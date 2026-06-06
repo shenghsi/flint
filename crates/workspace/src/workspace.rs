@@ -472,7 +472,7 @@ pub struct ToggleFileFinder {
     pub separate_history: bool,
 }
 
-/// Opens a new terminal in the center.
+/// Opens a new terminal workspace item.
 #[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -482,7 +482,7 @@ pub struct NewCenterTerminal {
     pub local: bool,
 }
 
-/// Opens a new terminal.
+/// Opens a new terminal workspace item.
 #[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -11255,7 +11255,7 @@ mod tests {
         DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
     };
-    use project::{Project, ProjectEntryId, WorktreeId};
+    use project::{DisableAiSettings, Project, ProjectEntryId, WorktreeId};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -15980,6 +15980,8 @@ mod tests {
             cx.set_global(settings_store);
             cx.set_global(db::AppDatabase::test_new());
             theme_settings::init(theme::LoadThemes::JustBase, cx);
+            DisableAiSettings::register(cx);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
         });
     }
 

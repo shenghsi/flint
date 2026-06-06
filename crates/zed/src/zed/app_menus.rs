@@ -1,8 +1,7 @@
-use collab_ui::collab_panel;
 use gpui::{App, Menu, MenuItem, OsAction};
 use release_channel::ReleaseChannel;
-use terminal_view::terminal_panel;
-use zed_actions::{debug_panel, dev};
+use terminal_view::{terminal_panel, terminal_threads};
+use zed_actions::dev;
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;
@@ -42,9 +41,12 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::separator(),
         MenuItem::action("Project Panel", zed_actions::project_panel::ToggleFocus),
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
-        MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
-        MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
-        MenuItem::action("Debugger Panel", debug_panel::ToggleFocus),
+        MenuItem::action("Terminal", terminal_panel::ToggleFocus),
+        MenuItem::separator(),
+        MenuItem::action("Terminal Threads", terminal_threads::OpenTerminalThreads),
+        MenuItem::action("New Codex Thread", terminal_threads::NewCodexThread),
+        MenuItem::action("New Claude Thread", terminal_threads::NewClaudeThread),
+        MenuItem::action("New Shell Thread", terminal_threads::NewShellThread),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),
@@ -90,7 +92,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 #[cfg(target_os = "macos")]
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
-                MenuItem::action("Extensions", zed_actions::Extensions::default()),
                 #[cfg(not(target_os = "windows"))]
                 MenuItem::action("Install CLI", install_cli::InstallCliBinary),
                 MenuItem::separator(),
@@ -268,19 +269,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                         reveal_target: None,
                     },
                 ),
-                MenuItem::action("Start Debugger", debugger_ui::Start),
                 MenuItem::separator(),
                 MenuItem::action("Edit tasks.json...", crate::zed::OpenProjectTasks),
-                MenuItem::action("Edit debug.json...", zed_actions::OpenProjectDebugTasks),
-                MenuItem::separator(),
-                MenuItem::action("Continue", debugger_ui::Continue),
-                MenuItem::action("Step Over", debugger_ui::StepOver),
-                MenuItem::action("Step Into", debugger_ui::StepInto),
-                MenuItem::action("Step Out", debugger_ui::StepOut),
-                MenuItem::separator(),
-                MenuItem::action("Toggle Breakpoint", editor::actions::ToggleBreakpoint),
-                MenuItem::action("Edit Breakpoint", editor::actions::EditLogBreakpoint),
-                MenuItem::action("Clear All Breakpoints", debugger_ui::ClearAllBreakpoints),
             ],
         },
         Menu {
@@ -300,13 +290,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     "View Release Notes Locally",
                     auto_update_ui::ViewReleaseNotesLocally,
                 ),
-                MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
-                MenuItem::action("Show Welcome", onboarding::ShowWelcome),
-                MenuItem::separator(),
-                MenuItem::action("File Bug Report...", zed_actions::feedback::FileBugReport),
-                MenuItem::action("Request Feature...", zed_actions::feedback::RequestFeature),
-                MenuItem::action("Email Us...", zed_actions::feedback::EmailZed),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
@@ -315,19 +299,71 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     },
                 ),
                 MenuItem::action("Zed Repository", feedback::OpenZedRepo),
-                MenuItem::action(
-                    "Zed Twitter",
-                    super::OpenBrowser {
-                        url: "https://twitter.com/zeddotdev".into(),
-                    },
-                ),
-                MenuItem::action(
-                    "Join the Team",
-                    super::OpenBrowser {
-                        url: "https://zed.dev/jobs".into(),
-                    },
-                ),
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect_menu_labels(menus: &[Menu], labels: &mut Vec<String>) {
+        for menu in menus {
+            labels.push(menu.name.to_string());
+            collect_menu_item_labels(&menu.items, labels);
+        }
+    }
+
+    fn collect_menu_item_labels(items: &[MenuItem], labels: &mut Vec<String>) {
+        for item in items {
+            match item {
+                MenuItem::Action { name, .. } => labels.push(name.to_string()),
+                MenuItem::Submenu(menu) => {
+                    labels.push(menu.name.to_string());
+                    collect_menu_item_labels(&menu.items, labels);
+                }
+                MenuItem::SystemMenu(menu) => labels.push(menu.name.to_string()),
+                MenuItem::Separator => {}
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_terminal_first_menus_omit_retired_surfaces(cx: &mut gpui::TestAppContext) {
+        let menus = app_menus(cx);
+        let mut labels = Vec::new();
+        collect_menu_labels(&menus, &mut labels);
+
+        for removed_label in [
+            "Collab Panel",
+            "Debugger Panel",
+            "Terminal Panel",
+            "Extensions",
+            "Start Debugger",
+            "Edit debug.json...",
+            "Continue",
+            "Step Over",
+            "Step Into",
+            "Step Out",
+            "Clear All Breakpoints",
+            "View Telemetry",
+            "Show Welcome",
+            "File Bug Report...",
+            "Request Feature...",
+            "Email Us...",
+            "Zed Twitter",
+            "Join the Team",
+        ] {
+            assert!(
+                !labels.iter().any(|label| label == removed_label),
+                "retired menu label {removed_label:?} should not be present; labels: {labels:?}"
+            );
+        }
+
+        assert!(labels.iter().any(|label| label == "Terminal"));
+        assert!(labels.iter().any(|label| label == "Project Panel"));
+        assert!(labels.iter().any(|label| label == "Open Settings"));
+        assert!(labels.iter().any(|label| label == "Find in Project"));
+    }
 }

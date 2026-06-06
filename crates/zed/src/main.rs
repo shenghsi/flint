@@ -198,6 +198,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
+const ENABLE_RETIRED_PRODUCT_SURFACES: bool = false;
 
 fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
@@ -556,7 +557,9 @@ fn main() {
 
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
-        debug_adapter_extension::init(extension_host_proxy.clone(), cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            debug_adapter_extension::init(extension_host_proxy.clone(), cx);
+        }
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -586,8 +589,10 @@ fn main() {
         #[cfg(target_os = "macos")]
         zed::move_to_applications::init(cx);
         project::Project::init(&client, cx);
-        debugger_ui::init(cx);
-        debugger_tools::init(cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            debugger_ui::init(cx);
+            debugger_tools::init(cx);
+        }
         client::init(&client, cx);
         feature_flags::FeatureFlagStore::init(cx);
 
@@ -653,7 +658,9 @@ fn main() {
         AppState::set_global(app_state.clone(), cx);
 
         auto_update::init(client.clone(), cx);
-        dap_adapters::init(cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            dap_adapters::init(cx);
+        }
         auto_update_ui::init(cx);
         reliability::init(client.clone(), cx);
         extension_host::init(
@@ -672,51 +679,59 @@ fn main() {
             cx.background_executor().clone(),
         );
         command_palette::init(cx);
-        let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
-            enterprise_uri: language::language_settings::all_language_settings(None, cx)
-                .edit_predictions
-                .copilot
-                .enterprise_uri
-                .clone(),
-        };
-        copilot_chat::init(
-            app_state.fs.clone(),
-            app_state.client.http_client(),
-            copilot_chat_configuration,
-            cx,
-        );
-
-        copilot_ui::init(&app_state, cx);
         language_model::init(cx);
-        RefreshLlmTokenListener::register(
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            cx,
-        );
-        language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
-        acp_tools::init(cx);
-        zed::telemetry_log::init(cx);
-        zed::remote_debug::init(cx);
-        edit_prediction_ui::init(cx);
-        web_search::init(cx);
-        web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
+                enterprise_uri: language::language_settings::all_language_settings(None, cx)
+                    .edit_predictions
+                    .copilot
+                    .enterprise_uri
+                    .clone(),
+            };
+            copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client(),
+                copilot_chat_configuration,
+                cx,
+            );
+
+            copilot_ui::init(&app_state, cx);
+            RefreshLlmTokenListener::register(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                cx,
+            );
+            language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+            acp_tools::init(cx);
+            zed::telemetry_log::init(cx);
+            zed::remote_debug::init(cx);
+            edit_prediction_ui::init(cx);
+            web_search::init(cx);
+            web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        }
         snippet_provider::init(cx);
-        edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        project::AgentRegistryStore::init_global(
-            cx,
-            app_state.fs.clone(),
-            app_state.client.http_client(),
-        );
-        agent_ui::init(
-            app_state.fs.clone(),
-            prompt_builder,
-            app_state.languages.clone(),
-            is_new_install,
-            false,
-            cx,
-        );
-        zed::watch_user_agents_md(app_state.fs.clone(), cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            edit_prediction_registry::init(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                cx,
+            );
+            let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
+            project::AgentRegistryStore::init_global(
+                cx,
+                app_state.fs.clone(),
+                app_state.client.http_client(),
+            );
+            agent_ui::init(
+                app_state.fs.clone(),
+                prompt_builder,
+                app_state.languages.clone(),
+                is_new_install,
+                false,
+                cx,
+            );
+            zed::watch_user_agents_md(app_state.fs.clone(), cx);
+        }
 
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
@@ -729,7 +744,9 @@ fn main() {
         repl::notebook::init(cx);
         diagnostics::init(cx);
 
-        audio::init(cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            audio::init(cx);
+        }
         workspace::init(app_state.clone(), cx);
         ui_prompt::init(cx);
 
@@ -742,7 +759,9 @@ fn main() {
         outline_panel::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
-        channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
+        }
         search::init(cx);
         cx.set_global(workspace::PaneSearchBarCallbacks {
             setup_search_bar: |languages, toolbar, window, cx| {
@@ -763,19 +782,27 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
-        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        collab_ui::init(&app_state, cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            collab_ui::init(&app_state, cx);
+        }
         git_ui::init(cx);
-        feedback::init(cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            feedback::init(cx);
+        }
         markdown_preview::init(cx);
         csv_preview::init(cx);
         svg_preview::init(cx);
-        onboarding::init(cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            onboarding::init(cx);
+        }
         settings_ui::init(cx);
         keymap_editor::init(cx);
-        extensions_ui::init(cx);
-        edit_prediction::init(cx);
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            extensions_ui::init(cx);
+            edit_prediction::init(cx);
+        }
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
         miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);

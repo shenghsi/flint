@@ -8,9 +8,10 @@ use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::solo_diff_view::SoloDiffView;
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
-    git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
+    git_panel_settings::{CommitMessageGeneratorSettings, GitPanelSettings},
+    git_status_icon,
+    repository_selector::RepositorySelector,
 };
-use agent_settings::{AgentSettings, UserAgentsMd};
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -18,8 +19,9 @@ use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset, SizingBehavior};
 use editor::{EditorStyle, RewrapOptions};
 use file_icons::FileIcons;
-use futures::StreamExt as _;
 use futures::channel::oneshot::Canceled;
+use futures::{FutureExt as _, select};
+use futures_lite::AsyncWriteExt;
 use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
@@ -43,10 +45,6 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, File};
-use language_model::{
-    CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
-};
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::StatusToast;
@@ -65,6 +63,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
 use smallvec::SmallVec;
 use std::future::Future;
+use std::io::ErrorKind;
 use std::ops::Range;
 use std::path::Path;
 use std::{sync::Arc, time::Duration, usize};
@@ -76,6 +75,7 @@ use ui::{
     PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab,
     TintColor, Tooltip, WithScrollbar, prelude::*,
 };
+use util::command::{Stdio, new_command};
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
@@ -644,6 +644,7 @@ pub struct GitPanel {
     conflicted_staged_count: usize,
     add_coauthors: bool,
     generate_commit_message_task: Option<Task<Option<()>>>,
+    commit_message_generation_error: Option<String>,
     entries: Vec<GitListEntry>,
     view_mode: GitPanelViewMode,
     entries_indices: HashMap<RepoPath, usize>,
@@ -799,11 +800,13 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let mut was_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+            let mut was_commit_generator_configured =
+                CommitMessageGeneratorSettings::get_global(cx).is_configured();
             let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-                let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
-                if was_ai_enabled != is_ai_enabled {
-                    was_ai_enabled = is_ai_enabled;
+                let is_commit_generator_configured =
+                    CommitMessageGeneratorSettings::get_global(cx).is_configured();
+                if was_commit_generator_configured != is_commit_generator_configured {
+                    was_commit_generator_configured = is_commit_generator_configured;
                     cx.notify();
                 }
             });
@@ -844,6 +847,7 @@ impl GitPanel {
                 conflicted_staged_count: 0,
                 add_coauthors: true,
                 generate_commit_message_task: None,
+                commit_message_generation_error: None,
                 entries: Vec::new(),
                 view_mode: GitPanelViewMode::from_settings(cx),
                 entries_indices: HashMap::default(),
@@ -2492,6 +2496,14 @@ impl GitPanel {
         self.generate_commit_message(cx);
     }
 
+    fn diff_type_for_commit_message(has_staged_changes: bool) -> DiffType {
+        if has_staged_changes {
+            DiffType::HeadToIndex
+        } else {
+            DiffType::HeadToWorktree
+        }
+    }
+
     fn split_patch(patch: &str) -> Vec<String> {
         let mut result = Vec::new();
         let mut current_patch = String::new();
@@ -2671,36 +2683,33 @@ impl GitPanel {
         )
     }
 
-    /// Generates a commit message using an LLM.
+    /// Generates a commit message using an external command.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
+        if !self.can_commit() {
             return;
         }
 
-        let Some(ConfiguredModel { provider, model }) =
-            LanguageModelRegistry::read_global(cx).commit_message_model(cx)
-        else {
+        let generator = CommitMessageGeneratorSettings::get_global(cx).clone();
+        if !generator.is_configured() {
             return;
-        };
+        }
 
         let Some(repo) = self.active_repository.as_ref() else {
             return;
         };
 
         telemetry::event!("Git Commit Message Generated");
+        self.commit_message_generation_error = None;
+        cx.notify();
 
         let diff = repo.update(cx, |repo, cx| {
-            if self.has_staged_changes() {
-                repo.diff(DiffType::HeadToIndex, cx)
-            } else {
-                repo.diff(DiffType::HeadToWorktree, cx)
-            }
+            repo.diff(
+                Self::diff_type_for_commit_message(self.has_staged_changes()),
+                cx,
+            )
         });
 
-        let temperature = AgentSettings::temperature_for_model(&model, cx);
-        let instructions = AgentSettings::get_global(cx)
-            .commit_message_instructions
-            .clone();
+        let instructions = generator.instructions.clone();
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
@@ -2709,16 +2718,6 @@ impl GitPanel {
                 let _defer = cx.on_drop(&this, |this, _cx| {
                     this.generate_commit_message_task.take();
                 });
-
-                if let Some(task) = cx.update(|cx| {
-                    if !provider.is_authenticated(cx) {
-                        Some(provider.authenticate(cx))
-                    } else {
-                        None
-                    }
-                }) {
-                    task.await.log_err();
-                }
 
                 let mut diff_text = match diff.await {
                     Ok(result) => match result {
@@ -2734,15 +2733,10 @@ impl GitPanel {
                     }
                 };
 
-                const MAX_DIFF_BYTES: usize = 20_000;
-                diff_text = Self::compress_commit_diff(&diff_text, MAX_DIFF_BYTES);
+                diff_text = Self::compress_commit_diff(&diff_text, generator.max_diff_bytes);
 
                 let rules_content =
                     Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
-                let user_agents_md = cx.update(|cx| {
-                    UserAgentsMd::global(cx)
-                        .and_then(|user_agents_md| user_agents_md.content().cloned())
-                });
 
                 let prompt = include_str!("../src/commit_message_prompt.txt");
 
@@ -2760,35 +2754,17 @@ impl GitPanel {
 
                 let content = Self::build_commit_message_prompt(
                     &prompt,
-                    user_agents_md.as_deref(),
+                    None,
                     rules_content.as_deref(),
                     instructions.as_deref(),
                     &subject,
                     &diff_text,
                 );
 
-                let request = LanguageModelRequest {
-                    thread_id: None,
-                    prompt_id: None,
-                    intent: Some(CompletionIntent::GenerateGitCommitMessage),
-                    messages: vec![LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![content.into()],
-                        cache: false,
-                        reasoning_details: None,
-                    }],
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    stop: Vec::new(),
-                    temperature,
-                    thinking_allowed: false,
-                    thinking_effort: None,
-                    speed: None,
-                };
-
-                let stream = model.stream_completion_text(request, cx);
-                match stream.await {
-                    Ok(mut messages) => {
+                match Self::run_commit_message_generator(generator, repo_work_dir, content, &mut cx)
+                    .await
+                {
+                    Ok(message) => {
                         if !text_empty {
                             this.update(cx, |this, cx| {
                                 this.commit_message_buffer(cx).update(cx, |buffer, cx| {
@@ -2802,27 +2778,18 @@ impl GitPanel {
                             })?;
                         }
 
-                        while let Some(message) = messages.stream.next().await {
-                            match message {
-                                Ok(text) => {
-                                    this.update(cx, |this, cx| {
-                                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                            let insert_position =
-                                                buffer.anchor_before(buffer.len());
-                                            buffer.edit(
-                                                [(insert_position..insert_position, text)],
-                                                None,
-                                                cx,
-                                            );
-                                        });
-                                    })?;
-                                }
-                                Err(e) => {
-                                    Self::show_commit_message_error(&this, &e, cx);
-                                    break;
-                                }
-                            }
-                        }
+                        this.update(cx, |this, cx| {
+                            this.commit_message_generation_error = None;
+                            this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                let insert_position = buffer.anchor_before(buffer.len());
+                                buffer.edit(
+                                    [(insert_position..insert_position, message)],
+                                    None,
+                                    cx,
+                                );
+                            });
+                            cx.notify();
+                        })?;
                     }
                     Err(e) => {
                         Self::show_commit_message_error(&this, &e, cx);
@@ -2834,6 +2801,114 @@ impl GitPanel {
             .log_err()
             .await
         }));
+    }
+
+    async fn run_commit_message_generator(
+        generator: CommitMessageGeneratorSettings,
+        repo_work_dir: Arc<Path>,
+        prompt: String,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<String> {
+        let timeout_duration = generator.timeout;
+        let timeout = cx.background_executor().timer(timeout_duration).fuse();
+        let output =
+            Self::run_commit_message_generator_once(generator, repo_work_dir, prompt).fuse();
+        futures::pin_mut!(timeout);
+        futures::pin_mut!(output);
+
+        select! {
+            result = output => result,
+            () = timeout => {
+                anyhow::bail!(
+                    "commit message generator timed out after {} seconds",
+                    timeout_duration.as_secs()
+                )
+            }
+        }
+    }
+
+    async fn run_commit_message_generator_once(
+        generator: CommitMessageGeneratorSettings,
+        repo_work_dir: Arc<Path>,
+        prompt: String,
+    ) -> anyhow::Result<String> {
+        let command_name = generator
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .context("commit message generator command is not configured")?
+            .to_string();
+
+        let mut command = new_command(&command_name);
+        command
+            .args(&generator.args)
+            .envs(&generator.env)
+            .current_dir(generator.cwd.as_deref().unwrap_or(repo_work_dir.as_ref()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let mut child = command.spawn().map_err(|err| {
+            if err.kind() == ErrorKind::NotFound {
+                anyhow::anyhow!("commit message generator command `{command_name}` was not found")
+            } else {
+                anyhow::anyhow!(
+                    "failed to start commit message generator command `{command_name}`: {err}"
+                )
+            }
+        })?;
+
+        let Some(mut stdin) = child.stdin.take() else {
+            anyhow::bail!("commit message generator stdin is unavailable");
+        };
+        stdin
+            .write_all(prompt.as_bytes())
+            .await
+            .context("failed to write prompt to commit message generator")?;
+        stdin
+            .close()
+            .await
+            .context("failed to close commit message generator stdin")?;
+        drop(stdin);
+
+        let output = child
+            .output()
+            .await
+            .context("failed to read commit message generator output")?;
+        let stdout = String::from_utf8(output.stdout)
+            .context("commit message generator stdout was not valid UTF-8")?;
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+        if !output.status.success() {
+            if stderr.is_empty() {
+                anyhow::bail!(
+                    "commit message generator exited with status {}",
+                    output.status
+                );
+            } else {
+                anyhow::bail!(
+                    "commit message generator exited with status {}: {}",
+                    output.status,
+                    stderr
+                );
+            }
+        }
+
+        let message = stdout.trim().to_string();
+        if message.is_empty() {
+            if stderr.is_empty() {
+                anyhow::bail!("commit message generator returned no commit message");
+            } else {
+                anyhow::bail!(
+                    "commit message generator returned no commit message; stderr: {}",
+                    stderr
+                );
+            }
+        }
+
+        Ok(message)
     }
 
     fn get_fetch_options(
@@ -4078,14 +4153,23 @@ impl GitPanel {
     where
         E: std::fmt::Debug + std::fmt::Display,
     {
+        let message = err.to_string();
+        weak_this
+            .update(cx, |this, cx| {
+                this.commit_message_generation_error = Some(message.clone());
+                cx.notify();
+            })
+            .ok();
+
         if let Ok(Some(workspace)) = weak_this.update(cx, |this, _cx| this.workspace.upgrade()) {
             let _ = workspace.update(cx, |workspace, cx| {
                 struct CommitMessageError;
                 let notification_id = NotificationId::unique::<CommitMessageError>();
-                workspace.show_notification(notification_id, cx, |cx| {
+                let message = message.clone();
+                workspace.show_notification(notification_id, cx, move |cx| {
                     cx.new(|cx| {
                         ErrorMessagePrompt::new(
-                            format!("Failed to generate commit message: {err}"),
+                            format!("Failed to generate commit message: {message}"),
                             cx,
                         )
                     })
@@ -4257,10 +4341,6 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if !agent_settings::AgentSettings::get_global(cx).enabled(cx) {
-            return None;
-        }
-
         if self.generate_commit_message_task.is_some() {
             return Some(
                 h_flex()
@@ -4273,6 +4353,8 @@ impl GitPanel {
                             .tooltip(Tooltip::text("Cancel Commit Message Generation"))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.generate_commit_message_task.take();
+                                this.commit_message_generation_error =
+                                    Some("Commit message generation canceled".to_string());
                                 cx.notify();
                             })),
                     )
@@ -4285,10 +4367,10 @@ impl GitPanel {
             );
         }
 
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let has_commit_model_configuration_error = model_registry
-            .configuration_error(model_registry.commit_message_model(cx), cx)
-            .is_some();
+        let generator = CommitMessageGeneratorSettings::get_global(cx);
+        let generator_configured = generator.is_configured();
+        let generator_label = generator.command_label();
+        let last_error = self.commit_message_generation_error.clone();
         let can_commit = self.can_commit();
 
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
@@ -4296,16 +4378,27 @@ impl GitPanel {
         Some(
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
-                .icon_color(if has_commit_model_configuration_error {
+                .icon_color(if !generator_configured {
                     Color::Disabled
+                } else if last_error.is_some() {
+                    Color::Error
                 } else {
                     Color::Muted
                 })
                 .tooltip(move |_window, cx| {
                     if !can_commit {
                         Tooltip::simple("No Changes to Commit", cx)
-                    } else if has_commit_model_configuration_error {
-                        Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
+                    } else if !generator_configured {
+                        Tooltip::simple("Configure a commit message generator command", cx)
+                    } else if let Some(last_error) = last_error.as_ref() {
+                        Tooltip::simple(format!("Last generation failed: {last_error}"), cx)
+                    } else if let Some(generator_label) = generator_label.as_ref() {
+                        Tooltip::for_action_in(
+                            format!("Generate Commit Message with {generator_label}"),
+                            &git::GenerateCommitMessage,
+                            &editor_focus_handle,
+                            cx,
+                        )
                     } else {
                         Tooltip::for_action_in(
                             "Generate Commit Message",
@@ -4315,7 +4408,7 @@ impl GitPanel {
                         )
                     }
                 })
-                .disabled(!can_commit || has_commit_model_configuration_error)
+                .disabled(!can_commit || !generator_configured)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.generate_commit_message(cx);
                 }))
@@ -7467,6 +7560,8 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use git::{
         repository::repo_path,
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
@@ -8764,6 +8859,158 @@ mod tests {
         );
 
         assert!(!prompt.contains("<commit_message_instructions>"));
+    }
+
+    #[test]
+    fn test_commit_message_uses_staged_diff_when_staged_changes_exist() {
+        assert!(matches!(
+            GitPanel::diff_type_for_commit_message(true),
+            DiffType::HeadToIndex
+        ));
+    }
+
+    #[test]
+    fn test_commit_message_uses_worktree_diff_without_staged_changes() {
+        assert!(matches!(
+            GitPanel::diff_type_for_commit_message(false),
+            DiffType::HeadToWorktree
+        ));
+    }
+
+    #[test]
+    fn test_commit_message_generator_settings_from_git_settings() {
+        let mut content = settings::SettingsContent::default();
+        let mut env = HashMap::default();
+        env.insert("COMMIT_STYLE".to_string(), "terse".to_string());
+        content.git = Some(settings::GitSettings {
+            commit_message_generator: Some(settings::GitCommitMessageGeneratorSettings {
+                command: Some("codex".to_string()),
+                args: Some(vec!["--quiet".to_string()]),
+                env: Some(env.clone()),
+                cwd: Some(PathBuf::from("/repo")),
+                timeout_seconds: Some(45),
+                max_diff_bytes: Some(1234),
+                instructions: Some("Use imperative mood".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        let settings = CommitMessageGeneratorSettings::from_settings(&content);
+
+        assert_eq!(settings.command, Some("codex".to_string()));
+        assert_eq!(settings.args, vec!["--quiet".to_string()]);
+        assert_eq!(settings.env, env);
+        assert_eq!(settings.cwd, Some(PathBuf::from("/repo")));
+        assert_eq!(settings.timeout, Duration::from_secs(45));
+        assert_eq!(settings.max_diff_bytes, 1234);
+        assert_eq!(
+            settings.instructions,
+            Some("Use imperative mood".to_string())
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_message_generator_reads_stdin_and_stdout(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let generator = test_generator(
+            "sh",
+            &[
+                "-c",
+                "grep -q 'diff --git' && printf 'Generated message\\n'",
+            ],
+            Duration::from_secs(5),
+        );
+
+        let result = run_generator_for_test(
+            cx,
+            generator,
+            "Here are the changes:\ndiff --git a/file b/file\n".to_string(),
+        )
+        .await
+        .expect("generator should succeed");
+
+        assert_eq!(result, "Generated message");
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_message_generator_reports_nonzero_exit_and_stderr(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let generator = test_generator(
+            "sh",
+            &["-c", "printf 'bad stderr' >&2; exit 7"],
+            Duration::from_secs(5),
+        );
+
+        let error = run_generator_for_test(cx, generator, "prompt".to_string())
+            .await
+            .expect_err("generator should fail");
+        let error = error.to_string();
+
+        assert!(error.contains("bad stderr"));
+        assert!(error.contains("commit message generator exited"));
+    }
+
+    #[gpui::test]
+    async fn test_commit_message_generator_reports_missing_command(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let generator = test_generator(
+            "__zed_missing_commit_message_generator__",
+            &[],
+            Duration::from_secs(5),
+        );
+
+        let error = run_generator_for_test(cx, generator, "prompt".to_string())
+            .await
+            .expect_err("generator should fail");
+
+        assert!(error.to_string().contains("was not found"));
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_message_generator_times_out(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let generator = test_generator("sh", &["-c", "sleep 1"], Duration::from_millis(10));
+
+        let error = run_generator_for_test(cx, generator, "prompt".to_string())
+            .await
+            .expect_err("generator should time out");
+
+        assert!(error.to_string().contains("timed out"));
+    }
+
+    fn test_generator(
+        command: &str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> CommitMessageGeneratorSettings {
+        CommitMessageGeneratorSettings {
+            command: Some(command.to_string()),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            env: HashMap::default(),
+            cwd: None,
+            timeout,
+            max_diff_bytes: 20_000,
+            instructions: None,
+        }
+    }
+
+    async fn run_generator_for_test(
+        cx: &mut TestAppContext,
+        generator: CommitMessageGeneratorSettings,
+        prompt: String,
+    ) -> anyhow::Result<String> {
+        let repo_work_dir: Arc<Path> = Arc::from(std::env::temp_dir());
+        let task = cx.update(|cx| {
+            cx.spawn(async move |cx| {
+                GitPanel::run_commit_message_generator(generator, repo_work_dir, prompt, cx).await
+            })
+        });
+        task.await
     }
 
     #[gpui::test]

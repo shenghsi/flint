@@ -9,6 +9,7 @@ pub mod merge_from;
 mod project;
 mod serde_helper;
 mod terminal;
+mod terminal_threads;
 mod theme;
 mod title_bar;
 mod workspace;
@@ -28,6 +29,7 @@ pub use serde_helper::{
 };
 use settings_json::parse_json_with_comments;
 pub use terminal::*;
+pub use terminal_threads::*;
 pub use theme::*;
 pub use title_bar::*;
 pub use workspace::*;
@@ -179,6 +181,9 @@ pub struct SettingsContent {
     pub image_viewer: Option<ImageViewerSettingsContent>,
 
     pub repl: Option<ReplSettingsContent>,
+
+    /// Terminal-backed Codex, Claude, and shell thread launch configuration.
+    pub terminal_threads: Option<TerminalThreadSettingsContent>,
 
     /// Whether or not to enable Helix mode.
     ///

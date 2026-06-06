@@ -7308,7 +7308,6 @@ dependencies = [
 name = "git_ui"
 version = "0.1.0"
 dependencies = [
- "agent_settings",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
@@ -7330,7 +7329,6 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
- "language_model",
  "linkify",
  "log",
  "markdown",
@@ -22321,7 +22319,6 @@ dependencies = [
 name = "workspace"
 version = "0.1.0"
 dependencies = [
- "agent_settings",
  "any_vec",
  "anyhow",
  "async-recursion",

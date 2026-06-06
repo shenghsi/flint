@@ -4228,7 +4228,7 @@ fn default_render_tab_bar_buttons(
                             .separator()
                             .action("New Terminal", NewTerminal::default().boxed_clone())
                             .action(
-                                "New Center Terminal",
+                                "New Terminal Item",
                                 NewCenterTerminal::default().boxed_clone(),
                             )
                     }))

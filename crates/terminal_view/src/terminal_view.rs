@@ -3,6 +3,7 @@ pub mod terminal_element;
 pub mod terminal_panel;
 mod terminal_path_like_target;
 pub mod terminal_scrollbar;
+pub mod terminal_threads;
 
 use editor::{
     Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
@@ -106,6 +107,7 @@ pub struct RenameTerminal;
 
 pub fn init(cx: &mut App) {
     terminal_panel::init(cx);
+    terminal_threads::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
 
@@ -508,10 +510,7 @@ impl TerminalView {
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal::default()))
-                .action(
-                    "New Center Terminal",
-                    Box::new(NewCenterTerminal::default()),
-                )
+                .action("New Terminal Item", Box::new(NewCenterTerminal::default()))
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
@@ -1109,6 +1108,7 @@ fn subscribe_for_terminal_events(
                         window.play_system_bell();
                     }
                     cx.emit(Event::Wakeup);
+                    cx.emit(ItemEvent::UpdateTab);
                 }
 
                 Event::BlinkChanged(blinking) => {
@@ -2135,7 +2135,10 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
-    use std::path::{Path, PathBuf};
+    use std::{
+        cell::RefCell,
+        path::{Path, PathBuf},
+    };
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
     use workspace::item::test::{TestItem, TestProjectItem};
@@ -2825,6 +2828,69 @@ mod tests {
                     window,
                     cx,
                 );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn title_changed_updates_center_terminal_tab(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, false, cx);
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = terminal_view.update(cx, |_, cx| {
+            cx.subscribe(&terminal_view, {
+                let events = events.clone();
+                move |_, _, event: &ItemEvent, _| events.borrow_mut().push(*event)
+            })
+        });
+
+        terminal.update(cx, |_, cx| cx.emit(Event::TitleChanged));
+        cx.run_until_parked();
+
+        assert!(events.borrow().contains(&ItemEvent::UpdateTab));
+    }
+
+    #[gpui::test]
+    async fn bell_marks_background_center_terminal_tab_without_stealing_focus(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (active_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, false, cx);
+
+        let focused_item = window_handle
+            .update(cx, |_, window, cx| {
+                let focused_item = cx.new(|cx| TestItem::new(cx).with_label("editor"));
+                active_pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(focused_item.clone()), true, true, None, window, cx);
+                });
+                focused_item
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = terminal_view.update(cx, |_, cx| {
+            cx.subscribe(&terminal_view, {
+                let events = events.clone();
+                move |_, _, event: &ItemEvent, _| events.borrow_mut().push(*event)
+            })
+        });
+
+        terminal.update(cx, |_, cx| cx.emit(Event::Bell));
+        cx.run_until_parked();
+
+        assert!(events.borrow().contains(&ItemEvent::UpdateTab));
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                let active_item = active_pane.read(cx).active_item().unwrap();
+                assert_eq!(active_item.item_id(), focused_item.entity_id());
+                assert!(terminal_view.read(cx).has_bell());
+                assert!(terminal_view.read(cx).is_dirty(cx));
+                assert!(!terminal_view.read(cx).focus_handle(cx).is_focused(window));
             })
             .unwrap();
     }

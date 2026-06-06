@@ -16,7 +16,6 @@ pub mod visual_tests;
 pub(crate) mod windows_only_instance;
 
 use agent_settings::{UserAgentsMdState, init_user_agents_md};
-use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -105,6 +104,7 @@ use zed_actions::{
 
 const DOCS_URL: &str = "https://zed.dev/docs/";
 const STATUS_URL: &str = "https://status.zed.dev";
+const ENABLE_RETIRED_PRODUCT_SURFACES: bool = false;
 
 pub struct CrashHandler(pub Arc<crashes::Client>);
 
@@ -464,20 +464,22 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 let active_workspace = this.workspace().clone();
                 let source_workspace = source_workspace.clone();
                 active_workspace.update(cx, |workspace, cx| {
-                    if let Some(ref source) = source_workspace {
-                        if let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx) {
-                            panel.update(cx, |panel, cx| {
-                                panel.initialize_from_source_workspace_if_needed(
-                                    source.clone(),
-                                    window,
-                                    cx,
-                                );
-                            });
+                    if ENABLE_RETIRED_PRODUCT_SURFACES {
+                        if let Some(ref source) = source_workspace {
+                            if let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx) {
+                                panel.update(cx, |panel, cx| {
+                                    panel.initialize_from_source_workspace_if_needed(
+                                        source.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
                         }
-                    }
 
-                    ensure_agent_panel_for_workspace(workspace, source_workspace, window, cx)
-                        .detach_and_log_err(cx);
+                        ensure_agent_panel_for_workspace(workspace, source_workspace, window, cx)
+                            .detach_and_log_err(cx);
+                    }
                 });
             },
         )
@@ -728,9 +730,6 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
-        let channels_panel =
-            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
         async fn add_panel_when_ready(
             panel_task: impl Future<Output = anyhow::Result<Entity<impl workspace::Panel>>> + 'static,
@@ -752,10 +751,20 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
             add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle, cx.clone()).map(|r| r.log_err()),
         );
+
+        if ENABLE_RETIRED_PRODUCT_SURFACES {
+            let channels_panel =
+                collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+            let mut debugger_cx = cx.clone();
+            let debug_panel = DebugPanel::load(workspace_handle.clone(), &mut debugger_cx);
+
+            futures::join!(
+                add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
+                add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
+                initialize_agent_panel(workspace_handle, cx.clone()).map(|r| r.log_err()),
+            );
+        }
 
         anyhow::Ok(())
     })
@@ -1350,8 +1359,6 @@ fn initialize_pane(
             toolbar.add_item(solo_diff_git_toolbar, window, cx);
             let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
-            let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
-            toolbar.add_item(agent_diff_toolbar, window, cx);
             let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
             toolbar.add_item(basedpyright_banner, window, cx);
             let image_view_toolbar = cx.new(|_| image_viewer::ImageViewToolbarControls::new());

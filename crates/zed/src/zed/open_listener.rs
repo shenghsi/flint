@@ -32,6 +32,8 @@ use workspace::PathList;
 use workspace::item::ItemHandle;
 use workspace::{AppState, MultiWorkspace, OpenOptions, OpenResult, SerializedWorkspaceLocation};
 
+const ENABLE_RETIRED_PRODUCT_SURFACES: bool = false;
+
 #[derive(Default, Debug)]
 pub struct OpenRequest {
     pub kind: Option<OpenRequestKind>,
@@ -179,17 +181,23 @@ impl OpenRequest {
                     extension_id: extension_id.to_string(),
                 });
             } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
-                if uuid::Uuid::parse_str(session_id_str).is_ok() {
-                    this.kind = Some(OpenRequestKind::SharedAgentThread {
-                        session_id: session_id_str.to_string(),
-                    });
-                } else {
-                    log::error!("Invalid session ID in URL: {}", session_id_str);
+                if ENABLE_RETIRED_PRODUCT_SURFACES {
+                    if uuid::Uuid::parse_str(session_id_str).is_ok() {
+                        this.kind = Some(OpenRequestKind::SharedAgentThread {
+                            session_id: session_id_str.to_string(),
+                        });
+                    } else {
+                        log::error!("Invalid session ID in URL: {}", session_id_str);
+                    }
                 }
             } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
-                this.parse_skill_install_url(&url)?
+                if ENABLE_RETIRED_PRODUCT_SURFACES {
+                    this.parse_skill_install_url(&url)?;
+                }
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
-                this.parse_agent_url(agent_path)
+                if ENABLE_RETIRED_PRODUCT_SURFACES {
+                    this.parse_agent_url(agent_path);
+                }
             } else if url == "zed://" || url == "zed://open" || url == "zed://open/" {
                 this.kind = Some(OpenRequestKind::FocusApp);
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {

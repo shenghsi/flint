@@ -572,6 +572,27 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+    /// External command used to generate commit messages from a prompt sent on stdin.
+    pub commit_message_generator: Option<GitCommitMessageGeneratorSettings>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct GitCommitMessageGeneratorSettings {
+    /// Command executable used to generate commit messages.
+    pub command: Option<String>,
+    /// Arguments passed to the generator command.
+    pub args: Option<Vec<String>>,
+    /// Environment variables added to the generator command.
+    pub env: Option<HashMap<String, String>>,
+    /// Working directory for the generator command. Defaults to the repository root.
+    pub cwd: Option<PathBuf>,
+    /// Timeout in seconds before the generator command is killed.
+    pub timeout_seconds: Option<u64>,
+    /// Maximum diff bytes included in the prompt before compression.
+    pub max_diff_bytes: Option<usize>,
+    /// Additional user instructions for commit message generation.
+    pub instructions: Option<String>,
 }
 
 #[with_fallible_options]

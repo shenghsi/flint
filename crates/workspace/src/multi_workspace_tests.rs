@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::item::test::TestItem;
-use agent_settings::AgentSettings;
 use client::proto;
 use fs::{FakeFs, Fs};
 use gpui::{TestAppContext, VisualTestContext};
@@ -17,6 +16,7 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(settings_store);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         DisableAiSettings::register(cx);
+        DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
     });
 }
 
@@ -92,7 +92,7 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppContext) {
+async fn test_multi_workspace_collapses_when_ai_is_disabled(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
@@ -114,9 +114,7 @@ async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppC
     });
 
     cx.update(|_window, cx| {
-        let mut settings = AgentSettings::get_global(cx).clone();
-        settings.enabled = false;
-        AgentSettings::override_global(settings, cx);
+        DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
     });
     cx.run_until_parked();
 

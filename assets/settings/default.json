@@ -450,7 +450,7 @@
   "allow_rewrap": "in_comments",
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
-  "show_edit_predictions": true,
+  "show_edit_predictions": false,
   // Controls whether edit predictions are shown in a given language scope.
   // Example: ["string", "comment"]
   "edit_predictions_disabled_in": [],
@@ -493,7 +493,7 @@
     // Whether to show the Selections menu in the editor toolbar.
     "selections_menu": true,
     // Whether to show agent review buttons in the editor toolbar.
-    "agent_review": true,
+    "agent_review": false,
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false,
   },
@@ -508,13 +508,13 @@
     // Whether to show the project host and name in the titlebar.
     "show_project_items": true,
     // Whether to show onboarding banners in the titlebar.
-    "show_onboarding_banner": true,
+    "show_onboarding_banner": false,
     // Whether to show user picture in the titlebar.
-    "show_user_picture": true,
+    "show_user_picture": false,
     // Whether to show the user menu in the titlebar.
-    "show_user_menu": true,
+    "show_user_menu": false,
     // Whether to show the sign in button in the titlebar.
-    "show_sign_in": true,
+    "show_sign_in": false,
     // Whether to show the menus in the titlebar.
     "show_menus": false,
     // The layout of window control buttons in the title bar (Linux only).
@@ -692,7 +692,7 @@
   // Search options to enable by default when opening new project and buffer searches.
   "search": {
     // Whether to show the project search button in the status bar.
-    "button": true,
+    "button": false,
     // Whether to only match on whole words.
     "whole_word": false,
     // Whether to match case sensitively.
@@ -926,7 +926,7 @@
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
-    "button": true,
+    "button": false,
     // Where to dock the collaboration panel. Can be 'left' or 'right'.
     "dock": "right",
     // Default width of the collaboration panel.
@@ -1002,9 +1002,9 @@
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
-    "enabled": true,
+    "enabled": false,
     // Whether to show the agent panel button in the status bar.
-    "button": true,
+    "button": false,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "left",
     // Whether the agent panel should use flexible (proportional) sizing.
@@ -1099,7 +1099,7 @@
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": false,
     // When enabled, show voting thumbs for feedback on agent edits.
-    "enable_feedback": true,
+    "enable_feedback": false,
     "default_profile": "write",
     "profiles": {
       "write": {
@@ -1168,7 +1168,7 @@
     // "primary_screen" - Show the notification only on your primary screen (default)
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
-    "notify_when_agent_waiting": "primary_screen",
+    "notify_when_agent_waiting": "never",
     // When to play a sound when the agent has either completed
     // its response, or needs user input.
     // "never" - Never play the sound
@@ -1210,10 +1210,10 @@
     // that offers to resolve conflicts using the agent.
     //
     // Default: true
-    "show_merge_conflict_indicator": true,
+    "show_merge_conflict_indicator": false,
   },
   // Whether the screen sharing icon is shown in the os status bar.
-  "show_call_status_icon": true,
+  "show_call_status_icon": false,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
   // Whether to perform linked edits of associated ranges, if the language server supports it.
@@ -1472,14 +1472,14 @@
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
-    "diagnostics": true,
+    "diagnostics": false,
     // Send anonymized usage data like what languages you're using Zed with.
-    "metrics": true,
+    "metrics": false,
   },
   // Whether to disable all AI features in Zed.
   //
   // Default: false
-  "disable_ai": false,
+  "disable_ai": true,
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
@@ -1642,6 +1642,23 @@
     //
     // Trailing slashes are ignored.
     "worktree_directory": "../worktrees",
+    // External command used to generate commit messages. The prompt and compressed diff are sent on stdin.
+    "commit_message_generator": {
+      // Command executable. Use "codex", "claude", or another command that writes the message to stdout.
+      "command": "codex",
+      // Arguments passed to the command.
+      "args": [],
+      // Environment variables added to the command.
+      "env": {},
+      // Working directory for the command. Defaults to the repository root.
+      // "cwd": null,
+      // Timeout in seconds before the command is killed.
+      "timeout_seconds": 30,
+      // Maximum diff bytes included in the prompt before compression.
+      "max_diff_bytes": 20000,
+      // Additional user instructions for commit message generation.
+      // "instructions": null,
+    },
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [
@@ -1697,7 +1714,7 @@
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
-      "enable_next_edit_suggestions": true,
+      "enable_next_edit_suggestions": false,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",
@@ -1750,6 +1767,22 @@
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
   },
+  // Terminal-backed Codex, Claude, and shell thread launchers.
+  "terminal_threads": {
+    "codex": {
+      "command": "codex",
+      "args": [],
+      "env": {},
+    },
+    "claude": {
+      "command": "claude",
+      "args": [],
+      "env": {},
+    },
+    "shell": {
+      "env": {},
+    },
+  },
   // Settings specific to the terminal
   "terminal": {
     // What shell to use when opening a terminal. May take 3 values:
@@ -1769,7 +1802,7 @@
     "shell": "system",
     // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
-    // Whether the terminal panel should use flexible (proportional) sizing.
+    // Whether docked terminals should use flexible (proportional) sizing.
     //
     // Default: true
     "flexible": true,
@@ -1844,7 +1877,7 @@
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
-    "button": true,
+    "button": false,
     // Any key-value pairs added to this list will be added to the terminal's
     // environment. Use `:` to separate multiple values.
     "env": {
@@ -1985,7 +2018,7 @@
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
     // timeout of `0` will disable path hyperlinking in terminal.
     "path_hyperlink_timeout_ms": 1,
-    // Whether to show a badge on the terminal panel icon with the count of open terminals.
+    // Whether to show a badge on the terminal icon with the count of open terminals.
     "show_count_badge": false,
     // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
     "bell": "off",
@@ -2661,7 +2694,7 @@
     "dock": "bottom",
     "log_dap_communications": true,
     "format_dap_log_messages": true,
-    "button": true,
+    "button": false,
   },
   // Configures any number of settings profiles that are temporarily applied
   // when selected from `settings profile selector: toggle`.
