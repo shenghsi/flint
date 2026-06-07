@@ -1613,7 +1613,7 @@ impl Panel for TerminalPanel {
     }
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
-        Box::new(Toggle)
+        Box::new(workspace::NewCenterTerminal::default())
     }
 
     fn pane(&self) -> Option<Entity<Pane>> {
