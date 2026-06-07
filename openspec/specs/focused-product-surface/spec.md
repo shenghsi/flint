@@ -1,23 +1,11 @@
 ## ADDED Requirements
 
-### Requirement: Removed product surfaces are not exposed
-The application SHALL NOT expose ACP, native Zed agent/chat, native model
-provider, Copilot, edit prediction, collaboration, call, debugger, or Zed cloud
-product surfaces in the default user interface.
-
-#### Scenario: Default menus omit removed surfaces
-- **WHEN** a user opens the application menus in a fresh workspace
-- **THEN** the menus do not include ACP registry, agent chat, collaboration,
-  calls, debugger, Copilot, edit prediction, or Zed cloud product entries
-
-#### Scenario: Removed panels are not registered as workspace panels
-- **WHEN** a workspace is initialized
-- **THEN** collaboration, call, debugger, native agent, and ACP-backed panels are
-  not added to any dock or center workspace area
-
 ### Requirement: Core review and writing surfaces remain available
 The application SHALL retain terminal, project navigation, editor, git review,
-diff, search, settings, theme, keymap, and Markdown surfaces.
+diff, search, settings, theme, keymap, Markdown, and title bar surfaces.
+The title bar SHALL render with visible content (at minimum the project name)
+for every open project. The terminal panel icon SHALL be visible in the
+status bar by default.
 
 #### Scenario: Core workspace opens with retained surfaces
 - **WHEN** a user opens a project

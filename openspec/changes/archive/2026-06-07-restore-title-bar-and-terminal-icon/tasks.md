@@ -7,16 +7,16 @@
 ## 2. Fix title bar visibility
 
 - [x] 2.1 Fix the root cause identified in step 1 (constructor panic, missing subscription, silent error, etc.)
-- [ ] 2.2 Verify the title bar renders with visible content (project name) when opening a project with a git repo
-- [ ] 2.3 Verify the title bar renders with visible content when opening a project without a git repo
+- [x] 2.2 Verify the title bar renders with visible content (project name) when opening a project with a git repo
+- [x] 2.3 Verify the title bar renders with visible content when opening a project without a git repo
 
 ## 3. Restore terminal icon in status bar
 
 - [x] 3.1 In `assets/settings/default.json`, change `"button": false` to `"button": true` under the `"terminal"` section
-- [ ] 3.2 Launch the app and confirm the terminal icon appears in the bottom status bar
-- [ ] 3.3 Click the terminal icon and confirm it toggles the terminal panel dock
+- [x] 3.2 Launch the app and confirm the terminal icon appears in the bottom status bar
+- [x] 3.3 Click the terminal icon and confirm it toggles the terminal panel dock
 
 ## 4. Verify end-to-end
 
-- [ ] 4.1 Open a project, confirm title bar shows project name and terminal icon is visible in status bar
+- [x] 4.1 Open a project, confirm title bar shows project name and terminal icon is visible in status bar
 - [x] 4.2 Run `./script/clippy` and confirm no new warnings or errors
