@@ -321,6 +321,7 @@ impl Render for PlatformTitleBar {
 
         v_flex()
             .w_full()
+            .flex_shrink_0()
             .child(title_bar)
             .child(self.system_window_tabs.clone().into_any_element())
     }

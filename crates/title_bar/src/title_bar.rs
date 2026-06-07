@@ -347,6 +347,7 @@ impl Render for TitleBar {
 
             v_flex()
                 .w_full()
+                .flex_shrink_0()
                 .child(self.platform_titlebar.clone().into_any_element())
                 .child(
                     h_flex()

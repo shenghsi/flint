@@ -580,6 +580,7 @@ fn main() {
         zed::move_to_applications::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
+        title_bar::init(cx);
         feature_flags::FeatureFlagStore::init(cx);
 
         let system_id = cx.foreground_executor().block_on(system_id).ok();

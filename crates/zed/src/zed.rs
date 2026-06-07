@@ -5216,6 +5216,7 @@ mod tests {
             release_channel::init(Version::new(0, 0, 0), cx);
             command_palette::init(cx);
             editor::init(cx);
+            title_bar::init(cx);
             git_ui::init(cx);
             project_panel::init(cx);
             outline_panel::init(cx);
