@@ -48,6 +48,38 @@ Desired terminal behavior:
 - Project panel and git panel stay available as side panels for navigation and
   review.
 
+Terminal-thread settings:
+
+```json
+{
+  "terminal_threads": {
+    "codex": {
+      "command": "codex",
+      "args": [],
+      "env": {},
+      "cwd": null
+    },
+    "claude": {
+      "command": "claude",
+      "args": [],
+      "env": {},
+      "cwd": null
+    },
+    "shell": {
+      "command": null,
+      "args": [],
+      "env": {},
+      "cwd": null
+    }
+  }
+}
+```
+
+`codex` and `claude` default to their matching executable names when no command
+is configured. `shell` falls back to the normal terminal shell unless a command
+override is provided. `cwd` can pin a launcher to a directory; otherwise the
+workspace/project context is used.
+
 ## Organized Agent Threads
 
 Agent threads are terminal-backed sessions, not ACP or native chat threads.
@@ -141,13 +173,20 @@ Example setting shape:
     "commit_message_generator": {
       "command": "codex",
       "args": [],
-      "timeout_seconds": 30
+      "env": {},
+      "cwd": null,
+      "timeout_seconds": 30,
+      "max_diff_bytes": 60000,
+      "instructions": "Use concise imperative commit messages."
     }
   }
 }
 ```
 
 This should support `codex`, `claude`, or any user-provided command.
+The generated prompt is sent to the command on stdin. Stdout is inserted into
+the commit message editor. Missing commands, non-zero exits, stderr, timeouts,
+and empty output are shown as git UI errors.
 
 ### Markdown
 
@@ -163,6 +202,47 @@ Target behavior:
 - Cursor movement, selection, copy/paste, undo, search, and save remain editor
   quality.
 - Preview pane remains optional for users who prefer split preview.
+
+Implementation boundary:
+
+- The existing `MarkdownPreviewView` remains a separate, read-only workspace
+  item. It observes an editor, copies its source into a `Markdown` entity, and
+  owns independent selection, search, and scrolling state, so it is not the
+  editable rendered surface.
+- Editable rendered mode is presentation state attached to the existing
+  `Editor`. The editor's buffer remains the only source of truth.
+- Reuse source ranges from `markdown::parser` to identify Markdown syntax and
+  rendered regions. Inline syntax can use editor text styles, inlays, and
+  source-range folds; tables, images, Mermaid diagrams, and other rich regions
+  can use editor custom blocks.
+- Presentation state must use buffer anchors and be rebuilt after edits.
+  Switching to source mode removes Markdown-specific folds, inlays, styles, and
+  blocks without replacing the editor item or buffer.
+- Existing split and following preview actions remain available independently
+  of editable rendered mode.
+
+Current Markdown setting:
+
+```json
+{
+  "markdown": {
+    "open_mode": "editable_rendered"
+  }
+}
+```
+
+Use `"source"` to open Markdown files as source by default. The editor tab
+context menu can switch an individual Markdown editor between rendered and
+source modes without replacing the buffer.
+
+Current implementation details:
+
+- Inline presentation uses editor highlight layers over the source buffer.
+- Tables, images, and Mermaid blocks are rendered as editor custom blocks
+  anchored below their source ranges.
+- Source mode clears Markdown-specific highlights and rich blocks.
+- `.md`, `.markdown`, `.mdown`, `.mkd`, and `.mkdn` files are treated as
+  Markdown even before language metadata finishes loading.
 
 ### Terminal Panel
 
@@ -221,6 +301,56 @@ Possible migration path:
 - Terminal panel plumbing: `crates/terminal_view/src/terminal_panel.rs`
 - Git commit message generation: `crates/git_ui/src/git_panel.rs`
 - Commit message prompt: `crates/git_ui/src/commit_message_prompt.txt`
+- Terminal-thread organizer and launchers:
+  `crates/terminal_view/src/terminal_threads.rs`
+- Markdown editable rendered mode:
+  `crates/editor/src/markdown_actions.rs`
+
+## Manual Verification
+
+Fresh workspace:
+
+- Open a project and confirm the project panel, editor, search, git panel,
+  settings, themes, keymaps, terminal threads, and Markdown preview are
+  available.
+- Confirm removed surfaces are absent from default menus and command palette:
+  ACP, native agent/chat, native model providers, Copilot/edit prediction,
+  collaboration/calls, debugger/DAP panels, and Zed cloud product entries.
+
+Terminal threads:
+
+- Run `New Codex Thread`; confirm a center terminal item opens and runs the
+  configured `terminal_threads.codex` command.
+- Run `New Claude Thread`; confirm a center terminal item opens and runs the
+  configured `terminal_threads.claude` command.
+- Run `New Shell Thread`; confirm a center terminal item opens with the shell or
+  configured override.
+- Rename a terminal title from the running process and confirm the tab/thread
+  organizer updates.
+- Emit a terminal bell in a background terminal and confirm attention state is
+  updated without stealing focus.
+
+Git:
+
+- Create unstaged changes and run generate commit message; confirm the external
+  command receives worktree diff context and stdout fills the commit editor.
+- Stage changes and run generate commit message; confirm staged diff context is
+  used.
+- Configure a missing command and confirm the git UI reports the missing
+  executable.
+- Configure a command that exits non-zero or writes stderr and confirm the error
+  is surfaced.
+
+Markdown:
+
+- Open a `.md` file and confirm it opens in editable rendered mode by default.
+- Switch to source mode and back from the editor tab context menu; confirm the
+  source text is unchanged.
+- Edit headings, emphasis, links, quotes, code fences, tables, images, and
+  Mermaid blocks; confirm save, undo, redo, search, copy, and paste operate on
+  the source buffer.
+- Open split Markdown preview while editable rendered mode is active and confirm
+  the preview follows or edits the same source buffer.
 
 ## Non-Goals
 

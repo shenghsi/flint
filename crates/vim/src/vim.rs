@@ -2235,9 +2235,7 @@ impl Vim {
             autoindent: self.should_autoindent(),
             cursor_offset_on_selection: self.mode.has_selection(),
             line_mode: matches!(self.mode, Mode::VisualLine),
-            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace)
-                && !(self.mode.is_normal()
-                    && VimSettings::get_global(cx).show_edit_predictions_in_normal_mode),
+            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
         }
     }
 
@@ -2287,7 +2285,6 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
-    pub show_edit_predictions_in_normal_mode: bool,
 }
 
 /// Cursor shape configuration for insert mode.
@@ -2375,7 +2372,6 @@ impl Settings for VimSettings {
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),
-            show_edit_predictions_in_normal_mode: vim.show_edit_predictions_in_normal_mode.unwrap(),
         }
     }
 }

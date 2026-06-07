@@ -6,14 +6,6 @@
       "cmd-0": "git_panel::ToggleFocus", // overrides `cmd-0` zoom reset
       "shift-escape": null, // Unmap workspace::zoom
       "cmd-~": "git::Branch",
-      "ctrl-f2": "debugger::Stop",
-      "f6": "debugger::Pause",
-      "f7": "debugger::StepInto",
-      "f8": "debugger::StepOver",
-      "shift-f8": "debugger::StepOut",
-      "f9": "debugger::Continue",
-      "shift-f9": "debugger::Start",
-      "alt-shift-f9": "debugger::Start",
     },
   },
   {
@@ -59,8 +51,6 @@
       "cmd-end": "editor::MoveToEnd",
       "cmd-shift-home": "editor::SelectToBeginning",
       "cmd-shift-end": "editor::SelectToEnd",
-      "ctrl-f8": "editor::ToggleBreakpoint",
-      "ctrl-shift-f8": "editor::EditLogBreakpoint",
       "cmd-shift-u": "editor::ToggleCase",
     },
   },
@@ -77,7 +67,6 @@
       "ctrl-space": "editor::ShowCompletions",
       "cmd-j": "editor::Hover",
       "cmd-p": "editor::ShowSignatureHelp",
-      "cmd-\\": "assistant::InlineAssist",
     },
   },
   {
@@ -124,7 +113,6 @@
       "cmd-alt-o": "project_symbols::Toggle", // JetBrains: Go to Symbol
       "cmd-o": "project_symbols::Toggle", // JetBrains: Go to Class
       "cmd-1": "project_panel::ToggleFocus",
-      "cmd-5": "debug_panel::ToggleFocus",
       "cmd-6": "diagnostics::Deploy",
       "cmd-7": "outline_panel::ToggleFocus",
     },
@@ -136,7 +124,6 @@
       "cmd-2": null, // Bookmarks (left dock)
       "cmd-3": null, // Find Panel (bottom dock)
       "cmd-4": null, // Run Panel (bottom dock)
-      "cmd-5": "debug_panel::ToggleFocus",
       "cmd-6": "diagnostics::Deploy",
       "cmd-7": "outline_panel::ToggleFocus",
       "cmd-8": null, // Services (bottom dock)

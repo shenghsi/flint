@@ -652,6 +652,10 @@ pub(crate) fn parse_markdown_with_options(
     }
 }
 
+pub fn parse_markdown_events(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
+    parse_markdown_with_options(text, false, false, false).events
+}
+
 fn build_footnote_definitions(
     events: &[(Range<usize>, MarkdownEvent)],
 ) -> HashMap<SharedString, usize> {

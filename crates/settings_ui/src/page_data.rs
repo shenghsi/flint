@@ -71,11 +71,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         search_and_files_page(),
         window_and_layout_page(),
         panels_page(),
-        debugger_page(),
         terminal_page(),
         version_control_page(),
-        collaboration_page(),
-        ai_page(cx),
         network_page(),
         developer_page(cx),
     ]
@@ -1073,52 +1070,6 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_font_section() -> [SettingsPageItem; 3] {
-        [
-            SettingsPageItem::SectionHeader("Agent Panel Font"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "UI Font Size",
-                description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("agent_ui_font_size"),
-                    pick: |settings_content| {
-                        settings_content
-                            .theme
-                            .agent_ui_font_size
-                            .as_ref()
-                            .or(settings_content.theme.ui_font_size.as_ref())
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.theme.agent_ui_font_size = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Buffer Font Size",
-                description: "Font size for user messages text in the agent panel.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("agent_buffer_font_size"),
-                    pick: |settings_content| {
-                        settings_content
-                            .theme
-                            .agent_buffer_font_size
-                            .as_ref()
-                            .or(settings_content.theme.buffer_font_size.as_ref())
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.theme.agent_buffer_font_size = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
-    }
-
     fn text_rendering_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Text Rendering"),
@@ -1346,7 +1297,6 @@ fn appearance_page() -> SettingsPage {
         theme_section(),
         buffer_font_section(),
         ui_font_section(),
-        agent_panel_font_section(),
         text_rendering_section(),
         cursor_section(),
         highlighting_section(),
@@ -2633,31 +2583,6 @@ fn editor_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Agent Review",
-                description: "Show agent review buttons in the editor toolbar.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("toolbar.agent_review"),
-                    pick: |settings_content| {
-                        settings_content
-                            .editor
-                            .toolbar
-                            .as_ref()?
-                            .agent_review
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .editor
-                            .toolbar
-                            .get_or_insert_default()
-                            .agent_review = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
                 title: "Code Actions",
                 description: "Show code action buttons in the editor toolbar.",
                 field: Box::new(SettingField {
@@ -2814,29 +2739,6 @@ fn editor_page() -> SettingsPage {
                             .vim
                             .get_or_insert_default()
                             .use_regex_search = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Show Edit Predictions in Normal Mode",
-                description: "Whether edit predictions are shown in normal mode. By default, edit predictions are only shown in insert and replace modes.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("vim.show_edit_predictions_in_normal_mode"),
-                    pick: |settings_content| {
-                        settings_content
-                            .vim
-                            .as_ref()?
-                            .show_edit_predictions_in_normal_mode
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .vim
-                            .get_or_insert_default()
-                            .show_edit_predictions_in_normal_mode = value;
                     },
                 }),
                 metadata: None,
@@ -3279,7 +3181,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                         let items: Box<[SettingsPageItem]> = concat_sections!(
                             language_settings_data(),
                             non_editor_language_settings_data(),
-                            edit_prediction_language_settings_section()
+                            Box::new([])
                         );
                         this.render_sub_page_items(
                             items.iter().enumerate(),
@@ -3833,20 +3735,6 @@ fn window_and_layout_page() -> SettingsPage {
                             .search
                             .get_or_insert_default()
                             .button = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Debugger Button",
-                description: "Show the debugger button in the status bar.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("debugger.button"),
-                    pick: |settings_content| settings_content.debugger.as_ref()?.button.as_ref(),
-                    write: |settings_content, value, _| {
-                        settings_content.debugger.get_or_insert_default().button = value;
                     },
                 }),
                 metadata: None,
@@ -6278,9 +6166,6 @@ fn panels_page() -> SettingsPage {
             terminal_panel_section(),
             outline_panel_section(),
             git_panel_section(),
-            debugger_panel_section(),
-            collaboration_panel_section(),
-            agent_panel_section(),
         ],
     }
 }
@@ -9984,7 +9869,6 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
     concat_sections!(
         lsp_section(),
         lsp_completions_section(),
-        debugger_section(),
         prettier_section(),
     )
 }

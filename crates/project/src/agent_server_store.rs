@@ -1642,7 +1642,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
 
 impl settings::Settings for AllAgentServersSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
-        let agent_settings = content.agent_servers.clone().unwrap();
+        let agent_settings = content.agent_servers.clone().unwrap_or_default();
         Self(
             agent_settings
                 .0

@@ -370,7 +370,6 @@ pub struct ToolbarContent {
     /// Only applicable while reviewing a file edited by the Agent.
     ///
     /// Default: true
-    pub agent_review: Option<bool>,
     /// Whether to display code action buttons in the editor toolbar.
     ///
     /// Default: false
@@ -492,11 +491,11 @@ pub struct GutterContent {
     /// Whether to show breakpoints in the gutter.
     ///
     /// Default: true
-    pub breakpoints: Option<bool>,
     /// Whether to show bookmarks in the gutter.
     ///
     /// Default: true
     pub bookmarks: Option<bool>,
+    pub breakpoints: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true

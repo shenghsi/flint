@@ -1767,6 +1767,7 @@ pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
+    #[cfg(any())]
     pub(crate) context: TaskContext,
 }
 
@@ -1777,10 +1778,13 @@ impl CodeActionContents {
         debug_scenarios: Vec<DebugScenario>,
         context: TaskContext,
     ) -> Self {
+        #[cfg(not(any()))]
+        let _ = context;
         Self {
             tasks: tasks.map(Rc::new),
             actions,
             debug_scenarios,
+            #[cfg(any())]
             context,
         }
     }

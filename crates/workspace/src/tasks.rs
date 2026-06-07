@@ -2,13 +2,18 @@ use std::process::ExitStatus;
 
 use anyhow::Result;
 use collections::HashSet;
-use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity};
+#[cfg(any())]
+use gpui::Entity;
+use gpui::{AppContext, AsyncWindowContext, Context, Task, TaskExt, WeakEntity};
+#[cfg(any())]
 use language::Buffer;
 use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
+#[cfg(any())]
+use task::{DebugScenario, SharedTaskContext};
 use task::{
-    DebugScenario, ResolvedTask, SaveStrategy, SharedTaskContext, SpawnInTerminal, TaskContext,
-    TaskHook, TaskTemplate, TaskVariables, VariableName,
+    ResolvedTask, SaveStrategy, SpawnInTerminal, TaskContext, TaskHook, TaskTemplate,
+    TaskVariables, VariableName,
 };
 use ui::Window;
 use util::TryFutureExt;
@@ -61,6 +66,7 @@ impl Workspace {
     ) {
         let spawn_in_terminal = resolved_task.resolved.clone();
         if !omit_history {
+            #[cfg(any())]
             if let Some(debugger_provider) = self.debugger_provider.as_ref() {
                 debugger_provider.task_scheduled(cx);
             }
@@ -139,6 +145,7 @@ impl Workspace {
         }
     }
 
+    #[cfg(any())]
     pub fn start_debug_session(
         &mut self,
         scenario: DebugScenario,

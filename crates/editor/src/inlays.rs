@@ -19,7 +19,9 @@ pub mod inlay_hints;
 
 use std::sync::OnceLock;
 
-use gpui::{Context, HighlightStyle, Hsla, Rgba, Task};
+#[cfg(any())]
+use gpui::Task;
+use gpui::{Context, HighlightStyle, Hsla, Rgba};
 use multi_buffer::Anchor;
 use project::{InlayHint, InlayId};
 use text::Rope;
@@ -132,12 +134,14 @@ impl Inlay {
     }
 }
 
+#[cfg(any())]
 pub struct InlineValueCache {
     pub enabled: bool,
     pub inlays: Vec<InlayId>,
     pub refresh_task: Task<Option<()>>,
 }
 
+#[cfg(any())]
 impl InlineValueCache {
     pub fn new(enabled: bool) -> Self {
         Self {
@@ -179,11 +183,12 @@ impl Editor {
         cx.notify();
     }
 
+    #[cfg(any())]
     pub fn inline_values_enabled(&self) -> bool {
         self.inline_value_cache.enabled
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(all(any(), any(test, feature = "test-support")))]
     pub fn inline_value_inlays(&self, cx: &gpui::App) -> Vec<Inlay> {
         self.display_map
             .read(cx)

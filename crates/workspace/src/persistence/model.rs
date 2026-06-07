@@ -13,10 +13,7 @@ use db::sqlez::{
 use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
-use project::{
-    Project, ProjectGroupKey, bookmark_store::SerializedBookmark,
-    debugger::breakpoint_store::SourceBreakpoint,
-};
+use project::{Project, ProjectGroupKey, bookmark_store::SerializedBookmark};
 use remote::RemoteConnectionOptions;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -147,6 +144,73 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(crate) enum BreakpointState {
+    Enabled,
+    Disabled,
+}
+
+impl BreakpointState {
+    pub(crate) fn to_int(self) -> i32 {
+        match self {
+            Self::Enabled => 0,
+            Self::Disabled => 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct SourceBreakpoint {
+    pub(crate) row: u32,
+    pub(crate) path: Arc<Path>,
+    pub(crate) message: Option<Arc<str>>,
+    pub(crate) condition: Option<Arc<str>>,
+    pub(crate) hit_condition: Option<Arc<str>>,
+    pub(crate) state: BreakpointState,
+}
+
+#[cfg(any())]
+impl From<project::debugger::breakpoint_store::SourceBreakpoint> for SourceBreakpoint {
+    fn from(breakpoint: project::debugger::breakpoint_store::SourceBreakpoint) -> Self {
+        Self {
+            row: breakpoint.row,
+            path: breakpoint.path,
+            message: breakpoint.message,
+            condition: breakpoint.condition,
+            hit_condition: breakpoint.hit_condition,
+            state: match breakpoint.state {
+                project::debugger::breakpoint_store::BreakpointState::Enabled => {
+                    BreakpointState::Enabled
+                }
+                project::debugger::breakpoint_store::BreakpointState::Disabled => {
+                    BreakpointState::Disabled
+                }
+            },
+        }
+    }
+}
+
+#[cfg(any())]
+impl From<SourceBreakpoint> for project::debugger::breakpoint_store::SourceBreakpoint {
+    fn from(breakpoint: SourceBreakpoint) -> Self {
+        Self {
+            row: breakpoint.row,
+            path: breakpoint.path,
+            message: breakpoint.message,
+            condition: breakpoint.condition,
+            hit_condition: breakpoint.hit_condition,
+            state: match breakpoint.state {
+                BreakpointState::Enabled => {
+                    project::debugger::breakpoint_store::BreakpointState::Enabled
+                }
+                BreakpointState::Disabled => {
+                    project::debugger::breakpoint_store::BreakpointState::Disabled
+                }
+            },
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]

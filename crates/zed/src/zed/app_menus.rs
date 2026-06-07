@@ -69,9 +69,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu::new("Settings").items([
-                    MenuItem::action("Open Settings", zed_actions::OpenSettings),
                     MenuItem::action("Open Settings File", super::OpenSettingsFile),
-                    MenuItem::action("Open Project Settings", zed_actions::OpenProjectSettings),
                     MenuItem::action("Open Project Settings File", super::OpenProjectSettingsFile),
                     MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                     MenuItem::separator(),
@@ -287,12 +285,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             disabled: false,
             items: vec![
                 MenuItem::action(
-                    "View Release Notes Locally",
-                    auto_update_ui::ViewReleaseNotesLocally,
-                ),
-                MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
-                MenuItem::separator(),
-                MenuItem::action(
                     "Documentation",
                     super::OpenBrowser {
                         url: "https://zed.dev/docs".into(),
@@ -331,7 +323,7 @@ mod tests {
 
     #[gpui::test]
     fn test_terminal_first_menus_omit_retired_surfaces(cx: &mut gpui::TestAppContext) {
-        let menus = app_menus(cx);
+        let menus = cx.update(app_menus);
         let mut labels = Vec::new();
         collect_menu_labels(&menus, &mut labels);
 
@@ -363,7 +355,7 @@ mod tests {
 
         assert!(labels.iter().any(|label| label == "Terminal"));
         assert!(labels.iter().any(|label| label == "Project Panel"));
-        assert!(labels.iter().any(|label| label == "Open Settings"));
+        assert!(labels.iter().any(|label| label == "Open Settings File"));
         assert!(labels.iter().any(|label| label == "Find in Project"));
     }
 }

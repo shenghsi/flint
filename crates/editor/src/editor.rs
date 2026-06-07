@@ -119,6 +119,7 @@ pub use items::MAX_TAB_TITLE_LEN;
 pub use linked_editing_ranges::LinkedEdits;
 pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
+pub use markdown_actions::{MarkdownSettings, MarkdownViewMode};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, BufferOffset, ExcerptRange, MBTextSummary, MultiBuffer,
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
@@ -141,6 +142,7 @@ use code_context_menus::{
 use code_lens::CodeLensState;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
+#[cfg(any())]
 use dap::TelemetrySpawnLocation;
 use display_map::*;
 use document_colors::LspColorData;
@@ -198,14 +200,12 @@ use multi_buffer::{
     ExcerptBoundaryInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint,
     MultiBufferRow,
 };
+#[cfg(any())]
 use parking_lot::Mutex;
 use persistence::EditorDb;
+#[cfg(any())]
 use project::{
-    BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
-    CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
-    InvalidationStrategy, Location, LocationLink, LspAction, PrepareRenameResponse, Project,
-    ProjectItem, ProjectPath, ProjectTransaction,
-    bookmark_store::BookmarkStore,
+    BreakpointWithPosition,
     debugger::{
         breakpoint_store::{
             Breakpoint, BreakpointEditAction, BreakpointSessionState, BreakpointState,
@@ -213,6 +213,13 @@ use project::{
         },
         session::{Session, SessionEvent},
     },
+};
+use project::{
+    CodeAction, Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse,
+    CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
+    InvalidationStrategy, Location, LocationLink, LspAction, PrepareRenameResponse, Project,
+    ProjectItem, ProjectPath, ProjectTransaction,
+    bookmark_store::BookmarkStore,
     git_store::GitStoreEvent,
     lsp_store::{
         BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
@@ -255,9 +262,10 @@ use theme::{
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
-    IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
-    utils::WithRemSize,
+    IconName, IconSize, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
+#[cfg(any())]
+use ui::{Indicator, utils::WithRemSize};
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
@@ -271,14 +279,13 @@ use workspace::{
 pub use zed_actions::editor::RevealInFileManager;
 use zed_actions::editor::{MoveDown, MoveUp};
 
+#[cfg(any())]
+use crate::inlays::InlineValueCache;
 use crate::{
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
     hover_links::{find_url, find_url_from_range},
-    inlays::{
-        InlineValueCache,
-        inlay_hints::{LspInlayHintData, inlay_hint_settings},
-    },
+    inlays::inlay_hints::{LspInlayHintData, inlay_hint_settings},
     runnables::{ResolvedTasks, RunnableData, RunnableTasks},
     scroll::{ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
@@ -347,6 +354,7 @@ impl Navigated {
 }
 
 pub fn init(cx: &mut App) {
+    MarkdownSettings::register(cx);
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
     cx.set_global(breadcrumbs::RenderBreadcrumbText(render_breadcrumb_text));
 
@@ -1037,6 +1045,10 @@ pub struct Editor {
     expects_character_input: bool,
     use_modal_editing: bool,
     read_only: bool,
+    is_markdown_document: bool,
+    markdown_view_mode: MarkdownViewMode,
+    markdown_view_mode_overridden: bool,
+    markdown_rich_block_ids: HashSet<CustomBlockId>,
     leader_id: Option<CollaboratorId>,
     remote_id: Option<ViewId>,
     pub hover_state: HoverState,
@@ -1097,6 +1109,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
+    #[cfg(any())]
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_hover_button: (Option<GutterHoverButton>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
@@ -1129,6 +1142,7 @@ pub struct Editor {
     serialize_folds: Task<()>,
     minimap: Option<Entity<Self>>,
     pub change_list: ChangeList,
+    #[cfg(any())]
     inline_value_cache: InlineValueCache,
     number_deleted_lines: bool,
 
@@ -2041,6 +2055,7 @@ impl Editor {
                 ));
             };
 
+            #[cfg(any())]
             project_subscriptions.push(cx.subscribe_in(
                 &project.read(cx).breakpoint_store(),
                 window,
@@ -2107,6 +2122,7 @@ impl Editor {
             _ => None,
         };
 
+        #[cfg(any())]
         let breakpoint_store = match (&mode, project.as_ref()) {
             (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
             _ => None,
@@ -2233,6 +2249,10 @@ impl Editor {
             expects_character_input: !is_minimap,
             use_modal_editing: full_mode,
             read_only: is_minimap,
+            is_markdown_document: false,
+            markdown_view_mode: MarkdownSettings::get_global(cx).open_mode,
+            markdown_view_mode_overridden: false,
+            markdown_rich_block_ids: HashSet::default(),
             use_autoclose: true,
             use_auto_surround: true,
             use_selection_highlight: true,
@@ -2253,6 +2273,7 @@ impl Editor {
             inline_diagnostics_enabled: full_mode,
             diagnostics_enabled: full_mode,
             word_completions_enabled: full_mode,
+            #[cfg(any())]
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
@@ -2290,6 +2311,7 @@ impl Editor {
             blame_subscription: None,
 
             bookmark_store,
+            #[cfg(any())]
             breakpoint_store,
             gutter_hover_button: (None, None),
             gutter_diff_review_indicator: (None, None),
@@ -2377,9 +2399,11 @@ impl Editor {
             return editor;
         }
 
+        editor.refresh_markdown_view_mode(cx);
         editor.applicable_language_settings = editor.fetch_applicable_language_settings(cx);
         editor.accent_data = editor.fetch_accent_data(cx);
 
+        #[cfg(any())]
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
                 ._subscriptions
@@ -2443,6 +2467,7 @@ impl Editor {
             },
         ));
 
+        #[cfg(any())]
         if let Some(dap_store) = editor
             .project
             .as_ref()
@@ -2488,6 +2513,7 @@ impl Editor {
                 editor.start_git_blame_inline(false, window, cx);
             }
 
+            #[cfg(any())]
             editor.go_to_active_debug_line(window, cx);
 
             editor.minimap =
@@ -3957,6 +3983,7 @@ impl Editor {
     /// This function is used to handle overlaps between breakpoints and Code action/runner symbol.
     /// It's also used to set the color of line numbers with breakpoints to the breakpoint color.
     /// TODO debugger: Use this function to color toggle symbols that house nested breakpoints
+    #[cfg(any())]
     fn active_breakpoints(
         &self,
         range: Range<DisplayRow>,
@@ -4011,6 +4038,7 @@ impl Editor {
         breakpoint_display_points
     }
 
+    #[cfg(any())]
     fn gutter_context_menu(
         &self,
         anchor: Anchor,
@@ -4196,6 +4224,7 @@ impl Editor {
         })
     }
 
+    #[cfg(any())]
     fn render_breakpoint(
         &self,
         position: Anchor,
@@ -4283,6 +4312,7 @@ impl Editor {
             })
     }
 
+    #[cfg(any())]
     fn render_gutter_hover_button(
         &self,
         position: Anchor,
@@ -4394,6 +4424,63 @@ impl Editor {
                         cx,
                     )
                 })
+            })
+    }
+
+    #[cfg(not(any()))]
+    fn gutter_context_menu(
+        &self,
+        anchor: Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ui::ContextMenu> {
+        let weak_editor = cx.weak_entity();
+        let focus_handle = self.focus_handle(cx);
+        let row = self
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .summary_for_anchor::<Point>(&anchor)
+            .row;
+        let label = if self.bookmark_at_row(row, window, cx).is_some() {
+            "Remove Bookmark"
+        } else {
+            "Add Bookmark"
+        };
+
+        ui::ContextMenu::build(window, cx, |menu, _, _| {
+            menu.on_blur_subscription(Subscription::new(|| {}))
+                .context(focus_handle)
+                .entry(label, None, move |_window, cx| {
+                    weak_editor
+                        .update(cx, |editor, cx| {
+                            editor.toggle_bookmark_at_anchor(anchor, cx);
+                        })
+                        .log_err();
+                })
+        })
+    }
+
+    #[cfg(not(any()))]
+    fn render_gutter_hover_button(
+        &self,
+        _: Anchor,
+        row: DisplayRow,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> IconButton {
+        let focus_handle = self.focus_handle.clone();
+        IconButton::new(("add_bookmark_button", row.0 as usize), IconName::Bookmark)
+            .icon_size(IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(Color::Info)
+            .style(ButtonStyle::Transparent)
+            .on_click(cx.listener(move |editor, _: &ClickEvent, window, cx| {
+                window.focus(&editor.focus_handle(cx), cx);
+                editor.toggle_bookmark_at_row(row, cx);
+            }))
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in("Add Bookmark", &ToggleBookmark, &focus_handle, cx)
             })
     }
 
@@ -5687,6 +5774,7 @@ impl Editor {
         );
     }
 
+    #[cfg(any())]
     fn add_edit_breakpoint_block(
         &mut self,
         anchor: Anchor,
@@ -5732,6 +5820,7 @@ impl Editor {
         });
     }
 
+    #[cfg(any())]
     pub(crate) fn breakpoint_at_row(
         &self,
         row: u32,
@@ -5744,6 +5833,7 @@ impl Editor {
         self.breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
     }
 
+    #[cfg(any())]
     pub(crate) fn breakpoint_at_anchor(
         &self,
         breakpoint_position: Anchor,
@@ -5851,6 +5941,7 @@ impl Editor {
             })
     }
 
+    #[cfg(any())]
     pub fn edit_log_breakpoint(
         &mut self,
         _: &EditLogBreakpoint,
@@ -5879,6 +5970,7 @@ impl Editor {
         }
     }
 
+    #[cfg(any())]
     fn breakpoints_at_cursors(
         &self,
         window: &mut Window,
@@ -5914,6 +6006,7 @@ impl Editor {
         cursors.into_iter().collect()
     }
 
+    #[cfg(any())]
     pub fn enable_breakpoint(
         &mut self,
         _: &crate::actions::EnableBreakpoint,
@@ -6031,6 +6124,7 @@ impl Editor {
         }
     }
 
+    #[cfg(any())]
     pub fn disable_breakpoint(
         &mut self,
         _: &crate::actions::DisableBreakpoint,
@@ -6054,6 +6148,7 @@ impl Editor {
         }
     }
 
+    #[cfg(any())]
     pub fn toggle_breakpoint(
         &mut self,
         _: &crate::actions::ToggleBreakpoint,
@@ -6083,6 +6178,7 @@ impl Editor {
         }
     }
 
+    #[cfg(any())]
     pub fn edit_breakpoint_at_anchor(
         &mut self,
         breakpoint_position: Anchor,
@@ -6117,11 +6213,12 @@ impl Editor {
         cx.notify();
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(all(any(), any(test, feature = "test-support")))]
     pub fn breakpoint_store(&self) -> Option<Entity<BreakpointStore>> {
         self.breakpoint_store.clone()
     }
 
+    #[cfg(any())]
     fn go_to_active_debug_line(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
@@ -9193,6 +9290,7 @@ impl Editor {
         cx.notify();
     }
 
+    #[cfg(any())]
     fn on_debug_session_event(
         &mut self,
         _session: Entity<Session>,
@@ -9204,6 +9302,7 @@ impl Editor {
         }
     }
 
+    #[cfg(any())]
     pub fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
         let Some(semantics) = self.semantics_provider.clone() else {
             return;
@@ -9415,12 +9514,14 @@ impl Editor {
                 cx.emit(EditorEvent::BuffersEdited {
                     buffer_ids: buffer_ids.clone(),
                 });
+                self.refresh_markdown_presentation(cx);
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.refresh_runnables(Some(*buffer_id), window, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.colorize_brackets(true, cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
+                self.refresh_markdown_presentation(cx);
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
@@ -9434,6 +9535,7 @@ impl Editor {
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 self.update_edit_prediction_settings(cx);
+                self.refresh_markdown_view_mode(cx);
                 cx.notify();
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
@@ -9518,6 +9620,7 @@ impl Editor {
         let new_language_settings = self.fetch_applicable_language_settings(cx);
         let language_settings_changed = new_language_settings != self.applicable_language_settings;
         self.applicable_language_settings = new_language_settings;
+        self.refresh_markdown_view_mode(cx);
 
         let new_accents = self.fetch_accent_data(cx);
         let accents_changed = new_accents != self.accent_data;
@@ -9532,6 +9635,7 @@ impl Editor {
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
         self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
+        #[cfg(any())]
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
@@ -11056,6 +11160,7 @@ impl SemanticsProvider for WeakEntity<Project> {
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         self.update(cx, |project, cx| {
+            #[cfg(any())]
             if project
                 .active_debug_session(cx)
                 .is_some_and(|(session, _)| session.read(cx).any_stopped_thread())
@@ -11085,13 +11190,21 @@ impl SemanticsProvider for WeakEntity<Project> {
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
-        self.update(cx, |project, cx| {
-            let (session, active_stack_frame) = project.active_debug_session(cx)?;
+        #[cfg(any())]
+        {
+            self.update(cx, |project, cx| {
+                let (session, active_stack_frame) = project.active_debug_session(cx)?;
 
-            Some(project.inline_values(session, active_stack_frame, buffer_handle, range, cx))
-        })
-        .ok()
-        .flatten()
+                Some(project.inline_values(session, active_stack_frame, buffer_handle, range, cx))
+            })
+            .ok()
+            .flatten()
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = (buffer_handle, range, cx);
+            None
+        }
     }
 
     fn applicable_inlay_chunks(
@@ -11960,12 +12073,14 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
+#[cfg(any())]
 enum BreakpointPromptEditAction {
     Log,
     Condition,
     HitCondition,
 }
 
+#[cfg(any())]
 struct BreakpointPromptEditor {
     pub(crate) prompt: Entity<Editor>,
     editor: WeakEntity<Editor>,
@@ -11977,6 +12092,7 @@ struct BreakpointPromptEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+#[cfg(any())]
 impl BreakpointPromptEditor {
     const MAX_LINES: u8 = 4;
 
@@ -12140,6 +12256,7 @@ impl BreakpointPromptEditor {
     }
 }
 
+#[cfg(any())]
 impl Render for BreakpointPromptEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
@@ -12185,6 +12302,7 @@ impl Render for BreakpointPromptEditor {
     }
 }
 
+#[cfg(any())]
 impl Focusable for BreakpointPromptEditor {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.prompt.focus_handle(cx)

@@ -35,7 +35,7 @@ dap.workspace = true
 dap_adapters = { workspace = true, optional = true }
 db.workspace = true
 debugger_tools.workspace = true
-editor.workspace = true
+editor = { workspace = true, features = ["debugger"] }
 feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
@@ -53,7 +53,7 @@ parse_int.workspace = true
 paths.workspace = true
 picker.workspace = true
 pretty_assertions.workspace = true
-project.workspace = true
+project = { workspace = true, features = ["debugger"] }
 rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -62,7 +62,7 @@ serde_json_lenient.workspace = true
 settings.workspace = true
 sysinfo.workspace = true
 task.workspace = true
-tasks_ui.workspace = true
+tasks_ui = { workspace = true, features = ["debugger"] }
 terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
@@ -74,19 +74,19 @@ ui.workspace = true
 ui_input.workspace = true
 unindent = { workspace = true, optional = true }
 util.workspace = true
-workspace.workspace = true
+workspace = { workspace = true, features = ["debugger"] }
 zed_actions.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
 dap_adapters = { workspace = true, features = ["test-support"] }
 debugger_tools = { workspace = true, features = ["test-support"] }
-editor = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["debugger", "test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
-project = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["debugger", "test-support"] }
 tree-sitter-go.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
-workspace = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["debugger", "test-support"] }
 zlog.workspace = true

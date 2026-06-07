@@ -57,7 +57,6 @@ use project::{
     },
     project_settings::{GitPathStyle, ProjectSettings},
 };
-use prompt_store::RULES_FILE_NAMES;
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
@@ -85,6 +84,18 @@ use workspace::{
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyTaskExt},
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
+
+const RULES_FILE_NAMES: &[&str] = &[
+    ".rules",
+    ".cursorrules",
+    ".windsurfrules",
+    ".clinerules",
+    ".github/copilot-instructions.md",
+    "AGENT.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+];
 
 actions!(
     git_panel,
@@ -675,7 +686,7 @@ pub struct GitPanel {
     modal_open: bool,
     show_placeholders: bool,
     // Only read to compute collaborative co-authors, which requires the `call` feature.
-    #[cfg_attr(not(feature = "call"), allow(dead_code))]
+    #[cfg_attr(not(any()), allow(dead_code))]
     local_committer: Option<GitCommitter>,
     local_committer_task: Option<Task<()>>,
     commit_template: Option<GitCommitTemplate>,
@@ -3422,12 +3433,12 @@ impl GitPanel {
         }
     }
 
-    #[cfg(not(feature = "call"))]
+    #[cfg(not(any()))]
     fn potential_co_authors(&self, _cx: &App) -> Vec<(String, String)> {
         Vec::new()
     }
 
-    #[cfg(feature = "call")]
+    #[cfg(any())]
     fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
         let mut new_co_authors = Vec::new();
         let project = self.project.read(cx);
@@ -3469,7 +3480,7 @@ impl GitPanel {
         new_co_authors
     }
 
-    #[cfg(feature = "call")]
+    #[cfg(any())]
     fn local_committer(&self, room: &call::Room, cx: &App) -> Option<(String, String)> {
         let user = room.local_participant_user(cx)?;
         let committer = self.local_committer.as_ref()?;
@@ -6738,7 +6749,7 @@ impl Render for GitPanel {
         let has_entries = !self.entries.is_empty();
         let has_write_access = self.has_write_access(cx);
 
-        #[cfg(feature = "call")]
+        #[cfg(any())]
         let has_co_authors = self
             .workspace
             .upgrade()
@@ -6752,7 +6763,7 @@ impl Render for GitPanel {
                     .values()
                     .any(|remote_participant| remote_participant.can_write())
             });
-        #[cfg(not(feature = "call"))]
+        #[cfg(not(any()))]
         let has_co_authors = false;
 
         v_flex()

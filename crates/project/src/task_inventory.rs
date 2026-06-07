@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
+#[cfg(any())]
 use dap::DapRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -287,6 +288,7 @@ impl Inventory {
         self.last_scheduled_scenarios.back()
     }
 
+    #[cfg(any())]
     pub fn list_debug_scenarios(
         &self,
         task_contexts: &TaskContexts,
@@ -689,12 +691,14 @@ impl Inventory {
         self.templates_from_settings.global_scenarios()
     }
 
+    #[cfg(any())]
     fn global_debug_scenarios_from_settings(
         &self,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, DebugScenario)> {
         self.scenarios_from_settings.global_scenarios()
     }
 
+    #[cfg(any())]
     fn worktree_scenarios_from_settings(
         &self,
         worktree: WorktreeId,

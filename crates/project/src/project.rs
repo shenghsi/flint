@@ -6,6 +6,7 @@ pub mod color_extractor;
 pub mod connection_manager;
 pub mod context_server_store;
 pub mod debounced_delay;
+#[cfg(any())]
 pub mod debugger;
 pub mod git_store;
 pub mod image_store;
@@ -33,6 +34,7 @@ use git_store::{Repository, RepositoryId};
 pub mod search_history;
 pub mod yarn;
 
+#[cfg(any())]
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 use itertools::{Either, Itertools};
 
@@ -62,11 +64,13 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::client::DebugAdapterClient;
-
 use collections::{BTreeSet, HashMap, HashSet, IndexSet};
+#[cfg(any())]
+use dap::client::DebugAdapterClient;
 use debounced_delay::DebouncedDelay;
+#[cfg(any())]
 pub use debugger::breakpoint_store::BreakpointWithPosition;
+#[cfg(any())]
 use debugger::{
     breakpoint_store::{ActiveStackFrame, BreakpointStore},
     dap_store::{DapStore, DapStoreEvent},
@@ -134,7 +138,9 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, Point, Rope};
+#[cfg(any())]
+use text::Point;
+use text::{Anchor, BufferId, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
@@ -156,9 +162,11 @@ pub use language::Location;
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
+#[cfg(any())]
+pub use task_inventory::DebugScenarioContext;
 pub use task_inventory::{
-    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, GIT_COMMAND_TASK_TAG,
-    Inventory, TaskContexts, TaskSourceKind,
+    BasicContextProvider, ContextProviderWithTasks, GIT_COMMAND_TASK_TAG, Inventory, TaskContexts,
+    TaskSourceKind,
 };
 
 pub use buffer_store::ProjectTransaction;
@@ -214,10 +222,12 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
+    #[cfg(any())]
     dap_store: Entity<DapStore>,
     agent_server_store: Entity<AgentServerStore>,
 
     bookmark_store: Entity<BookmarkStore>,
+    #[cfg(any())]
     breakpoint_store: Entity<BreakpointStore>,
     collab_client: Arc<client::Client>,
     join_project_response_message_id: u32,
@@ -417,6 +427,7 @@ pub enum Event {
 
 pub struct AgentLocationChanged;
 
+#[cfg(any())]
 pub enum DebugAdapterClientState {
     Starting(Task<Option<Arc<DebugAdapterClient>>>),
     Running(Arc<DebugAdapterClient>),
@@ -908,7 +919,9 @@ enum EntitySubscription {
     WorktreeStore(PendingEntitySubscription<WorktreeStore>),
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
+    #[cfg(any())]
     DapStore(PendingEntitySubscription<DapStore>),
+    #[cfg(any())]
     BreakpointStore(PendingEntitySubscription<BreakpointStore>),
 }
 
@@ -1163,8 +1176,11 @@ impl Project {
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
-        DapStore::init(&client, cx);
-        BreakpointStore::init(&client);
+        #[cfg(any())]
+        {
+            DapStore::init(&client, cx);
+            BreakpointStore::init(&client);
+        }
         context_server_store::init(cx);
     }
 
@@ -1228,9 +1244,11 @@ impl Project {
             let bookmark_store =
                 cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
 
+            #[cfg(any())]
             let breakpoint_store =
                 cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
 
+            #[cfg(any())]
             let dap_store = cx.new(|cx| {
                 DapStore::new_local(
                     client.http_client(),
@@ -1244,6 +1262,7 @@ impl Project {
                     cx,
                 )
             });
+            #[cfg(any())]
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
             let image_store = cx.new(|cx| ImageStore::local(worktree_store.clone(), cx));
@@ -1347,7 +1366,9 @@ impl Project {
                 fs,
                 remote_client: None,
                 bookmark_store,
+                #[cfg(any())]
                 breakpoint_store,
+                #[cfg(any())]
                 dap_store,
                 agent_server_store,
 
@@ -1483,6 +1504,7 @@ impl Project {
             let bookmark_store =
                 cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
 
+            #[cfg(any())]
             let breakpoint_store = cx.new(|_| {
                 BreakpointStore::remote(
                     REMOTE_SERVER_PROJECT_ID,
@@ -1492,6 +1514,7 @@ impl Project {
                 )
             });
 
+            #[cfg(any())]
             let dap_store = cx.new(|cx| {
                 DapStore::new_remote(
                     REMOTE_SERVER_PROJECT_ID,
@@ -1559,7 +1582,9 @@ impl Project {
                 lsp_store,
                 context_server_store,
                 bookmark_store,
+                #[cfg(any())]
                 breakpoint_store,
+                #[cfg(any())]
                 dap_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
@@ -1618,8 +1643,11 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.buffer_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.worktree_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.lsp_store);
-            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
-            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.breakpoint_store);
+            #[cfg(any())]
+            {
+                remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
+                remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.breakpoint_store);
+            }
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.agent_server_store);
@@ -1644,8 +1672,11 @@ impl Project {
             SettingsObserver::init(&remote_proto);
             TaskStore::init(Some(&remote_proto));
             ToolchainStore::init(&remote_proto);
-            DapStore::init(&remote_proto, cx);
-            BreakpointStore::init(&remote_proto);
+            #[cfg(any())]
+            {
+                DapStore::init(&remote_proto, cx);
+                BreakpointStore::init(&remote_proto);
+            }
             GitStore::init(&remote_proto);
             AgentServerStore::init_remote(&remote_proto);
 
@@ -1663,7 +1694,7 @@ impl Project {
     ) -> Result<Entity<Self>> {
         client.connect(true, &cx).await.into_response()?;
 
-        let subscriptions = [
+        let subscriptions = vec![
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
             EntitySubscription::BufferStore(client.subscribe_to_entity::<BufferStore>(remote_id)?),
             EntitySubscription::GitStore(client.subscribe_to_entity::<GitStore>(remote_id)?),
@@ -1674,7 +1705,9 @@ impl Project {
             EntitySubscription::SettingsObserver(
                 client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
             ),
+            #[cfg(any())]
             EntitySubscription::DapStore(client.subscribe_to_entity::<DapStore>(remote_id)?),
+            #[cfg(any())]
             EntitySubscription::BreakpointStore(
                 client.subscribe_to_entity::<BreakpointStore>(remote_id)?,
             ),
@@ -1706,7 +1739,7 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 8],
+        subscriptions: Vec<EntitySubscription>,
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Entity<UserStore>,
@@ -1745,6 +1778,7 @@ impl Project {
         let bookmark_store =
             cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
 
+        #[cfg(any())]
         let breakpoint_store = cx.new(|_| {
             BreakpointStore::remote(
                 remote_id,
@@ -1753,6 +1787,7 @@ impl Project {
                 worktree_store.clone(),
             )
         });
+        #[cfg(any())]
         let dap_store = cx.new(|cx| {
             DapStore::new_collab(
                 remote_id,
@@ -1850,6 +1885,7 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
+            #[cfg(any())]
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
             let mut project = Self {
@@ -1879,7 +1915,9 @@ impl Project {
                     replica_id,
                 },
                 bookmark_store: bookmark_store.clone(),
+                #[cfg(any())]
                 breakpoint_store: breakpoint_store.clone(),
+                #[cfg(any())]
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
                 agent_server_store,
@@ -1935,9 +1973,11 @@ impl Project {
                 EntitySubscription::LspStore(subscription) => {
                     subscription.set_entity(&lsp_store, &cx)
                 }
+                #[cfg(any())]
                 EntitySubscription::DapStore(subscription) => {
                     subscription.set_entity(&dap_store, &cx)
                 }
+                #[cfg(any())]
                 EntitySubscription::BreakpointStore(subscription) => {
                     subscription.set_entity(&breakpoint_store, &cx)
                 }
@@ -2154,6 +2194,7 @@ impl Project {
         worktree
     }
 
+    #[cfg(any())]
     #[inline]
     pub fn dap_store(&self) -> Entity<DapStore> {
         self.dap_store.clone()
@@ -2164,11 +2205,13 @@ impl Project {
         self.bookmark_store.clone()
     }
 
+    #[cfg(any())]
     #[inline]
     pub fn breakpoint_store(&self) -> Entity<BreakpointStore> {
         self.breakpoint_store.clone()
     }
 
+    #[cfg(any())]
     pub fn active_debug_session(&self, cx: &App) -> Option<(Entity<Session>, ActiveStackFrame)> {
         let active_position = self.breakpoint_store.read(cx).active_position()?;
         let session = self
@@ -2729,9 +2772,11 @@ impl Project {
             self.collab_client
                 .subscribe_to_entity(project_id)?
                 .set_entity(&self.settings_observer, &cx.to_async()),
+            #[cfg(any())]
             self.collab_client
                 .subscribe_to_entity(project_id)?
                 .set_entity(&self.dap_store, &cx.to_async()),
+            #[cfg(any())]
             self.collab_client
                 .subscribe_to_entity(project_id)?
                 .set_entity(&self.breakpoint_store, &cx.to_async()),
@@ -2749,12 +2794,15 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.collab_client.clone().into(), cx)
         });
-        self.breakpoint_store.update(cx, |breakpoint_store, _| {
-            breakpoint_store.shared(project_id, self.collab_client.clone().into())
-        });
-        self.dap_store.update(cx, |dap_store, cx| {
-            dap_store.shared(project_id, self.collab_client.clone().into(), cx);
-        });
+        #[cfg(any())]
+        {
+            self.breakpoint_store.update(cx, |breakpoint_store, _| {
+                breakpoint_store.shared(project_id, self.collab_client.clone().into())
+            });
+            self.dap_store.update(cx, |dap_store, cx| {
+                dap_store.shared(project_id, self.collab_client.clone().into(), cx);
+            });
+        }
         self.task_store.update(cx, |task_store, cx| {
             task_store.shared(project_id, self.collab_client.clone().into(), cx);
         });
@@ -2854,12 +2902,15 @@ impl Project {
             self.task_store.update(cx, |task_store, cx| {
                 task_store.unshared(cx);
             });
-            self.breakpoint_store.update(cx, |breakpoint_store, cx| {
-                breakpoint_store.unshared(cx);
-            });
-            self.dap_store.update(cx, |dap_store, cx| {
-                dap_store.unshared(cx);
-            });
+            #[cfg(any())]
+            {
+                self.breakpoint_store.update(cx, |breakpoint_store, cx| {
+                    breakpoint_store.unshared(cx);
+                });
+                self.dap_store.update(cx, |dap_store, cx| {
+                    dap_store.unshared(cx);
+                });
+            }
             self.settings_observer.update(cx, |settings_observer, cx| {
                 settings_observer.unshared(cx);
             });
@@ -3501,6 +3552,7 @@ impl Project {
         }
     }
 
+    #[cfg(any())]
     fn on_dap_store_event(
         &mut self,
         _: Entity<DapStore>,
@@ -4503,6 +4555,7 @@ impl Project {
         })
     }
 
+    #[cfg(any())]
     pub fn inline_values(
         &mut self,
         session: Entity<Session>,
@@ -5171,6 +5224,7 @@ impl Project {
             this.buffer_store.update(cx, |buffer_store, _| {
                 buffer_store.forget_shared_buffers_for(&collaborator.peer_id);
             });
+            #[cfg(any())]
             this.breakpoint_store.read(cx).broadcast();
             cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
@@ -6647,6 +6701,7 @@ fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui:
     }
 }
 
+#[cfg(any())]
 fn provide_inline_values(
     captures: impl Iterator<Item = (Range<usize>, language::DebuggerTextObject)>,
     snapshot: &language::BufferSnapshot,

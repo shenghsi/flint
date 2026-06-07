@@ -383,6 +383,7 @@ impl ActivityIndicator {
             }
         }
 
+        #[cfg(any())]
         if let Some(session) = self
             .project
             .read(cx)

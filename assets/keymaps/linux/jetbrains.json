@@ -6,14 +6,6 @@
       "ctrl-}": "pane::ActivateNextItem",
       "shift-escape": null, // Unmap workspace::zoom
       "ctrl-~": "git::Branch",
-      "ctrl-f2": "debugger::Stop",
-      "f6": "debugger::Pause",
-      "f7": "debugger::StepInto",
-      "f8": "debugger::StepOver",
-      "shift-f8": "debugger::StepOut",
-      "f9": "debugger::Continue",
-      "shift-f9": "debugger::Start",
-      "alt-shift-f9": "debugger::Start",
     },
   },
   {
@@ -60,8 +52,6 @@
       "ctrl-end": "editor::MoveToEnd",
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
-      "ctrl-f8": "editor::ToggleBreakpoint",
-      "ctrl-shift-f8": "editor::EditLogBreakpoint",
       "ctrl-shift-u": "editor::ToggleCase",
     },
   },
@@ -78,7 +68,6 @@
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-q": "editor::Hover",
       "ctrl-p": "editor::ShowSignatureHelp",
-      "ctrl-\\": "assistant::InlineAssist",
     },
   },
   {
@@ -121,7 +110,6 @@
       "ctrl-alt-shift-n": "project_symbols::Toggle",
       "alt-0": "git_panel::ToggleFocus",
       "alt-1": "project_panel::ToggleFocus",
-      "alt-5": "debug_panel::ToggleFocus",
       "alt-6": "diagnostics::Deploy",
       "alt-7": "outline_panel::ToggleFocus",
     },
@@ -133,7 +121,6 @@
       "alt-2": null, // Bookmarks (left dock)
       "alt-3": null, // Find Panel (bottom dock)
       "alt-4": null, // Run Panel (bottom dock)
-      "alt-5": "debug_panel::ToggleFocus",
       "alt-6": "diagnostics::Deploy",
       "alt-7": "outline_panel::ToggleFocus",
       "alt-8": null, // Services (bottom dock)

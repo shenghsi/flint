@@ -1169,7 +1169,7 @@ mod tests {
     use crate::markdown_preview_view::ImageSource;
     use crate::markdown_preview_view::Resource;
     use crate::markdown_preview_view::resolve_preview_image;
-    use editor::Editor;
+    use editor::{Editor, MarkdownViewMode};
     use gpui::{Entity, TestAppContext};
     use serde_json::json;
     use std::path::PathBuf;
@@ -1241,6 +1241,10 @@ mod tests {
                     .active_item(cx)
                     .and_then(|item| item.act_as::<Editor>(cx))
                     .unwrap();
+                assert_eq!(
+                    editor.read(cx).markdown_view_mode(),
+                    Some(MarkdownViewMode::EditableRendered)
+                );
 
                 workspace.update(cx, |workspace, cx| {
                     let preview = MarkdownPreviewView::create_markdown_view(

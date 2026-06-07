@@ -95,10 +95,11 @@ pub use persistence::{
 };
 use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
+#[cfg(any())]
+use project::debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus};
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     WorktreeSettings,
-    debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
     trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
@@ -217,6 +218,7 @@ pub trait DebuggerProvider {
     fn debug_scenario_scheduled(&self, cx: &mut App);
     fn debug_scenario_scheduled_last(&self, cx: &App) -> bool;
 
+    #[cfg(any())]
     fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus>;
 }
 
@@ -1397,6 +1399,7 @@ pub struct Workspace {
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     terminal_provider: Option<Box<dyn TerminalProvider>>,
+    #[cfg(any())]
     debugger_provider: Option<Arc<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     _items_serializer: Task<Result<()>>,
@@ -1617,6 +1620,7 @@ impl Workspace {
         })
         .detach();
 
+        #[cfg(any())]
         cx.subscribe_in(
             &project.read(cx).breakpoint_store(),
             window,
@@ -1850,6 +1854,7 @@ impl Workspace {
             on_prompt_for_new_path: None,
             on_prompt_for_open_path: None,
             terminal_provider: None,
+            #[cfg(any())]
             debugger_provider: None,
             serializable_items_tx,
             _items_serializer,
@@ -2962,6 +2967,7 @@ impl Workspace {
         self.terminal_provider = Some(Box::new(provider));
     }
 
+    #[cfg(any())]
     pub fn set_debugger_provider(&mut self, provider: impl DebuggerProvider + 'static) {
         self.debugger_provider = Some(Arc::new(provider));
     }
@@ -2978,6 +2984,7 @@ impl Workspace {
         self._dev_container_task = Some(task);
     }
 
+    #[cfg(any())]
     pub fn debugger_provider(&self) -> Option<Arc<dyn DebuggerProvider>> {
         self.debugger_provider.clone()
     }
@@ -7090,12 +7097,20 @@ impl Workspace {
                         .all_serialized_bookmarks(cx)
                 });
 
+                #[cfg(any())]
                 let breakpoints = self.project.update(cx, |project, cx| {
                     project
                         .breakpoint_store()
                         .read(cx)
                         .all_source_breakpoints(cx)
+                        .into_iter()
+                        .map(|(path, breakpoints)| {
+                            (path, breakpoints.into_iter().map(Into::into).collect())
+                        })
+                        .collect()
                 });
+                #[cfg(not(any()))]
+                let breakpoints = Default::default();
                 let user_toolchains = self
                     .project
                     .read(cx)
@@ -7337,16 +7352,24 @@ impl Workspace {
                 .await
                 .log_err();
 
-            let _ = project
+            #[cfg(any())]
+            project
                 .update(cx, |project, cx| {
                     project
                         .breakpoint_store()
                         .update(cx, |breakpoint_store, cx| {
-                            breakpoint_store
-                                .with_serialized_breakpoints(serialized_workspace.breakpoints, cx)
+                            let breakpoints = serialized_workspace
+                                .breakpoints
+                                .into_iter()
+                                .map(|(path, breakpoints)| {
+                                    (path, breakpoints.into_iter().map(Into::into).collect())
+                                })
+                                .collect();
+                            breakpoint_store.with_serialized_breakpoints(breakpoints, cx)
                         })
                 })
-                .await;
+                .await
+                .log_err();
 
             // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
             // after loading the items, we might have different items and in order to avoid
@@ -7389,6 +7412,7 @@ impl Workspace {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
+        #[cfg(any())]
         if let Some(status) = self
             .debugger_provider
             .as_ref()
@@ -9365,41 +9389,6 @@ pub async fn apply_restored_multiworkspace_state(
 }
 
 actions!(
-    collab,
-    [
-        /// Opens the channel notes for the current call.
-        ///
-        /// Use `collab_panel::OpenSelectedChannelNotes` to open the channel notes for the selected
-        /// channel in the collab panel.
-        ///
-        /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
-        /// can be copied via "Copy link to section" in the context menu of the channel notes
-        /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
-        OpenChannelNotes,
-        /// Mutes your microphone.
-        Mute,
-        /// Deafens yourself (mute both microphone and speakers).
-        Deafen,
-        /// Leaves the current call.
-        LeaveCall,
-        /// Shares the current project with collaborators.
-        ShareProject,
-        /// Shares your screen with collaborators.
-        ScreenShare,
-        /// Copies the current room name and session id for debugging purposes.
-        CopyRoomId,
-    ]
-);
-
-/// Opens the channel notes for a specific channel by its ID.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = collab)]
-#[serde(deny_unknown_fields)]
-pub struct OpenChannelNotesById {
-    pub channel_id: u64,
-}
-
-actions!(
     zed,
     [
         /// Opens the Zed log file.
@@ -9600,12 +9589,6 @@ pub fn join_channel(
                     window.activate_window();
                 })
                 .ok();
-
-            if result.is_ok() {
-                cx.update(|cx| {
-                    cx.dispatch_action(&OpenChannelNotes);
-                });
-            }
 
             active_window = Some(window_handle);
         }

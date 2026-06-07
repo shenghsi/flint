@@ -99,7 +99,6 @@ impl Render for QuickActionBar {
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
-        let inline_values_enabled = editor_value.inline_values_enabled();
         let semantic_highlights_enabled = editor_value.semantic_highlights_enabled();
         let code_lens_enabled = editor_value.code_lens_enabled();
         let is_full = editor_value.mode().is_full();
@@ -319,27 +318,6 @@ impl Render for QuickActionBar {
                                                 .ok();
                                         }
                                     },
-                                );
-
-                                menu = menu.toggleable_entry(
-                                    "Inline Values",
-                                    inline_values_enabled,
-                                    IconPosition::Start,
-                                    Some(editor::actions::ToggleInlineValues.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_inline_values(
-                                                        &editor::actions::ToggleInlineValues,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    }
                                 );
                             }
 

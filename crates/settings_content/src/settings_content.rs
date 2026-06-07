@@ -5,6 +5,7 @@ mod extension;
 mod fallible_options;
 mod language;
 mod language_model;
+mod markdown;
 pub mod merge_from;
 mod project;
 mod serde_helper;
@@ -21,6 +22,7 @@ pub use extension::*;
 pub use fallible_options::*;
 pub use language::*;
 pub use language_model::*;
+pub use markdown::*;
 pub use merge_from::MergeFrom as MergeFromTrait;
 pub use project::*;
 use serde::de::DeserializeOwned;
@@ -148,9 +150,6 @@ pub struct SettingsContent {
     pub agent: Option<AgentSettingsContent>,
     pub agent_servers: Option<AllAgentServersSettings>,
 
-    /// Configuration of audio in Zed.
-    pub audio: Option<AudioSettingsContent>,
-
     /// Whether or not to automatically check for updates.
     ///
     /// Default: true
@@ -162,11 +161,6 @@ pub struct SettingsContent {
     ///
     /// Default: VSCode
     pub base_keymap: Option<BaseKeymapContent>,
-
-    /// Configuration for the collab panel visual settings.
-    pub collaboration_panel: Option<PanelSettingsContent>,
-
-    pub debugger: Option<DebuggerSettingsContent>,
 
     /// Configuration for Diagnostics-related features.
     pub diagnostics: Option<DiagnosticsSettingsContent>,
@@ -198,6 +192,9 @@ pub struct SettingsContent {
     pub hide_mouse: Option<HideMouseMode>,
 
     pub journal: Option<JournalSettingsContent>,
+
+    /// Markdown editing and display behavior.
+    pub markdown: Option<MarkdownSettingsContent>,
 
     /// A map of log scopes to the desired log level.
     /// Useful for filtering out noisy logs or enabling more verbose logging.
@@ -245,9 +242,6 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub vim_mode: Option<bool>,
-
-    // Settings related to calls in Zed
-    pub calls: Option<CallSettingsContent>,
 
     /// Settings for the which-key popup.
     pub which_key: Option<WhichKeySettingsContent>,
@@ -470,50 +464,6 @@ impl strum::VariantNames for BaseKeymapContent {
     ];
 }
 
-/// Configuration of audio in Zed.
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-pub struct AudioSettingsContent {
-    /// Select specific output audio device.
-    #[serde(rename = "experimental.output_audio_device")]
-    pub output_audio_device: Option<AudioOutputDeviceName>,
-    /// Select specific input audio device.
-    #[serde(rename = "experimental.input_audio_device")]
-    pub input_audio_device: Option<AudioInputDeviceName>,
-}
-
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-#[serde(transparent)]
-pub struct AudioOutputDeviceName(pub Option<String>);
-
-impl AsRef<Option<String>> for AudioInputDeviceName {
-    fn as_ref(&self) -> &Option<String> {
-        &self.0
-    }
-}
-
-impl From<Option<String>> for AudioInputDeviceName {
-    fn from(value: Option<String>) -> Self {
-        Self(value)
-    }
-}
-
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-#[serde(transparent)]
-pub struct AudioInputDeviceName(pub Option<String>);
-
-impl AsRef<Option<String>> for AudioOutputDeviceName {
-    fn as_ref(&self) -> &Option<String> {
-        &self.0
-    }
-}
-
-impl From<Option<String>> for AudioOutputDeviceName {
-    fn from(value: Option<String>) -> Self {
-        Self(value)
-    }
-}
-
 /// Control what info is collected by Zed.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
@@ -537,66 +487,6 @@ impl Default for TelemetrySettingsContent {
     }
 }
 
-#[with_fallible_options]
-#[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone, MergeFrom)]
-pub struct DebuggerSettingsContent {
-    /// Determines the stepping granularity.
-    ///
-    /// Default: line
-    pub stepping_granularity: Option<SteppingGranularity>,
-    /// Whether the breakpoints should be reused across Zed sessions.
-    ///
-    /// Default: true
-    pub save_breakpoints: Option<bool>,
-    /// Whether to show the debug button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Time in milliseconds until timeout error when connecting to a TCP debug adapter
-    ///
-    /// Default: 2000ms
-    pub timeout: Option<u64>,
-    /// Whether to log messages between active debug adapters and Zed
-    ///
-    /// Default: true
-    pub log_dap_communications: Option<bool>,
-    /// Whether to format dap messages in when adding them to debug adapter logger
-    ///
-    /// Default: true
-    pub format_dap_log_messages: Option<bool>,
-    /// The dock position of the debug panel
-    ///
-    /// Default: Bottom
-    pub dock: Option<DockPosition>,
-}
-
-/// The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.
-#[derive(
-    PartialEq,
-    Eq,
-    Debug,
-    Hash,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    JsonSchema,
-    MergeFrom,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum SteppingGranularity {
-    /// The step should allow the program to run until the current statement has finished executing.
-    /// The meaning of a statement is determined by the adapter and it may be considered equivalent to a line.
-    /// For example 'for(int i = 0; i < 10; i++)' could be considered to have 3 statements 'int i = 0', 'i < 10', and 'i++'.
-    Statement,
-    /// The step should allow the program to run until the current source line has executed.
-    Line,
-    /// The step should allow one instruction to execute (e.g. one x86 instruction).
-    Instruction,
-}
-
 #[derive(
     Copy,
     Clone,
@@ -615,21 +505,6 @@ pub enum DockPosition {
     Left,
     Bottom,
     Right,
-}
-
-/// Configuration of voice calls in Zed.
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-pub struct CallSettingsContent {
-    /// Whether the microphone should be muted when joining a channel or a call.
-    ///
-    /// Default: false
-    pub mute_on_join: Option<bool>,
-
-    /// Whether your current project should be shared when joining an empty channel.
-    ///
-    /// Default: false
-    pub share_on_join: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -858,9 +733,6 @@ pub struct VimSettingsContent {
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
-    /// When enabled, edit predictions are shown in Vim normal mode.
-    /// By default, edit predictions are only shown in insert and replace modes.
-    pub show_edit_predictions_in_normal_mode: Option<bool>,
 }
 
 #[derive(

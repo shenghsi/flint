@@ -1,6 +1,8 @@
+#[cfg(any())]
+use crate::ActiveDebugLine;
 use crate::{
-    ActiveDebugLine, Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent,
-    EditorSettings, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
+    Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent, EditorSettings,
+    ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
     ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
@@ -1092,15 +1094,16 @@ impl Item for Editor {
         }
     }
 
-    fn pane_changed(&mut self, new_pane_id: EntityId, cx: &mut Context<Self>) {
+    fn pane_changed(&mut self, _new_pane_id: EntityId, _cx: &mut Context<Self>) {
+        #[cfg(any())]
         if self
             .highlighted_rows
             .get(&TypeId::of::<ActiveDebugLine>())
             .is_some_and(|lines| !lines.is_empty())
             && let Some(breakpoint_store) = self.breakpoint_store.as_ref()
         {
-            breakpoint_store.update(cx, |store, _cx| {
-                store.set_active_debug_pane_id(new_pane_id);
+            breakpoint_store.update(_cx, |store, _cx| {
+                store.set_active_debug_pane_id(_new_pane_id);
             });
         }
     }
@@ -1167,6 +1170,18 @@ impl Item for Editor {
             });
 
         if is_markdown {
+            if let Some(markdown_view_mode) = self.markdown_view_mode() {
+                match markdown_view_mode {
+                    crate::MarkdownViewMode::EditableRendered => actions.push((
+                        "Show Markdown Source".into(),
+                        Box::new(crate::ShowSource) as Box<dyn gpui::Action>,
+                    )),
+                    crate::MarkdownViewMode::Source => actions.push((
+                        "Show Rendered Markdown".into(),
+                        Box::new(crate::ShowRendered) as Box<dyn gpui::Action>,
+                    )),
+                }
+            }
             actions.push((
                 "Open Markdown Preview".into(),
                 Box::new(OpenMarkdownPreview) as Box<dyn gpui::Action>,

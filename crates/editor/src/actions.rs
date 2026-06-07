@@ -379,16 +379,6 @@ pub struct InsertSnippet {
 }
 
 actions!(
-    debugger,
-    [
-        /// Runs program execution to the current cursor position.
-        RunToCursor,
-        /// Evaluates the selected text in the debugger context.
-        EvaluateSelectedText
-    ]
-);
-
-actions!(
     go_to_line,
     [
         /// Toggles the go to line dialog.
@@ -403,6 +393,12 @@ actions!(
         /// Toggles a block quote (`> `) prefix on the selected lines (or the
         /// current line) while in Markdown files.
         ToggleBlockQuote,
+        /// Displays the current Markdown editor with inline formatting.
+        ShowRendered,
+        /// Displays the current Markdown editor as source text.
+        ShowSource,
+        /// Toggles the current Markdown editor between rendered and source modes.
+        ToggleRendered,
     ]
 );
 
@@ -845,16 +841,8 @@ actions!(
         Backtab,
         /// Toggles a bookmark at the current line.
         ToggleBookmark,
-        /// Toggles a breakpoint at the current line.
-        ToggleBreakpoint,
         /// Toggles the case of selected text.
         ToggleCase,
-        /// Disables the breakpoint at the current line.
-        DisableBreakpoint,
-        /// Enables the breakpoint at the current line.
-        EnableBreakpoint,
-        /// Edits the log message for a breakpoint.
-        EditLogBreakpoint,
         /// Toggles automatic signature help.
         ToggleAutoSignatureHelp,
         /// Toggles inline git blame display.
@@ -871,8 +859,6 @@ actions!(
         ToggleCodeLens,
         /// Toggles semantic highlights display.
         ToggleSemanticHighlights,
-        /// Toggles inline values display.
-        ToggleInlineValues,
         /// Toggles inline diagnostics display.
         ToggleInlineDiagnostics,
         /// Toggles edit prediction feature.

@@ -243,6 +243,7 @@ impl Editor {
                     .await
                 }))
             }
+            #[cfg(any())]
             CodeActionsItem::DebugScenario(scenario) => {
                 let context = actions_menu.actions.context.into();
 
@@ -259,6 +260,8 @@ impl Editor {
                 });
                 Some(Task::ready(Ok(())))
             }
+            #[cfg(not(any()))]
+            CodeActionsItem::DebugScenario(_) => None,
         }
     }
 
@@ -412,6 +415,7 @@ impl Editor {
         );
     }
 
+    #[cfg(any())]
     fn debug_scenarios(
         &mut self,
         resolved_tasks: &Option<ResolvedTasks>,
@@ -451,6 +455,16 @@ impl Editor {
             }))
         })
         .unwrap_or_else(|| Task::ready(vec![]))
+    }
+
+    #[cfg(not(any()))]
+    fn debug_scenarios(
+        &mut self,
+        _: &Option<ResolvedTasks>,
+        _: &Entity<Buffer>,
+        _: &mut App,
+    ) -> Task<Vec<task::DebugScenario>> {
+        Task::ready(Vec::new())
     }
 }
 

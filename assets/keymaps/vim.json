@@ -359,8 +359,6 @@
       "escape": "vim::NormalBefore",
       "ctrl-x": null,
       "ctrl-x ctrl-o": "editor::ShowCompletions",
-      "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
-      "ctrl-x ctrl-c": "editor::ShowEditPrediction", // zed specific
       "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
       "ctrl-x ctrl-z": "editor::Cancel",
       "ctrl-x ctrl-e": "vim::LineDown",
@@ -1111,29 +1109,14 @@
     },
   },
   {
-    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
-    "bindings": {
-      // This is identical to the binding in the base keymap, but the vim bindings above to
-      // "vim::Tab" shadow it, so it needs to be bound again.
-      "tab": "editor::AcceptEditPrediction",
-    },
-  },
-  {
     "context": "MessageEditor > Editor && VimControl",
     "bindings": {
-      "enter": "agent::Chat",
     },
   },
 
   {
     "context": "SettingsWindow > NavigationMenu && !search",
     "bindings": {
-      "l": "settings_editor::ExpandNavEntry",
-      "h": "settings_editor::CollapseNavEntry",
-      "k": "settings_editor::FocusPreviousNavEntry",
-      "j": "settings_editor::FocusNextNavEntry",
-      "g g": "settings_editor::FocusFirstNavEntry",
-      "shift-g": "settings_editor::FocusLastNavEntry",
     },
   },
   {
@@ -1188,10 +1171,6 @@
       "l": "menu::SelectChild",
       "g g": "menu::SelectFirst",
       "shift-g": "menu::SelectLast",
-      "/": "agents_sidebar::FocusSidebarFilter",
-      "d d": "agent::RemoveSelectedThread",
-      "o": "agents_sidebar::NewThreadInGroup",
-      "shift-o": "agents_sidebar::NewThreadInGroup",
       "] p": "multi_workspace::NextProject",
       "[ p": "multi_workspace::PreviousProject",
       "z a": "editor::ToggleFold",
@@ -1214,15 +1193,11 @@
   {
     "context": "SkillCreator",
     "bindings": {
-      "tab": "skill_creator::FocusNextField",
-      "shift-tab": "skill_creator::FocusPreviousField",
     },
   },
   {
     "context": "SkillCreator > Editor",
     "bindings": {
-      "tab": "skill_creator::FocusNextField",
-      "shift-tab": "skill_creator::FocusPreviousField",
     },
   },
 ]

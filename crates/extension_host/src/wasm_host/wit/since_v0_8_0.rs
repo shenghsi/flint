@@ -920,17 +920,18 @@ impl dap::Host for WasmState {
         template: dap::TcpArgumentsTemplate,
     ) -> wasmtime::Result<Result<dap::TcpArguments, String>> {
         maybe!(async {
-            let (host, port, timeout) =
-                ::dap::configure_tcp_connection(task::TcpArgumentsTemplate {
-                    port: template.port,
-                    host: template.host.map(Into::into),
-                    timeout: template.timeout,
-                })
-                .await?;
+            let host = template
+                .host
+                .map(Into::into)
+                .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+            let port = match template.port {
+                Some(port) => port,
+                None => std::net::TcpListener::bind((host, 0))?.local_addr()?.port(),
+            };
             Ok(dap::TcpArguments {
                 port,
                 host: host.into(),
-                timeout,
+                timeout: template.timeout,
             })
         })
         .await

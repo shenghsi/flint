@@ -752,8 +752,10 @@ impl settings::Settings for AllLanguageSettings {
                 document_folding_ranges: settings.document_folding_ranges.unwrap(),
                 document_symbols: settings.document_symbols.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
-                show_edit_predictions: settings.show_edit_predictions.unwrap(),
-                edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
+                show_edit_predictions: settings.show_edit_predictions.unwrap_or(false),
+                edit_predictions_disabled_in: settings
+                    .edit_predictions_disabled_in
+                    .unwrap_or_default(),
                 show_whitespaces: settings.show_whitespaces.unwrap(),
                 whitespace_map: WhitespaceMap {
                     space: SharedString::new(whitespace_map.space.unwrap().to_string()),
@@ -800,7 +802,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_fetch_timeout_ms: completions.lsp_fetch_timeout_ms.unwrap(),
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
-                debuggers: settings.debuggers.unwrap(),
+                debuggers: settings.debuggers.unwrap_or_default(),
                 word_diff_enabled: settings.word_diff_enabled.unwrap(),
             }
         }
@@ -822,17 +824,16 @@ impl settings::Settings for AllLanguageSettings {
             .as_ref()
             .and_then(|ep| ep.provider);
 
-        let edit_predictions = all_languages.edit_predictions.clone().unwrap();
-        let edit_predictions_mode = edit_predictions.mode.unwrap();
+        let edit_predictions = all_languages.edit_predictions.clone().unwrap_or_default();
+        let edit_predictions_mode = edit_predictions.mode.unwrap_or_default();
 
         let disabled_globs: HashSet<&String> = edit_predictions
             .disabled_globs
             .as_ref()
-            .unwrap()
-            .iter()
-            .collect();
+            .map(|disabled_globs| disabled_globs.iter().collect())
+            .unwrap_or_default();
 
-        let copilot = edit_predictions.copilot.unwrap();
+        let copilot = edit_predictions.copilot.unwrap_or_default();
         let copilot_settings = CopilotSettings {
             proxy: copilot.proxy,
             proxy_no_verify: copilot.proxy_no_verify,
@@ -840,38 +841,48 @@ impl settings::Settings for AllLanguageSettings {
             enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
         };
 
-        let codestral = edit_predictions.codestral.unwrap();
+        let codestral = edit_predictions.codestral.unwrap_or_default();
         let codestral_settings = CodestralSettings {
             model: codestral.model,
             max_tokens: codestral.max_tokens,
             api_url: codestral.api_url,
         };
 
-        let ollama = edit_predictions.ollama.unwrap();
-        let ollama_settings = ollama
-            .model
-            .filter(|model| !model.0.is_empty())
-            .map(|model| OpenAiCompatibleEditPredictionSettings {
-                model: model.0,
-                max_output_tokens: ollama.max_output_tokens.unwrap(),
-                api_url: ollama.api_url.unwrap().into(),
-                prompt_format: ollama.prompt_format.unwrap().into(),
-            });
-        let openai_compatible_settings = edit_predictions.open_ai_compatible_api.unwrap();
-        let openai_compatible_settings = openai_compatible_settings
-            .model
-            .filter(|model| !model.is_empty())
-            .zip(
-                openai_compatible_settings
-                    .api_url
-                    .filter(|api_url| !api_url.is_empty()),
-            )
-            .map(|(model, api_url)| OpenAiCompatibleEditPredictionSettings {
-                model,
-                max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
-                api_url: api_url.into(),
-                prompt_format: openai_compatible_settings.prompt_format.unwrap().into(),
-            });
+        let ollama_settings = edit_predictions.ollama.and_then(|ollama| {
+            ollama
+                .model
+                .filter(|model| !model.0.is_empty())
+                .map(|model| OpenAiCompatibleEditPredictionSettings {
+                    model: model.0,
+                    max_output_tokens: ollama.max_output_tokens.unwrap_or_default(),
+                    api_url: ollama.api_url.unwrap_or_default().into(),
+                    prompt_format: ollama.prompt_format.unwrap_or_default().into(),
+                })
+        });
+        let openai_compatible_settings =
+            edit_predictions
+                .open_ai_compatible_api
+                .and_then(|openai_compatible_settings| {
+                    openai_compatible_settings
+                        .model
+                        .filter(|model| !model.is_empty())
+                        .zip(
+                            openai_compatible_settings
+                                .api_url
+                                .filter(|api_url| !api_url.is_empty()),
+                        )
+                        .map(|(model, api_url)| OpenAiCompatibleEditPredictionSettings {
+                            model,
+                            max_output_tokens: openai_compatible_settings
+                                .max_output_tokens
+                                .unwrap_or_default(),
+                            api_url: api_url.into(),
+                            prompt_format: openai_compatible_settings
+                                .prompt_format
+                                .unwrap_or_default()
+                                .into(),
+                        })
+                });
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 

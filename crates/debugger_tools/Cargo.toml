@@ -18,12 +18,12 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 dap.workspace = true
-editor.workspace = true
+editor = { workspace = true, features = ["debugger"] }
 futures.workspace = true
 gpui.workspace = true
-project.workspace = true
+project = { workspace = true, features = ["debugger"] }
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 util.workspace = true
-workspace.workspace = true
+workspace = { workspace = true, features = ["debugger"] }

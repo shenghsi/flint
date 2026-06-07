@@ -41,9 +41,8 @@ use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffse
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    FakeFs, Project, ProjectPath,
+    FakeFs, Project,
     bookmark_store::SerializedBookmark,
-    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
@@ -28111,616 +28110,6 @@ async fn assert_highlighted_edits(
     });
 }
 
-#[track_caller]
-fn assert_breakpoint(
-    breakpoints: &BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
-    path: &Arc<Path>,
-    expected: Vec<(u32, Breakpoint)>,
-) {
-    if expected.is_empty() {
-        assert!(!breakpoints.contains_key(path), "{}", path.display());
-    } else {
-        let mut breakpoint = breakpoints
-            .get(path)
-            .unwrap()
-            .iter()
-            .map(|breakpoint| {
-                (
-                    breakpoint.row,
-                    Breakpoint {
-                        message: breakpoint.message.clone(),
-                        state: breakpoint.state,
-                        condition: breakpoint.condition.clone(),
-                        hit_condition: breakpoint.hit_condition.clone(),
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-
-        breakpoint.sort_by_key(|(cached_position, _)| *cached_position);
-
-        assert_eq!(expected, breakpoint);
-    }
-}
-
-fn add_log_breakpoint_at_cursor(
-    editor: &mut Editor,
-    log_message: &str,
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
-    let (anchor, bp) = editor
-        .breakpoints_at_cursors(window, cx)
-        .first()
-        .and_then(|(anchor, bp)| bp.as_ref().map(|bp| (*anchor, bp.clone())))
-        .unwrap_or_else(|| {
-            let snapshot = editor.snapshot(window, cx);
-            let cursor_position: Point =
-                editor.selections.newest(&snapshot.display_snapshot).head();
-
-            let breakpoint_position = snapshot
-                .buffer_snapshot()
-                .anchor_before(Point::new(cursor_position.row, 0));
-
-            (breakpoint_position, Breakpoint::new_log(log_message))
-        });
-
-    editor.edit_breakpoint_at_anchor(
-        anchor,
-        bp,
-        BreakpointEditAction::EditLogMessage(log_message.into()),
-        cx,
-    );
-}
-
-#[gpui::test]
-async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
-
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
-
-    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
-
-    // assert we can add breakpoint on the first line
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_eq!(1, breakpoints.len());
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![
-            (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_standard()),
-        ],
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_eq!(1, breakpoints.len());
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![(3, Breakpoint::new_standard())],
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_eq!(0, breakpoints.len());
-    assert_breakpoint(&breakpoints, &abs_path, vec![]);
-}
-
-#[gpui::test]
-async fn test_breakpoint_after_save_as_existing_path(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": "First line\nSecond line\nThird line\nFourth line",
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace =
-        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
-
-    let worktree_id = workspace.update(cx, |workspace, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
-
-    let first_buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
-
-    let (first_editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(first_buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
-
-    first_editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
-
-    let replacement_buffer = project.update(cx, |project, cx| {
-        project.create_local_buffer("Alpha\nBeta\nGamma", None, true, cx)
-    });
-    project
-        .update(cx, |project, cx| {
-            project.save_buffer_as(
-                replacement_buffer.clone(),
-                ProjectPath {
-                    worktree_id,
-                    path: rel_path("main.rs").into(),
-                },
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
-    let (replacement_editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(replacement_buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
-
-    replacement_editor.update_in(cx, |editor, window, cx| {
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
-
-    let project_path =
-        first_editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
-
-    let breakpoints = first_editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .source_breakpoints_from_path(&abs_path, cx)
-    });
-
-    assert_eq!(
-        vec![0, 1],
-        breakpoints
-            .into_iter()
-            .map(|breakpoint| breakpoint.row)
-            .collect::<Vec<_>>()
-    );
-}
-
-#[gpui::test]
-async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-
-    let worktree_id = workspace.update(cx, |workspace, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
-
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
-
-    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
-
-    editor.update_in(cx, |editor, window, cx| {
-        add_log_breakpoint_at_cursor(editor, "hello world", window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![(0, Breakpoint::new_log("hello world"))],
-    );
-
-    // Removing a log message from a log breakpoint should remove it
-    editor.update_in(cx, |editor, window, cx| {
-        add_log_breakpoint_at_cursor(editor, "", window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_breakpoint(&breakpoints, &abs_path, vec![]);
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-        // Not adding a log message to a standard breakpoint shouldn't remove it
-        add_log_breakpoint_at_cursor(editor, "", window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![
-            (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_standard()),
-        ],
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        add_log_breakpoint_at_cursor(editor, "hello world", window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![
-            (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_log("hello world")),
-        ],
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        add_log_breakpoint_at_cursor(editor, "hello Earth!!", window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![
-            (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_log("hello Earth!!")),
-        ],
-    );
-}
-
-/// This also tests that Editor::breakpoint_at_cursor_head is working properly
-/// we had some issues where we wouldn't find a breakpoint at Point {row: 0, col: 0}
-/// or when breakpoints were placed out of order. This tests for a regression too
-#[gpui::test]
-async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
-
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
-
-    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
-
-    // assert we can add breakpoint on the first line
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-        editor.move_up(&MoveUp, window, cx);
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_eq!(1, breakpoints.len());
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![
-            (0, Breakpoint::new_standard()),
-            (2, Breakpoint::new_standard()),
-            (3, Breakpoint::new_standard()),
-        ],
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
-        // Disabling a breakpoint that doesn't exist should do nothing
-        editor.move_up(&MoveUp, window, cx);
-        editor.move_up(&MoveUp, window, cx);
-        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    let disable_breakpoint = {
-        let mut bp = Breakpoint::new_standard();
-        bp.state = BreakpointState::Disabled;
-        bp
-    };
-
-    assert_eq!(1, breakpoints.len());
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![
-            (0, disable_breakpoint.clone()),
-            (2, Breakpoint::new_standard()),
-            (3, disable_breakpoint.clone()),
-        ],
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.enable_breakpoint(&actions::EnableBreakpoint, window, cx);
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.enable_breakpoint(&actions::EnableBreakpoint, window, cx);
-        editor.move_up(&MoveUp, window, cx);
-        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
-    });
-
-    let breakpoints = editor.update(cx, |editor, cx| {
-        editor
-            .breakpoint_store()
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .all_source_breakpoints(cx)
-    });
-
-    assert_eq!(1, breakpoints.len());
-    assert_breakpoint(
-        &breakpoints,
-        &abs_path,
-        vec![
-            (0, Breakpoint::new_standard()),
-            (2, disable_breakpoint),
-            (3, Breakpoint::new_standard()),
-        ],
-    );
-}
-
 struct BookmarkTestContext {
     project: Entity<Project>,
     editor: Entity<Editor>,
@@ -38122,4 +37511,265 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
         third
         fourthˇ»
     "});
+}
+
+#[gpui::test]
+async fn test_markdown_view_mode_switching(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.markdown_view_mode(), None);
+    });
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(
+            editor.markdown_view_mode(),
+            Some(MarkdownViewMode::EditableRendered)
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_markdown_source(&ShowSource, window, cx);
+        assert_eq!(editor.markdown_view_mode(), Some(MarkdownViewMode::Source));
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_rendered_markdown(&ToggleRendered, window, cx);
+        assert_eq!(
+            editor.markdown_view_mode(),
+            Some(MarkdownViewMode::EditableRendered)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_markdown_rendered_mode_applies_and_clears_inline_styles(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        "# Heading\n\n**bold** and *italic* and [link](url) and `code`\n\n> quote\n\n```rust\nlet x = 1;\n```\nˇ",
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+
+    let highlighted_text = |editor: &Editor, key, cx: &App| {
+        let source = editor.text(cx);
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        editor
+            .text_highlights(key, cx)
+            .map(|(_, ranges)| {
+                ranges
+                    .iter()
+                    .map(|range| {
+                        let start = range.start.to_offset(&snapshot).0;
+                        let end = range.end.to_offset(&snapshot).0;
+                        source[start..end].to_string()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+
+    cx.update_editor(|editor, _, cx| {
+        assert!(
+            highlighted_text(editor, HighlightKey::MarkdownHeading, cx)
+                .contains(&"Heading".to_string())
+        );
+        assert!(
+            highlighted_text(editor, HighlightKey::MarkdownStrong, cx)
+                .contains(&"bold".to_string())
+        );
+        assert!(
+            highlighted_text(editor, HighlightKey::MarkdownEmphasis, cx)
+                .contains(&"italic".to_string())
+        );
+        assert!(
+            highlighted_text(editor, HighlightKey::MarkdownLink, cx).contains(&"link".to_string())
+        );
+        assert!(
+            highlighted_text(editor, HighlightKey::MarkdownCode, cx)
+                .iter()
+                .any(|text| text.contains("let x = 1;"))
+        );
+        assert!(!highlighted_text(editor, HighlightKey::MarkdownSyntax, cx).is_empty());
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_markdown_source(&ShowSource, window, cx);
+        for key in [
+            HighlightKey::MarkdownBlockQuote,
+            HighlightKey::MarkdownCode,
+            HighlightKey::MarkdownEmphasis,
+            HighlightKey::MarkdownHeading,
+            HighlightKey::MarkdownLink,
+            HighlightKey::MarkdownStrikethrough,
+            HighlightKey::MarkdownStrong,
+            HighlightKey::MarkdownSyntax,
+        ] {
+            assert!(editor.text_highlights(key, cx).is_none());
+        }
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_rendered_markdown(&ShowRendered, window, cx);
+        assert_eq!(
+            highlighted_text(editor, HighlightKey::MarkdownHeading, cx),
+            vec!["Heading"]
+        );
+        assert!(editor.text(cx).starts_with("# Heading"));
+    });
+
+    cx.set_state("# Changedˇ");
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            highlighted_text(editor, HighlightKey::MarkdownHeading, cx),
+            vec!["Changed"]
+        );
+        assert_eq!(editor.text(cx), "# Changed");
+    });
+}
+
+#[gpui::test]
+async fn test_markdown_rendered_mode_tracks_rich_blocks(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        | Name | Value |
+        |------|-------|
+        | One  | Two   |
+
+        ![Alt text](image.png)
+
+        ```mermaid
+        graph TD
+            A-->B
+        ```
+        ˇ
+    "});
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.markdown_rich_block_count(), 3);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_markdown_source(&ShowSource, window, cx);
+        assert_eq!(editor.markdown_rich_block_count(), 0);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_rendered_markdown(&ShowRendered, window, cx);
+        assert_eq!(editor.markdown_rich_block_count(), 3);
+    });
+
+    cx.set_state(indoc! {"
+        | Name | Value |
+        |------|-------|
+        | One  | Two   |
+
+        ![Alt text](image.png)
+        ˇ
+    "});
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(editor.markdown_rich_block_count(), 2);
+        assert!(editor.text(cx).contains("![Alt text](image.png)"));
+    });
+}
+
+#[gpui::test]
+async fn test_markdown_rendered_mode_preserves_core_editing_behavior(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        # Title
+
+        «copyˇ» target
+
+        | Name | Value |
+        |------|-------|
+        | One  | Two   |
+    "});
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.markdown_rich_block_count(), 1);
+    });
+
+    cx.update_editor(|editor, window, cx| editor.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("copy".to_string())
+    );
+
+    cx.set_state(indoc! {"
+        # Title
+
+        copy targetˇ
+
+        | Name | Value |
+        |------|-------|
+        | One  | Two   |
+    "});
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state(indoc! {"
+        # Title
+
+        copy targetcopyˇ
+
+        | Name | Value |
+        |------|-------|
+        | One  | Two   |
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.insert("!", window, cx));
+    cx.assert_editor_state(indoc! {"
+        # Title
+
+        copy targetcopy!ˇ
+
+        | Name | Value |
+        |------|-------|
+        | One  | Two   |
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.undo(&Undo, window, cx));
+    cx.assert_editor_state(indoc! {"
+        # Title
+
+        copy targetcopyˇ
+
+        | Name | Value |
+        |------|-------|
+        | One  | Two   |
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.redo(&Redo, window, cx));
+    cx.assert_editor_state(indoc! {"
+        # Title
+
+        copy targetcopy!ˇ
+
+        | Name | Value |
+        |------|-------|
+        | One  | Two   |
+    "});
+
+    let query = Arc::new(
+        project::search::SearchQuery::text(
+            "targetcopy!",
+            false,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .unwrap(),
+    );
+    let matches = cx.update_editor(|editor, window, cx| {
+        workspace::searchable::SearchableItem::find_matches(editor, query, window, cx)
+    });
+    assert_eq!(matches.await.len(), 1);
 }

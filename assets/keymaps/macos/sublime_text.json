@@ -67,7 +67,7 @@
     },
   },
   {
-    "context": "Editor && !agent_diff",
+    "context": "Editor",
     "bindings": {
       "cmd-k cmd-z": "git::Restore",
     },

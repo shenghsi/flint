@@ -4,12 +4,11 @@ use crate::capability_granter::CapabilityGranter;
 use crate::{ExtensionManifest, ExtensionSettings};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
-use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
-    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
-    WorktreeDelegate,
+    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
+    StartDebuggingRequestArgumentsRequest, Symbol, WorktreeDelegate,
 };
 use fs::Fs;
 use futures::future::LocalBoxFuture;
@@ -36,7 +35,7 @@ use std::{
     sync::{Arc, LazyLock, OnceLock},
     time::Duration,
 };
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 use util::paths::SanitizedPath;
 use wasmtime::{
     CacheStore, Engine, Store,

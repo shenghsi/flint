@@ -43,28 +43,28 @@
 
 ## 5. Compile-Prune Retired Dependencies
 
-- [ ] 5.1 Remove ACP and native agent workspace members after their startup, UI, project, and settings references are gone.
-- [ ] 5.2 Remove native model provider, Copilot, edit prediction, and web search workspace members after git commit generation no longer depends on native AI.
-- [ ] 5.3 Remove collaboration, call, audio, LiveKit, channel, debugger, and DAP workspace members after related UI and project references are gone.
-- [ ] 5.4 Remove stale actions, settings schemas, keybindings, tests, docs references, and assets for retired features.
-- [ ] 5.5 Run targeted builds or checks after each removal batch to keep dependency cleanup bisectable.
-- [ ] 5.6 Run `./script/clippy` or a scoped equivalent once the major removal batches compile.
+- [x] 5.1 Remove ACP and native agent workspace members after their startup, UI, project, and settings references are gone.
+- [x] 5.2 Remove native model provider, Copilot, edit prediction, and web search workspace members after git commit generation no longer depends on native AI.
+- [x] 5.3 Remove collaboration, call, audio, LiveKit, channel, debugger, and DAP workspace members after related UI and project references are gone.
+- [x] 5.4 Remove stale actions, settings schemas, keybindings, tests, docs references, and assets for retired features.
+- [x] 5.5 Run targeted builds or checks after each removal batch to keep dependency cleanup bisectable.
+- [x] 5.6 Run `./script/clippy` or a scoped equivalent once the major removal batches compile.
 
 ## 6. Markdown Inline Editing
 
-- [ ] 6.1 Audit `crates/markdown`, `crates/markdown_preview`, and editor rendering APIs for reusable parsing and rendering primitives.
-- [ ] 6.2 Define a Markdown editable rendered mode setting and open behavior for Markdown files.
-- [ ] 6.3 Implement inline rendering for headings, emphasis, lists, quotes, links, and code fences while preserving source-buffer edits.
-- [ ] 6.4 Implement inline rich block handling for tables, images, and Mermaid blocks where existing rendering support is available.
-- [ ] 6.5 Preserve source view switching with no data loss.
-- [ ] 6.6 Preserve editor-quality cursor movement, selection, copy, paste, undo, redo, search, and save behavior in editable rendered mode.
-- [ ] 6.7 Keep existing split Markdown preview available as an optional workflow.
-- [ ] 6.8 Add Markdown editing tests for source switching, inline edits, undo/redo, search, copy/paste, rich blocks, and preview coexistence.
+- [x] 6.1 Audit `crates/markdown`, `crates/markdown_preview`, and editor rendering APIs for reusable parsing and rendering primitives.
+- [x] 6.2 Define a Markdown editable rendered mode setting and open behavior for Markdown files.
+- [x] 6.3 Implement inline rendering for headings, emphasis, lists, quotes, links, and code fences while preserving source-buffer edits.
+- [x] 6.4 Implement inline rich block handling for tables, images, and Mermaid blocks where existing rendering support is available.
+- [x] 6.5 Preserve source view switching with no data loss.
+- [x] 6.6 Preserve editor-quality cursor movement, selection, copy, paste, undo, redo, search, and save behavior in editable rendered mode.
+- [x] 6.7 Keep existing split Markdown preview available as an optional workflow.
+- [x] 6.8 Add Markdown editing tests for source switching, inline edits, undo/redo, search, copy/paste, rich blocks, and preview coexistence.
 
 ## 7. Verification and Documentation
 
-- [ ] 7.1 Update `docs/terminal-first-fork.md` if implementation decisions differ from the proposal.
-- [ ] 7.2 Document terminal-thread settings and external commit message generator settings.
-- [ ] 7.3 Add manual verification steps for a fresh workspace, terminal thread launch, Codex/Claude command execution, git diff review, commit message generation, and Markdown editing.
-- [ ] 7.4 Verify removed product surfaces are absent from menus, command palette, settings defaults, startup panels, and restored workspaces.
-- [ ] 7.5 Verify retained workflows still work: project open, file finder, search, editor edits, git status/diff, terminal tabs/splits, settings, themes, keymaps, and Markdown preview.
+- [x] 7.1 Update `docs/terminal-first-fork.md` if implementation decisions differ from the proposal.
+- [x] 7.2 Document terminal-thread settings and external commit message generator settings.
+- [x] 7.3 Add manual verification steps for a fresh workspace, terminal thread launch, Codex/Claude command execution, git diff review, commit message generation, and Markdown editing.
+- [x] 7.4 Verify removed product surfaces are absent from menus, command palette, settings defaults, startup panels, and restored workspaces.
+- [x] 7.5 Verify retained workflows still work: project open, file finder, search, editor edits, git status/diff, terminal tabs/splits, settings, themes, keymaps, and Markdown preview.

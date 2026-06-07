@@ -60,10 +60,9 @@ use multi_buffer::{
     Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint, MultiBufferRow, RowInfo,
 };
 
-use project::{
-    debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
-    project_settings::ProjectSettings,
-};
+#[cfg(any())]
+use project::debugger::breakpoint_store::{Breakpoint, BreakpointSessionState};
+use project::project_settings::ProjectSettings;
 use settings::{
     GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring,
     Settings,
@@ -502,9 +501,13 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_bookmark);
         register_action(editor, window, Editor::go_to_next_bookmark);
         register_action(editor, window, Editor::go_to_previous_bookmark);
+        #[cfg(any())]
         register_action(editor, window, Editor::toggle_breakpoint);
+        #[cfg(any())]
         register_action(editor, window, Editor::edit_log_breakpoint);
+        #[cfg(any())]
         register_action(editor, window, Editor::enable_breakpoint);
+        #[cfg(any())]
         register_action(editor, window, Editor::disable_breakpoint);
         register_action(editor, window, Editor::toggle_read_only);
         register_action(editor, window, Editor::reload_file);
@@ -572,6 +575,9 @@ impl EditorElement {
             register_action(editor, window, Editor::toggle_comments);
             register_action(editor, window, Editor::toggle_block_comments);
             register_action(editor, window, Editor::toggle_markdown_block_quote);
+            register_action(editor, window, Editor::show_rendered_markdown);
+            register_action(editor, window, Editor::show_markdown_source);
+            register_action(editor, window, Editor::toggle_rendered_markdown);
             register_action(editor, window, Editor::unwrap_syntax_node);
             register_action(editor, window, Editor::accept_next_word_edit_prediction);
             register_action(editor, window, Editor::accept_next_line_edit_prediction);
@@ -2440,6 +2446,7 @@ impl EditorElement {
         })
     }
 
+    #[cfg(any())]
     fn layout_breakpoints(
         &self,
         gutter: &Gutter,
@@ -2520,7 +2527,7 @@ impl EditorElement {
         &self,
         gutter: &Gutter,
         run_indicators: &HashSet<DisplayRow>,
-        breakpoints: &HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
+        breakpoint_anchors: &HashMap<DisplayRow, Anchor>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -2558,7 +2565,7 @@ impl EditorElement {
                                 .render_run_indicator(
                                     &self.style,
                                     Some(*display_row) == active_task_indicator_row,
-                                    breakpoints.get(&display_row).map(|(anchor, _, _)| *anchor),
+                                    breakpoint_anchors.get(display_row).copied(),
                                     *display_row,
                                     cx,
                                 )
@@ -8312,17 +8319,18 @@ impl Element for EditorElement {
                         })
                         .unwrap_or_else(|| (Vec::new(), Vec::new(), HashMap::default()));
 
-                    let (selections, mut active_rows, newest_selection_head) = self
-                        .layout_selections(
-                            start_anchor,
-                            end_anchor,
-                            &local_selections,
-                            &snapshot,
-                            start_row,
-                            end_row,
-                            window,
-                            cx,
-                        );
+                    let (selections, active_rows, newest_selection_head) = self.layout_selections(
+                        start_anchor,
+                        end_anchor,
+                        &local_selections,
+                        &snapshot,
+                        start_row,
+                        end_row,
+                        window,
+                        cx,
+                    );
+                    #[cfg(any())]
+                    let mut active_rows = active_rows;
 
                     // relative rows are based on newest selection, even outside the visible area
                     let current_selection_head = self.editor.update(cx, |editor, cx| {
@@ -8350,15 +8358,25 @@ impl Element for EditorElement {
                         editor.active_run_indicators(start_row..end_row, window, cx)
                     });
 
+                    #[cfg(any())]
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
 
+                    #[cfg(any())]
                     for (display_row, (_, bp, state)) in &breakpoint_rows {
                         if bp.is_enabled() && state.is_none_or(|s| s.verified) {
                             active_rows.entry(*display_row).or_default().breakpoint = true;
                         }
                     }
+
+                    #[cfg(any())]
+                    let breakpoint_anchors = breakpoint_rows
+                        .iter()
+                        .map(|(row, (anchor, _, _))| (*row, *anchor))
+                        .collect();
+                    #[cfg(not(any()))]
+                    let breakpoint_anchors = HashMap::default();
 
                     let gutter = Gutter {
                         line_height,
@@ -8974,7 +8992,7 @@ impl Element for EditorElement {
                         self.layout_run_indicators(
                             &gutter,
                             &run_indicator_rows,
-                            &breakpoint_rows,
+                            &breakpoint_anchors,
                             window,
                             cx,
                         )
@@ -8988,7 +9006,7 @@ impl Element for EditorElement {
                     let bookmark_rows = self.editor.update(cx, |editor, cx| {
                         let mut rows = editor.active_bookmarks(start_row..end_row, window, cx);
                         rows.retain(|k| !run_indicator_rows.contains(k));
-                        rows.retain(|k| !breakpoint_rows.contains_key(k));
+                        rows.retain(|k| !breakpoint_anchors.contains_key(k));
                         rows
                     });
 
@@ -8998,16 +9016,21 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    #[cfg(any())]
                     let show_breakpoints = snapshot
                         .show_breakpoints
                         .unwrap_or(gutter_settings.breakpoints);
 
+                    #[cfg(any())]
                     breakpoint_rows.retain(|k, _| !run_indicator_rows.contains(k));
+                    #[cfg(any())]
                     let mut breakpoints = if show_breakpoints {
                         self.layout_breakpoints(&gutter, &breakpoint_rows, window, cx)
                     } else {
                         Vec::new()
                     };
+                    #[cfg(not(any()))]
+                    let mut breakpoints = Vec::new();
 
                     let gutter_hover_button = self
                         .editor
@@ -9018,10 +9041,14 @@ impl Element for EditorElement {
                         .map(|phantom| phantom.display_row);
 
                     if let Some(row) = gutter_hover_button
-                        && !breakpoint_rows.contains_key(&row)
+                        && !breakpoint_anchors.contains_key(&row)
                         && !run_indicator_rows.contains(&row)
                         && !bookmark_rows.contains(&row)
-                        && (show_bookmarks || show_breakpoints)
+                        && (show_bookmarks
+                            || cfg!(feature = "debugger")
+                                && snapshot
+                                    .show_breakpoints
+                                    .unwrap_or(gutter_settings.breakpoints))
                     {
                         let position = snapshot
                             .display_point_to_anchor(DisplayPoint::new(row, 0), Bias::Right);

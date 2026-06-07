@@ -25,8 +25,10 @@ use ui::{Context, Window};
 use util::debug_panic;
 
 use super::{Inlay, InlayId};
+#[cfg(any())]
+use crate::ToggleInlineValues;
 use crate::{
-    Editor, EditorSnapshot, PointForPosition, ToggleInlayHints, ToggleInlineValues, debounce_value,
+    Editor, EditorSnapshot, PointForPosition, ToggleInlayHints, debounce_value,
     display_map::{DisplayMap, InlayOffset},
     hover_links::{InlayHighlight, TriggerPoint, show_link_definition},
     hover_popover::{self, InlayHover},
@@ -257,6 +259,7 @@ impl Editor {
         supports
     }
 
+    #[cfg(any())]
     pub fn toggle_inline_values(
         &mut self,
         _: &ToggleInlineValues,

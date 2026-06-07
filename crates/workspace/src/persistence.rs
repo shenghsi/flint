@@ -23,7 +23,6 @@ use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
-    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
 };
 
@@ -50,8 +49,8 @@ use crate::{
 };
 
 use model::{
-    GroupId, ItemId, PaneId, RemoteConnectionId, SerializedItem, SerializedPane,
-    SerializedPaneGroup, SerializedWorkspace,
+    BreakpointState, GroupId, ItemId, PaneId, RemoteConnectionId, SerializedItem, SerializedPane,
+    SerializedPaneGroup, SerializedWorkspace, SourceBreakpoint,
 };
 
 use self::model::{DockStructure, SerializedWorkspaceLocation, SessionWorkspace};
@@ -425,12 +424,12 @@ impl Column for Bookmark {
 }
 
 #[derive(Debug)]
-pub struct Breakpoint {
-    pub position: u32,
-    pub message: Option<Arc<str>>,
-    pub condition: Option<Arc<str>>,
-    pub hit_condition: Option<Arc<str>>,
-    pub state: BreakpointState,
+pub(crate) struct Breakpoint {
+    pub(crate) position: u32,
+    pub(crate) message: Option<Arc<str>>,
+    pub(crate) condition: Option<Arc<str>>,
+    pub(crate) hit_condition: Option<Arc<str>>,
+    pub(crate) state: BreakpointState,
 }
 
 /// Wrapper for DB type of a breakpoint

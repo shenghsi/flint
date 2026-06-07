@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 use collections::HashMap;
 use context_server::ContextServerCommand;
+#[cfg(any())]
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
@@ -19,12 +20,14 @@ use rpc::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::BinarySettings;
+#[cfg(any())]
+use settings::DapSettingsContent;
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
-    DapSettingsContent, EditorconfigEvent, InvalidSettingsError, LocalSettingsKind,
-    LocalSettingsPath, RegisterSetting, SemanticTokenRules, Settings, SettingsLocation,
-    SettingsStore, parse_json_with_comments, watch_config_file,
+    EditorconfigEvent, InvalidSettingsError, LocalSettingsKind, LocalSettingsPath, RegisterSetting,
+    SemanticTokenRules, Settings, SettingsLocation, SettingsStore, parse_json_with_comments,
+    watch_config_file,
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
@@ -56,7 +59,7 @@ pub struct ProjectSettings {
     /// Common language server settings.
     pub global_lsp_settings: GlobalLspSettings,
 
-    /// Configuration for Debugger-related features
+    #[cfg(any())]
     pub dap: HashMap<DebugAdapterName, DapSettings>,
 
     /// Settings for context servers used for AI-related features.
@@ -735,6 +738,7 @@ impl Settings for ProjectSettings {
                     .unwrap()
                     .clone(),
             },
+            #[cfg(any())]
             dap: project
                 .dap
                 .clone()
@@ -1597,12 +1601,14 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
 }
 
 #[derive(Debug, Clone)]
+#[cfg(any())]
 pub struct DapSettings {
     pub binary: DapBinary,
     pub args: Option<Vec<String>>,
     pub env: Option<HashMap<String, String>>,
 }
 
+#[cfg(any())]
 impl From<DapSettingsContent> for DapSettings {
     fn from(content: DapSettingsContent) -> Self {
         DapSettings {

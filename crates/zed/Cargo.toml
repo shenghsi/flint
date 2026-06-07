@@ -28,77 +28,29 @@ test-support = [
     "repl/test-support",
     "title_bar/test-support",
 ]
-visual-tests = [
-    "gpui/test-support",
-    "gpui_platform/screen-capture",
-    "gpui_platform/test-support",
-    "dep:image",
-    "dep:tempfile",
-    "dep:action_log",
-    "dep:agent_servers",
-    "workspace/test-support",
-    "project/test-support",
-    "editor/test-support",
-    "terminal_view/test-support",
-    "image_viewer/test-support",
-    "clock/test-support",
-    "acp_thread/test-support",
-    "action_log/test-support",
-    "agent_ui/test-support",
-    "db/test-support",
-    "agent/test-support",
-    "language_model/test-support",
-    "fs/test-support",
-    "recent_projects/test-support",
-    "title_bar/test-support",
-]
 
 [[bin]]
 name = "zed"
 path = "src/main.rs"
 
-[[bin]]
-name = "zed_visual_test_runner"
-path = "src/visual_test_runner.rs"
-required-features = ["visual-tests"]
-
 [dependencies]
-acp_tools.workspace = true
 activity_indicator.workspace = true
-agent.workspace = true
-agent-client-protocol.workspace = true
-agent_settings.workspace = true
-agent_skills.workspace = true
-agent_ui = { workspace = true, features = ["audio"] }
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
-audio.workspace = true
 auto_update.workspace = true
-auto_update_ui.workspace = true
 breadcrumbs.workspace = true
-call.workspace = true
 chrono.workspace = true
-channel.workspace = true
 clap.workspace = true
 cli.workspace = true
 client.workspace = true
-codestral.workspace = true
-collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
 component.workspace = true
 component_preview.workspace = true
-copilot.workspace = true
-copilot_chat.workspace = true
-copilot_ui.workspace = true
 crashes.workspace = true
 csv_preview.workspace = true
-dap_adapters.workspace = true
 db.workspace = true
-debug_adapter_extension.workspace = true
-debugger_tools.workspace = true
-debugger_ui.workspace = true
 dev_container.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
@@ -123,16 +75,9 @@ hdrhistogram.workspace = true
 image = { workspace = true, optional = true }
 itertools.workspace = true
 semver.workspace = true
-tempfile = { workspace = true, optional = true }
-clock = { workspace = true, optional = true }
-acp_thread.workspace = true
-action_log = { workspace = true, optional = true }
-agent_servers = { workspace = true, optional = true }
 gpui_tokio.workspace = true
 rayon.workspace = true
 
-edit_prediction.workspace = true
-edit_prediction_ui.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
 input_latency_ui.workspace = true
@@ -143,8 +88,6 @@ json_schema_store.workspace = true
 keymap_editor.workspace = true
 language.workspace = true
 language_extension.workspace = true
-language_model.workspace = true
-language_models.workspace = true
 language_onboarding.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
@@ -169,7 +112,6 @@ profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
-prompt_store.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
@@ -184,9 +126,7 @@ serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
 settings_profile_selector.workspace = true
-settings_ui.workspace = true
 shellexpand.workspace = true
-sidebar.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
@@ -217,8 +157,6 @@ uuid.workspace = true
 vim.workspace = true
 vim_mode_setting.workspace = true
 watch.workspace = true
-web_search.workspace = true
-web_search_providers.workspace = true
 which_key.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
@@ -254,7 +192,6 @@ image.workspace = true
 pkg-config = "0.3.22"
 
 [dev-dependencies]
-call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["input-latency-histogram", "test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
@@ -267,7 +204,6 @@ terminal_view = { workspace = true, features = ["test-support"] }
 title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 image.workspace = true
-agent_ui = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
 repl = { workspace = true, features = ["test-support"] }
 
