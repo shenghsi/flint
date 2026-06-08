@@ -1,19 +1,10 @@
 # Flint
 
-[![Flint](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/flint/main/assets/badge/v0.json)](https://flint.dev)
-[![CI](https://github.com/zed-industries/flint/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/flint/actions/workflows/run_tests.yml)
+Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed), the high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
-Welcome to Flint, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+Flint inherits Zed's fast, GPU-accelerated rendering and AI capabilities while shipping with terminal-first defaults and its own identity.
 
 ---
-
-### Installation
-
-On macOS, Linux, and Windows you can [download Flint directly](https://flint.dev/download) or install Flint via your local package manager ([macOS](https://flint.dev/docs/installation#macos)/[Linux](https://flint.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://flint.dev/docs/windows#package-managers)).
-
-Other platforms are not yet available:
-
-- Web ([tracking discussion](https://github.com/zed-industries/flint/discussions/26195))
 
 ### Developing Flint
 
@@ -21,11 +12,9 @@ Other platforms are not yet available:
 - [Building Flint for Linux](./docs/src/development/linux.md)
 - [Building Flint for Windows](./docs/src/development/windows.md)
 
-### Contributing
+### Extensions
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Flint.
-
-Also... we're hiring! Check out our [jobs](https://flint.dev/jobs) page for open roles.
+Flint is compatible with the [Zed extension registry](https://zed.dev/extensions). Extensions install and work without modification.
 
 ### Licensing
 
@@ -39,10 +28,6 @@ We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automati
 - Is the error `failed to satisfy license requirements` for a dependency? If so, first determine what license the project has and whether this system is sufficient to comply with this license's requirements. If you're unsure, ask a lawyer. Once you've verified that this system is acceptable add the license's SPDX identifier to the `accepted` array in `script/licenses/flint-licenses.toml`.
 - Is `cargo-about` unable to find the license for a dependency? If so, add a clarification field at the end of `script/licenses/flint-licenses.toml`, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
 
-## Sponsorship
+### Acknowledgements
 
-Flint is developed by **Flint Industries, Inc.**, a for-profit company.
-
-If you’d like to financially support the project, you can do so via GitHub Sponsors.
-Sponsorships go directly to Flint Industries and are used as general company revenue.
-There are no perks or entitlements associated with sponsorship.
+Flint is built on top of [Zed](https://github.com/zed-industries/zed) by Zed Industries. We are grateful for their open-source contribution.
