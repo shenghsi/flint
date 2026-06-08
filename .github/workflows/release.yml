@@ -6,6 +6,9 @@ on:
   push:
     tags:
       - v*
+  workflow_dispatch: {}
+permissions:
+  contents: write
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
@@ -24,15 +27,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
       - name: Setup sccache
         run: ./script/setup-sccache
         env:
           ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           SCCACHE_GHA_ENABLED: "on"
+      - run: cargo install cargo-nextest --locked
       - run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
       - run: sccache --show-stats || true
       - name: Cleanup cargo config
@@ -64,15 +65,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
       - name: Setup sccache
         run: ./script/setup-sccache
         env:
           ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           SCCACHE_GHA_ENABLED: "on"
+      - run: cargo install cargo-nextest --locked
       - run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
       - run: sccache --show-stats || true
       - name: Cleanup cargo config
@@ -99,6 +98,8 @@ jobs:
           ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           SCCACHE_GHA_ENABLED: "on"
+      - shell: pwsh
+        run: cargo install cargo-nextest --locked
       - shell: pwsh
         run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
       - name: Show sccache stats
