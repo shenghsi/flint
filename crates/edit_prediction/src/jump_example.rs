@@ -328,7 +328,7 @@ fn submit_jump_example_capture_task(
         let compressed = zstd::encode_all(&json_bytes[..], 3)?;
         let url = client
             .http_client()
-            .build_zed_llm_url("/predict_edits/jump_example", &[])?;
+            .build_flint_llm_url("/predict_edits/jump_example", &[])?;
         EditPredictionStore::send_api_request::<SubmitEditPredictionJumpExampleResponse>(
             |builder| {
                 Ok(builder

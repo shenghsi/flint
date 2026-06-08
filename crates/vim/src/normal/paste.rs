@@ -66,7 +66,7 @@ impl Vim {
                 let display_map = editor.display_snapshot(cx);
                 let current_selections = editor.selections.all_adjusted_display(&display_map);
 
-                // unlike zed, if you have a multi-cursor selection from vim block mode,
+                // unlike flint, if you have a multi-cursor selection from vim block mode,
                 // pasting it will paste it on subsequent lines, even if you don't yet
                 // have a cursor there.
                 let mut selections_to_process = Vec::new();
@@ -93,8 +93,8 @@ impl Vim {
                 }
 
                 let first_selection_indent_column =
-                    clipboard_selections.as_ref().and_then(|zed_selections| {
-                        zed_selections
+                    clipboard_selections.as_ref().and_then(|flint_selections| {
+                        flint_selections
                             .first()
                             .map(|selection| selection.first_line_indent)
                     });

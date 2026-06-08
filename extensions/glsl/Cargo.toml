@@ -1,5 +1,5 @@
 [package]
-name = "zed_glsl"
+name = "flint_glsl"
 version = "0.2.4"
 edition.workspace = true
 publish.workspace = true

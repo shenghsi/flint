@@ -247,7 +247,7 @@ pub enum Request {
 /// This struct represent a user created debug task from the new process modal
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub struct ZedDebugConfig {
+pub struct FlintDebugConfig {
     /// Name of the debug task
     pub label: SharedString,
     /// The debug adapter to use

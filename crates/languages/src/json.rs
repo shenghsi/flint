@@ -329,7 +329,7 @@ impl LspAdapter for JsonLspAdapter {
         .collect()
     }
 
-    fn is_primary_zed_json_schema_adapter(&self) -> bool {
+    fn is_primary_flint_json_schema_adapter(&self) -> bool {
         true
     }
 }

@@ -1081,8 +1081,8 @@ impl Editor {
 
             if let Some(url) = url {
                 cx.update(|window, cx| {
-                    if parse_zed_link(&url, cx).is_some() {
-                        window.dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                    if parse_flint_link(&url, cx).is_some() {
+                        window.dispatch_action(Box::new(flint_actions::OpenFlintUrl { url }), cx);
                     } else {
                         cx.open_url(&url);
                     }
@@ -1697,9 +1697,9 @@ impl Editor {
                 match first_url_or_file {
                     Some(Either::Left(url)) => {
                         cx.update(|window, cx| {
-                            if parse_zed_link(&url, cx).is_some() {
+                            if parse_flint_link(&url, cx).is_some() {
                                 window
-                                    .dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                                    .dispatch_action(Box::new(flint_actions::OpenFlintUrl { url }), cx);
                             } else {
                                 cx.open_url(&url);
                             }

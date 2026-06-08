@@ -800,7 +800,7 @@ impl Fs for RealFs {
 
     async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashedEntry> {
         // We must make the path absolute or trash will make a weird abomination
-        // of the zed working directory (not usually the worktree) and whatever
+        // of the flint working directory (not usually the worktree) and whatever
         // the path variable holds.
         // We deliberately use `std::path::absolute` instead of `canonicalize`
         // to avoid resolving symlinks. Otherwise trashing a symlink would trash
@@ -859,7 +859,7 @@ impl Fs for RealFs {
         smol::unblock(move || {
             // Use the directory of the destination as temp dir to avoid
             // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-            // See https://github.com/zed-industries/zed/pull/8437 for more details.
+            // See https://github.com/zed-industries/flint/pull/8437 for more details.
             let mut tmp_file =
                 tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
             tmp_file.write_all(data.as_bytes())?;
@@ -885,7 +885,7 @@ impl Fs for RealFs {
             // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#remarks
             //
             // So we use the directory of the destination as a temp dir to avoid it.
-            // https://github.com/zed-industries/zed/issues/16571
+            // https://github.com/zed-industries/flint/issues/16571
             let temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
             let temp_file = {
                 let temp_file_path = temp_dir.path().join("temp_file");

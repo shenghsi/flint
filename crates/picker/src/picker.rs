@@ -23,7 +23,7 @@ use ui::{
 };
 use ui_input::{ErasedEditor, ErasedEditorEvent};
 use workspace::{ModalView, item::Settings};
-use zed_actions::editor::{MoveDown, MoveUp};
+use flint_actions::editor::{MoveDown, MoveUp};
 
 enum ElementContainer {
     List(ListState),

@@ -213,7 +213,7 @@ def main() -> int:
         default=100,
         help="Number of unresolved issues to consider for candidate selection",
     )
-    parser.add_argument("--org", default="zed-dev", help="Sentry org slug")
+    parser.add_argument("--org", default="flint-dev", help="Sentry org slug")
     parser.add_argument(
         "--select-only",
         action="store_true",

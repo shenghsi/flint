@@ -836,7 +836,7 @@ impl ConfigurationView {
                             .child(Label::new("ollama run gpt-oss:20b").inline_code(cx)),
                     )
                     .child(ListBulletItem::new(
-                        "Click 'Connect' below to start using Ollama in Zed",
+                        "Click 'Connect' below to start using Ollama in Flint",
                     )),
             )
             .child(Label::new(
@@ -860,7 +860,7 @@ impl ConfigurationView {
               .child(self.api_key_editor.clone())
               .child(
                   Label::new(
-                      format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed.")
+                      format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Flint.")
                   )
                   .size(LabelSize::Small)
                   .color(Color::Muted),
@@ -1111,7 +1111,7 @@ mod tests {
 
     #[test]
     fn test_merge_settings_preserves_display_names_for_similar_models() {
-        // Regression test for https://github.com/zed-industries/zed/issues/43646
+        // Regression test for https://github.com/zed-industries/flint/issues/43646
         // When multiple models share the same base name (e.g., qwen2.5-coder:1.5b and qwen2.5-coder:3b),
         // each model should get its own display_name from settings, not a random one.
 

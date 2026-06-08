@@ -31,7 +31,7 @@ jobs:
   assign-contributor:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.repository == 'zed-industries/zed' &&
+      (github.repository == 'flint-industries/flint' &&
       github.event.issue.state == 'open' &&
       (startsWith(github.event.label.name, '.contrib/good ') || startsWith(github.event.label.name, 'area:')))
     runs-on: namespace-profile-2x4-ubuntu-2404
@@ -44,7 +44,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: flint-industries
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1

@@ -108,9 +108,9 @@ impl FeatureFlagValue for PresenceFlag {
 /// To create a feature flag, implement this trait on a trivial type and use it as
 /// a generic parameter when called [`FeatureFlagAppExt::has_flag`].
 ///
-/// Feature flags are enabled for members of Zed staff by default. To disable this behavior
+/// Feature flags are enabled for members of Flint staff by default. To disable this behavior
 /// so you can test flags being disabled, set ZED_DISABLE_STAFF=1 in your environment,
-/// which will force Zed to treat the current user as non-staff.
+/// which will force Flint to treat the current user as non-staff.
 pub trait FeatureFlag {
     const NAME: &'static str;
 
@@ -118,7 +118,7 @@ pub trait FeatureFlag {
     /// on/off flags.
     type Value: FeatureFlagValue;
 
-    /// Returns whether this feature flag is enabled for Zed staff.
+    /// Returns whether this feature flag is enabled for Flint staff.
     fn enabled_for_staff() -> bool {
         true
     }

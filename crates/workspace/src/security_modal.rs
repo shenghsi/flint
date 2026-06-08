@@ -180,7 +180,7 @@ impl Render for SecurityModal {
                             )
                             .child(
                                 Label::new(
-                                    "Review .zed/settings.json for any extensions or commands configured by this project.",
+                                    "Review .flint/settings.json for any extensions or commands configured by this project.",
                                 )
                                 .color(Color::Muted),
                             ),

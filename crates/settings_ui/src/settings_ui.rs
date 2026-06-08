@@ -48,7 +48,7 @@ use workspace::{
     AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
     client_side_decorations,
 };
-use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt, OpenSettingsAtTarget};
+use flint_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt, OpenSettingsAtTarget};
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
@@ -748,7 +748,7 @@ fn open_settings_editor_at_target(
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Zed — Settings".into()),
+                    title: Some("Flint — Settings".into()),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(12.0), px(12.0))),
                 }),
@@ -1380,7 +1380,7 @@ fn render_settings_item_link(
                 .tooltip(Tooltip::text("Copy Link"))
                 .when_some(json_path, |this, path| {
                     this.on_click(cx.listener(move |this, _, _, cx| {
-                        let link = format!("zed://settings/{}", path);
+                        let link = format!("flint://settings/{}", path);
                         cx.write_to_clipboard(ClipboardItem::new_string(link));
                         this.last_copied_link_path = Some(path);
                         cx.notify();
@@ -1518,7 +1518,7 @@ fn all_language_names(cx: &App) -> Vec<SharedString> {
         .languages
         .language_names()
         .into_iter()
-        .filter(|name| name.as_ref() != "Zed Keybind Context")
+        .filter(|name| name.as_ref() != "Flint Keybind Context")
         .map(Into::into)
         .collect()
 }
@@ -3869,7 +3869,7 @@ impl SettingsWindow {
 
                 let worktree_id = *worktree_id;
 
-                // TODO: move zed::open_local_file() APIs to this crate, and
+                // TODO: move flint::open_local_file() APIs to this crate, and
                 // re-implement the "initial_contents" behavior
                 let workspace_weak = corresponding_workspace.downgrade();
                 workspace_window
@@ -5812,7 +5812,7 @@ mod project_settings_update_tests {
         let fs = FakeFs::new(cx.executor());
         let tree = if let Some(settings_content) = initial_settings {
             json!({
-                ".zed": {
+                ".flint": {
                     "settings.json": settings_content
                 },
                 "src": { "main.rs": "" }
@@ -5829,7 +5829,7 @@ mod project_settings_update_tests {
             (worktree.read(cx).id(), worktree.downgrade())
         });
 
-        let rel_path: Arc<RelPath> = RelPath::unix(".zed/settings.json")
+        let rel_path: Arc<RelPath> = RelPath::unix(".flint/settings.json")
             .expect("valid path")
             .into_arc();
         let project_path = ProjectPath {
@@ -6059,7 +6059,7 @@ mod project_settings_update_tests {
 
         let file_content = setup
             .fs
-            .load("/project/.zed/settings.json".as_ref())
+            .load("/project/.flint/settings.json".as_ref())
             .await
             .unwrap();
         assert_eq!(
@@ -6092,7 +6092,7 @@ mod project_settings_update_tests {
         setup
             .fs
             .save(
-                "/project/.zed/settings.json".as_ref(),
+                "/project/.flint/settings.json".as_ref(),
                 &r#"{ "tab_size": 99 }"#.into(),
                 Default::default(),
             )

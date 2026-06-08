@@ -1132,7 +1132,7 @@ fn compute_hunks(
     if let Some((diff_base, diff_base_rope)) = diff_base {
         let buffer_text = buffer.as_rope().to_string();
 
-        // A common case in Zed is that the empty buffer is represented as just a newline,
+        // A common case in Flint is that the empty buffer is represented as just a newline,
         // but if we just compute a naive diff you get a "preserved" line in the middle,
         // which is a bit odd.
         if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {

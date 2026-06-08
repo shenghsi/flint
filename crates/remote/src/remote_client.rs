@@ -346,7 +346,7 @@ impl ConnectionIdentifier {
 
     // This string gets used in a socket name, and so must be relatively short.
     // The total length of:
-    //   /home/{username}/.local/share/zed/server_state/{name}/stdout.sock
+    //   /home/{username}/.local/share/flint/server_state/{name}/stdout.sock
     // Must be less than about 100 characters
     //   https://unix.stackexchange.com/questions/367008/why-is-socket-path-length-limited-to-a-hundred-chars
     // So our strings should be at most 20 characters or so.

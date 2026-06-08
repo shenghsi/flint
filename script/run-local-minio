@@ -8,7 +8,7 @@ if ! which minio > /dev/null; then
 fi
 
 mkdir -p .blob_store/the-extensions-bucket
-mkdir -p .blob_store/zed-crash-reports
+mkdir -p .blob_store/flint-crash-reports
 
 export MINIO_ROOT_USER=the-blob-store-access-key
 export MINIO_ROOT_PASSWORD=the-blob-store-secret-key

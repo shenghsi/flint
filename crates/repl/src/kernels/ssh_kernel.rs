@@ -198,7 +198,7 @@ impl SshRunningKernel {
             local_connection_info["ip"] = serde_json::json!("127.0.0.1");
 
             let local_connection_file =
-                std::env::temp_dir().join(format!("zed_ssh_kernel_{}.json", kernel_id));
+                std::env::temp_dir().join(format!("flint_ssh_kernel_{}.json", kernel_id));
             std::fs::write(
                 &local_connection_file,
                 serde_json::to_string_pretty(&local_connection_info)?,

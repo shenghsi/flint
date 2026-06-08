@@ -13,7 +13,7 @@ use gpui::BackgroundExecutor;
 use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
-use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate, FlintDebugConfig};
 
 use latest::dap::StartDebuggingRequestArgumentsRequest;
 
@@ -84,7 +84,7 @@ pub fn authorize_access_to_unreleased_wasm_api_version(
 
     anyhow::ensure!(
         allow_unreleased_version,
-        "unreleased versions of the extension API can only be used on development builds of Zed"
+        "unreleased versions of the extension API can only be used on development builds of Flint"
     );
 
     Ok(())
@@ -1141,7 +1141,7 @@ impl Extension {
     pub async fn call_dap_config_to_scenario(
         &self,
         store: &mut Store<WasmState>,
-        config: ZedDebugConfig,
+        config: FlintDebugConfig,
     ) -> Result<Result<DebugScenario, String>> {
         match self {
             Extension::V0_8_0(ext) => {

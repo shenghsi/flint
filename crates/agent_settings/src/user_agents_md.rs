@@ -1,6 +1,6 @@
 //! User-global `AGENTS.md` support.
 //!
-//! Loads `~/.config/zed/AGENTS.md` (or the platform equivalent) into an
+//! Loads `~/.config/flint/AGENTS.md` (or the platform equivalent) into an
 //! in-memory global, watches the file for changes, and surfaces read errors
 //! through a caller-supplied notifier (so the host application can present
 //! them with the same UI it uses for settings/keymap errors).

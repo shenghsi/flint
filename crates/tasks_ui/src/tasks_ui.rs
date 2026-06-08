@@ -412,7 +412,7 @@ mod tests {
         fs.insert_tree(
             path!("/dir"),
             json!({
-                ".zed": {
+                ".flint": {
                     "tasks.json": r#"[
                             {
                                 "label": "example task",

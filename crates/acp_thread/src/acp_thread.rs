@@ -3856,7 +3856,7 @@ mod tests {
             .unwrap();
 
         thread
-            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
+            .update(cx, |thread, cx| thread.send_raw("Hello from Flint!", cx))
             .await
             .unwrap();
 
@@ -3866,7 +3866,7 @@ mod tests {
             indoc! {r#"
             ## User
 
-            Hello from Zed!
+            Hello from Flint!
 
             ## Assistant
 
@@ -3916,12 +3916,12 @@ mod tests {
             .unwrap();
 
         thread
-            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
+            .update(cx, |thread, cx| thread.send_raw("Hello from Flint!", cx))
             .await
             .unwrap();
 
         let output = thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
-        assert_eq!(output.matches("Hello from Zed!").count(), 1);
+        assert_eq!(output.matches("Hello from Flint!").count(), 1);
     }
 
     #[gpui::test]
@@ -6050,7 +6050,7 @@ mod tests {
     /// the outer task observes `rx.await` returning `Err(Cancelled)` and
     /// must still clear `running_turn` so the panel transitions out of
     /// `Generating`. Without this, the agent thread is wedged in the
-    /// loading state until Zed restarts.
+    /// loading state until Flint restarts.
     #[gpui::test]
     async fn test_running_turn_cleared_when_send_task_dropped(cx: &mut TestAppContext) {
         init_test(cx);

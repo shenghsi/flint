@@ -16,7 +16,7 @@ use settings::{
     MinimumContrast,
 };
 use ui::prelude::*;
-use zed_actions::editor::{MoveDown, MoveUp};
+use flint_actions::editor::{MoveDown, MoveUp};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NumberFieldMode {

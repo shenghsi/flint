@@ -145,7 +145,7 @@ async fn cursor_position(
 
     let cursor_path_str = example.spec.cursor_path.to_string_lossy();
     // Also try cursor path with first component stripped - old examples may have
-    // paths like "zed/crates/foo.rs" instead of "crates/foo.rs".
+    // paths like "flint/crates/foo.rs" instead of "crates/foo.rs".
     let cursor_path_without_prefix: PathBuf =
         example.spec.cursor_path.components().skip(1).collect();
     let cursor_path_without_prefix_str = cursor_path_without_prefix.to_string_lossy();

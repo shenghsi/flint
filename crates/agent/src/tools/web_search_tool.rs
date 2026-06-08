@@ -62,7 +62,7 @@ impl AgentTool for WebSearchTool {
         "Searching the Web".into()
     }
 
-    /// We currently only support Zed Cloud as a provider.
+    /// We currently only support Flint Cloud as a provider.
     fn supports_provider(provider: &LanguageModelProviderId) -> bool {
         provider == &ZED_CLOUD_PROVIDER_ID
     }

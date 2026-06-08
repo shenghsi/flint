@@ -320,7 +320,7 @@ fn class_diagram_fallback_text_uses_accent_classes() {
                     if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
                         let class = class_attr.unescape_value().unwrap_or_default().to_string();
                         for token in class.split_whitespace() {
-                            if token.starts_with("zed-accent-") {
+                            if token.starts_with("flint-accent-") {
                                 accent_classes.push(token.to_string());
                             }
                         }
@@ -336,7 +336,7 @@ fn class_diagram_fallback_text_uses_accent_classes() {
 
     assert!(
         !accent_classes.is_empty(),
-        "expected zed-accent-N classes on text elements in fallback groups",
+        "expected flint-accent-N classes on text elements in fallback groups",
     );
 }
 
@@ -356,7 +356,7 @@ fn sequence_diagram_tspan_uses_accent_classes() {
                 if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
                     let class = class_attr.unescape_value().unwrap_or_default().to_string();
                     for token in class.split_whitespace() {
-                        if token.starts_with("zed-accent-") {
+                        if token.starts_with("flint-accent-") {
                             accent_classes.push(token.to_string());
                         }
                     }
@@ -368,7 +368,7 @@ fn sequence_diagram_tspan_uses_accent_classes() {
 
     assert!(
         !accent_classes.is_empty(),
-        "expected zed-accent-N classes on tspan elements in sequence diagram",
+        "expected flint-accent-N classes on tspan elements in sequence diagram",
     );
 }
 

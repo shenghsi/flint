@@ -343,7 +343,7 @@ struct CommitDataHandler {
     pending_requests: HashSet<Oid>,
 }
 
-/// Represents the handler of a git cat-file --batch process within Zed
+/// Represents the handler of a git cat-file --batch process within Flint
 /// It's used to lazily fetch commit data as needed (whatever a user is viewing)
 enum CommitDataHandlerState {
     /// The handler is open and processing requests
@@ -4406,8 +4406,8 @@ impl RepositorySnapshot {
     /// The main worktree is the original checkout that other worktrees were
     /// created from.
     ///
-    /// For example, if you had both `~/code/zed` and `~/code/worktrees/zed-2`,
-    /// then `~/code/zed` is the main worktree and `~/code/worktrees/zed-2` is a linked worktree.
+    /// For example, if you had both `~/code/flint` and `~/code/worktrees/flint-2`,
+    /// then `~/code/flint` is the main worktree and `~/code/worktrees/flint-2` is a linked worktree.
     ///
     /// Submodules also return `true` here, since they are not linked worktrees.
     pub fn is_main_worktree(&self) -> bool {
@@ -8399,7 +8399,7 @@ impl Repository {
         self.send_job("access", None, move |git_repo, _cx| async move {
             match git_repo {
                 // TODO: Correctly handle remote repositories, where the user
-                // that's running the Zed remote may not own the `.git/`
+                // that's running the Flint remote may not own the `.git/`
                 // directory. For now we just return `GitAccess::Yes` so that
                 // remoting continues working as expected.
                 RepositoryState::Remote(..) => GitAccess::Yes,
@@ -8582,7 +8582,7 @@ async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path,
 ///   normal checkout, or `.bare` for a bare clone), the parent directory is
 ///   returned. Both of these are internal Git directories; the parent is the
 ///   meaningful project root.
-/// - Otherwise (e.g. `zed.git` for a bare clone), `common_dir` itself is
+/// - Otherwise (e.g. `flint.git` for a bare clone), `common_dir` itself is
 ///   returned — it is already a meaningful on-disk path.
 pub fn repo_identity_path(common_dir: &Path) -> &Path {
     let is_dot_entry = common_dir

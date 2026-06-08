@@ -5,14 +5,14 @@
     let
       # NOTE: Duplicated because this is in a separate flake-parts partition
       # than ./packages.nix
-      mkZed = import ../toolchain.nix { inherit inputs; };
-      zed-editor = mkZed pkgs;
+      mkFlint = import ../toolchain.nix { inherit inputs; };
+      flint-editor = mkFlint pkgs;
 
       rustBin = inputs.rust-overlay.lib.mkRustBin { } pkgs;
       rustToolchain = rustBin.fromRustupToolchainFile ../../rust-toolchain.toml;
 
       baseEnv =
-        (zed-editor.overrideAttrs (attrs: {
+        (flint-editor.overrideAttrs (attrs: {
           passthru.env = attrs.env;
         })).env; # exfil `env`; it's not in drvAttrs
 
@@ -33,9 +33,9 @@
       };
     in
     {
-      devShells.default = (pkgs.mkShell.override { inherit (zed-editor) stdenv; }) {
-        name = "zed-editor-dev";
-        inputsFrom = [ zed-editor ];
+      devShells.default = (pkgs.mkShell.override { inherit (flint-editor) stdenv; }) {
+        name = "flint-editor-dev";
+        inputsFrom = [ flint-editor ];
 
         packages =
           with pkgs;
@@ -46,10 +46,10 @@
             cargo-hakari
             cargo-machete
             cargo-zigbuild
-            # TODO: package protobuf-language-server for editing zed.proto
+            # TODO: package protobuf-language-server for editing flint.proto
             # TODO: add other tools used in our scripts
 
-            # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`)
+            # `build.nix` adds this to the `flint-editor` wrapper (see `postFixup`)
             # we'll just put it on `$PATH`:
             nodejs_22
             zig

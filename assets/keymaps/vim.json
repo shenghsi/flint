@@ -112,9 +112,9 @@
       "g s": "outline::Toggle",
       "g shift-o": "outline::Toggle",
       "g shift-s": "project_symbols::Toggle",
-      "g .": "editor::ToggleCodeActions", // zed specific
-      "g shift-a": "editor::FindAllReferences", // zed specific
-      "g space": "editor::OpenExcerpts", // zed specific
+      "g .": "editor::ToggleCodeActions", // flint specific
+      "g shift-a": "editor::FindAllReferences", // flint specific
+      "g space": "editor::OpenExcerpts", // flint specific
       "g *": ["vim::MoveToNext", { "partial_word": true }],
       "g #": ["vim::MoveToPrevious", { "partial_word": true }],
       "g j": ["vim::Down", { "display_lines": true }],
@@ -359,7 +359,7 @@
       "escape": "vim::NormalBefore",
       "ctrl-x": null,
       "ctrl-x ctrl-o": "editor::ShowCompletions",
-      "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
+      "ctrl-x ctrl-l": "editor::ToggleCodeActions", // flint specific
       "ctrl-x ctrl-z": "editor::Cancel",
       "ctrl-x ctrl-e": "vim::LineDown",
       "ctrl-x ctrl-y": "vim::LineUp",
@@ -513,11 +513,11 @@
       "shift-h": "pane::ActivatePreviousItem", // not a helix default
       "g w": "vim::HelixJumpToWord",
       "g .": "vim::HelixGotoLastModification",
-      "g o": "editor::ToggleSelectedDiffHunks", // Zed specific
-      "g shift-o": "git::ToggleStaged", // Zed specific
-      "g shift-r": "git::Restore", // Zed specific
-      "g u": "git::StageAndNext", // Zed specific
-      "g shift-u": "git::UnstageAndNext", // Zed specific
+      "g o": "editor::ToggleSelectedDiffHunks", // Flint specific
+      "g shift-o": "git::ToggleStaged", // Flint specific
+      "g shift-r": "git::Restore", // Flint specific
+      "g u": "git::StageAndNext", // Flint specific
+      "g shift-u": "git::UnstageAndNext", // Flint specific
 
       // Window mode
       "space w v": "pane::SplitRight",
@@ -701,7 +701,7 @@
     "bindings": {
       "c": "vim::CurrentLine",
       "x": "vim::Exchange",
-      "d": "editor::Rename", // zed specific
+      "d": "editor::Rename", // flint specific
       "s": ["vim::PushChangeSurrounds", {}],
     },
   },
@@ -857,7 +857,7 @@
       "escape": ["vim::Literal", ["escape", "\u001B"]],
       "enter": ["vim::Literal", ["enter", "\u000D"]],
       "tab": ["vim::Literal", ["tab", "\u0009"]],
-      // zed extensions:
+      // flint extensions:
       "backspace": ["vim::Literal", ["backspace", "\u0008"]],
       "delete": ["vim::Literal", ["delete", "\u007F"]],
     },

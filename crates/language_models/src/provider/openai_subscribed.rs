@@ -504,7 +504,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
                 (
                     HeaderName::from_static("originator"),
-                    HeaderValue::from_static("zed"),
+                    HeaderValue::from_static("flint"),
                 ),
                 (
                     HeaderName::from_static("openai-beta"),
@@ -739,7 +739,7 @@ async fn do_oauth_flow(
         .append_pair("id_token_add_organizations", "true")
         .append_pair("state", &oauth_state)
         .append_pair("codex_cli_simplified_flow", "true")
-        .append_pair("originator", "zed");
+        .append_pair("originator", "flint");
 
     // Open browser AFTER the listener is ready
     cx.update(|cx| cx.open_url(auth_url.as_str()));
@@ -1067,7 +1067,7 @@ impl Render for ConfigurationView {
         v_flex()
             .gap_2()
             .child(Label::new(
-                "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Zed's agent.",
+                "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Flint's agent.",
             ))
             .child(
                 Button::new("sign-in", button_label)

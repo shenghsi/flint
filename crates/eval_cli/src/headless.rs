@@ -43,7 +43,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
     theme_settings::init(theme::LoadThemes::JustBase, cx);
 
     let user_agent = format!(
-        "Zed Agent CLI/{} ({}; {})",
+        "Flint Agent CLI/{} ({}; {})",
         app_version,
         std::env::consts::OS,
         std::env::consts::ARCH

@@ -1,6 +1,6 @@
-# Zed Schema Generator
+# Flint Schema Generator
 
-Prints various Zed schemas to stdout.
+Prints various Flint schemas to stdout.
 
 ## Usage
 

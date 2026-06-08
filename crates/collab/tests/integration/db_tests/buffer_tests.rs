@@ -19,19 +19,19 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     let owner_id = db.create_server("production").await.unwrap().0 as u32;
 
-    let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
+    let flint_id = db.create_root_channel("flint", a_id).await.unwrap();
 
-    db.invite_channel_member(zed_id, b_id, a_id, ChannelRole::Member)
+    db.invite_channel_member(flint_id, b_id, a_id, ChannelRole::Member)
         .await
         .unwrap();
 
-    db.respond_to_channel_invite(zed_id, b_id, true)
+    db.respond_to_channel_invite(flint_id, b_id, true)
         .await
         .unwrap();
 
     let connection_id_a = ConnectionId { owner_id, id: 1 };
     let _ = db
-        .join_channel_buffer(zed_id, a_id, connection_id_a)
+        .join_channel_buffer(flint_id, a_id, connection_id_a)
         .await
         .unwrap();
 
@@ -53,13 +53,13 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .map(|op| proto::serialize_operation(&language::Operation::Buffer(op)))
         .collect::<Vec<_>>();
 
-    db.update_channel_buffer(zed_id, a_id, &operations)
+    db.update_channel_buffer(flint_id, a_id, &operations)
         .await
         .unwrap();
 
     let connection_id_b = ConnectionId { owner_id, id: 2 };
     let buffer_response_b = db
-        .join_channel_buffer(zed_id, b_id, connection_id_b)
+        .join_channel_buffer(flint_id, b_id, connection_id_b)
         .await
         .unwrap();
 
@@ -81,7 +81,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     // Ensure that C fails to open the buffer
     assert!(
-        db.join_channel_buffer(zed_id, c_id, ConnectionId { owner_id, id: 3 })
+        db.join_channel_buffer(flint_id, c_id, ConnectionId { owner_id, id: 3 })
             .await
             .is_err()
     );
@@ -110,11 +110,11 @@ async fn test_channel_buffers(db: &Arc<Database>) {
     );
 
     // Ensure that get_channel_buffer_collaborators works
-    let zed_collaborats = db.get_channel_buffer_collaborators(zed_id).await.unwrap();
-    assert_eq!(zed_collaborats, &[a_id, b_id]);
+    let flint_collaborats = db.get_channel_buffer_collaborators(flint_id).await.unwrap();
+    assert_eq!(flint_collaborats, &[a_id, b_id]);
 
     let left_buffer = db
-        .leave_channel_buffer(zed_id, connection_id_b)
+        .leave_channel_buffer(flint_id, connection_id_b)
         .await
         .unwrap();
 
@@ -128,15 +128,15 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     db.leave_channel_buffers(connection_id_a).await.unwrap();
 
-    let zed_collaborators = db.get_channel_buffer_collaborators(zed_id).await.unwrap();
+    let flint_collaborators = db.get_channel_buffer_collaborators(flint_id).await.unwrap();
     let cargo_collaborators = db.get_channel_buffer_collaborators(cargo_id).await.unwrap();
-    assert_eq!(zed_collaborators, &[]);
+    assert_eq!(flint_collaborators, &[]);
     assert_eq!(cargo_collaborators, &[]);
 
     // When everyone has left the channel, the operations are collapsed into
     // a new base text.
     let buffer_response_b = db
-        .join_channel_buffer(zed_id, b_id, connection_id_b)
+        .join_channel_buffer(flint_id, b_id, connection_id_b)
         .await
         .unwrap();
     assert_eq!(buffer_response_b.base_text, "hello, cruel world");

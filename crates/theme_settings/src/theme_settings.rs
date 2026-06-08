@@ -2,7 +2,7 @@
 
 //! # Theme Settings
 //!
-//! This crate provides theme settings integration for Zed,
+//! This crate provides theme settings integration for Flint,
 //! bridging the theme system with the settings infrastructure.
 
 mod schema;
@@ -205,7 +205,7 @@ pub fn reload_icon_theme(cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// Loads the themes bundled with the Zed binary into the registry.
+/// Loads the themes bundled with the Flint binary into the registry.
 pub fn load_bundled_themes(registry: &ThemeRegistry) {
     let theme_paths = registry
         .assets()

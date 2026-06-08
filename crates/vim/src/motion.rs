@@ -163,7 +163,7 @@ pub enum Motion {
     // we don't have a good way to run a search synchronously, so
     // we handle search motions by running the search async and then
     // calling back into motion with this
-    ZedSearchResult {
+    FlintSearchResult {
         prior_selections: Vec<Range<Anchor>>,
         new_selections: Vec<Range<Anchor>>,
     },
@@ -691,7 +691,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     pub(crate) fn search_motion(&mut self, m: Motion, window: &mut Window, cx: &mut Context<Self>) {
-        if let Motion::ZedSearchResult {
+        if let Motion::FlintSearchResult {
             prior_selections, ..
         } = &m
         {
@@ -820,7 +820,7 @@ impl Motion {
             | Sneak { .. }
             | SneakBackward { .. }
             | Jump { .. }
-            | ZedSearchResult { .. } => MotionKind::Exclusive,
+            | FlintSearchResult { .. } => MotionKind::Exclusive,
             RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
                 motion.default_kind()
             }
@@ -894,7 +894,7 @@ impl Motion {
             | WindowBottom
             | WindowMiddle
             | WindowTop
-            | ZedSearchResult { .. } => true,
+            | FlintSearchResult { .. } => true,
         }
     }
 
@@ -941,7 +941,7 @@ impl Motion {
             | WindowBottom
             | NextLineStart
             | PreviousLineStart
-            | ZedSearchResult { .. }
+            | FlintSearchResult { .. }
             | NextSectionStart
             | NextSectionEnd
             | PreviousSectionStart
@@ -1250,7 +1250,7 @@ impl Motion {
             WindowMiddle => window_middle(map, point, text_layout_details),
             WindowBottom => window_bottom(map, point, text_layout_details, times - 1),
             Jump { line, anchor } => mark::jump_motion(map, *anchor, *line),
-            ZedSearchResult { new_selections, .. } => {
+            FlintSearchResult { new_selections, .. } => {
                 // There will be only one selection, as
                 // Search::SelectNextMatch selects a single match.
                 if let Some(new_selection) = new_selections.first() {
@@ -1340,7 +1340,7 @@ impl Motion {
         text_layout_details: &TextLayoutDetails,
         forced_motion: bool,
     ) -> Option<(Range<DisplayPoint>, MotionKind)> {
-        if let Motion::ZedSearchResult {
+        if let Motion::FlintSearchResult {
             prior_selections,
             new_selections,
         } = self
@@ -1615,7 +1615,7 @@ fn up_down_buffer_rows(
     // This can happen when moving down (Bias::Right) and hitting an inlay hint.
     // Re-clip with opposite bias to stay on the intended line.
     //
-    // See: https://github.com/zed-industries/zed/issues/29134
+    // See: https://github.com/zed-industries/flint/issues/29134
     if clipped_point.row() > point.row() {
         clipped_point = map.clip_point(point, Bias::Left);
     }

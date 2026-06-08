@@ -499,9 +499,9 @@ mod tests {
     // NOTE: The fingerprint search logic (finding content at new offsets when file
     // is modified externally) is in editor.rs:restore_from_db and requires a full
     // Editor context to test. Manual testing procedure:
-    // 1. Open a file, fold some sections, close Zed
+    // 1. Open a file, fold some sections, close Flint
     // 2. Add text at the START of the file externally (shifts all offsets)
-    // 3. Reopen Zed - folds should be restored at their NEW correct positions
+    // 3. Reopen Flint - folds should be restored at their NEW correct positions
     // The search uses contains_str_at() to find fingerprints in the buffer.
 
     #[gpui::test]

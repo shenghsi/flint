@@ -35,7 +35,7 @@ use std::{
     sync::{Arc, LazyLock, OnceLock},
     time::Duration,
 };
-use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate, FlintDebugConfig};
 use util::paths::SanitizedPath;
 use wasmtime::{
     CacheStore, Engine, Store,
@@ -64,7 +64,7 @@ pub struct WasmExtension {
     pub manifest: Arc<ExtensionManifest>,
     pub work_dir: Arc<Path>,
     #[allow(unused)]
-    pub zed_api_version: Version,
+    pub flint_api_version: Version,
     _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }
 
@@ -473,7 +473,7 @@ impl extension::Extension for WasmExtension {
         .await?
     }
 
-    async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn dap_config_to_scenario(&self, config: FlintDebugConfig) -> Result<DebugScenario> {
         self.call(|extension, store| {
             async move {
                 let kind = extension
@@ -646,15 +646,15 @@ impl WasmHost {
             let engine = this.engine.clone();
 
             executor.spawn(async move {
-                let zed_api_version = parse_wasm_extension_version(&manifest_id, &wasm_bytes)?;
+                let flint_api_version = parse_wasm_extension_version(&manifest_id, &wasm_bytes)?;
                 let component = Component::from_binary(&engine, &wasm_bytes)
                     .context("failed to compile wasm component")?;
 
-                anyhow::Ok((zed_api_version, component))
+                anyhow::Ok((flint_api_version, component))
             })
         };
 
-        let load_extension = |zed_api_version: Version, component| async move {
+        let load_extension = |flint_api_version: Version, component| async move {
             let wasi_ctx = this.build_wasi_ctx(&manifest).await?;
             let mut store = wasmtime::Store::new(
                 &this.engine,
@@ -677,7 +677,7 @@ impl WasmHost {
                 &executor,
                 &mut store,
                 this.release_channel,
-                zed_api_version.clone(),
+                flint_api_version.clone(),
                 &component,
             )
             .await?;
@@ -699,17 +699,17 @@ impl WasmHost {
                 manifest.clone(),
                 this.work_dir.join(manifest.id.as_ref()).into(),
                 tx,
-                zed_api_version,
+                flint_api_version,
             ))
         };
 
         cx.spawn(async move |cx| {
-            let (zed_api_version, component) = compile_task.await?;
+            let (flint_api_version, component) = compile_task.await?;
 
             // Run wasi-dependent operations on tokio.
             // wasmtime_wasi internally uses tokio for I/O operations.
-            let (extension_task, manifest, work_dir, tx, zed_api_version) =
-                gpui_tokio::Tokio::spawn(cx, load_extension(zed_api_version, component)).await??;
+            let (extension_task, manifest, work_dir, tx, flint_api_version) =
+                gpui_tokio::Tokio::spawn(cx, load_extension(flint_api_version, component)).await??;
 
             // Run the extension message loop on tokio since extension
             // calls may invoke wasi functions that require a tokio runtime.
@@ -719,7 +719,7 @@ impl WasmHost {
                 manifest,
                 work_dir,
                 tx,
-                zed_api_version,
+                flint_api_version,
                 _task: task,
             })
         })
@@ -809,12 +809,12 @@ pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Re
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
         if let wasmparser::Payload::CustomSection(s) =
             part.context("error parsing wasm extension")?
-            && s.name() == "zed:api-version"
+            && s.name() == "flint:api-version"
         {
             version = parse_wasm_extension_version_custom_section(s.data());
             if version.is_none() {
                 bail!(
-                    "extension {} has invalid zed:api-version section: {:?}",
+                    "extension {} has invalid flint:api-version section: {:?}",
                     extension_id,
                     s.data()
                 );
@@ -827,7 +827,7 @@ pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Re
     //
     // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
     // earlier as an `Err` rather than as a panic.
-    version.with_context(|| format!("extension {extension_id} has no zed:api-version section"))
+    version.with_context(|| format!("extension {extension_id} has no flint:api-version section"))
 }
 
 fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<Version> {

@@ -3,8 +3,8 @@ name = "GLSL"
 description = "GLSL support."
 version = "0.2.4"
 schema_version = 1
-authors = ["Mikayla Maki <mikayla@zed.dev>"]
-repository = "https://github.com/zed-industries/zed"
+authors = ["Mikayla Maki <mikayla@flint.dev>"]
+repository = "https://github.com/zed-industries/flint"
 
 [language_servers.glsl_analyzer]
 name = "GLSL Analyzer LSP"

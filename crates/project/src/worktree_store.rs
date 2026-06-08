@@ -272,7 +272,7 @@ impl WorktreeStore {
             (WorktreeStoreState::Local { .. }, Some((client, REMOTE_SERVER_PROJECT_ID))) => {
                 Either::Left(client.clone())
             }
-            // we are just a local zed project, we can assign ids
+            // we are just a local flint project, we can assign ids
             (WorktreeStoreState::Local { .. }, _) => Either::Right(self.next_worktree_id.next()),
             // we are connected to a remote server, we are in charge of assigning worktree ids
             (WorktreeStoreState::Remote { .. }, _) => Either::Right(self.next_worktree_id.next()),

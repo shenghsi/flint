@@ -60,7 +60,7 @@ pub fn into_open_ai(
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     let should_add = if message.role == Role::User {
                         // Including whitespace-only user messages can cause error with OpenAI compatible APIs
-                        // See https://github.com/zed-industries/zed/issues/40097
+                        // See https://github.com/zed-industries/flint/issues/40097
                         !text.trim().is_empty()
                     } else {
                         !text.is_empty()

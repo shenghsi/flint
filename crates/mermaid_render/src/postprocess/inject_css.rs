@@ -211,7 +211,7 @@ fn accent_css(theme: &MermaidTheme) -> String {
             theme.background,
             ACCENT_FILL_OPACITY,
         ));
-        let class = format!(".zed-accent-{i}");
+        let class = format!(".flint-accent-{i}");
         write!(
             css,
             "{class} rect, {class} path, {class} circle, {class} polygon, {class} ellipse, \
@@ -230,7 +230,7 @@ fn chart_color_css(theme: &MermaidTheme) -> String {
     let mut css = String::with_capacity(8 * 250);
     for i in 0..8 {
         let color = crate::css_color(theme.git_branch_colors[i]);
-        let class = format!(".zed-chart-{i}");
+        let class = format!(".flint-chart-{i}");
         write!(
             css,
             "path.pieCircle{class} {{ fill: {color} !important; }}\n\

@@ -74,7 +74,7 @@ async fn test_sharing_an_ssh_remote_project(
             path!("/code"),
             json!({
                 "project1": {
-                    ".zed": {
+                    ".flint": {
                         "settings.json": r#"{"languages":{"Rust":{"language_servers":["override-rust-analyzer"]}}}"#
                     },
                     "README.md": "# project 1",
@@ -140,8 +140,8 @@ async fn test_sharing_an_ssh_remote_project(
         assert_eq!(
             worktree.paths().collect::<Vec<_>>(),
             vec![
-                rel_path(".zed"),
-                rel_path(".zed/settings.json"),
+                rel_path(".flint"),
+                rel_path(".flint/settings.json"),
                 rel_path("README.md"),
                 rel_path("src"),
                 rel_path("src/lib.rs"),
@@ -153,8 +153,8 @@ async fn test_sharing_an_ssh_remote_project(
         assert_eq!(
             worktree.paths().collect::<Vec<_>>(),
             vec![
-                rel_path(".zed"),
-                rel_path(".zed/settings.json"),
+                rel_path(".flint"),
+                rel_path(".flint/settings.json"),
                 rel_path("README.md"),
                 rel_path("src"),
                 rel_path("src/lib.rs"),
@@ -1284,7 +1284,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
             path!("/projects"),
             json!({
                 "project_a": {
-                    ".zed": {
+                    ".flint": {
                         "settings.json": r#"{"languages":{"Rust":{"language_servers":["override-rust-analyzer"]}}}"#
                     },
                     "main.rs": "fn main() {}"
@@ -1438,7 +1438,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         assert_eq!(
             LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
             ["...".to_string()],
-            "remote .zed/settings.json must not sync before trust approval"
+            "remote .flint/settings.json must not sync before trust approval"
         )
     });
 
@@ -1466,7 +1466,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         assert_eq!(
             LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()],
-            "remote .zed/settings.json should sync after trust approval"
+            "remote .flint/settings.json should sync after trust approval"
         )
     });
     let _fake_language_server = fake_language_server.await.unwrap();

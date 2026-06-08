@@ -11,7 +11,7 @@ permissions:
 jobs:
   add-to-project:
     if: >
-      github.repository == 'zed-industries/zed' &&
+      github.repository == 'flint-industries/flint' &&
       github.event.issue.state == 'closed' &&
       github.event.issue.pull_request == null &&
       github.event.issue.type != null &&
@@ -39,7 +39,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: flint-industries
 
       - if: steps.is-post-close-comment.outputs.result == 'true'
         id: check-staff
@@ -49,7 +49,7 @@ jobs:
           script: |
             try {
               const response = await github.rest.teams.getMembershipForUserInOrg({
-                org: 'zed-industries',
+                org: 'flint-industries',
                 team_slug: 'staff',
                 username: context.payload.comment.user.login
               });
@@ -79,5 +79,5 @@ jobs:
       - if: steps.is-post-close-comment.outputs.result == 'true' && steps.check-staff.outputs.result == 'false'
         uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2
         with:
-          project-url: https://github.com/orgs/zed-industries/projects/73
+          project-url: https://github.com/orgs/flint-industries/projects/73
           github-token: ${{ steps.get-app-token.outputs.token }}

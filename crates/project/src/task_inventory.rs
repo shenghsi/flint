@@ -88,10 +88,10 @@ impl<T: InventoryContents> InventoryFor<T> {
         worktree: WorktreeId,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
         let worktree_dirs = self.worktree.get(&worktree);
-        let has_zed_dir = worktree_dirs
+        let has_flint_dir = worktree_dirs
             .map(|dirs| {
                 dirs.keys()
-                    .any(|dir| dir.file_name().is_some_and(|name| name == ".zed"))
+                    .any(|dir| dir.file_name().is_some_and(|name| name == ".flint"))
             })
             .unwrap_or(false);
 
@@ -99,7 +99,7 @@ impl<T: InventoryContents> InventoryFor<T> {
             .into_iter()
             .flatten()
             .filter(move |(directory, _)| {
-                !(has_zed_dir && directory.file_name().is_some_and(|name| name == ".vscode"))
+                !(has_flint_dir && directory.file_name().is_some_and(|name| name == ".vscode"))
             })
             .flat_map(|(directory, templates)| {
                 templates.iter().map(move |template| (directory, template))
@@ -148,13 +148,13 @@ impl<T> Default for InventoryFor<T> {
 pub enum TaskSourceKind {
     /// bash-like commands spawned by users, not associated with any path
     UserInput,
-    /// Tasks from the worktree's .zed/task.json
+    /// Tasks from the worktree's .flint/task.json
     Worktree {
         id: WorktreeId,
         directory_in_worktree: Arc<RelPath>,
         id_base: Cow<'static, str>,
     },
-    /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
+    /// ~/.config/flint/task.json - like global files with task definitions, applicable to any path
     AbsPath {
         id_base: Cow<'static, str>,
         abs_path: PathBuf,
@@ -452,13 +452,13 @@ impl Inventory {
         });
         let buffer = location.map(|location| location.buffer.clone());
 
-        let worktrees_with_zed_tasks: HashSet<WorktreeId> = self
+        let worktrees_with_flint_tasks: HashSet<WorktreeId> = self
             .templates_from_settings
             .worktree
             .iter()
             .filter(|(_, dirs)| {
                 dirs.keys()
-                    .any(|dir| dir.file_name().is_some_and(|name| name == ".zed"))
+                    .any(|dir| dir.file_name().is_some_and(|name| name == ".flint"))
             })
             .map(|(id, _)| *id)
             .collect();
@@ -478,7 +478,7 @@ impl Inventory {
                     ..
                 } = task_kind
                 {
-                    !(worktrees_with_zed_tasks.contains(id)
+                    !(worktrees_with_flint_tasks.contains(id)
                         && dir.file_name().is_some_and(|name| name == ".vscode"))
                 } else {
                     true

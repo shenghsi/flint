@@ -1,7 +1,7 @@
 # Configures a drive for testing in CI.
 
 # Currently, total CI requires almost 45GB of space, here we are creating a 100GB drive.
-$Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 100GB |
+$Volume = New-VHD -Path C:/flint_dev_drive.vhdx -SizeBytes 100GB |
                     Mount-VHD -Passthru |
                     Initialize-Disk -Passthru |
                     New-Partition -AssignDriveLetter -UseMaximumSize |
@@ -19,8 +19,8 @@ fsutil devdrv trust $Drive
 fsutil devdrv enable /disallowAv
 
 # Remount so the changes take effect
-Dismount-VHD -Path C:/zed_dev_drive.vhdx
-Mount-VHD -Path C:/zed_dev_drive.vhdx
+Dismount-VHD -Path C:/flint_dev_drive.vhdx
+Mount-VHD -Path C:/flint_dev_drive.vhdx
 
 # Show some debug information
 Write-Output $Volume
@@ -34,6 +34,6 @@ Write-Output `
 	"DEV_DRIVE=$($Drive)" `
 	"RUSTUP_HOME=$($Drive)/.rustup" `
 	"CARGO_HOME=$($Drive)/.cargo" `
-	"ZED_WORKSPACE=$($Drive)/zed" `
+	"ZED_WORKSPACE=$($Drive)/flint" `
 	"PATH=$($Drive)/.cargo/bin;$env:PATH" `
 	>> $env:GITHUB_ENV

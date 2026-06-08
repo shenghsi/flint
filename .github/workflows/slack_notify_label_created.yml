@@ -7,7 +7,7 @@ on:
 jobs:
   notify-slack:
     if: >-
-      github.repository_owner == 'zed-industries'
+      github.repository_owner == 'flint-industries'
       && (startsWith(github.event.label.name, 'area:')
           || startsWith(github.event.label.name, 'platform:'))
     runs-on: namespace-profile-2x4-ubuntu-2404

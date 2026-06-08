@@ -1,5 +1,5 @@
 use crate::multibuffer_hint::MultibufferHint;
-use client::{Client, UserStore, zed_urls};
+use client::{Client, UserStore, flint_urls};
 use cloud_api_types::Plan;
 use db::kvp::KeyValueStore;
 use fs::Fs;
@@ -28,7 +28,7 @@ use workspace::{
     notifications::NotifyResultExt as _,
     open_new, register_serializable_item, with_active_or_new_workspace,
 };
-use zed_actions::OpenOnboarding;
+use flint_actions::OpenOnboarding;
 
 mod base_keymap_picker;
 mod basics_page;
@@ -37,7 +37,7 @@ mod theme_preview;
 
 /// Imports settings from Visual Studio Code.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = zed)]
+#[action(namespace = flint)]
 #[serde(deny_unknown_fields)]
 pub struct ImportVsCodeSettings {
     #[serde(default)]
@@ -46,7 +46,7 @@ pub struct ImportVsCodeSettings {
 
 /// Imports settings from Cursor editor.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = zed)]
+#[action(namespace = flint)]
 #[serde(deny_unknown_fields)]
 pub struct ImportCursorSettings {
     #[serde(default)]
@@ -62,7 +62,7 @@ actions!(
         Finish,
         /// Sign in while in the onboarding flow.
         SignIn,
-        /// Open the user account in zed.dev while in the onboarding flow.
+        /// Open the user account in flint.dev while in the onboarding flow.
         OpenAccount,
         /// Resets the welcome screen hints to their initial state.
         ResetHints
@@ -224,7 +224,7 @@ impl Onboarding {
         let client = Client::global(cx);
         let status = *client.status().borrow();
         let plan = workspace.user_store().read(cx).plan();
-        let zed_agent_state = if status.is_signed_out()
+        let flint_agent_state = if status.is_signed_out()
             || matches!(
                 status,
                 client::Status::AuthenticationError | client::Status::ConnectionError
@@ -234,11 +234,11 @@ impl Onboarding {
             "signing_in"
         } else {
             match plan {
-                Some(Plan::ZedPro) => "pro",
-                Some(Plan::ZedProTrial) => "trial",
-                Some(Plan::ZedBusiness) => "business",
-                Some(Plan::ZedStudent) => "student",
-                Some(Plan::ZedFree) | None => "free",
+                Some(Plan::FlintPro) => "pro",
+                Some(Plan::FlintProTrial) => "trial",
+                Some(Plan::FlintBusiness) => "business",
+                Some(Plan::FlintStudent) => "student",
+                Some(Plan::FlintFree) | None => "free",
             }
         };
         let agents_installed = basics_page::FEATURED_AGENT_IDS
@@ -248,7 +248,7 @@ impl Onboarding {
             .collect::<Vec<_>>();
         telemetry::event!(
             "Welcome Agent Setup Viewed",
-            zed_agent = zed_agent_state,
+            flint_agent = flint_agent_state,
             agents_installed = agents_installed,
         );
 
@@ -292,7 +292,7 @@ impl Onboarding {
     }
 
     fn handle_open_account(_: &OpenAccount, _: &mut Window, cx: &mut App) {
-        cx.open_url(&zed_urls::account_url(cx))
+        cx.open_url(&flint_urls::account_url(cx))
     }
 
     fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -346,11 +346,11 @@ impl Render for Onboarding {
                                     .child(
                                         h_flex()
                                             .gap_4()
-                                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                                            .child(Vector::square(VectorName::FlintLogo, rems(2.5)))
                                             .child(
                                                 v_flex()
                                                     .child(
-                                                        Headline::new("Welcome to Zed")
+                                                        Headline::new("Welcome to Flint")
                                                             .size(HeadlineSize::Small),
                                                     )
                                                     .child(

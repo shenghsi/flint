@@ -2283,7 +2283,7 @@ mod tests {
         // when splitting inlay text for highlighting. Previously, this would panic
         // when trying to split at byte 13, which is in the middle of the '…' character.
         //
-        // See https://github.com/zed-industries/zed/issues/33641
+        // See https://github.com/zed-industries/flint/issues/33641
         let buffer = MultiBuffer::build_simple("fn main() {}\n", cx);
         let (mut inlay_map, _) = InlayMap::new(buffer.read(cx).snapshot(cx));
 

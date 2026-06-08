@@ -24,24 +24,24 @@ on:
         default: ''
 jobs:
   rebuild_releases_page:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: after_release::rebuild_releases_page::refresh_cloud_releases
-      run: curl -fX POST "https://cloud.zed.dev/releases/refresh?expect_tag=$TAG_NAME"
+      run: curl -fX POST "https://cloud.flint.dev/releases/refresh?expect_tag=$TAG_NAME"
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-    - name: after_release::rebuild_releases_page::redeploy_zed_dev
+    - name: after_release::rebuild_releases_page::redeploy_flint_dev
       run: ./script/redeploy-vercel
       env:
         VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
   deploy_docs:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     permissions:
       contents: read
-    uses: zed-industries/zed/.github/workflows/deploy_docs.yml@main
+    uses: flint-industries/flint/.github/workflows/deploy_docs.yml@main
     secrets:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
       DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}
@@ -53,16 +53,16 @@ jobs:
   post_to_discord:
     needs:
     - rebuild_releases_page
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: get-release-url
       name: after_release::post_to_discord::get_release_url
       run: |
         if [ "$IS_PRERELEASE" == "true" ]; then
-            URL="https://zed.dev/releases/preview"
+            URL="https://flint.dev/releases/preview"
         else
-            URL="https://zed.dev/releases/stable"
+            URL="https://flint.dev/releases/stable"
         fi
 
         echo "URL=$URL" >> "$GITHUB_OUTPUT"
@@ -71,7 +71,7 @@ jobs:
       uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757
       with:
         stringToTruncate: |
-          📣 Zed [${{ env.TAG_NAME }}](<${{ steps.get-release-url.outputs.URL }}>)  was just released!
+          📣 Flint [${{ env.TAG_NAME }}](<${{ steps.get-release-url.outputs.URL }}>)  was just released!
 
           ${{ github.event.release.body || inputs.body }}
         maxLength: 2000
@@ -107,9 +107,9 @@ jobs:
       name: after_release::publish_winget::set_package_name
       run: |
         if ($env:IS_PRERELEASE -eq "true") {
-            $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
+            $PACKAGE_NAME = "FlintIndustries.Flint.Preview"
         } else {
-            $PACKAGE_NAME = "ZedIndustries.Zed"
+            $PACKAGE_NAME = "FlintIndustries.Flint"
         }
 
         echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
@@ -122,7 +122,7 @@ jobs:
         max-versions-to-keep: 5
         token: ${{ secrets.WINGET_TOKEN }}
   create_sentry_release:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -134,8 +134,8 @@ jobs:
       with:
         environment: production
       env:
-        SENTRY_ORG: zed-dev
-        SENTRY_PROJECT: zed
+        SENTRY_ORG: flint-dev
+        SENTRY_PROJECT: flint
         SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
   notify_on_failure:
     needs:

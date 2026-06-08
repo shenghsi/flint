@@ -2,13 +2,13 @@ We have two cloudflare workers that let us serve some assets of this repo
 from Cloudflare.
 
 - `open-source-website-assets` is used for `install.sh`
-- `docs-proxy` is used for `https://zed.dev/docs`
+- `docs-proxy` is used for `https://flint.dev/docs`
 
 During docs deployments, both of these (and the files they depend on) are uploaded to Cloudflare.
 
 ### Deployment
 
-These functions are deployed by the docs deployment workflows. Worker Rules in Cloudflare intercept requests to zed.dev and proxy them to the appropriate workers.
+These functions are deployed by the docs deployment workflows. Worker Rules in Cloudflare intercept requests to flint.dev and proxy them to the appropriate workers.
 
 ### Testing
 

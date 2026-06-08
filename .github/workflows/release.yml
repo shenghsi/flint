@@ -10,7 +10,7 @@ on:
     - v*
 jobs:
   run_tests_mac:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -40,7 +40,7 @@ jobs:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        SCCACHE_BUCKET: sccache-flint
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
     - name: steps::show_sccache_stats
@@ -51,7 +51,7 @@ jobs:
         rm -rf ./../.cargo
     timeout-minutes: 60
   run_tests_linux:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -88,7 +88,7 @@ jobs:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        SCCACHE_BUCKET: sccache-flint
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
     - name: steps::show_sccache_stats
@@ -107,7 +107,7 @@ jobs:
         - 5432:5432
         options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_windows:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
@@ -133,7 +133,7 @@ jobs:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        SCCACHE_BUCKET: sccache-flint
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
       shell: pwsh
@@ -147,7 +147,7 @@ jobs:
       shell: pwsh
     timeout-minutes: 60
   clippy_mac:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -169,14 +169,14 @@ jobs:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        SCCACHE_BUCKET: sccache-flint
     - name: steps::clippy
       run: ./script/clippy
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     timeout-minutes: 60
   clippy_linux:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -205,14 +205,14 @@ jobs:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        SCCACHE_BUCKET: sccache-flint
     - name: steps::clippy
       run: ./script/clippy
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     timeout-minutes: 60
   clippy_windows:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
@@ -231,7 +231,7 @@ jobs:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        SCCACHE_BUCKET: sccache-flint
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
@@ -240,7 +240,7 @@ jobs:
       shell: pwsh
     timeout-minutes: 60
   check_scripts:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -271,7 +271,7 @@ jobs:
         fi
     timeout-minutes: 60
   create_draft_release:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
@@ -299,7 +299,7 @@ jobs:
         GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 60
   compliance_check:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -336,7 +336,7 @@ jobs:
             MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
         else
             STATUS="❌ Preliminary compliance check failed (but this can still be fixed while the builds are running!) for $COMPLIANCE_TAG"
-            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/flint-industries/flint/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
         fi
 
         curl -X POST -H 'Content-type: application/json' \
@@ -380,14 +380,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-linux-aarch64.tar.gz
-        path: target/release/zed-linux-aarch64.tar.gz
+        name: flint-linux-aarch64.tar.gz
+        path: target/release/flint-linux-aarch64.tar.gz
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-linux-aarch64.gz
-        path: target/zed-remote-server-linux-aarch64.gz
+        name: flint-remote-server-linux-aarch64.gz
+        path: target/flint-remote-server-linux-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_linux_x86_64:
@@ -420,14 +420,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-linux-x86_64.tar.gz
-        path: target/release/zed-linux-x86_64.tar.gz
+        name: flint-linux-x86_64.tar.gz
+        path: target/release/flint-linux-x86_64.tar.gz
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-linux-x86_64.gz
-        path: target/zed-remote-server-linux-x86_64.gz
+        name: flint-remote-server-linux-x86_64.gz
+        path: target/flint-remote-server-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_aarch64:
@@ -465,14 +465,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-aarch64.dmg
-        path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+        name: Flint-aarch64.dmg
+        path: target/aarch64-apple-darwin/release/Flint-aarch64.dmg
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-macos-aarch64.gz
-        path: target/zed-remote-server-macos-aarch64.gz
+        name: flint-remote-server-macos-aarch64.gz
+        path: target/flint-remote-server-macos-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_x86_64:
@@ -510,14 +510,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-x86_64.dmg
-        path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
+        name: Flint-x86_64.dmg
+        path: target/x86_64-apple-darwin/release/Flint-x86_64.dmg
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-macos-x86_64.gz
-        path: target/zed-remote-server-macos-x86_64.gz
+        name: flint-remote-server-macos-x86_64.gz
+        path: target/flint-remote-server-macos-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_windows_aarch64:
@@ -555,14 +555,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-aarch64.exe
-        path: target/Zed-aarch64.exe
+        name: Flint-aarch64.exe
+        path: target/Flint-aarch64.exe
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-windows-aarch64.zip
-        path: target/zed-remote-server-windows-aarch64.zip
+        name: flint-remote-server-windows-aarch64.zip
+        path: target/flint-remote-server-windows-aarch64.zip
         if-no-files-found: error
     timeout-minutes: 60
   bundle_windows_x86_64:
@@ -600,14 +600,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-x86_64.exe
-        path: target/Zed-x86_64.exe
+        name: Flint-x86_64.exe
+        path: target/Flint-x86_64.exe
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-windows-x86_64.zip
-        path: target/zed-remote-server-windows-x86_64.zip
+        name: flint-remote-server-windows-x86_64.zip
+        path: target/flint-remote-server-windows-x86_64.zip
         if-no-files-found: error
     timeout-minutes: 60
   upload_release_assets:
@@ -631,20 +631,20 @@ jobs:
       run: |-
         mkdir -p release-artifacts/
 
-        mv ./artifacts/Zed-aarch64.dmg/Zed-aarch64.dmg release-artifacts/Zed-aarch64.dmg
-        mv ./artifacts/Zed-x86_64.dmg/Zed-x86_64.dmg release-artifacts/Zed-x86_64.dmg
-        mv ./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz release-artifacts/zed-linux-aarch64.tar.gz
-        mv ./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz release-artifacts/zed-linux-x86_64.tar.gz
-        mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
-        mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
-        mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz
-        mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
-        mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
-        mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
-        mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
-        mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
-    - name: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
-      run: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
+        mv ./artifacts/Flint-aarch64.dmg/Flint-aarch64.dmg release-artifacts/Flint-aarch64.dmg
+        mv ./artifacts/Flint-x86_64.dmg/Flint-x86_64.dmg release-artifacts/Flint-x86_64.dmg
+        mv ./artifacts/flint-linux-aarch64.tar.gz/flint-linux-aarch64.tar.gz release-artifacts/flint-linux-aarch64.tar.gz
+        mv ./artifacts/flint-linux-x86_64.tar.gz/flint-linux-x86_64.tar.gz release-artifacts/flint-linux-x86_64.tar.gz
+        mv ./artifacts/Flint-x86_64.exe/Flint-x86_64.exe release-artifacts/Flint-x86_64.exe
+        mv ./artifacts/Flint-aarch64.exe/Flint-aarch64.exe release-artifacts/Flint-aarch64.exe
+        mv ./artifacts/flint-remote-server-macos-aarch64.gz/flint-remote-server-macos-aarch64.gz release-artifacts/flint-remote-server-macos-aarch64.gz
+        mv ./artifacts/flint-remote-server-macos-x86_64.gz/flint-remote-server-macos-x86_64.gz release-artifacts/flint-remote-server-macos-x86_64.gz
+        mv ./artifacts/flint-remote-server-linux-aarch64.gz/flint-remote-server-linux-aarch64.gz release-artifacts/flint-remote-server-linux-aarch64.gz
+        mv ./artifacts/flint-remote-server-linux-x86_64.gz/flint-remote-server-linux-x86_64.gz release-artifacts/flint-remote-server-linux-x86_64.gz
+        mv ./artifacts/flint-remote-server-windows-aarch64.zip/flint-remote-server-windows-aarch64.zip release-artifacts/flint-remote-server-windows-aarch64.zip
+        mv ./artifacts/flint-remote-server-windows-x86_64.zip/flint-remote-server-windows-x86_64.zip release-artifacts/flint-remote-server-windows-x86_64.zip
+    - name: gh release upload "$GITHUB_REF_NAME" --repo=flint-industries/flint release-artifacts/*
+      run: gh release upload "$GITHUB_REF_NAME" --repo=flint-industries/flint release-artifacts/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   validate_release_assets:
@@ -654,10 +654,10 @@ jobs:
     steps:
     - name: release::validate_release_assets
       run: |
-        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz", "zed-remote-server-windows-aarch64.zip", "zed-remote-server-windows-x86_64.zip"]'
+        EXPECTED_ASSETS='["Flint-aarch64.dmg", "Flint-x86_64.dmg", "flint-linux-aarch64.tar.gz", "flint-linux-x86_64.tar.gz", "Flint-x86_64.exe", "Flint-aarch64.exe", "flint-remote-server-macos-aarch64.gz", "flint-remote-server-macos-x86_64.gz", "flint-remote-server-linux-aarch64.gz", "flint-remote-server-linux-x86_64.gz", "flint-remote-server-windows-aarch64.zip", "flint-remote-server-windows-x86_64.zip"]'
         TAG="$GITHUB_REF_NAME"
 
-        ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
+        ACTUAL_ASSETS=$(gh release view "$TAG" --repo=flint-industries/flint --json assets -q '[.assets[].name]')
 
         MISSING_ASSETS=$(echo "$EXPECTED_ASSETS" | jq -r --argjson actual "$ACTUAL_ASSETS" '. - $actual | .[]')
 
@@ -710,7 +710,7 @@ jobs:
             MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
         else
             STATUS="❌ Compliance check failed for $COMPLIANCE_TAG"
-            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/flint-industries/flint/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
         fi
 
         curl -X POST -H 'Content-type: application/json' \
@@ -770,7 +770,7 @@ jobs:
         fi
 
         if [[ "$should_release" == "true" ]]; then
-            gh release edit "$tag" --repo=zed-industries/zed --draft=false
+            gh release edit "$tag" --repo=flint-industries/flint --draft=false
             release_published=true
         fi
 
@@ -808,7 +808,7 @@ jobs:
         MESSAGE=$(if [ "$DRAFT_RESULT" == "failure" ]; then
             echo "❌ Draft release creation failed for $TAG: $RUN_URL"
         else
-            RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
+            RELEASE_URL=$(gh release view "$TAG" --repo=flint-industries/flint --json url -q '.url')
             if [ "$UPLOAD_RESULT" == "failure" ]; then
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
             elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then

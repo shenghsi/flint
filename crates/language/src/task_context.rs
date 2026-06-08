@@ -9,8 +9,8 @@ use gpui::{App, Entity, Task};
 use lsp::LanguageServerName;
 use task::{TaskTemplates, TaskVariables};
 
-/// Language Contexts are used by Zed tasks to extract information about the source file where the tasks are supposed to be scheduled from.
-/// Multiple context providers may be used together: by default, Zed provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
+/// Language Contexts are used by Flint tasks to extract information about the source file where the tasks are supposed to be scheduled from.
+/// Multiple context providers may be used together: by default, Flint provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
 ///
 /// The context will be used to fill data for the tasks, and filter out the ones that do not have the variables required.
 pub trait ContextProvider: Send + Sync {

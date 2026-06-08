@@ -75,7 +75,7 @@ ui_input.workspace = true
 unindent = { workspace = true, optional = true }
 util.workspace = true
 workspace = { workspace = true, features = ["debugger"] }
-zed_actions.workspace = true
+flint_actions.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }

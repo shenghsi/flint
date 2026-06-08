@@ -8,7 +8,7 @@ on:
 jobs:
   update-duplicate-magnets:
     runs-on: ubuntu-latest
-    if: github.repository == 'zed-industries/zed'
+    if: github.repository == 'flint-industries/flint'
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 

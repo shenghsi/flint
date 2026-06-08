@@ -229,6 +229,7 @@ dependencies = [
  "env_logger 0.11.8",
  "eval_utils",
  "feature_flags",
+ "flint_env_vars",
  "fs",
  "futures 0.3.32",
  "git",
@@ -279,7 +280,6 @@ dependencies = [
  "uuid",
  "watch",
  "web_search",
- "zed_env_vars",
  "zlog",
  "zstd",
 ]
@@ -346,6 +346,7 @@ dependencies = [
  "collections",
  "env_logger 0.11.8",
  "feature_flags",
+ "flint_credentials_provider",
  "fs",
  "futures 0.3.32",
  "google_ai",
@@ -372,7 +373,6 @@ dependencies = [
  "util",
  "uuid",
  "watch",
- "zed_credentials_provider",
 ]
 
 [[package]]
@@ -447,13 +447,13 @@ dependencies = [
  "client",
  "cloud_api_types",
  "component",
+ "flint_actions",
  "gpui",
  "language_model",
  "serde",
  "smallvec",
  "telemetry",
  "ui",
- "zed_actions",
 ]
 
 [[package]]
@@ -1215,6 +1215,7 @@ dependencies = [
  "client",
  "db",
  "editor",
+ "flint_actions",
  "gpui",
  "markdown_preview",
  "notifications",
@@ -1228,7 +1229,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -2602,6 +2602,7 @@ dependencies = [
  "credentials_provider",
  "derive_more",
  "feature_flags",
+ "flint_credentials_provider",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -2640,7 +2641,6 @@ dependencies = [
  "util",
  "windows 0.61.3",
  "worktree",
- "zed_credentials_provider",
 ]
 
 [[package]]
@@ -2794,6 +2794,7 @@ dependencies = [
  "anyhow",
  "edit_prediction",
  "edit_prediction_types",
+ "flint_credentials_provider",
  "futures 0.3.32",
  "gpui",
  "http_client",
@@ -2804,7 +2805,6 @@ dependencies = [
  "serde",
  "serde_json",
  "text",
- "zed_credentials_provider",
  "zeta_prompt",
 ]
 
@@ -2859,6 +2859,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "editor",
+ "flint_actions",
  "fuzzy_nucleo",
  "go_to_line",
  "gpui",
@@ -2877,7 +2878,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -3914,6 +3914,7 @@ name = "db"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "flint_env_vars",
  "gpui",
  "indoc",
  "inventory",
@@ -3925,7 +3926,6 @@ dependencies = [
  "tempfile",
  "util",
  "uuid",
- "zed_env_vars",
 ]
 
 [[package]]
@@ -4105,6 +4105,7 @@ dependencies = [
  "component",
  "ctor",
  "editor",
+ "flint_actions",
  "futures-lite 1.13.0",
  "gpui",
  "indoc",
@@ -4126,7 +4127,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
- "zed_actions",
  "zlog",
 ]
 
@@ -4404,6 +4404,8 @@ dependencies = [
  "edit_prediction_metrics",
  "edit_prediction_types",
  "feature_flags",
+ "flint_actions",
+ "flint_credentials_provider",
  "fs",
  "futures 0.3.32",
  "git",
@@ -4443,8 +4445,6 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
- "zed_actions",
- "zed_credentials_provider",
  "zeta_prompt",
  "zlog",
  "zstd",
@@ -4520,6 +4520,7 @@ dependencies = [
  "edit_prediction_types",
  "editor",
  "feature_flags",
+ "flint_actions",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -4540,7 +4541,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
  "zeta_prompt",
 ]
 
@@ -4565,6 +4565,7 @@ dependencies = [
  "emojis",
  "feature_flags",
  "file_icons",
+ "flint_actions",
  "fs",
  "futures 0.3.32",
  "futures-lite 1.13.0",
@@ -4627,7 +4628,6 @@ dependencies = [
  "uuid",
  "vim_mode_setting",
  "workspace",
- "zed_actions",
  "zlog",
  "ztracing",
 ]
@@ -5132,6 +5132,7 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
+ "flint_actions",
  "fs",
  "fuzzy",
  "gpui",
@@ -5152,7 +5153,6 @@ dependencies = [
  "util",
  "vim_mode_setting",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -5279,12 +5279,12 @@ version = "0.1.0"
 dependencies = [
  "client",
  "extension_host",
+ "flint_actions",
  "gpui",
  "system_specs",
  "urlencoding",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -5297,6 +5297,7 @@ dependencies = [
  "ctor",
  "editor",
  "file_icons",
+ "flint_actions",
  "futures 0.3.32",
  "fuzzy",
  "fuzzy_nucleo",
@@ -5318,7 +5319,6 @@ dependencies = [
  "ui_input",
  "util",
  "workspace",
- "zed_actions",
  "zlog",
 ]
 
@@ -5381,6 +5381,206 @@ checksum = "b375d6465b98090a5f25b1c7703f3859783755aa9a80433b36e0379a3ec2f369"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "flint"
+version = "1.7.0"
+dependencies = [
+ "activity_indicator",
+ "anyhow",
+ "ashpd",
+ "askpass",
+ "assets",
+ "auto_update",
+ "breadcrumbs",
+ "chrono",
+ "clap",
+ "cli",
+ "client",
+ "collections",
+ "command_palette",
+ "component",
+ "component_preview",
+ "crashes",
+ "csv_preview",
+ "db",
+ "dev_container",
+ "diagnostics",
+ "editor",
+ "encoding_selector",
+ "env_logger 0.11.8",
+ "etw_tracing",
+ "extension",
+ "extension_host",
+ "extensions_ui",
+ "feature_flags",
+ "feedback",
+ "file_finder",
+ "flint_actions",
+ "flint_env_vars",
+ "fs",
+ "futures 0.3.32",
+ "git",
+ "git_hosting_providers",
+ "git_ui",
+ "go_to_line",
+ "gpui",
+ "gpui_platform",
+ "gpui_tokio",
+ "hdrhistogram",
+ "http_client",
+ "image",
+ "image_viewer",
+ "input_latency_ui",
+ "inspector_ui",
+ "install_cli",
+ "itertools 0.14.0",
+ "journal",
+ "json_schema_store",
+ "keymap_editor",
+ "language",
+ "language_extension",
+ "language_onboarding",
+ "language_selector",
+ "language_tools",
+ "languages",
+ "line_ending_selector",
+ "log",
+ "markdown",
+ "markdown_preview",
+ "menu",
+ "migrator",
+ "mimalloc",
+ "miniprofiler_ui",
+ "node_runtime",
+ "notifications",
+ "onboarding",
+ "outline",
+ "outline_panel",
+ "parking_lot",
+ "paths",
+ "picker",
+ "pkg-config",
+ "pretty_assertions",
+ "profiling",
+ "project",
+ "project_panel",
+ "project_symbols",
+ "proto",
+ "rayon",
+ "recent_projects",
+ "release_channel",
+ "remote",
+ "repl",
+ "reqwest_client",
+ "rope",
+ "search",
+ "semver",
+ "serde",
+ "serde_json",
+ "session",
+ "settings",
+ "settings_profile_selector",
+ "shellexpand",
+ "smol",
+ "snippet_provider",
+ "snippets_ui",
+ "svg_preview",
+ "sysinfo 0.37.2",
+ "system_specs",
+ "tab_switcher",
+ "task",
+ "tasks_ui",
+ "telemetry",
+ "telemetry_events",
+ "terminal_view",
+ "theme",
+ "theme_extension",
+ "theme_selector",
+ "theme_settings",
+ "time",
+ "time_format",
+ "title_bar",
+ "toolchain_selector",
+ "tracing",
+ "ui",
+ "ui_prompt",
+ "url",
+ "urlencoding",
+ "util",
+ "uuid",
+ "vim",
+ "vim_mode_setting",
+ "watch",
+ "which_key",
+ "windows 0.61.3",
+ "windows_resources",
+ "workspace",
+ "zed-reqwest",
+ "zlog",
+ "zlog_settings",
+ "ztracing",
+]
+
+[[package]]
+name = "flint_actions"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "schemars 1.0.4",
+ "serde",
+ "util",
+ "uuid",
+]
+
+[[package]]
+name = "flint_credentials_provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "credentials_provider",
+ "futures 0.3.32",
+ "gpui",
+ "paths",
+ "release_channel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "flint_env_vars"
+version = "0.1.0"
+dependencies = [
+ "env_var",
+]
+
+[[package]]
+name = "flint_glsl"
+version = "0.2.4"
+dependencies = [
+ "zed_extension_api 0.1.0",
+]
+
+[[package]]
+name = "flint_html"
+version = "0.3.1"
+dependencies = [
+ "zed_extension_api 0.7.0",
+]
+
+[[package]]
+name = "flint_proto"
+version = "0.3.2"
+dependencies = [
+ "zed_extension_api 0.7.0",
+]
+
+[[package]]
+name = "flint_test_extension"
+version = "0.1.0"
+dependencies = [
+ "zed_extension_api 0.8.0",
 ]
 
 [[package]]
@@ -6018,6 +6218,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "flint_actions",
  "fs",
  "futures 0.3.32",
  "futures-lite 1.13.0",
@@ -6066,7 +6267,6 @@ dependencies = [
  "watch",
  "windows 0.61.3",
  "workspace",
- "zed_actions",
  "zeroize",
  "zlog",
  "ztracing",
@@ -7592,6 +7792,7 @@ dependencies = [
  "anyhow",
  "command_palette_hooks",
  "editor",
+ "flint_actions",
  "fuzzy",
  "gpui",
  "language",
@@ -7603,7 +7804,6 @@ dependencies = [
  "util",
  "util_macros",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -8015,6 +8215,7 @@ dependencies = [
  "component",
  "db",
  "editor",
+ "flint_actions",
  "fs",
  "fuzzy",
  "gpui",
@@ -8040,7 +8241,6 @@ dependencies = [
  "ui_input",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -8418,6 +8618,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "editor",
+ "flint_actions",
  "futures 0.3.32",
  "gpui",
  "itertools 0.14.0",
@@ -8438,7 +8639,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
  "zlog",
 ]
 
@@ -8999,6 +9199,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "flint_actions",
  "fs",
  "gpui",
  "language",
@@ -9014,7 +9215,6 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -9425,6 +9625,7 @@ name = "miniprofiler_ui"
 version = "0.1.0"
 dependencies = [
  "command_palette_hooks",
+ "flint_actions",
  "gpui",
  "rpc",
  "serde_json",
@@ -9433,7 +9634,6 @@ dependencies = [
  "theme_settings",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -9793,6 +9993,7 @@ dependencies = [
  "anyhow",
  "client",
  "component",
+ "flint_actions",
  "futures-lite 1.13.0",
  "gpui",
  "rpc",
@@ -9801,7 +10002,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -10373,6 +10573,7 @@ dependencies = [
  "component",
  "db",
  "documented",
+ "flint_actions",
  "fs",
  "fuzzy",
  "gpui",
@@ -10390,7 +10591,6 @@ dependencies = [
  "util",
  "vim_mode_setting",
  "workspace",
- "zed_actions",
  "zlog",
 ]
 
@@ -10636,6 +10836,7 @@ name = "outline"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "flint_actions",
  "futures 0.3.32",
  "fuzzy",
  "gpui",
@@ -10654,7 +10855,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -10667,6 +10867,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "flint_actions",
  "futures 0.3.32",
  "fuzzy",
  "gpui",
@@ -10689,7 +10890,6 @@ dependencies = [
  "util",
  "workspace",
  "worktree",
- "zed_actions",
 ]
 
 [[package]]
@@ -11516,6 +11716,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "flint_actions",
  "gpui",
  "menu",
  "schemars 1.0.4",
@@ -11526,7 +11727,6 @@ dependencies = [
  "ui",
  "ui_input",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -11615,6 +11815,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "platform_title_bar"
 version = "0.1.0"
 dependencies = [
+ "flint_actions",
  "gpui",
  "project",
  "settings",
@@ -11624,7 +11825,6 @@ dependencies = [
  "ui",
  "windows 0.61.3",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -11993,6 +12193,7 @@ dependencies = [
  "encoding_rs",
  "extension",
  "fancy-regex 0.17.0",
+ "flint_credentials_provider",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -12047,7 +12248,6 @@ dependencies = [
  "wax",
  "which 6.0.3",
  "worktree",
- "zed_credentials_provider",
  "zeroize",
  "zlog",
  "ztracing",
@@ -12088,6 +12288,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "file_icons",
+ "flint_actions",
  "fs",
  "futures 0.3.32",
  "git",
@@ -12115,7 +12316,6 @@ dependencies = [
  "util",
  "workspace",
  "worktree",
- "zed_actions",
 ]
 
 [[package]]
@@ -12708,6 +12908,7 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
+ "flint_actions",
  "fs",
  "futures 0.3.32",
  "fuzzy_nucleo",
@@ -12739,7 +12940,6 @@ dependencies = [
  "windows-registry 0.6.1",
  "workspace",
  "worktree",
- "zed_actions",
 ]
 
 [[package]]
@@ -13027,6 +13227,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "file_icons",
+ "flint_actions",
  "futures 0.3.32",
  "gpui",
  "html_to_markdown",
@@ -13064,7 +13265,6 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -13779,6 +13979,7 @@ dependencies = [
  "bitflags 2.10.0",
  "collections",
  "editor",
+ "flint_actions",
  "fs",
  "futures 0.3.32",
  "futures-lite 1.13.0",
@@ -13801,7 +14002,6 @@ dependencies = [
  "util",
  "util_macros",
  "workspace",
- "zed_actions",
  "ztracing",
 ]
 
@@ -14181,6 +14381,7 @@ name = "settings_profile_selector"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "flint_actions",
  "fuzzy",
  "gpui",
  "menu",
@@ -14192,7 +14393,6 @@ dependencies = [
  "theme_settings",
  "ui",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -14927,12 +15127,12 @@ name = "svg_preview"
 version = "0.1.0"
 dependencies = [
  "file_icons",
+ "flint_actions",
  "gpui",
  "language",
  "multi_buffer",
  "ui",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -15186,6 +15386,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "flint_actions",
  "futures 0.3.32",
  "gpui",
  "hex",
@@ -15200,7 +15401,6 @@ dependencies = [
  "sha2",
  "shellexpand",
  "util",
- "zed_actions",
 ]
 
 [[package]]
@@ -15211,6 +15411,7 @@ dependencies = [
  "collections",
  "editor",
  "file_icons",
+ "flint_actions",
  "fuzzy",
  "gpui",
  "itertools 0.14.0",
@@ -15226,7 +15427,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -15348,6 +15548,7 @@ dependencies = [
  "db",
  "dirs",
  "editor",
+ "flint_actions",
  "futures 0.3.32",
  "gpui",
  "itertools 0.14.0",
@@ -15373,7 +15574,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -15455,6 +15655,7 @@ name = "theme_selector"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "flint_actions",
  "fs",
  "fuzzy",
  "gpui",
@@ -15470,7 +15671,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -15693,6 +15893,7 @@ dependencies = [
  "client",
  "cloud_api_types",
  "db",
+ "flint_actions",
  "fs",
  "git_ui",
  "gpui",
@@ -15715,7 +15916,6 @@ dependencies = [
  "util",
  "windows 0.61.3",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -16843,6 +17043,7 @@ dependencies = [
  "db",
  "editor",
  "env_logger 0.11.8",
+ "flint_actions",
  "futures 0.3.32",
  "fuzzy",
  "git_ui",
@@ -16880,7 +17081,6 @@ dependencies = [
  "util_macros",
  "vim_mode_setting",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -19232,6 +19432,7 @@ dependencies = [
  "component",
  "db",
  "dirs",
+ "flint_actions",
  "fs",
  "futures 0.3.32",
  "futures-lite 1.13.0",
@@ -19269,7 +19470,6 @@ dependencies = [
  "util",
  "uuid",
  "windows 0.61.3",
- "zed_actions",
  "zlog",
 ]
 
@@ -19694,146 +19894,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed"
-version = "1.7.0"
-dependencies = [
- "activity_indicator",
- "anyhow",
- "ashpd",
- "askpass",
- "assets",
- "auto_update",
- "breadcrumbs",
- "chrono",
- "clap",
- "cli",
- "client",
- "collections",
- "command_palette",
- "component",
- "component_preview",
- "crashes",
- "csv_preview",
- "db",
- "dev_container",
- "diagnostics",
- "editor",
- "encoding_selector",
- "env_logger 0.11.8",
- "etw_tracing",
- "extension",
- "extension_host",
- "extensions_ui",
- "feature_flags",
- "feedback",
- "file_finder",
- "fs",
- "futures 0.3.32",
- "git",
- "git_hosting_providers",
- "git_ui",
- "go_to_line",
- "gpui",
- "gpui_platform",
- "gpui_tokio",
- "hdrhistogram",
- "http_client",
- "image",
- "image_viewer",
- "input_latency_ui",
- "inspector_ui",
- "install_cli",
- "itertools 0.14.0",
- "journal",
- "json_schema_store",
- "keymap_editor",
- "language",
- "language_extension",
- "language_onboarding",
- "language_selector",
- "language_tools",
- "languages",
- "line_ending_selector",
- "log",
- "markdown",
- "markdown_preview",
- "menu",
- "migrator",
- "mimalloc",
- "miniprofiler_ui",
- "node_runtime",
- "notifications",
- "onboarding",
- "outline",
- "outline_panel",
- "parking_lot",
- "paths",
- "picker",
- "pkg-config",
- "pretty_assertions",
- "profiling",
- "project",
- "project_panel",
- "project_symbols",
- "proto",
- "rayon",
- "recent_projects",
- "release_channel",
- "remote",
- "repl",
- "reqwest_client",
- "rope",
- "search",
- "semver",
- "serde",
- "serde_json",
- "session",
- "settings",
- "settings_profile_selector",
- "shellexpand",
- "smol",
- "snippet_provider",
- "snippets_ui",
- "svg_preview",
- "sysinfo 0.37.2",
- "system_specs",
- "tab_switcher",
- "task",
- "tasks_ui",
- "telemetry",
- "telemetry_events",
- "terminal_view",
- "theme",
- "theme_extension",
- "theme_selector",
- "theme_settings",
- "time",
- "time_format",
- "title_bar",
- "toolchain_selector",
- "tracing",
- "ui",
- "ui_prompt",
- "url",
- "urlencoding",
- "util",
- "uuid",
- "vim",
- "vim_mode_setting",
- "watch",
- "which_key",
- "windows 0.61.3",
- "windows_resources",
- "workspace",
- "zed-reqwest",
- "zed_actions",
- "zed_env_vars",
- "zlog",
- "zlog_settings",
- "ztracing",
-]
-
-[[package]]
 name = "zed-font-kit"
 version = "0.14.1-zed"
 source = "git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269#94b0f28166665e8fd2f53ff6d268a14955c82269"
@@ -19941,38 +20001,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_actions"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "schemars 1.0.4",
- "serde",
- "util",
- "uuid",
-]
-
-[[package]]
-name = "zed_credentials_provider"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "credentials_provider",
- "futures 0.3.32",
- "gpui",
- "paths",
- "release_channel",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "zed_env_vars"
-version = "0.1.0"
-dependencies = [
- "env_var",
-]
-
-[[package]]
 name = "zed_extension_api"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20001,34 +20029,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen 0.41.0",
-]
-
-[[package]]
-name = "zed_glsl"
-version = "0.2.4"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_html"
-version = "0.3.1"
-dependencies = [
- "zed_extension_api 0.7.0",
-]
-
-[[package]]
-name = "zed_proto"
-version = "0.3.2"
-dependencies = [
- "zed_extension_api 0.7.0",
-]
-
-[[package]]
-name = "zed_test_extension"
-version = "0.1.0"
-dependencies = [
- "zed_extension_api 0.8.0",
 ]
 
 [[package]]

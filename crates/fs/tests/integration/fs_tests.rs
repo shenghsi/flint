@@ -432,7 +432,7 @@ async fn test_copy_recursive_with_ignoring(executor: BackgroundExecutor) {
 #[gpui::test]
 async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
     // With the file handle still open, the file should be replaced
-    // https://github.com/zed-industries/zed/issues/30054
+    // https://github.com/zed-industries/flint/issues/30054
     let fs = RealFs::new(None, executor);
     let temp_dir = TempDir::new().unwrap();
     let file_to_be_replaced = temp_dir.path().join("file.txt");

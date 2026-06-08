@@ -297,7 +297,7 @@ mod test {
             .assert_matches();
 
         // on last character of word, `cw` doesn't eat subsequent punctuation
-        // see https://github.com/zed-industries/zed/issues/35269
+        // see https://github.com/zed-industries/flint/issues/35269
         cx.simulate("c w", "tesˇt-test").await.assert_matches();
     }
 

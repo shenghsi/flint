@@ -10,7 +10,7 @@ on:
   workflow_dispatch: {}
 jobs:
   check_nightly_tag:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -34,7 +34,7 @@ jobs:
   run_tests_linux:
     needs:
     - check_nightly_tag
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_nightly_tag.outputs.skip != 'true'
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions') && needs.check_nightly_tag.outputs.skip != 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -71,7 +71,7 @@ jobs:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        SCCACHE_BUCKET: sccache-flint
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
     - name: steps::show_sccache_stats
@@ -109,7 +109,7 @@ jobs:
         set -eu
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
-        echo "nightly" > crates/zed/RELEASE_CHANNEL
+        echo "nightly" > crates/flint/RELEASE_CHANNEL
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -123,14 +123,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-linux-aarch64.tar.gz
-        path: target/release/zed-linux-aarch64.tar.gz
+        name: flint-linux-aarch64.tar.gz
+        path: target/release/flint-linux-aarch64.tar.gz
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-linux-aarch64.gz
-        path: target/zed-remote-server-linux-aarch64.gz
+        name: flint-remote-server-linux-aarch64.gz
+        path: target/flint-remote-server-linux-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_linux_x86_64:
@@ -153,7 +153,7 @@ jobs:
         set -eu
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
-        echo "nightly" > crates/zed/RELEASE_CHANNEL
+        echo "nightly" > crates/flint/RELEASE_CHANNEL
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -167,14 +167,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-linux-x86_64.tar.gz
-        path: target/release/zed-linux-x86_64.tar.gz
+        name: flint-linux-x86_64.tar.gz
+        path: target/release/flint-linux-x86_64.tar.gz
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-linux-x86_64.gz
-        path: target/zed-remote-server-linux-x86_64.gz
+        name: flint-remote-server-linux-x86_64.gz
+        path: target/flint-remote-server-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_aarch64:
@@ -200,7 +200,7 @@ jobs:
         set -eu
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
-        echo "nightly" > crates/zed/RELEASE_CHANNEL
+        echo "nightly" > crates/flint/RELEASE_CHANNEL
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -216,14 +216,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-aarch64.dmg
-        path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+        name: Flint-aarch64.dmg
+        path: target/aarch64-apple-darwin/release/Flint-aarch64.dmg
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-macos-aarch64.gz
-        path: target/zed-remote-server-macos-aarch64.gz
+        name: flint-remote-server-macos-aarch64.gz
+        path: target/flint-remote-server-macos-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_x86_64:
@@ -249,7 +249,7 @@ jobs:
         set -eu
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
-        echo "nightly" > crates/zed/RELEASE_CHANNEL
+        echo "nightly" > crates/flint/RELEASE_CHANNEL
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -265,14 +265,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-x86_64.dmg
-        path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
+        name: Flint-x86_64.dmg
+        path: target/x86_64-apple-darwin/release/Flint-x86_64.dmg
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-macos-x86_64.gz
-        path: target/zed-remote-server-macos-x86_64.gz
+        name: flint-remote-server-macos-x86_64.gz
+        path: target/flint-remote-server-macos-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_windows_aarch64:
@@ -302,7 +302,7 @@ jobs:
         $ErrorActionPreference = "Stop"
         $version = git rev-parse --short HEAD
         Write-Host "Publishing version: $version on release channel nightly"
-        "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
+        "nightly" | Set-Content -Path "crates/flint/RELEASE_CHANNEL"
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
     - name: steps::setup_sentry
@@ -316,14 +316,14 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-aarch64.exe
-        path: target/Zed-aarch64.exe
+        name: Flint-aarch64.exe
+        path: target/Flint-aarch64.exe
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-windows-aarch64.zip
-        path: target/zed-remote-server-windows-aarch64.zip
+        name: flint-remote-server-windows-aarch64.zip
+        path: target/flint-remote-server-windows-aarch64.zip
         if-no-files-found: error
     timeout-minutes: 60
   bundle_windows_x86_64:
@@ -353,7 +353,7 @@ jobs:
         $ErrorActionPreference = "Stop"
         $version = git rev-parse --short HEAD
         Write-Host "Publishing version: $version on release channel nightly"
-        "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
+        "nightly" | Set-Content -Path "crates/flint/RELEASE_CHANNEL"
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
     - name: steps::setup_sentry
@@ -367,20 +367,20 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-x86_64.exe
-        path: target/Zed-x86_64.exe
+        name: Flint-x86_64.exe
+        path: target/Flint-x86_64.exe
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-windows-x86_64.zip
-        path: target/zed-remote-server-windows-x86_64.zip
+        name: flint-remote-server-windows-x86_64.zip
+        path: target/flint-remote-server-windows-x86_64.zip
         if-no-files-found: error
     timeout-minutes: 60
   build_nix_linux_x86_64:
     needs:
     - run_tests_linux
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -403,7 +403,7 @@ jobs:
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
-        name: zed
+        name: flint
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
     - name: nix_build::build_nix::build
@@ -413,7 +413,7 @@ jobs:
   build_nix_mac_aarch64:
     needs:
     - run_tests_linux
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-mac-large
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -442,7 +442,7 @@ jobs:
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
-        name: zed
+        name: flint
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
     - name: nix_build::build_nix::build
@@ -466,7 +466,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - id: generate-token
@@ -491,18 +491,18 @@ jobs:
       run: |-
         mkdir -p release-artifacts/
 
-        mv ./artifacts/Zed-aarch64.dmg/Zed-aarch64.dmg release-artifacts/Zed-aarch64.dmg
-        mv ./artifacts/Zed-x86_64.dmg/Zed-x86_64.dmg release-artifacts/Zed-x86_64.dmg
-        mv ./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz release-artifacts/zed-linux-aarch64.tar.gz
-        mv ./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz release-artifacts/zed-linux-x86_64.tar.gz
-        mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
-        mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
-        mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz
-        mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
-        mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
-        mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
-        mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
-        mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
+        mv ./artifacts/Flint-aarch64.dmg/Flint-aarch64.dmg release-artifacts/Flint-aarch64.dmg
+        mv ./artifacts/Flint-x86_64.dmg/Flint-x86_64.dmg release-artifacts/Flint-x86_64.dmg
+        mv ./artifacts/flint-linux-aarch64.tar.gz/flint-linux-aarch64.tar.gz release-artifacts/flint-linux-aarch64.tar.gz
+        mv ./artifacts/flint-linux-x86_64.tar.gz/flint-linux-x86_64.tar.gz release-artifacts/flint-linux-x86_64.tar.gz
+        mv ./artifacts/Flint-x86_64.exe/Flint-x86_64.exe release-artifacts/Flint-x86_64.exe
+        mv ./artifacts/Flint-aarch64.exe/Flint-aarch64.exe release-artifacts/Flint-aarch64.exe
+        mv ./artifacts/flint-remote-server-macos-aarch64.gz/flint-remote-server-macos-aarch64.gz release-artifacts/flint-remote-server-macos-aarch64.gz
+        mv ./artifacts/flint-remote-server-macos-x86_64.gz/flint-remote-server-macos-x86_64.gz release-artifacts/flint-remote-server-macos-x86_64.gz
+        mv ./artifacts/flint-remote-server-linux-aarch64.gz/flint-remote-server-linux-aarch64.gz release-artifacts/flint-remote-server-linux-aarch64.gz
+        mv ./artifacts/flint-remote-server-linux-x86_64.gz/flint-remote-server-linux-x86_64.gz release-artifacts/flint-remote-server-linux-x86_64.gz
+        mv ./artifacts/flint-remote-server-windows-aarch64.zip/flint-remote-server-windows-aarch64.zip release-artifacts/flint-remote-server-windows-aarch64.zip
+        mv ./artifacts/flint-remote-server-windows-x86_64.zip/flint-remote-server-windows-x86_64.zip release-artifacts/flint-remote-server-windows-x86_64.zip
     - name: ./script/upload-nightly
       run: ./script/upload-nightly
       env:
@@ -525,8 +525,8 @@ jobs:
       with:
         environment: production
       env:
-        SENTRY_ORG: zed-dev
-        SENTRY_PROJECT: zed
+        SENTRY_ORG: flint-dev
+        SENTRY_PROJECT: flint
         SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     timeout-minutes: 60
   notify_on_failure:

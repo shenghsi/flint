@@ -1,7 +1,7 @@
 //! # Plain Text Output
 //!
 //! This module provides functionality for rendering plain text output in a terminal-like format.
-//! It uses Zed's terminal emulator to process and display text, supporting ANSI escape
+//! It uses Flint's terminal emulator to process and display text, supporting ANSI escape
 //! sequences for formatting, colors, and other terminal features.
 //!
 //! The main component of this module is the `TerminalOutput` struct, which handles the parsing
@@ -37,7 +37,7 @@ use crate::repl_settings::ReplSettings;
 /// * text/plain content
 /// * error tracebacks
 ///
-/// It uses Zed's terminal emulator backend to process and render text,
+/// It uses Flint's terminal emulator backend to process and render text,
 /// supporting ANSI escape sequences for text formatting and colors.
 ///
 pub struct TerminalOutput {

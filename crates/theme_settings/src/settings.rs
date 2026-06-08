@@ -76,7 +76,7 @@ pub struct ThemeSettings {
     pub theme: ThemeSelection,
     /// Manual overrides for the active theme.
     ///
-    /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
+    /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/flint/issues/18078)
     pub experimental_theme_overrides: Option<settings::ThemeStyleContent>,
     /// Manual overrides per theme
     pub theme_overrides: HashMap<String, settings::ThemeStyleContent>,

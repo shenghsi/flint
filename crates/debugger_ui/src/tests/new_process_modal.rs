@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use task::{
     DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext, TaskContext, VariableName,
-    ZedDebugConfig,
+    FlintDebugConfig,
 };
 use text::Point;
 use util::path;
@@ -215,7 +215,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
         .unwrap();
 
     let debug_json_content = fs
-        .load(path!("/project/.zed/debug.json").as_ref())
+        .load(path!("/project/.flint/debug.json").as_ref())
         .await
         .expect("debug.json should exist")
         .lines()
@@ -278,7 +278,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
         ]"#};
 
     let debug_json_content = fs
-        .load(path!("/project/.zed/debug.json").as_ref())
+        .load(path!("/project/.flint/debug.json").as_ref())
         .await
         .expect("debug.json should exist")
         .lines()
@@ -300,7 +300,7 @@ async fn test_debug_modal_subtitles_with_multiple_worktrees(
     fs.insert_tree(
         path!("/workspace1"),
         json!({
-            ".zed": {
+            ".flint": {
                 "debug.json": r#"[
                     {
                         "adapter": "fake-adapter",
@@ -353,7 +353,7 @@ async fn test_debug_modal_subtitles_with_multiple_worktrees(
 
     assert_eq!(
         subtitles.as_slice(),
-        [path!(".zed/debug.json"), path!(".zed/debug.json")]
+        [path!(".flint/debug.json"), path!(".flint/debug.json")]
     );
 }
 
@@ -375,7 +375,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
         registry.enumerate_adapters::<Vec<_>>()
     });
 
-    let zed_config = ZedDebugConfig {
+    let flint_config = FlintDebugConfig {
         label: "test_debug_session".into(),
         adapter: "test_adapter".into(),
         request: DebugRequest::Launch(LaunchRequest {
@@ -400,15 +400,15 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
             })
             .unwrap_or_else(|| panic!("Adapter {} should exist", adapter_name));
 
-        let mut adapter_specific_config = zed_config.clone();
+        let mut adapter_specific_config = flint_config.clone();
         adapter_specific_config.adapter = adapter_name.to_string().into();
 
         let debug_scenario = adapter
-            .config_from_zed_format(adapter_specific_config)
+            .config_from_flint_format(adapter_specific_config)
             .await
             .unwrap_or_else(|_| {
                 panic!(
-                    "Adapter {} should successfully convert from Zed format",
+                    "Adapter {} should successfully convert from Flint format",
                     adapter_name
                 )
             });

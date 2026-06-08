@@ -303,7 +303,7 @@ fn seed_thread_metadata(metadata: ThreadMetadata, cx: &mut TestAppContext) {
 /// alive for the duration of the test) and the `RemoteConnectionOptions`
 /// used for the fake server. Passing those options back into
 /// `reuse_opts` on a subsequent call makes the new project share the
-/// same `RemoteConnectionIdentity`, matching how Zed treats multiple
+/// same `RemoteConnectionIdentity`, matching how Flint treats multiple
 /// projects on the same SSH host.
 async fn start_remote_project(
     server_fs: &Arc<FakeFs>,
@@ -1093,7 +1093,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 metadata: ThreadMetadata {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-1"))),
-                    agent_id: AgentId::new("zed-agent"),
+                    agent_id: AgentId::new("flint-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Completed thread".into()),
                     title_override: None,
@@ -1103,7 +1103,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     archived: false,
                     remote_connection: None,
                 },
-                icon: IconName::ZedAgent,
+                icon: IconName::FlintAgent,
                 icon_from_external_svg: None,
                 status: AgentThreadStatus::Completed,
                 workspace: ThreadEntryWorkspace::Open(workspace.clone()),
@@ -1120,7 +1120,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 metadata: ThreadMetadata {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-2"))),
-                    agent_id: AgentId::new("zed-agent"),
+                    agent_id: AgentId::new("flint-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Running thread".into()),
                     title_override: None,
@@ -1130,7 +1130,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     archived: false,
                     remote_connection: None,
                 },
-                icon: IconName::ZedAgent,
+                icon: IconName::FlintAgent,
                 icon_from_external_svg: None,
                 status: AgentThreadStatus::Running,
                 workspace: ThreadEntryWorkspace::Open(workspace.clone()),
@@ -1147,7 +1147,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 metadata: ThreadMetadata {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-3"))),
-                    agent_id: AgentId::new("zed-agent"),
+                    agent_id: AgentId::new("flint-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Error thread".into()),
                     title_override: None,
@@ -1157,7 +1157,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     archived: false,
                     remote_connection: None,
                 },
-                icon: IconName::ZedAgent,
+                icon: IconName::FlintAgent,
                 icon_from_external_svg: None,
                 status: AgentThreadStatus::Error,
                 workspace: ThreadEntryWorkspace::Open(workspace.clone()),
@@ -1175,7 +1175,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 metadata: ThreadMetadata {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-4"))),
-                    agent_id: AgentId::new("zed-agent"),
+                    agent_id: AgentId::new("flint-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Waiting thread".into()),
                     title_override: None,
@@ -1185,7 +1185,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     archived: false,
                     remote_connection: None,
                 },
-                icon: IconName::ZedAgent,
+                icon: IconName::FlintAgent,
                 icon_from_external_svg: None,
                 status: AgentThreadStatus::WaitingForConfirmation,
                 workspace: ThreadEntryWorkspace::Open(workspace.clone()),
@@ -1203,7 +1203,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 metadata: ThreadMetadata {
                     thread_id: notified_thread_id,
                     session_id: Some(acp::SessionId::new(Arc::from("t-5"))),
-                    agent_id: AgentId::new("zed-agent"),
+                    agent_id: AgentId::new("flint-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Notified thread".into()),
                     title_override: None,
@@ -1213,7 +1213,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     archived: false,
                     remote_connection: None,
                 },
-                icon: IconName::ZedAgent,
+                icon: IconName::FlintAgent,
                 icon_from_external_svg: None,
                 status: AgentThreadStatus::Completed,
                 workspace: ThreadEntryWorkspace::Open(workspace.clone()),
@@ -1798,7 +1798,7 @@ async fn test_closing_last_agent_panel_terminal_restores_empty_header(cx: &mut T
     // placeholder row, so the header reports having threads.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [my-project]", "  New Zed Agent Thread"]
+        vec!["v [my-project]", "  New Flint Agent Thread"]
     );
     assert_project_header_has_threads(&sidebar, "my-project", true, cx);
 
@@ -7232,31 +7232,31 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
 // but the sidebar rebuild's lookups all miss.
 //
 // Real-world setup: a single multi-root workspace whose roots are
-// `[/cloud, /worktrees/zed/wt_a/zed]`, where:
+// `[/cloud, /worktrees/flint/wt_a/flint]`, where:
 //   - `/cloud` is a standalone git repo (main == folder).
-//   - `/worktrees/zed/wt_a/zed` is a linked worktree of `/zed`.
+//   - `/worktrees/flint/wt_a/flint` is a linked worktree of `/flint`.
 //
 // Once git scans complete the project group key is
-// `[/cloud, /zed]` — the main paths of the two roots. A thread
+// `[/cloud, /flint]` — the main paths of the two roots. A thread
 // created in this workspace is written with
-// `main=[/cloud, /zed], folder=[/cloud, /worktrees/zed/wt_a/zed]`
+// `main=[/cloud, /flint], folder=[/cloud, /worktrees/flint/wt_a/flint]`
 // and the sidebar finds it via `entries_for_main_worktree_path`.
 //
 // If some other code path (stale data on reload, a path-less archive
 // restored via the project picker, a legacy write …) persists the
 // thread with `main == folder` instead, the stored
 // `main_worktree_paths` is
-// `[/cloud, /worktrees/zed/wt_a/zed]` ≠ `[/cloud, /zed]`. The three
+// `[/cloud, /worktrees/flint/wt_a/flint]` ≠ `[/cloud, /flint]`. The three
 // lookups in `rebuild_contents` all miss:
 //
-//   1. `entries_for_main_worktree_path([/cloud, /zed])` — the
+//   1. `entries_for_main_worktree_path([/cloud, /flint])` — the
 //      thread's stored main doesn't equal the group key.
-//   2. `entries_for_path([/cloud, /zed])` — the thread's folder paths
+//   2. `entries_for_path([/cloud, /flint])` — the thread's folder paths
 //      don't equal the group key either.
 //   3. The linked-worktree fallback iterates the group's workspaces'
 //      `linked_worktrees()` snapshots. Those yield *sibling* linked
 //      worktrees of the repo, not the workspace's own roots, so the
-//      thread's folder `/worktrees/zed/wt_a/zed` doesn't match.
+//      thread's folder `/worktrees/flint/wt_a/flint` doesn't match.
 //
 // The row falls out of the sidebar entirely — matching the user's
 // symptom of a thread visible in the agent panel but missing from
@@ -7293,10 +7293,10 @@ async fn test_sidebar_keeps_multi_root_thread_with_stale_main_paths(cx: &mut Tes
     )
     .await;
 
-    // Separate /zed repo whose linked worktree will form the second
-    // workspace root. /zed itself is NOT opened as a workspace root.
+    // Separate /flint repo whose linked worktree will form the second
+    // workspace root. /flint itself is NOT opened as a workspace root.
     fs.insert_tree(
-        "/zed",
+        "/flint",
         serde_json::json!({
             ".git": {},
             "src": {},
@@ -7304,18 +7304,18 @@ async fn test_sidebar_keeps_multi_root_thread_with_stale_main_paths(cx: &mut Tes
     )
     .await;
     fs.insert_tree(
-        "/worktrees/zed/wt_a/zed",
+        "/worktrees/flint/wt_a/flint",
         serde_json::json!({
-            ".git": "gitdir: /zed/.git/worktrees/wt_a",
+            ".git": "gitdir: /flint/.git/worktrees/wt_a",
             "src": {},
         }),
     )
     .await;
     fs.add_linked_worktree_for_repo(
-        Path::new("/zed/.git"),
+        Path::new("/flint/.git"),
         false,
         git::repository::Worktree {
-            path: std::path::PathBuf::from("/worktrees/zed/wt_a/zed"),
+            path: std::path::PathBuf::from("/worktrees/flint/wt_a/flint"),
             ref_name: Some("refs/heads/wt_a".into()),
             sha: "aaa".into(),
             is_main: false,
@@ -7327,10 +7327,10 @@ async fn test_sidebar_keeps_multi_root_thread_with_stale_main_paths(cx: &mut Tes
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     // Single multi-root project with both /cloud and the linked
-    // worktree of /zed.
+    // worktree of /flint.
     let project = project::Project::test(
         fs.clone(),
-        ["/cloud".as_ref(), "/worktrees/zed/wt_a/zed".as_ref()],
+        ["/cloud".as_ref(), "/worktrees/flint/wt_a/flint".as_ref()],
         cx,
     )
     .await;
@@ -7345,22 +7345,22 @@ async fn test_sidebar_keeps_multi_root_thread_with_stale_main_paths(cx: &mut Tes
 
     // Sanity-check the shapes the rest of the test depends on.
     let group_key = workspace.read_with(cx, |ws, cx| ws.project_group_key(cx));
-    let expected_main_paths = PathList::new(&[PathBuf::from("/cloud"), PathBuf::from("/zed")]);
+    let expected_main_paths = PathList::new(&[PathBuf::from("/cloud"), PathBuf::from("/flint")]);
     assert_eq!(
         group_key.path_list(),
         &expected_main_paths,
         "expected the multi-root workspace's project group key to normalize to \
-         [/cloud, /zed] (main of the standalone repo + main of the linked worktree)"
+         [/cloud, /flint] (main of the standalone repo + main of the linked worktree)"
     );
 
     let folder_paths = PathList::new(&[
         PathBuf::from("/cloud"),
-        PathBuf::from("/worktrees/zed/wt_a/zed"),
+        PathBuf::from("/worktrees/flint/wt_a/flint"),
     ]);
     let workspace_root_paths = workspace.read_with(cx, |ws, cx| PathList::new(&ws.root_paths(cx)));
     assert_eq!(
         workspace_root_paths, folder_paths,
-        "expected the workspace's root paths to equal [/cloud, /worktrees/zed/wt_a/zed]"
+        "expected the workspace's root paths to equal [/cloud, /worktrees/flint/wt_a/flint]"
     );
 
     let session_id = acp::SessionId::new(Arc::from("multi-root-stale-paths"));
@@ -14092,7 +14092,7 @@ async fn test_remote_archive_thread_with_active_connection(
     // The mock remote transport only supports one live `RemoteClient` per
     // connection at a time (each client's `start_proxy` replaces the
     // previous server channel), so we can't split the main repo and the
-    // linked worktree across two remote projects the way Zed does in
+    // linked worktree across two remote projects the way Flint does in
     // production. Opening both as visible worktrees of a single remote
     // project still exercises every interesting path of the archive flow
     // while staying within the mock's multiplexing limits.

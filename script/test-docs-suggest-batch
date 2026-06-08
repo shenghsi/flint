@@ -90,7 +90,7 @@ while IFS='|' read -r pr_num title; do
     title_escaped=$(echo "$title" | sed 's/|/\\|/g' | cut -c1-60)
     
     # Add row to table
-    echo "| [#$pr_num](https://github.com/zed-industries/zed/pull/$pr_num) | $title_escaped | $result | $source_count | $notes |" >> "$OUTPUT"
+    echo "| [#$pr_num](https://github.com/flint-industries/flint/pull/$pr_num) | $title_escaped | $result | $source_count | $notes |" >> "$OUTPUT"
     
     rm -f "$tmpfile" "$tmpfile.out" "$tmpfile.err"
 done <<< "$PRS"

@@ -572,7 +572,7 @@ impl Render for ThreadImportModal {
                         ModalHeader::new()
                             .headline("Import External Agent Threads")
                             .description(
-                                "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client. \
+                                "Import threads from agents like Claude Agent, Codex, and more, whether started in Flint or another client. \
                                 Choose which agents to include, and their threads will appear in your thread history."
                             )
                             .show_dismiss_button(true),

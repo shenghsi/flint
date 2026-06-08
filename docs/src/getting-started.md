@@ -1,11 +1,11 @@
 ---
-title: Getting Started with Zed
-description: Get started with Zed, the fast open-source code editor. Essential commands, environment setup, and navigation basics.
+title: Getting Started with Flint
+description: Get started with Flint, the fast open-source code editor. Essential commands, environment setup, and navigation basics.
 ---
 
 # Getting Started
 
-Zed is an open-source code editor with built-in collaboration and AI tools.
+Flint is an open-source code editor with built-in collaboration and AI tools.
 
 This guide covers the essential commands, environment setup, and navigation basics.
 
@@ -13,7 +13,7 @@ This guide covers the essential commands, environment setup, and navigation basi
 
 ### Welcome Page
 
-When you open Zed without a folder, you see the welcome page in the main editor area. The welcome page offers quick actions to open a folder, clone a repository, or view documentation. Once you open a folder or file, the welcome page disappears. If you split the editor into multiple panes, the welcome page appears only in the center pane when empty—other panes show a standard empty state.
+When you open Flint without a folder, you see the welcome page in the main editor area. The welcome page offers quick actions to open a folder, clone a repository, or view documentation. Once you open a folder or file, the welcome page disappears. If you split the editor into multiple panes, the welcome page appears only in the center pane when empty—other panes show a standard empty state.
 
 To reopen the welcome page, close all items in the center pane or use the command palette to search for "Welcome".
 
@@ -22,12 +22,12 @@ To reopen the welcome page, close all items in the center pane or use the comman
 Open a folder from the command line:
 
 ```sh
-zed ~/projects/my-app
+flint ~/projects/my-app
 ```
 
-Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Zed.
+Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Flint.
 
-By default, new projects open in your current window's threads sidebar. To open in a new window instead, use `zed -n ~/projects/my-app` or press `Cmd+Enter` when selecting from Open Recent. See [Windows & Projects](./windows-and-projects.md) for more details.
+By default, new projects open in your current window's threads sidebar. To open in a new window instead, use `flint -n ~/projects/my-app` or press `Cmd+Enter` when selecting from Open Recent. See [Windows & Projects](./windows-and-projects.md) for more details.
 
 ### 2. Learn the Essential Commands
 
@@ -40,11 +40,11 @@ By default, new projects open in your current window's threads sidebar. To open 
 | Toggle terminal | `` Ctrl+` ``  | `` Ctrl+` ``   |
 | Open settings   | `Cmd+,`       | `Ctrl+,`       |
 
-The command palette (`Cmd+Shift+P`) is your gateway to every action in Zed. If you forget a shortcut, search for it there.
+The command palette (`Cmd+Shift+P`) is your gateway to every action in Flint. If you forget a shortcut, search for it there.
 
 ### Panel Layout
 
-Use **Zed > Panel Layout > Agentic** when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Zed > Panel Layout > Classic** to restore the editor-oriented layout.
+Use **Flint > Panel Layout > Agentic** when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Flint > Panel Layout > Classic** to restore the editor-oriented layout.
 
 ### 3. Configure Your Editor
 
@@ -58,7 +58,7 @@ Common first changes:
 
 ### 4. Set Up Your Language
 
-Zed includes built-in support for many languages. For others, install the extension:
+Flint includes built-in support for many languages. For others, install the extension:
 
 1. Open Extensions with `Cmd+Shift+X` (macOS) or `Ctrl+Shift+X` (Linux/Windows)
 2. Search for your language
@@ -68,7 +68,7 @@ See [Languages](./languages.md) for language-specific setup instructions.
 
 ### 5. Try AI Features
 
-Zed includes built-in AI assistance. Open the Agent Panel with `Cmd+Shift+A` (macOS) or `Ctrl+Shift+A` (Linux/Windows) to start a conversation, or use `Cmd+Enter` (macOS) / `Ctrl+Enter` (Linux/Windows) for inline assistance.
+Flint includes built-in AI assistance. Open the Agent Panel with `Cmd+Shift+A` (macOS) or `Ctrl+Shift+A` (Linux/Windows) to start a conversation, or use `Cmd+Enter` (macOS) / `Ctrl+Enter` (Linux/Windows) for inline assistance.
 
 See [AI Overview](./ai/overview.md) to configure providers and learn what's possible.
 
@@ -77,10 +77,10 @@ See [AI Overview](./ai/overview.md) to configure providers and learn what's poss
 We have dedicated guides for switching from other editors:
 
 - [VS Code](./migrate/vs-code.md) — Import settings, map keybindings, find equivalent features
-- [IntelliJ IDEA](./migrate/intellij.md) — Adapt to Zed's approach to navigation and refactoring
-- [PyCharm](./migrate/pycharm.md) — Set up Python development in Zed
+- [IntelliJ IDEA](./migrate/intellij.md) — Adapt to Flint's approach to navigation and refactoring
+- [PyCharm](./migrate/pycharm.md) — Set up Python development in Flint
 - [WebStorm](./migrate/webstorm.md) — Configure JavaScript/TypeScript workflows
-- [RustRover](./migrate/rustrover.md) — Rust development in Zed
+- [RustRover](./migrate/rustrover.md) — Rust development in Flint
 
 You can also enable familiar keybindings:
 
@@ -89,8 +89,8 @@ You can also enable familiar keybindings:
 
 ## Join the Community
 
-Zed is open source. Join us on GitHub or in Discord to contribute code, report bugs, or suggest features.
+Flint is open source. Join us on GitHub or in Discord to contribute code, report bugs, or suggest features.
 
-- [Discord](https://discord.com/invite/zedindustries)
-- [GitHub Discussions](https://github.com/zed-industries/zed/discussions)
-- [Zed Reddit](https://www.reddit.com/r/ZedEditor)
+- [Discord](https://discord.com/invite/flintindustries)
+- [GitHub Discussions](https://github.com/zed-industries/flint/discussions)
+- [Flint Reddit](https://www.reddit.com/r/FlintEditor)

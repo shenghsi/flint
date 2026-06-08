@@ -268,7 +268,7 @@ impl LspAdapter for EsLintLspAdapter {
             "problems": {},
             "codeActionOnSave": {
                 // We enable this, but without also configuring code_actions_on_format
-                // in the Zed configuration, it doesn't have an effect.
+                // in the Flint configuration, it doesn't have an effect.
                 "enable": true,
             },
             "codeAction": {
@@ -390,7 +390,7 @@ fn eslint_settings_overrides_for(
     config_kind: Option<EslintConfigKind>,
 ) -> EslintSettingsOverrides {
     // vscode-eslint 3.x already discovers config files and chooses a working
-    // directory from the active file on its own. Zed only overrides settings
+    // directory from the active file on its own. Flint only overrides settings
     // for the two cases where leaving everything unset is known to be wrong:
     //
     // - ESLint 8.21-8.56 flat config still needs experimental.useFlatConfig.

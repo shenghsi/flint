@@ -158,7 +158,7 @@ pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
     RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
 };
-use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
+use flint_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
 use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
 use crate::{
@@ -6483,7 +6483,7 @@ impl Workspace {
 
             let Some(task) = task else {
                 anyhow::bail!(
-                    "failed to construct view from leader (maybe from a different version of zed?)"
+                    "failed to construct view from leader (maybe from a different version of flint?)"
                 );
             };
 
@@ -9389,11 +9389,11 @@ pub async fn apply_restored_multiworkspace_state(
 }
 
 actions!(
-    zed,
+    flint,
     [
-        /// Opens the Zed log file.
+        /// Opens the Flint log file.
         OpenLog,
-        /// Reveals the Zed log file in the system file manager.
+        /// Reveals the Flint log file in the system file manager.
         RevealLogInFileManager
     ]
 );
@@ -9601,7 +9601,7 @@ pub fn join_channel(
                         let detail: SharedString = match err.error_code() {
                             ErrorCode::SignedOut => "Please sign in to continue.".into(),
                             ErrorCode::UpgradeRequired => concat!(
-                                "Your are running an unsupported version of Zed. ",
+                                "Your are running an unsupported version of Flint. ",
                                 "Please update to continue."
                             )
                             .into(),
@@ -9658,7 +9658,7 @@ pub async fn get_any_active_multi_workspace(
         })
         .await?;
     }
-    activate_any_workspace_window(&mut cx).context("could not open zed")
+    activate_any_workspace_window(&mut cx).context("could not open flint")
 }
 
 pub fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<MultiWorkspace>> {
@@ -9825,7 +9825,7 @@ pub enum WorkspaceMatching {
     /// Match paths against existing worktrees including subdirectories, and
     /// fall back to any existing window if no worktree matched.
     ///
-    /// For example, `zed -a foo/bar` will activate the `bar` workspace if it
+    /// For example, `flint -a foo/bar` will activate the `bar` workspace if it
     /// exists, otherwise it will open a new window with `foo/bar` as the root.
     MatchSubdirectory,
 }
@@ -11742,7 +11742,7 @@ mod tests {
         assert!(task.await.unwrap());
     }
 
-    // See https://github.com/zed-industries/zed/issues/55726.
+    // See https://github.com/zed-industries/flint/issues/55726.
     //
     // macOS only: on Linux/Windows, closing the last window sets
     // `save_last_workspace`, which preserves the session (same as `Quit`),
@@ -11821,7 +11821,7 @@ mod tests {
         assert!(task.await.unwrap());
     }
 
-    // See https://github.com/zed-industries/zed/issues/55726.
+    // See https://github.com/zed-industries/flint/issues/55726.
     #[gpui::test]
     async fn test_replace_window_without_worktrees_prompts(cx: &mut TestAppContext) {
         init_test(cx);
@@ -15972,7 +15972,7 @@ mod tests {
     async fn test_toggle_theme_mode_persists_and_updates_active_theme(cx: &mut TestAppContext) {
         use settings::{ThemeName, ThemeSelection};
         use theme::SystemAppearance;
-        use zed_actions::theme::ToggleMode;
+        use flint_actions::theme::ToggleMode;
 
         init_test(cx);
 

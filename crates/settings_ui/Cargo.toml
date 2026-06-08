@@ -60,8 +60,8 @@ theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-zed_actions.workspace = true
-zed_credentials_provider.workspace = true
+flint_actions.workspace = true
+flint_credentials_provider.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

@@ -28,7 +28,7 @@ use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use uuid::Uuid;
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
-use zed_actions::{
+use flint_actions::{
     agent::ToggleModelSelector,
     editor::{MoveDown, MoveUp},
 };
@@ -399,7 +399,7 @@ impl<T: 'static> PromptEditor<T> {
         };
 
         let agent_panel_keybinding =
-            ui::text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
+            ui::text_for_action(&flint_actions::assistant::ToggleFocus, window, cx)
                 .map(|keybinding| format!("{keybinding} to chat"))
                 .unwrap_or_default();
 

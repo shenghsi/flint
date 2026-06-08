@@ -1,5 +1,5 @@
 syntax = "proto3";
-package zed.messages;
+package flint.messages;
 
 message ListToolchains {
   uint64 project_id = 1;

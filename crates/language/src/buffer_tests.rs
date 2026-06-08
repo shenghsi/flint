@@ -217,19 +217,19 @@ fn test_select_language(cx: &mut App) {
     // matching suffix that is not the full file extension or filename
     assert_eq!(
         registry
-            .language_for_file(&file("zed/cars"), None, cx)
+            .language_for_file(&file("flint/cars"), None, cx)
             .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
-            .language_for_file(&file("zed/a.cars"), None, cx)
+            .language_for_file(&file("flint/a.cars"), None, cx)
             .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
-            .language_for_file(&file("zed/sumk"), None, cx)
+            .language_for_file(&file("flint/sumk"), None, cx)
             .map(|l| l.name()),
         None
     );
@@ -390,7 +390,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
 fn file(path: &str) -> Arc<dyn File> {
     Arc::new(TestFile {
         path: Arc::from(rel_path(path)),
-        root_name: "zed".into(),
+        root_name: "flint".into(),
         local_root: None,
     })
 }

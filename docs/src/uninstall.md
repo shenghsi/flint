@@ -1,121 +1,121 @@
 ---
 title: Uninstall
-description: "This guide covers how to uninstall Zed on different operating systems."
+description: "This guide covers how to uninstall Flint on different operating systems."
 ---
 
 # Uninstall
 
-This guide covers how to uninstall Zed on different operating systems.
+This guide covers how to uninstall Flint on different operating systems.
 
 ## macOS
 
 ### Standard Installation
 
-If you installed Zed by downloading it from the website:
+If you installed Flint by downloading it from the website:
 
-1. Quit Zed if it's running
+1. Quit Flint if it's running
 2. Open Finder and go to your Applications folder
-3. Drag Zed to the Trash (or right-click and select "Move to Trash")
+3. Drag Flint to the Trash (or right-click and select "Move to Trash")
 4. Empty the Trash
 
 ### Homebrew Installation
 
-If you installed Zed using Homebrew, use the following command:
+If you installed Flint using Homebrew, use the following command:
 
 ```sh
-brew uninstall --cask zed
+brew uninstall --cask flint
 ```
 
 Or for the preview version:
 
 ```sh
-brew uninstall --cask zed@preview
+brew uninstall --cask flint@preview
 ```
 
 ### Removing User Data (Optional)
 
-To completely remove all Zed configuration files and data:
+To completely remove all Flint configuration files and data:
 
 1. Open Finder
 2. Press `Cmd + Shift + G` to open "Go to Folder"
 3. Delete the following directories if they exist:
-   - `~/Library/Application Support/Zed`
-   - `~/Library/Saved Application State/dev.zed.Zed.savedState`
-   - `~/Library/Logs/Zed`
-   - `~/Library/Caches/dev.zed.Zed`
-   - `~/Library/Caches/Zed`
-   - `~/.config/zed`
-   - `~/.local/state/Zed`
+   - `~/Library/Application Support/Flint`
+   - `~/Library/Saved Application State/dev.flint.Flint.savedState`
+   - `~/Library/Logs/Flint`
+   - `~/Library/Caches/dev.flint.Flint`
+   - `~/Library/Caches/Flint`
+   - `~/.config/flint`
+   - `~/.local/state/Flint`
 
 ## Linux
 
 ### Standard Uninstall
 
-If Zed was installed using the default installation script, run:
+If Flint was installed using the default installation script, run:
 
 ```sh
-zed --uninstall
+flint --uninstall
 ```
 
-You'll be prompted whether to keep or delete your preferences. After making a choice, you should see a message that Zed was successfully uninstalled.
+You'll be prompted whether to keep or delete your preferences. After making a choice, you should see a message that Flint was successfully uninstalled.
 
-If the `zed` command is not found in your PATH, try:
+If the `flint` command is not found in your PATH, try:
 
 ```sh
-$HOME/.local/bin/zed --uninstall
+$HOME/.local/bin/flint --uninstall
 ```
 
 or:
 
 ```sh
-$HOME/.local/zed.app/bin/zed --uninstall
+$HOME/.local/flint.app/bin/flint --uninstall
 ```
 
 ### Package Manager
 
-If you installed Zed using a package manager (such as Flatpak, Snap, or a distribution-specific package manager), consult that package manager's documentation for uninstallation instructions.
+If you installed Flint using a package manager (such as Flatpak, Snap, or a distribution-specific package manager), consult that package manager's documentation for uninstallation instructions.
 
 ### Manual Removal
 
-If the uninstall command fails or Zed was installed to a custom location, you can manually remove:
+If the uninstall command fails or Flint was installed to a custom location, you can manually remove:
 
-- Installation directory: `~/.local/zed.app` (or your custom installation path)
-- Binary symlink: `~/.local/bin/zed`
-- Configuration and data: `~/.config/zed`
+- Installation directory: `~/.local/flint.app` (or your custom installation path)
+- Binary symlink: `~/.local/bin/flint`
+- Configuration and data: `~/.config/flint`
 
 ## Windows
 
 ### Standard Installation
 
-1. Quit Zed if it's running
+1. Quit Flint if it's running
 2. Open Settings (Windows key + I)
 3. Go to "Apps" > "Installed apps" (or "Apps & features" on Windows 10)
-4. Search for "Zed"
-5. Click the three dots menu next to Zed and select "Uninstall"
+4. Search for "Flint"
+5. Click the three dots menu next to Flint and select "Uninstall"
 6. Follow the prompts to complete the uninstallation
 
 Alternatively, you can:
 
 1. Open the Start menu
-2. Right-click on Zed
+2. Right-click on Flint
 3. Select "Uninstall"
 
 ### Removing User Data (Optional)
 
-To completely remove all Zed configuration files and data:
+To completely remove all Flint configuration files and data:
 
 1. Press `Windows key + R` to open Run
 2. Type `%APPDATA%` and press Enter
-3. Delete the `Zed` folder if it exists
+3. Delete the `Flint` folder if it exists
 4. Press `Windows key + R` again, type `%LOCALAPPDATA%` and press Enter
-5. Delete the `Zed` folder if it exists
+5. Delete the `Flint` folder if it exists
 
 ## Troubleshooting
 
 If you encounter issues during uninstallation:
 
-- **macOS/Windows**: Ensure Zed is completely quit before attempting to uninstall. Check Activity Manager (macOS) or Task Manager (Windows) for any running Zed processes.
+- **macOS/Windows**: Ensure Flint is completely quit before attempting to uninstall. Check Activity Manager (macOS) or Task Manager (Windows) for any running Flint processes.
 - **Linux**: If the uninstall script fails, check the error message and consider manual removal of the directories listed above.
-- **All platforms**: If you want to start fresh while keeping Zed installed, you can delete the configuration directories instead of uninstalling the application entirely.
+- **All platforms**: If you want to start fresh while keeping Flint installed, you can delete the configuration directories instead of uninstalling the application entirely.
 
-For additional help, see our [Linux-specific documentation](./linux.md) or visit the [Zed community](https://zed.dev/community-links).
+For additional help, see our [Linux-specific documentation](./linux.md) or visit the [Flint community](https://flint.dev/community-links).

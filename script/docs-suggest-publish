@@ -473,7 +473,7 @@ cat >> "$PR_BODY_FILE" << 'EOF'
 Use the Preview callout for new/additive features:
 
 ```markdown
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+> **Preview:** This feature is available in Flint Preview. It will be included in the next Stable release.
 ```
 
 Use this callout for behavior modifications to existing functionality:

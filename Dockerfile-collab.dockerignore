@@ -5,7 +5,7 @@
 .gitattributes
 .mailmap
 **/target
-zed.xcworkspace
+flint.xcworkspace
 .DS_Store
 compose.yml
 plugins/bin

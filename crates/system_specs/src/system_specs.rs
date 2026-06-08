@@ -8,7 +8,7 @@ use std::{env, fmt::Display};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
 actions!(
-    zed,
+    flint,
     [
         /// Copies system specifications to the clipboard for bug reports.
         CopySystemSpecsIntoClipboard,
@@ -108,7 +108,7 @@ impl Display for SystemSpecs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let os_information = format!("OS: {} {}", self.os_name, self.os_version);
         let app_version_information = format!(
-            "Zed: v{} ({}) {}{}",
+            "Flint: v{} ({}) {}{}",
             self.app_version,
             match &self.commit_sha {
                 Some(commit_sha) => format!("{} {}", self.release_channel, commit_sha),
@@ -288,7 +288,7 @@ fn read_pci_id_from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<u1
 /// The compiletime value is used by flatpak since it doesn't seem to have a way to provide a
 /// runtime environment variable.
 ///
-/// The runtime value is used by snap since the Zed snaps use release binaries directly, and so
+/// The runtime value is used by snap since the Flint snaps use release binaries directly, and so
 /// cannot have this baked in.
 fn bundle_type() -> Option<String> {
     option_env!("ZED_BUNDLE_TYPE")

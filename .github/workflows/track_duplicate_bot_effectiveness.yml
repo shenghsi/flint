@@ -14,7 +14,7 @@ jobs:
   classify-closed-issue:
     if: >
       github.event_name == 'issues' &&
-      github.repository == 'zed-industries/zed' &&
+      github.repository == 'flint-industries/flint' &&
       github.event.issue.pull_request == null &&
       (github.event.issue.type == null ||
        github.event.issue.type.name == 'Bug' ||
@@ -34,7 +34,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: flint-industries
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -56,7 +56,7 @@ jobs:
 
   classify-open:
     if: >
-      github.repository == 'zed-industries/zed' &&
+      github.repository == 'flint-industries/flint' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -73,7 +73,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: flint-industries
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0

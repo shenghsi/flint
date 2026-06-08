@@ -47,7 +47,7 @@
 - [AI Quick Start](./ai/quick-start.md)
 - [AI by Company](./ai/by-company.md)
 - [Agents](./ai/agents.md)
-  - [Zed Agent](./ai/zed-agent.md)
+  - [Flint Agent](./ai/flint-agent.md)
   - [External Agents](./ai/external-agents.md)
   - [Terminal Threads](./ai/terminal-threads.md)
 - [Agent Panel](./ai/agent-panel.md)
@@ -73,10 +73,10 @@
 
 - [Authenticate](./authentication.md)
 - [Plans & Pricing](./account/plans-and-pricing.md)
-- [Zed-Hosted Models](./account/zed-hosted-models.md)
+- [Flint-Hosted Models](./account/flint-hosted-models.md)
 - [Billing](./account/billing.md)
 
-# Zed Business
+# Flint Business
 
 - [Overview](./business/overview.md)
 - [Organizations](./business/organizations.md)
@@ -213,9 +213,9 @@
 - [All Actions](./all-actions.md)
 - [CLI Reference](./reference/cli.md)
 
-# Developing Zed
+# Developing Flint
 
-- [Developing Zed](./development.md)
+- [Developing Flint](./development.md)
   - [macOS](./development/macos.md)
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)

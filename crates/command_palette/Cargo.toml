@@ -35,7 +35,7 @@ ui.workspace = true
 util.workspace = true
 telemetry.workspace = true
 workspace.workspace = true
-zed_actions.workspace = true
+flint_actions.workspace = true
 
 [dev-dependencies]
 

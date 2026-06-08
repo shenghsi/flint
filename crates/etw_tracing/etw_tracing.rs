@@ -15,7 +15,7 @@ use workspace::notifications::{NotificationId, show_app_notification};
 use wprcontrol::*;
 
 actions!(
-    zed,
+    flint,
     [
         /// Starts recording an ETW (Event Tracing for Windows) trace.
         RecordEtwTrace,
@@ -167,7 +167,7 @@ fn start_etw_recording(cx: &mut App, heap_pid: Option<u32>) {
         show_etw_notification(cx, "ETW recording is already in progress");
         return;
     }
-    let save_dialog = cx.prompt_for_new_path(&PathBuf::default(), Some("zed-trace.etl"));
+    let save_dialog = cx.prompt_for_new_path(&PathBuf::default(), Some("flint-trace.etl"));
     cx.spawn(async move |cx| {
         let output_path = match save_dialog.await {
             Ok(Ok(Some(path))) => path,
@@ -230,7 +230,7 @@ fn start_etw_recording(cx: &mut App, heap_pid: Option<u32>) {
 
 const RECORDING_TIMEOUT: Duration = Duration::from_secs(60);
 
-const INSTANCE_NAME: &str = "Zed";
+const INSTANCE_NAME: &str = "Flint";
 
 const BUILTIN_PROFILES: &[&str] = &[
     "CPU.Verbose.Memory",
@@ -244,7 +244,7 @@ fn heap_tracing_profile(heap_pid: Option<u32>) -> String {
         Some(pid) => (
             format!(
                 r#"
-    <HeapEventProvider Id="ZedHeapProvider">
+    <HeapEventProvider Id="FlintHeapProvider">
       <HeapProcessIds Operation="Set">
         <HeapProcessId Value="{pid}"/>
       </HeapProcessIds>
@@ -254,7 +254,7 @@ fn heap_tracing_profile(heap_pid: Option<u32>) -> String {
       <Collectors Operation="Add">
         <HeapEventCollectorId Value="HeapCollector_WPRHeapCollector">
           <HeapEventProviders Operation="Set">
-            <HeapEventProviderId Value="ZedHeapProvider"/>
+            <HeapEventProviderId Value="FlintHeapProvider"/>
           </HeapEventProviders>
         </HeapEventCollectorId>
       </Collectors>"#
@@ -265,11 +265,11 @@ fn heap_tracing_profile(heap_pid: Option<u32>) -> String {
 
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
-<WindowsPerformanceRecorder Version="1.0" Author="Zed Industries">
+<WindowsPerformanceRecorder Version="1.0" Author="Flint Industries">
   <Profiles>
     {heap_provider}
 
-    <Profile Id="ZedHeap.Verbose.Memory" Base="Heap.Verbose.Memory" Name="ZedHeap" DetailLevel="Verbose" LoggingMode="Memory" Description="Heap tracing">
+    <Profile Id="FlintHeap.Verbose.Memory" Base="Heap.Verbose.Memory" Name="FlintHeap" DetailLevel="Verbose" LoggingMode="Memory" Description="Heap tracing">
       {heap_collector}
     </Profile>
   </Profiles>
@@ -432,7 +432,7 @@ fn build_profile_collection(heap_pid: Option<u32>) -> Result<IProfileCollection>
         collection
             .Add(&heap_profile, VARIANT_BOOL(0))
             .wpr_context(&collection)
-            .context("Add ZedHeap profile to collection")?;
+            .context("Add FlintHeap profile to collection")?;
     }
 
     Ok(collection)
@@ -572,7 +572,7 @@ pub struct EtwSession {
 }
 
 pub fn launch_etw_recording(heap_pid: Option<u32>, output_path: &Path) -> Result<EtwSession> {
-    let sock_path = std::env::temp_dir().join(format!("zed-etw-{}.sock", std::process::id()));
+    let sock_path = std::env::temp_dir().join(format!("flint-etw-{}.sock", std::process::id()));
 
     _ = std::fs::remove_file(&sock_path);
     let listener = net::UnixListener::bind(&sock_path).context("Bind Unix socket for ETW IPC")?;
@@ -580,7 +580,7 @@ pub fn launch_etw_recording(heap_pid: Option<u32>, output_path: &Path) -> Result
     let exe_path = std::env::current_exe().context("Failed to get current exe path")?;
     let pid_arg = heap_pid.map_or(-1i64, |pid| pid as i64);
     let args = format!(
-        "--record-etw-trace --etw-zed-pid {} --etw-output \"{}\" --etw-socket \"{}\"",
+        "--record-etw-trace --etw-flint-pid {} --etw-output \"{}\" --etw-socket \"{}\"",
         pid_arg,
         output_path.display(),
         sock_path.display(),

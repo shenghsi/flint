@@ -25,7 +25,7 @@ pub struct TailwindCssLspAdapter {
     node: NodeRuntime,
 }
 
-// Implements the LSP adapter for the Tailwind CSS LSP fork: https://github.com/zed-industries/zed/pull/39517#issuecomment-3368206678
+// Implements the LSP adapter for the Tailwind CSS LSP fork: https://github.com/zed-industries/flint/pull/39517#issuecomment-3368206678
 impl TailwindCssLspAdapter {
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("tailwindcss-intellisense-css");

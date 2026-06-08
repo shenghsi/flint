@@ -322,7 +322,7 @@ PROMPT_HEADER
 - **Internal links minimum**: Non-reference pages should include at least 3
   useful internal docs links; reference pages can include fewer when extra links
   would be noise
-- **Marketing links**: For main feature pages, include a relevant `zed.dev`
+- **Marketing links**: For main feature pages, include a relevant `flint.dev`
   marketing link alongside docs links
 
 ### Brand Voice Rubric (Required)
@@ -376,12 +376,12 @@ CONVENTIONS
 
 ### Preview Release Callouts
 
-This change is going into Zed Preview first. Use the appropriate callout based on the type of change:
+This change is going into Flint Preview first. Use the appropriate callout based on the type of change:
 
 #### For NEW/ADDITIVE features (new commands, new settings, new UI elements):
 
 \`\`\`markdown
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+> **Preview:** This feature is available in Flint Preview. It will be included in the next Stable release.
 \`\`\`
 
 #### For BEHAVIOR MODIFICATIONS (changed defaults, altered behavior of existing features):
@@ -453,7 +453,7 @@ Respond with ONE of these formats:
   ---
   ```
 - **Links**: [List at least 3 internal docs links for non-reference pages; if
-  this is a main feature page, include one relevant `zed.dev` marketing link]
+  this is a main feature page, include one relevant `flint.dev` marketing link]
 - **Suggestion**: [Specific text or description of what to add/change]
 - **Full-file brand pass**: [Required: yes. Note any additional voice edits
   elsewhere in the same file needed to pass rubric across the entire file.]

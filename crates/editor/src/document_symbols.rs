@@ -333,7 +333,7 @@ mod tests {
     use gpui::TestAppContext;
     use settings::{DocumentSymbols, SettingsStore};
     use util::path;
-    use zed_actions::editor::{MoveDown, MoveUp};
+    use flint_actions::editor::{MoveDown, MoveUp};
 
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,

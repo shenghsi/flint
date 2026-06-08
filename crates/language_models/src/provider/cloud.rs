@@ -1,6 +1,6 @@
 use ai_onboarding::YoungAccountBanner;
 use anyhow::Result;
-use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
+use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, flint_urls};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
 use cloud_api_types::Plan;
@@ -18,8 +18,8 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
 use settings::SettingsStore;
-pub use settings::ZedDotDevAvailableModel as AvailableModel;
-pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
+pub use settings::FlintDotDevAvailableModel as AvailableModel;
+pub use settings::FlintDotDevAvailableProvider as AvailableProvider;
 use std::sync::Arc;
 use std::time::Duration;
 use ui::{TintColor, prelude::*};
@@ -73,7 +73,7 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct ZedDotDevSettings {
+pub struct FlintDotDevSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -269,7 +269,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiZed)
+        IconOrSvg::Icon(IconName::AiFlint)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -361,53 +361,53 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         Some(FastModeConfirmation {
-            title: "Enable Fast Mode for Zed?".into(),
+            title: "Enable Fast Mode for Flint?".into(),
             message: "Fast mode routes requests through the upstream provider's fast mode or priority tier. The \
                 upstream provider's premium per-token pricing applies and is passed through to \
-                your Zed billing."
+                your Flint billing."
                 .into(),
         })
     }
 }
 
 #[derive(IntoElement, RegisterComponent)]
-struct ZedAiConfiguration {
+struct FlintAiConfiguration {
     is_connected: bool,
     plan: Option<Plan>,
-    is_zed_model_provider_enabled: bool,
+    is_flint_model_provider_enabled: bool,
     eligible_for_trial: bool,
     account_too_young: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
-impl RenderOnce for ZedAiConfiguration {
+impl RenderOnce for FlintAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let (subscription_text, has_paid_plan) = match self.plan {
-            Some(Plan::ZedPro) => (
-                "You have access to Zed's hosted models through your Pro subscription.",
+            Some(Plan::FlintPro) => (
+                "You have access to Flint's hosted models through your Pro subscription.",
                 true,
             ),
-            Some(Plan::ZedProTrial) => (
-                "You have access to Zed's hosted models through your Pro trial.",
+            Some(Plan::FlintProTrial) => (
+                "You have access to Flint's hosted models through your Pro trial.",
                 false,
             ),
-            Some(Plan::ZedStudent) => (
-                "You have access to Zed's hosted models through your Student subscription.",
+            Some(Plan::FlintStudent) => (
+                "You have access to Flint's hosted models through your Student subscription.",
                 true,
             ),
-            Some(Plan::ZedBusiness) => (
-                if self.is_zed_model_provider_enabled {
-                    "You have access to Zed's hosted models through your organization."
+            Some(Plan::FlintBusiness) => (
+                if self.is_flint_model_provider_enabled {
+                    "You have access to Flint's hosted models through your organization."
                 } else {
-                    "Zed's hosted models are disabled by your organization's configuration."
+                    "Flint's hosted models are disabled by your organization's configuration."
                 },
                 true,
             ),
-            Some(Plan::ZedFree) | None => (
+            Some(Plan::FlintFree) | None => (
                 if self.eligible_for_trial {
-                    "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
+                    "Subscribe for access to Flint's hosted models. Start with a 14 day free trial."
                 } else {
-                    "Subscribe for access to Zed's hosted models."
+                    "Subscribe for access to Flint's hosted models."
                 },
                 false,
             ),
@@ -418,28 +418,28 @@ impl RenderOnce for ZedAiConfiguration {
                 .full_width()
                 .label_size(LabelSize::Small)
                 .style(ButtonStyle::Tinted(TintColor::Accent))
-                .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
+                .on_click(|_, _, cx| cx.open_url(&flint_urls::account_url(cx)))
                 .into_any_element()
         } else if self.plan.is_none() || self.eligible_for_trial {
             Button::new("start_trial", "Start 14-day Free Pro Trial")
                 .full_width()
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
-                .on_click(|_, _, cx| cx.open_url(&zed_urls::start_trial_url(cx)))
+                .on_click(|_, _, cx| cx.open_url(&flint_urls::start_trial_url(cx)))
                 .into_any_element()
         } else {
             Button::new("upgrade", "Upgrade to Pro")
                 .full_width()
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
-                .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)))
+                .on_click(|_, _, cx| cx.open_url(&flint_urls::upgrade_to_flint_pro_url(cx)))
                 .into_any_element()
         };
 
         if !self.is_connected {
             return v_flex()
                 .gap_2()
-                .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
+                .child(Label::new("Sign in to have access to Flint's complete agentic experience with hosted models."))
                 .child(
-                    Button::new("sign_in", "Sign In to use Zed AI")
+                    Button::new("sign_in", "Sign In to use Flint AI")
                         .start_icon(Icon::new(IconName::Github).size(IconSize::Small).color(Color::Muted))
                         .full_width()
                         .on_click({
@@ -455,7 +455,7 @@ impl RenderOnce for ZedAiConfiguration {
                     Button::new("upgrade", "Upgrade to Pro")
                         .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                         .full_width()
-                        .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))),
+                        .on_click(|_, _, cx| cx.open_url(&flint_urls::upgrade_to_flint_pro_url(cx))),
                 )
             } else {
                 this.text_sm()
@@ -494,14 +494,14 @@ impl Render for ConfigurationView {
         let state = self.state.read(cx);
         let user_store = state.user_store.read(cx);
 
-        let is_zed_model_provider_enabled = user_store
+        let is_flint_model_provider_enabled = user_store
             .current_organization_configuration()
-            .map_or(true, |config| config.is_zed_model_provider_enabled);
+            .map_or(true, |config| config.is_flint_model_provider_enabled);
 
-        ZedAiConfiguration {
+        FlintAiConfiguration {
             is_connected: !state.is_signed_out(cx),
             plan: user_store.plan(),
-            is_zed_model_provider_enabled,
+            is_flint_model_provider_enabled,
             eligible_for_trial: user_store.trial_started_at().is_none(),
             account_too_young: user_store.account_too_young(),
             sign_in_callback: self.sign_in_callback.clone(),
@@ -784,7 +784,7 @@ mod tests {
     }
 }
 
-impl Component for ZedAiConfiguration {
+impl Component for FlintAiConfiguration {
     fn name() -> &'static str {
         "AI Configuration Content"
     }
@@ -798,24 +798,24 @@ impl Component for ZedAiConfiguration {
     }
 
     fn description() -> &'static str {
-        "The configuration surface for Zed's hosted AI models, \
+        "The configuration surface for Flint's hosted AI models, \
         showing the user's connection status, current plan, trial eligibility, \
-        and entry points for enabling the Zed model provider."
+        and entry points for enabling the Flint model provider."
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         struct PreviewConfiguration {
             plan: Option<Plan>,
             is_connected: bool,
-            is_zed_model_provider_enabled: bool,
+            is_flint_model_provider_enabled: bool,
             eligible_for_trial: bool,
         }
 
         let configuration = |config: PreviewConfiguration| -> AnyElement {
-            ZedAiConfiguration {
+            FlintAiConfiguration {
                 is_connected: config.is_connected,
                 plan: config.plan,
-                is_zed_model_provider_enabled: config.is_zed_model_provider_enabled,
+                is_flint_model_provider_enabled: config.is_flint_model_provider_enabled,
                 eligible_for_trial: config.eligible_for_trial,
                 account_too_young: false,
                 sign_in_callback: Arc::new(|_, _| {}),
@@ -832,7 +832,7 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: None,
                         is_connected: false,
-                        is_zed_model_provider_enabled: true,
+                        is_flint_model_provider_enabled: true,
                         eligible_for_trial: false,
                     }),
                 ),
@@ -841,7 +841,7 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: None,
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_flint_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
@@ -850,7 +850,7 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: None,
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_flint_model_provider_enabled: true,
                         eligible_for_trial: false,
                     }),
                 ),
@@ -859,52 +859,52 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: None,
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_flint_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
                 single_example(
                     "Free Plan",
                     configuration(PreviewConfiguration {
-                        plan: Some(Plan::ZedFree),
+                        plan: Some(Plan::FlintFree),
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_flint_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
                 single_example(
-                    "Zed Pro Trial Plan",
+                    "Flint Pro Trial Plan",
                     configuration(PreviewConfiguration {
-                        plan: Some(Plan::ZedProTrial),
+                        plan: Some(Plan::FlintProTrial),
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_flint_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
                 single_example(
-                    "Zed Pro Plan",
+                    "Flint Pro Plan",
                     configuration(PreviewConfiguration {
-                        plan: Some(Plan::ZedPro),
+                        plan: Some(Plan::FlintPro),
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_flint_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
                 single_example(
-                    "Business Plan - Zed models enabled",
+                    "Business Plan - Flint models enabled",
                     configuration(PreviewConfiguration {
-                        plan: Some(Plan::ZedBusiness),
+                        plan: Some(Plan::FlintBusiness),
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_flint_model_provider_enabled: true,
                         eligible_for_trial: false,
                     }),
                 ),
                 single_example(
-                    "Business Plan - Zed models disabled",
+                    "Business Plan - Flint models disabled",
                     configuration(PreviewConfiguration {
-                        plan: Some(Plan::ZedBusiness),
+                        plan: Some(Plan::FlintBusiness),
                         is_connected: true,
-                        is_zed_model_provider_enabled: false,
+                        is_flint_model_provider_enabled: false,
                         eligible_for_trial: false,
                     }),
                 ),

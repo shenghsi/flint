@@ -479,7 +479,7 @@ pub trait AgentModelSelector: 'static {
 /// Icon for a model in the model selector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentModelIcon {
-    /// A built-in icon from Zed's icon set.
+    /// A built-in icon from Flint's icon set.
     Named(IconName),
     /// Path to a custom SVG icon file.
     Path(SharedString),
@@ -1061,7 +1061,7 @@ mod test_support {
                     id: AgentModelId::new("visual-test-model"),
                     name: "Visual Test Model".into(),
                     description: Some("A stub model for visual testing".into()),
-                    icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
+                    icon: Some(AgentModelIcon::Named(ui::IconName::FlintAssistant)),
                     is_latest: false,
                     cost: None,
                 })),

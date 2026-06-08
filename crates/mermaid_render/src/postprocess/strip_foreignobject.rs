@@ -3,7 +3,7 @@
 //!
 //! merman's raster-safe SVG pipeline converts `<foreignObject>` labels into
 //! native `<text>` fallback groups (`data-merman-foreignobject="fallback"`) and
-//! removes the original `<foreignObject>` elements before Zed-specific
+//! removes the original `<foreignObject>` elements before Flint-specific
 //! post-processing runs. For most diagram types the fallback `<text>` group is
 //! the *only* remaining copy of a label, so it must be preserved.
 //!

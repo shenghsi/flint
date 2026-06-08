@@ -49,7 +49,7 @@ const includesIssueUrl = ISSUE_LINK_PATTERN.test(bodyWithoutReleaseNotes);
 if (includesIssueUrl) {
   const matches = bodyWithoutReleaseNotes.match(ISSUE_LINK_PATTERN) ?? [];
   const issues = matches
-    .map((match) => match.replace(/^#/, "").replace(/https:\/\/github\.com\/zed-industries\/zed\/issues\//, ""))
+    .map((match) => match.replace(/^#/, "").replace(/https:\/\/github\.com\/flint-industries\/flint\/issues\//, ""))
     .filter((issue, index, self) => self.indexOf(issue) === index);
 
   const issuesToReport = issues.map((issue) => `#${issue}`).join(", ");

@@ -627,7 +627,7 @@ mod tests {
             .collect()
     }
 
-    /// Test for https://github.com/zed-industries/zed/issues/44324
+    /// Test for https://github.com/zed-industries/flint/issues/44324
     #[test]
     fn test_recursive_score_match_index_out_of_bounds() {
         let paths = vec!["İ/İ/İ/İ"];

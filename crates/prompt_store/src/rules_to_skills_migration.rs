@@ -21,7 +21,7 @@
 //!   user Rules — if the user has edited the body away from the
 //!   built-in's `default_content()`, the edited body is appended to
 //!   AGENTS.md ahead of any user Default Rules. Uncustomized built-ins
-//!   (still using Zed's shipped default content) are skipped so we don't
+//!   (still using Flint's shipped default content) are skipped so we don't
 //!   pollute AGENTS.md with text the user never wrote.
 //!
 //! Both migrations are gated by a single global "migration already ran"
@@ -32,7 +32,7 @@
 //! The migration is intentionally non-destructive: rule rows in the LMDB
 //! database are left in place after the migration. That way users can
 //! still see and edit their Rules via the existing UI, and a user who
-//! downgrades to a Zed build without skills support won't lose anything.
+//! downgrades to a Flint build without skills support won't lose anything.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -321,7 +321,7 @@ enum AgentsMdMigrationEntryKind {
 /// The appended block contains, in order:
 ///
 /// 1. Each [`BuiltInPrompt`] the user has customized (uncustomized
-///    built-ins are skipped so we don't write Zed's shipped default text
+///    built-ins are skipped so we don't write Flint's shipped default text
 ///    into the user's personal AGENTS.md).
 /// 2. Each user Default Rule, in the order given.
 ///

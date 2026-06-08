@@ -74,7 +74,7 @@ rust-embed.workspace = true
 gaoya = "0.2.0"
 
 # Wasmtime is included as a dependency in order to enable the same
-# features that are enabled in Zed.
+# features that are enabled in Flint.
 #
 # If we don't enable these features we get crashes when creating
 # a Tree-sitter WasmStore.

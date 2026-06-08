@@ -2365,7 +2365,7 @@ impl Editor {
     ) -> edit_prediction_types::EditPredictionIconSet {
         match provider {
             Some(provider) => provider.provider.icons(cx),
-            None => edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict),
+            None => edit_prediction_types::EditPredictionIconSet::new(IconName::FlintPredict),
         }
     }
 
@@ -2537,10 +2537,10 @@ impl Render for MissingEditPredictionKeybindingTooltip {
                         .items_end()
                         .w_full()
                         .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact).on_click(|_ev, window, cx| {
-                            window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx)
+                            window.dispatch_action(flint_actions::OpenKeymapFile.boxed_clone(), cx)
                         }))
                         .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact).on_click(|_ev, _window, cx| {
-                            cx.open_url("https://zed.dev/docs/completions#edit-predictions-missing-keybinding");
+                            cx.open_url("https://flint.dev/docs/completions#edit-predictions-missing-keybinding");
                         })),
                 )
         })

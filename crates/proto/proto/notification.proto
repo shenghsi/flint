@@ -1,5 +1,5 @@
 syntax = "proto3";
-package zed.messages;
+package flint.messages;
 
 message GetNotifications {
   optional uint64 before_id = 1;

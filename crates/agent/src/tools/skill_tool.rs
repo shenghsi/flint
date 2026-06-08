@@ -216,7 +216,7 @@ impl AgentTool for SkillTool {
             };
             let rendered = render_skill_envelope(&skill, &body);
 
-            // Built-in skills ship with Zed and are trusted by default,
+            // Built-in skills ship with Flint and are trusted by default,
             // so they skip the authorization prompt. User-installed skills
             // go through the standard Allow-Once / Always-Allow UX.
             let is_builtin = skill.source == agent_skills::SkillSource::BuiltIn;

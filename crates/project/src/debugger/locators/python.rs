@@ -51,8 +51,8 @@ impl DapLocator for PythonLocator {
         let program_position = mod_name
             .is_none()
             .then(|| {
-                let zed_file = VariableName::File.template_value_with_whitespace();
-                build_config.args.iter().position(|arg| *arg == zed_file)
+                let flint_file = VariableName::File.template_value_with_whitespace();
+                build_config.args.iter().position(|arg| *arg == flint_file)
             })
             .flatten();
         let args = if let Some(position) = program_position {

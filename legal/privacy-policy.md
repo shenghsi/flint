@@ -7,50 +7,50 @@ slug: privacy-policy
 
 ## Summary
 
-Zed collects user information (name, email, username, IP address, etc.), device and usage data, and web analytics to improve our products and services, as well as payment details if you subscribe. We do not store your source code and we process but do not store audio/video/screenshare from collaboration sessions.
+Flint collects user information (name, email, username, IP address, etc.), device and usage data, and web analytics to improve our products and services, as well as payment details if you subscribe. We do not store your source code and we process but do not store audio/video/screenshare from collaboration sessions.
 
 - **We don't sell your data and we don't allow AI providers to train on it**
-- **You control Zed editor telemetry** — disable it in Settings or learn more at [https://zed.dev/docs/telemetry](/telemetry)
+- **You control Flint editor telemetry** — disable it in Settings or learn more at [https://flint.dev/docs/telemetry](/telemetry)
 - **We honor Global Privacy Control** (GPC) signals from your browser
-- To access, correct, or delete your data, email privacy@zed.dev with subject "Privacy Request"
+- To access, correct, or delete your data, email privacy@flint.dev with subject "Privacy Request"
 
-Questions? Contact us at privacy@zed.dev. The full policy below contains complete details.
+Questions? Contact us at privacy@flint.dev. The full policy below contains complete details.
 
 ## Introduction
 
-This Privacy Policy explains how Zed Industries, Inc. ("**Zed**," "**we**," "**our**," or "**us**") collects, uses, and shares your personal data when you use our websites (including [https://zed.dev](https://zed.dev)), our downloadable software ("**Software**"), our subscription service ("**Service**"), or otherwise interact with us.
+This Privacy Policy explains how Flint Industries, Inc. ("**Flint**," "**we**," "**our**," or "**us**") collects, uses, and shares your personal data when you use our websites (including [https://flint.dev](https://flint.dev)), our downloadable software ("**Software**"), our subscription service ("**Service**"), or otherwise interact with us.
 
 As used in this Privacy Policy, “personal data” means any information relating to an identified or identifiable individual and includes any information that constitutes "personally identifiable information," “personal data,” or "personal information" under applicable privacy or data protection laws or regulations.
 
-You acknowledge the collection, use, disclosure, procedures, and other processing described in this Privacy Policy. Beyond the Privacy Policy, your use of our products and services is also subject to our Terms of Service included alongside. This Privacy Policy does not apply to the extent we process personal data in the role of a processor or service provider on behalf of our Zed Business customers. Such processing is governed by our Data Processing Agreement, available upon request. For information about the sub-processors we engage in that capacity, see [https://zed.dev/subprocessors](/subprocessors).
+You acknowledge the collection, use, disclosure, procedures, and other processing described in this Privacy Policy. Beyond the Privacy Policy, your use of our products and services is also subject to our Terms of Service included alongside. This Privacy Policy does not apply to the extent we process personal data in the role of a processor or service provider on behalf of our Flint Business customers. Such processing is governed by our Data Processing Agreement, available upon request. For information about the sub-processors we engage in that capacity, see [https://flint.dev/subprocessors](/subprocessors).
 
 ## Personal Data We Collect
 
 We may collect personal data from or about you and your devices from the sources and in the manner described below. If you do not provide requested data, some features may not work - either because we need that data to deliver them, or because we're legally required to collect it.
 
-For authorized users on Zed Business plans, certain data described in this section may be processed by Zed as a data processor on behalf of the Zed Business customer. In those cases, the Zed Business customer determines the purposes and lawful basis for that processing, as set forth in our Data Processing Agreement.
+For authorized users on Flint Business plans, certain data described in this section may be processed by Flint as a data processor on behalf of the Flint Business customer. In those cases, the Flint Business customer determines the purposes and lawful basis for that processing, as set forth in our Data Processing Agreement.
 
 ### Personal Data You Provide to Us
 
-- **Contact Information** - We may collect your personal data when you inquire about Zed, our products and services, or when you otherwise interact with us, including when you sign up for, attend, or take part in our demos, events, or webinars. This data may include your full name, work email, company name, company size, and any other data you share with us.
+- **Contact Information** - We may collect your personal data when you inquire about Flint, our products and services, or when you otherwise interact with us, including when you sign up for, attend, or take part in our demos, events, or webinars. This data may include your full name, work email, company name, company size, and any other data you share with us.
 
 - **Communications** - When you contact us directly, we may receive personal data about you, such as your name, email address, message contents and attachments, and - if you join a live collaboration session - we process, but do not store, your audio and shared screen. When you sign up for news and updates, we will collect your email address and any other data you share. When you communicate with us online, our third-party vendors may receive and store these communications on our behalf. Our emails may include tracking pixels to track information about how you interact with our emails, such as whether you open them and whether you access any included links, your approximate Location Information (described below) based on your IP address, and Device Information (described below), to improve our website, products, and services.
 
-- **Account Information** - When you create an Account with Zed, we collect the data you provide to create, update, or manage your Service account. Examples include: your name, username, and email address.
+- **Account Information** - When you create an Account with Flint, we collect the data you provide to create, update, or manage your Service account. Examples include: your name, username, and email address.
 
 - **Careers** - If you apply for a job with us, you may submit your contact information and your resume online. We will collect any information you choose to provide on your resume, such as your contact information, education, and employment experience.
 
-- **Payment Information** - If you make a payment, your payment details, such as credit card, address, phone number, or other financial information, are collected by our third-party payment processor on our behalf. Zed does not collect, process, or store your payment information directly.
+- **Payment Information** - If you make a payment, your payment details, such as credit card, address, phone number, or other financial information, are collected by our third-party payment processor on our behalf. Flint does not collect, process, or store your payment information directly.
 
-- **Regarding Third-Party Services** - If you use or integrate third-party tools or link third-party services with the Software or Service, we may receive personal data about you, such as your [GitHub username and other related information](https://docs.github.com/en/apps/oauth-apps/using-oauth-apps/connecting-with-third-party-applications) that permits us to authenticate your user identity and keep your account secure. You can learn more about Zed Third Parties here: [https://zed.dev/](https://zed.dev/acceptable-use-policies)[acceptable-use-policies](/acceptable-use-policies)
+- **Regarding Third-Party Services** - If you use or integrate third-party tools or link third-party services with the Software or Service, we may receive personal data about you, such as your [GitHub username and other related information](https://docs.github.com/en/apps/oauth-apps/using-oauth-apps/connecting-with-third-party-applications) that permits us to authenticate your user identity and keep your account secure. You can learn more about Flint Third Parties here: [https://flint.dev/](https://flint.dev/acceptable-use-policies)[acceptable-use-policies](/acceptable-use-policies)
 
 ### Personal Data We Collect When You Use Our Websites, Software, or Service
 
-- **Website, Software, and Service Telemetry** - We automatically collect telemetry - technical logs, metrics, and usage data - to improve and support Zed’s websites, Software, and Service. You may opt out of local telemetry collection in the Software settings. However, when you sign into or use the websites or Service (including via the Software) we collect telemetry on our servers related to use of the websites and Service.
+- **Website, Software, and Service Telemetry** - We automatically collect telemetry - technical logs, metrics, and usage data - to improve and support Flint’s websites, Software, and Service. You may opt out of local telemetry collection in the Software settings. However, when you sign into or use the websites or Service (including via the Software) we collect telemetry on our servers related to use of the websites and Service.
 
-Learn more about telemetry and your choices and how to opt out of Software telemetry collection at [https://zed.dev/docs/telemetry](/telemetry)
+Learn more about telemetry and your choices and how to opt out of Software telemetry collection at [https://flint.dev/docs/telemetry](/telemetry)
 
-- **Device and Location Information** - When you use the website, Software, or Service we may collect information about your device and software, including IP address (and inferred approximate location), device type, device identifiers, browser (type, version, user-agent, and language), and operating system or mobile device type. We do so to support improving and securing the Software and Service. Zed does not collect precise location information.
+- **Device and Location Information** - When you use the website, Software, or Service we may collect information about your device and software, including IP address (and inferred approximate location), device type, device identifiers, browser (type, version, user-agent, and language), and operating system or mobile device type. We do so to support improving and securing the Software and Service. Flint does not collect precise location information.
 
 - **Usage Information** - We automatically collect information about how you use our website and Service, like the pages or other content you view and the dates and times of your visits. We do so to support improving and securing the websites, Software, and Service.
 
@@ -88,17 +88,17 @@ If you are located in the European Economic Area (“**EEA**”) or the United K
 
 ## How We Disclose the Personal Data We Collect
 
-The disclosures described below relate to Zed’s processing as a data controller. When we process data on behalf of Zed Business customers as a data processor, some of the third-parties described below may act as sub-processors under our Data Processing Agreement.
+The disclosures described below relate to Flint’s processing as a data controller. When we process data on behalf of Flint Business customers as a data processor, some of the third-parties described below may act as sub-processors under our Data Processing Agreement.
 
-- **Zed does not sell your personal data to third-parties**.  We also do not share your data with third-parties for the purposes of cross-context advertising.
+- **Flint does not sell your personal data to third-parties**.  We also do not share your data with third-parties for the purposes of cross-context advertising.
 
-- **Partners and Affiliates** - We may share information we receive to our current or future affiliates (companies under common ownership with Zed) for any of the lawful business purposes described in this Privacy Policy above.
+- **Partners and Affiliates** - We may share information we receive to our current or future affiliates (companies under common ownership with Flint) for any of the lawful business purposes described in this Privacy Policy above.
 
 - **Vendors and Service Providers** - We may disclose information we receive to vendors and service providers retained in connection with operating, maintaining, or monitoring our websites, products, and services for any of the lawful business purposes described in this Privacy Policy above.
 
-- **AI Service Providers** - We may disclose information we receive to vendors that provide artificial intelligence services in connection with our websites, software, or services for legitimate business purposes only, including website performance monitoring and sales and marketing of our products and services. Zed does not utilize third-party services which use this information for AI training purposes.
+- **AI Service Providers** - We may disclose information we receive to vendors that provide artificial intelligence services in connection with our websites, software, or services for legitimate business purposes only, including website performance monitoring and sales and marketing of our products and services. Flint does not utilize third-party services which use this information for AI training purposes.
 
-- **Web Analytics** - We use analytics services such as Amplitude to collect and process certain analytics data related to your use of our websites. These services utilize first-party cookies to collect information about your use of our websites, apps, and online resources via HTTP referrer and/or depending on your choices regarding cookies. Zed does not use third-party tracking cookies that collect your activity for other websites.
+- **Web Analytics** - We use analytics services such as Amplitude to collect and process certain analytics data related to your use of our websites. These services utilize first-party cookies to collect information about your use of our websites, apps, and online resources via HTTP referrer and/or depending on your choices regarding cookies. Flint does not use third-party tracking cookies that collect your activity for other websites.
 
 - **As Required By Law and Similar Disclosures** - We may access, preserve, and disclose your information if we believe doing so is required or appropriate to:
 
@@ -120,7 +120,7 @@ The disclosures described below relate to Zed’s processing as a data controlle
 
 - **Do Not Track** - Because there is no widely-accepted standard on how to respond to “Do Not Track” signals, we instead utilize and honor [Global Privacy Control (GPC)](https://globalprivacycontrol.org/#gpc-spec) as an alternative where and when feasible.
 
-- **Opting-out of Software Telemetry** - Learn more about telemetry and how to opt out of Software telemetry collection at [https://zed.dev/docs/telemetry](/telemetry)
+- **Opting-out of Software Telemetry** - Learn more about telemetry and how to opt out of Software telemetry collection at [https://flint.dev/docs/telemetry](/telemetry)
 
 - **Disabling Image Loading for Email** - In order to prevent the use of tracking pixels, you may disable image loading in your own email client.
 
@@ -136,9 +136,9 @@ Depending on where you are located, applicable data protection laws may provide 
 
 ### How to Exercise Your Privacy Rights
 
-Regardless of where you are located, you may exercise these rights by contacting us at [privacy@zed.dev](mailto:privacy@zed.dev) or by using the contact details at the end of this Privacy Policy. Please include the subject line "Privacy Request" and include: (1) the specific right you wish to exercise, (2) your account email address, and (3) any details that help us locate your data.
+Regardless of where you are located, you may exercise these rights by contacting us at [privacy@flint.dev](mailto:privacy@flint.dev) or by using the contact details at the end of this Privacy Policy. Please include the subject line "Privacy Request" and include: (1) the specific right you wish to exercise, (2) your account email address, and (3) any details that help us locate your data.
 
-Before fulfilling your request, we may ask you to provide reasonable information to verify your identity. Zed will respond to these requests without undue delay and in any event, within one month and will execute the request within one month of responding. Complex requests may require an additional 60 days with notice provided to you.
+Before fulfilling your request, we may ask you to provide reasonable information to verify your identity. Flint will respond to these requests without undue delay and in any event, within one month and will execute the request within one month of responding. Complex requests may require an additional 60 days with notice provided to you.
 
 Please note that there are exceptions and limitations to each of these rights, and that while any changes you make will be reflected in active user databases instantly or within a reasonable period of time, we may retain personal data for backups, archiving, prevention of fraud and abuse, satisfaction of legal obligations, or where we otherwise reasonably believe that we have a legitimate and lawful reason to do so.
 
@@ -154,13 +154,13 @@ When you request deletion, we take measures to delete your personal data or anon
 
 ## Security
 
-Designing Zed and our Service with “secure-by-default” as an objective is of utmost importance to us. We take your security and ours very seriously and strive to follow industry best-practice in order to uphold that principle.  To learn more about Zed’s security program, please visit [https://zed.dev/docs/ai/privacy-and-security](https://zed.dev/docs/ai/privacy-and-security).
+Designing Flint and our Service with “secure-by-default” as an objective is of utmost importance to us. We take your security and ours very seriously and strive to follow industry best-practice in order to uphold that principle.  To learn more about Flint’s security program, please visit [https://flint.dev/docs/ai/privacy-and-security](https://flint.dev/docs/ai/privacy-and-security).
 
-Zed will notify users as soon as possible should an incident affect their security or privacy. However, because no electronic transmission or storage of data can be proven entirely secure, we can make no guarantees as to the security or privacy of your data.
+Flint will notify users as soon as possible should an incident affect their security or privacy. However, because no electronic transmission or storage of data can be proven entirely secure, we can make no guarantees as to the security or privacy of your data.
 
 ## Children’s Privacy
 
-We do not knowingly collect, maintain, or use personal data from children under 18 years of age, and no part of our websites, products, or services is directed to children. If you learn that a child has provided us with personal data in violation of this Privacy Policy, alert us at [privacy@zed.dev](mailto:privacy@zed.dev).
+We do not knowingly collect, maintain, or use personal data from children under 18 years of age, and no part of our websites, products, or services is directed to children. If you learn that a child has provided us with personal data in violation of this Privacy Policy, alert us at [privacy@flint.dev](mailto:privacy@flint.dev).
 
 ## International Visitors
 
@@ -168,13 +168,13 @@ Our websites, products, and services are hosted in the United States (“**U.S.*
 
 ## Changes to this Privacy Policy
 
-We will post any adjustments to the Privacy Policy on this page, and the revised version will be effective when it is posted. Registered customers will be notified of material privacy policy changes via the email on file with Zed.
+We will post any adjustments to the Privacy Policy on this page, and the revised version will be effective when it is posted. Registered customers will be notified of material privacy policy changes via the email on file with Flint.
 
 ## Contact Information
 
-When data is used as outlined in this Privacy Policy, Zed is the data controller and responsible for the processing of your personal data. When Zed processes personal data on behalf of Zed Business customers as a data processor, the terms of our Data Processing Agreement apply. If you have any questions, comments, or concerns about our processing activities, please email us at [privacy@zed.dev](mailto:privacy@zed.dev) or write to us at:
+When data is used as outlined in this Privacy Policy, Flint is the data controller and responsible for the processing of your personal data. When Flint processes personal data on behalf of Flint Business customers as a data processor, the terms of our Data Processing Agreement apply. If you have any questions, comments, or concerns about our processing activities, please email us at [privacy@flint.dev](mailto:privacy@flint.dev) or write to us at:
 
-Zed Industries, Inc.
+Flint Industries, Inc.
 2590 Welton St
 Suite 200, PO Box 1916
 Denver, CO 80205

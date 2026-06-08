@@ -155,7 +155,7 @@ pub struct Model {
     vendor: ModelVendor,
     is_chat_default: bool,
     // The model with this value true is selected by VSCode copilot if a premium request limit is
-    // reached. Zed does not currently implement this behaviour
+    // reached. Flint does not currently implement this behaviour
     is_chat_fallback: bool,
     model_picker_enabled: bool,
     #[serde(default)]
@@ -910,7 +910,7 @@ pub(crate) fn copilot_request_headers(
         .header(
             "Editor-Version",
             format!(
-                "Zed/{}",
+                "Flint/{}",
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )

@@ -74,7 +74,7 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
         MimeType::Plain(_) => 1,
-        // All other media types are not supported in Zed at this time
+        // All other media types are not supported in Flint at this time
         _ => 0,
     }
 }

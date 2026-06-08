@@ -40,7 +40,7 @@ if [ -z "${ALLOW_MISSING_LICENSES-}" ]; then WRAPPER=fail_on_stderr; else WRAPPE
 set -x
 $WRAPPER cargo about generate \
     $FAIL_FLAG \
-    -c script/licenses/zed-licenses.toml \
+    -c script/licenses/flint-licenses.toml \
     "$TEMPLATE_FILE" >>"$OUTPUT_FILE"
 set +x
 

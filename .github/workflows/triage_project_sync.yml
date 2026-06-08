@@ -1,4 +1,4 @@
-# Sync triage state into "Zed weekly triage" (project #84).
+# Sync triage state into "Flint weekly triage" (project #84).
 #
 # Runs in two modes:
 #   1. Event-driven (primary): fires on issue events + new issue comments.
@@ -9,7 +9,7 @@
 #
 # Auth: GitHub App `ZED_COMMUNITY_BOT_APP_ID` with
 # `Organization Projects: Read and write` permission added. Token is
-# requested with `owner: zed-industries` so it can mutate org-level project
+# requested with `owner: flint-industries` so it can mutate org-level project
 # items (the default repo-scoped token is insufficient for org projects).
 #
 # This workflow only mutates the triage project (#84). It does not write
@@ -63,7 +63,7 @@ jobs:
     # Run only on the canonical repo (not forks); skip PR comments since this
     # workflow is for issues only.
     if: |
-      github.repository == 'zed-industries/zed' &&
+      github.repository == 'flint-industries/flint' &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request == null)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -90,7 +90,7 @@ jobs:
           # IMPORTANT: org-scoped token is required for org-level project
           # mutations. Without `owner:`, the default token is repo-scoped and
           # cannot write to org projects.
-          owner: zed-industries
+          owner: flint-industries
           # Scope the token down to the minimum needed for this workflow.
           # Even though the App may have broader permissions for other
           # automations (e.g., Issues:Write for the dupe-bot), this token
@@ -169,5 +169,5 @@ jobs:
             if [ -n "$ISSUE_NUMBER" ]; then
               echo "- Issue: #$ISSUE_NUMBER"
             fi
-            echo "- Project: [#84 Zed weekly triage](https://github.com/orgs/zed-industries/projects/84)"
+            echo "- Project: [#84 Flint weekly triage](https://github.com/orgs/flint-industries/projects/84)"
           } >> "$GITHUB_STEP_SUMMARY"

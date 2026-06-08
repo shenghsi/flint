@@ -4,7 +4,7 @@
 //! never fail just because diagnostics couldn't be collected.
 //!
 //! What we gather:
-//! - All transitive descendant processes of the current Zed process
+//! - All transitive descendant processes of the current Flint process
 //!   (cross-platform via `sysinfo`).
 //! - On Linux: each descendant's `/proc/<pid>/wchan` (kernel function the
 //!   thread is currently sleeping in) and `State:` from `/proc/<pid>/status`.
@@ -105,7 +105,7 @@ fn collect_process_tree() -> anyhow::Result<Value> {
         .collect();
 
     Ok(serde_json::json!({
-        "zed_pid": current_pid.as_u32(),
+        "flint_pid": current_pid.as_u32(),
         "descendant_count": entries.len(),
         "descendants": entries,
     }))

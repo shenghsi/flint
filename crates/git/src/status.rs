@@ -741,7 +741,7 @@ mod tests {
 
     #[test]
     fn test_tree_diff_parsing() {
-        let input = ":000000 100644 0000000000000000000000000000000000000000 0062c311b8727c3a2e3cd7a41bc9904feacf8f98 A\x00.zed/settings.json\x00".to_owned() +
+        let input = ":000000 100644 0000000000000000000000000000000000000000 0062c311b8727c3a2e3cd7a41bc9904feacf8f98 A\x00.flint/settings.json\x00".to_owned() +
             ":100644 000000 bb3e9ed2e97a8c02545bae243264d342c069afb3 0000000000000000000000000000000000000000 D\x00README.md\x00" +
             ":100644 100644 42f097005a1f21eb2260fad02ec8c991282beee8 a437d85f63bb8c62bd78f83f40c506631fabf005 M\x00parallel.go\x00";
 
@@ -751,7 +751,7 @@ mod tests {
             TreeDiff {
                 entries: [
                     (
-                        RepoPath::new(".zed/settings.json").unwrap(),
+                        RepoPath::new(".flint/settings.json").unwrap(),
                         TreeDiffStatus::Added,
                     ),
                     (

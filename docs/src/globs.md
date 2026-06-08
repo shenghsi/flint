@@ -1,22 +1,22 @@
 ---
-title: Glob Patterns - Zed
-description: How glob patterns work in Zed for file matching, search filtering, and configuration. Syntax reference and examples.
+title: Glob Patterns - Flint
+description: How glob patterns work in Flint for file matching, search filtering, and configuration. Syntax reference and examples.
 ---
 
 # Globs
 
-Zed supports the use of [glob](<https://en.wikipedia.org/wiki/Glob_(programming)>) patterns that are the formal name for Unix shell-style path matching wildcards like `*.md` or `docs/src/**/*.md` supported by sh, bash, zsh, etc. A glob is similar but distinct from a [regex (regular expression)](https://en.wikipedia.org/wiki/Regular_expression). In Zed, globs are commonly used when matching filenames.
+Flint supports the use of [glob](<https://en.wikipedia.org/wiki/Glob_(programming)>) patterns that are the formal name for Unix shell-style path matching wildcards like `*.md` or `docs/src/**/*.md` supported by sh, bash, zsh, etc. A glob is similar but distinct from a [regex (regular expression)](https://en.wikipedia.org/wiki/Regular_expression). In Flint, globs are commonly used when matching filenames.
 
 ## Glob Flavor
 
-Zed uses two different rust crates for matching glob patterns:
+Flint uses two different rust crates for matching glob patterns:
 
 - [ignore crate](https://docs.rs/ignore/latest/ignore/) for matching glob patterns stored in `.gitignore` files
-- [glob crate](https://docs.rs/glob/latest/glob/) for matching file paths in Zed
+- [glob crate](https://docs.rs/glob/latest/glob/) for matching file paths in Flint
 
-While simple expressions are portable across environments (e.g. running `ls *.py` or `*.tmp` in a gitignore) there is significant divergence in the support for and syntax of more advanced features (character classes, exclusions, `**`, etc) across implementations. For the rest of this document we will be describing globs as supported in Zed via the `glob` crate implementation. Please see [References](#references) below for documentation links for glob pattern syntax for `.gitignore`, shells and other programming languages.
+While simple expressions are portable across environments (e.g. running `ls *.py` or `*.tmp` in a gitignore) there is significant divergence in the support for and syntax of more advanced features (character classes, exclusions, `**`, etc) across implementations. For the rest of this document we will be describing globs as supported in Flint via the `glob` crate implementation. Please see [References](#references) below for documentation links for glob pattern syntax for `.gitignore`, shells and other programming languages.
 
-The `glob` crate is implemented entirely in rust and does not rely on the `glob` / `fnmatch` interfaces provided by your platform's libc. This means that globs in Zed should behave similarly across platforms.
+The `glob` crate is implemented entirely in rust and does not rely on the `glob` / `fnmatch` interfaces provided by your platform's libc. This means that globs in Flint should behave similarly across platforms.
 
 ## Introduction
 
@@ -24,14 +24,14 @@ A glob "pattern" is used to match a file name or complete file path. For example
 
 ### Multiple Patterns
 
-You can specify multiple glob patterns in Project Search filters by separating them with commas. When using comma-separated patterns, Zed correctly handles braces within individual patterns:
+You can specify multiple glob patterns in Project Search filters by separating them with commas. When using comma-separated patterns, Flint correctly handles braces within individual patterns:
 
 - `*.ts, *.tsx` — Match TypeScript and TSX files
 - `src/{components,utils}/**/*.ts, tests/**/*.test.ts` — Match TypeScript files in specific directories plus test files
 
 Each pattern is evaluated independently. Commas inside braces (like `{a,b}`) are treated as part of the pattern, not as separators.
 
-**Important:** While braces are preserved in patterns, Zed does not expand them into multiple patterns. The pattern `src/{a,b}/*.ts` matches the literal path structure, not `src/a/*.ts` OR `src/b/*.ts`. This differs from shell behavior.
+**Important:** While braces are preserved in patterns, Flint does not expand them into multiple patterns. The pattern `src/{a,b}/*.ts` matches the literal path structure, not `src/a/*.ts` OR `src/b/*.ts`. This differs from shell behavior.
 
 When creating a glob pattern you can use one or multiple special characters:
 
@@ -59,19 +59,19 @@ If you wanted to only search Markdown files add `*.md` to the "Include" search f
 
 ### Case insensitive matching
 
-Globs in Zed are case-sensitive, so `*.c` will not match `main.C` (even on case-insensitive filesystems like HFS+/APFS on macOS). Instead use brackets to match characters. So instead of `*.c` use `*.[cC]`.
+Globs in Flint are case-sensitive, so `*.c` will not match `main.C` (even on case-insensitive filesystems like HFS+/APFS on macOS). Instead use brackets to match characters. So instead of `*.c` use `*.[cC]`.
 
 ### Matching directories
 
-If you wanted to search the [zed repository](https://github.com/zed-industries/zed) for examples of [Configuring Language Servers](https://zed.dev/docs/configuring-languages#configuring-language-servers) (under `"lsp"` in Zed settings.json) you could search for `"lsp"` and in the "Include" filter specify `docs/**/*.md`. This would only match files whose path was under the `docs` directory or any nested subdirectories `**/` of that folder with a filename that ends in `.md`.
+If you wanted to search the [flint repository](https://github.com/zed-industries/flint) for examples of [Configuring Language Servers](https://flint.dev/docs/configuring-languages#configuring-language-servers) (under `"lsp"` in Flint settings.json) you could search for `"lsp"` and in the "Include" filter specify `docs/**/*.md`. This would only match files whose path was under the `docs` directory or any nested subdirectories `**/` of that folder with a filename that ends in `.md`.
 
-If instead you wanted to restrict yourself only to [Zed Language-Specific Documentation](https://zed.dev/docs/languages) pages you could define a narrower pattern of: `docs/src/languages/*.md` this would match [`docs/src/languages/rust.md`](https://github.com/zed-industries/zed/blob/main/docs/src/languages/rust.md) and [`docs/src/languages/cpp.md`](https://github.com/zed-industries/zed/blob/main/docs/src/languages/cpp.md) but not [`docs/src/configuring-languages.md`](https://github.com/zed-industries/zed/blob/main/docs/src/configuring-languages.md).
+If instead you wanted to restrict yourself only to [Flint Language-Specific Documentation](https://flint.dev/docs/languages) pages you could define a narrower pattern of: `docs/src/languages/*.md` this would match [`docs/src/languages/rust.md`](https://github.com/zed-industries/flint/blob/main/docs/src/languages/rust.md) and [`docs/src/languages/cpp.md`](https://github.com/zed-industries/flint/blob/main/docs/src/languages/cpp.md) but not [`docs/src/configuring-languages.md`](https://github.com/zed-industries/flint/blob/main/docs/src/configuring-languages.md).
 
 ### Implicit Wildcards
 
-When using the "Include" / "Exclude" filters on a Project Search each glob is wrapped in implicit wildcards. For example to exclude any files with license in the path or filename from your search just type `license` in the exclude box. Behind the scenes Zed transforms `license` to `**license**`. This means that files named `license.*`, `*.license` or inside a `license` subdirectory will all be filtered out. This enables users to easily filter for `*.ts` without having to remember to type `**/*.ts` every time.
+When using the "Include" / "Exclude" filters on a Project Search each glob is wrapped in implicit wildcards. For example to exclude any files with license in the path or filename from your search just type `license` in the exclude box. Behind the scenes Flint transforms `license` to `**license**`. This means that files named `license.*`, `*.license` or inside a `license` subdirectory will all be filtered out. This enables users to easily filter for `*.ts` without having to remember to type `**/*.ts` every time.
 
-Alternatively, if in your Zed settings you wanted a [`file_types`](./reference/all-settings.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as a Jinja2 template you could use the following:
+Alternatively, if in your Flint settings you wanted a [`file_types`](./reference/all-settings.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as a Jinja2 template you could use the following:
 
 ```json [settings]
 {
@@ -84,7 +84,7 @@ Alternatively, if in your Zed settings you wanted a [`file_types`](./reference/a
 
 ## References
 
-While globs in Zed are implemented as described above, when writing code using globs in other languages, please reference your platform's glob documentation:
+While globs in Flint are implemented as described above, when writing code using globs in other languages, please reference your platform's glob documentation:
 
 - [macOS fnmatch](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/fnmatch.3.html) (BSD C Standard Library)
 - [Linux fnmatch](https://www.gnu.org/software/libc/manual/html_node/Wildcard-Matching.html) (GNU C Standard Library)

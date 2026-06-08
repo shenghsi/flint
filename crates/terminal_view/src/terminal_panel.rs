@@ -148,7 +148,7 @@ impl TerminalPanel {
                                         // context menu will be gone the moment we spawn the modal.
                                         .action(
                                             "Spawn Task",
-                                            zed_actions::Spawn::modal().boxed_clone(),
+                                            flint_actions::Spawn::modal().boxed_clone(),
                                         )
                                 });
 
@@ -1264,10 +1264,10 @@ impl Render for FailedToSpawnTerminal {
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
-                        .action("Open Settings", zed_actions::OpenSettings.boxed_clone())
+                        .action("Open Settings", flint_actions::OpenSettings.boxed_clone())
                         .action(
                             "Edit settings.json",
-                            zed_actions::OpenSettingsFile.boxed_clone(),
+                            flint_actions::OpenSettingsFile.boxed_clone(),
                         )
                 }))
             })
@@ -1301,7 +1301,7 @@ impl Render for FailedToSpawnTerminal {
                         ButtonLike::new("open-settings-ui")
                             .child(Label::new("Edit Settings").size(LabelSize::Small))
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                                window.dispatch_action(flint_actions::OpenSettings.boxed_clone(), cx);
                             }),
                         popover_menu.into_any_element(),
                     )),

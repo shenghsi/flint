@@ -9,7 +9,7 @@ use ui::{ButtonStyle, IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
-pub use zed_actions::search::ToggleIncludeIgnored;
+pub use flint_actions::search::ToggleIncludeIgnored;
 
 pub use search_status_button::SEARCH_ICON;
 

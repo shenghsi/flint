@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   refresh:
-    if: github.repository == 'zed-industries/zed'
+    if: github.repository == 'flint-industries/flint'
     runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 15
 
@@ -31,7 +31,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: flint-industries
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1

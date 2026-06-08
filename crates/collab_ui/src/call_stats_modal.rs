@@ -6,7 +6,7 @@ use gpui::{
 use livekit_client::ConnectionQuality;
 use ui::prelude::*;
 use workspace::{ModalView, Workspace};
-use zed_actions::ShowCallStats;
+use flint_actions::ShowCallStats;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {

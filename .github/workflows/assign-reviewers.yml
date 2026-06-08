@@ -1,11 +1,11 @@
 # Assign Reviewers — Smart team assignment based on diff weight
 #
 # Triggers on PR open and ready_for_review events. Checks out the coordinator
-# repo (zed-industries/codeowner-coordinator) to access the assignment script and rules,
+# repo (flint-industries/codeowner-coordinator) to access the assignment script and rules,
 # then assigns the 1-2 most relevant teams as reviewers.
 #
 # NOTE: This file is stored in the codeowner-coordinator repo but must be deployed to
-# the zed repo at .github/workflows/assign-reviewers.yml. See INSTALL.md.
+# the flint repo at .github/workflows/assign-reviewers.yml. See INSTALL.md.
 #
 # AUTH NOTE: Uses a GitHub App (COORDINATOR_APP_ID + COORDINATOR_APP_PRIVATE_KEY)
 # for all API operations: cloning the private coordinator repo, requesting team
@@ -55,14 +55,14 @@ jobs:
         with:
           app-id: ${{ vars.COORDINATOR_APP_ID }}
           private-key: ${{ secrets.COORDINATOR_APP_PRIVATE_KEY }}
-          repositories: codeowner-coordinator,zed
+          repositories: codeowner-coordinator,flint
 
       # SECURITY: checks out the coordinator repo at ref: main, NOT the PR branch.
       # persist-credentials: false prevents the token from leaking into .git/config.
       - name: Checkout coordinator repo
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          repository: zed-industries/codeowner-coordinator
+          repository: flint-industries/codeowner-coordinator
           ref: main
           path: codeowner-coordinator
           token: ${{ steps.app-token.outputs.token }}
@@ -92,7 +92,7 @@ jobs:
             --apply \
             --rules-file team-membership-rules.yml \
             --repo "$TARGET_REPO" \
-            --org zed-industries \
+            --org flint-industries \
             2>&1 | tee /tmp/assign-reviewers-output.txt
 
       - name: Upload output

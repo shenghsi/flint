@@ -1,24 +1,24 @@
 ---
-title: Dev Containers - Zed
-description: Open projects in dev containers with Zed. Reproducible development environments using devcontainer.json configuration.
+title: Dev Containers - Flint
+description: Open projects in dev containers with Flint. Reproducible development environments using devcontainer.json configuration.
 ---
 
 # Dev Containers
 
 Dev Containers provide a consistent, reproducible development environment by defining your project's dependencies, tools, and settings in a container configuration.
 
-If your repository includes a `.devcontainer/devcontainer.json` file, Zed can open a project inside a development container.
+If your repository includes a `.devcontainer/devcontainer.json` file, Flint can open a project inside a development container.
 
 ## Requirements
 
-- Docker or Podman must be installed and available in your `PATH`. If you use `podman`, you must set the `use_podman` setting in your Zed settings.json to true.
+- Docker or Podman must be installed and available in your `PATH`. If you use `podman`, you must set the `use_podman` setting in your Flint settings.json to true.
 - Your project must contain a `.devcontainer/devcontainer.json` directory/file.
 
-## Using Dev Containers in Zed
+## Using Dev Containers in Flint
 
 ### Automatic prompt
 
-When you open a project that contains the `.devcontainer/devcontainer.json` directory/file, Zed will display a prompt asking whether to open the project inside the dev container. Choosing "Open in Container" will:
+When you open a project that contains the `.devcontainer/devcontainer.json` directory/file, Flint will display a prompt asking whether to open the project inside the dev container. Choosing "Open in Container" will:
 
 1. Build the dev container image (if needed).
 2. Launch the container.
@@ -26,19 +26,19 @@ When you open a project that contains the `.devcontainer/devcontainer.json` dire
 
 ### Manual open
 
-If you dismiss the prompt or want to reopen the project inside a container later, you can use Zed's command palette to run the "Project: Open Remote" command and select the option to open the project in a dev container.
+If you dismiss the prompt or want to reopen the project inside a container later, you can use Flint's command palette to run the "Project: Open Remote" command and select the option to open the project in a dev container.
 Alternatively, you can reach for the Remote Projects modal (through the {#kb projects::OpenRemote} binding) and choose the "Connect Dev Container" option.
 
 ## Editing the dev container configuration
 
-If you modify `.devcontainer/devcontainer.json`, Zed does not currently rebuild or reload the container automatically. After changing configuration:
+If you modify `.devcontainer/devcontainer.json`, Flint does not currently rebuild or reload the container automatically. After changing configuration:
 
 - Stop or kill the existing container manually (e.g., via `docker kill <container>`).
 - Reopen the project in the container.
 
 ## Working in a Dev Container
 
-Once connected, Zed operates inside the container environment for tasks, terminals, and language servers.
+Once connected, Flint operates inside the container environment for tasks, terminals, and language servers.
 Files are linked from your workspace into the container according to the dev container specification.
 
 ## Extensions
@@ -49,7 +49,7 @@ You can specify extensions in `.devcontainer/devcontainer.json` under the "custo
 {
   ...
   "customizations": {
-    "zed": {
+    "flint": {
       "extensions": ["vue", "ruby"],
     },
     "vscode": {
@@ -62,7 +62,7 @@ You can specify extensions in `.devcontainer/devcontainer.json` under the "custo
 }
 ```
 
-Note that extensions load for the Zed session, so these extensions will exist on your local Zed instances as well.
+Note that extensions load for the Flint session, so these extensions will exist on your local Flint instances as well.
 
 ## Known Limitations
 

@@ -1,4 +1,4 @@
-//! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
+//! See [Telemetry in Flint](https://flint.dev/docs/telemetry) for additional information.
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -6,23 +6,23 @@ use std::{collections::HashMap, fmt::Display, time::Duration};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventRequestBody {
-    /// Identifier unique to each system Zed is installed on
+    /// Identifier unique to each system Flint is installed on
     pub system_id: Option<String>,
-    /// Identifier unique to each Zed installation (differs for stable, preview, dev)
+    /// Identifier unique to each Flint installation (differs for stable, preview, dev)
     pub installation_id: Option<String>,
-    /// Identifier unique to each logged in Zed user (randomly generated on first sign in)
-    /// Identifier unique to each Zed session (differs for each time you open Zed)
+    /// Identifier unique to each logged in Flint user (randomly generated on first sign in)
+    /// Identifier unique to each Flint session (differs for each time you open Flint)
     pub session_id: Option<String>,
     pub metrics_id: Option<String>,
-    /// True for Zed staff, otherwise false
+    /// True for Flint staff, otherwise false
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_staff: Option<bool>,
-    /// Zed version number
+    /// Flint version number
     pub app_version: String,
     pub os_name: String,
     pub os_version: Option<String>,
     pub architecture: String,
-    /// Zed release channel (stable, preview, dev)
+    /// Flint release channel (stable, preview, dev)
     pub release_channel: Option<String>,
     pub events: Vec<EventWrapper>,
 }

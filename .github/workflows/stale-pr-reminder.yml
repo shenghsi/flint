@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   check-stale-prs:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'flint-industries'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:

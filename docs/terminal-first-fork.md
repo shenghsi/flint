@@ -1,8 +1,8 @@
-# Terminal-First Zed Fork
+# Terminal-First Flint Fork
 
 ## Purpose
 
-This fork turns Zed into a terminal-first code review and writing workspace.
+This fork turns Flint into a terminal-first code review and writing workspace.
 Codex, Claude Code, and similar tools run in real terminals. The IDE's job is
 to organize those terminal sessions, show their code changes clearly, provide
 fast editing when needed, and offer a stronger Markdown writing experience.
@@ -129,10 +129,10 @@ Remove these product areas from the fork:
 
 - ACP: `acp_thread`, `acp_tools`, `agent_servers`, ACP registry, ACP imports,
   external-agent protocol handling.
-- Native Zed agent/chat: agent panel chat, inline assistant, agent tools, tool
+- Native Flint agent/chat: agent panel chat, inline assistant, agent tools, tool
   permissions, model-backed text threads, ACP thread import/history.
 - Native model providers: Anthropic, OpenAI, Google, Bedrock, Ollama,
-  OpenRouter, DeepSeek, Mistral, LM Studio, xAI, OpenCode provider UI, Zed cloud
+  OpenRouter, DeepSeek, Mistral, LM Studio, xAI, OpenCode provider UI, Flint cloud
   model providers, and the full language model registry where it only serves
   native AI features.
 - Copilot and edit prediction: `copilot*`, `edit_prediction*`.
@@ -140,8 +140,8 @@ Remove these product areas from the fork:
   screen sharing, channel notes.
 - Debugger: `dap*`, `debug_adapter_extension`, `debugger_tools`,
   `debugger_ui`, debugger panels, debug tasks UI.
-- Zed cloud/product surfaces: account settings, hosted model onboarding,
-  feedback, social/help links specific to Zed, telemetry UI.
+- Flint cloud/product surfaces: account settings, hosted model onboarding,
+  feedback, social/help links specific to Flint, telemetry UI.
 - Extension marketplace UI if extension installation and management are not
   part of the fork's first product.
 
@@ -151,7 +151,7 @@ Some areas should be kept but narrowed.
 
 ### Git Commit Messages
 
-Keep AI-assisted commit message generation, but do not keep Zed's full native
+Keep AI-assisted commit message generation, but do not keep Flint's full native
 LLM stack just for this feature.
 
 Replace the current `LanguageModelRegistry`-based flow with a small external
@@ -294,9 +294,9 @@ Possible migration path:
 
 ## Important Code Entry Points
 
-- App startup feature registration: `crates/zed/src/main.rs`
-- Workspace panel loading: `crates/zed/src/zed.rs`
-- App menus: `crates/zed/src/zed/app_menus.rs`
+- App startup feature registration: `crates/flint/src/main.rs`
+- Workspace panel loading: `crates/flint/src/flint.rs`
+- App menus: `crates/flint/src/flint/app_menus.rs`
 - Terminal item: `crates/terminal_view/src/terminal_view.rs`
 - Terminal panel plumbing: `crates/terminal_view/src/terminal_panel.rs`
 - Git commit message generation: `crates/git_ui/src/git_panel.rs`
@@ -315,7 +315,7 @@ Fresh workspace:
   available.
 - Confirm removed surfaces are absent from default menus and command palette:
   ACP, native agent/chat, native model providers, Copilot/edit prediction,
-  collaboration/calls, debugger/DAP panels, and Zed cloud product entries.
+  collaboration/calls, debugger/DAP panels, and Flint cloud product entries.
 
 Terminal threads:
 

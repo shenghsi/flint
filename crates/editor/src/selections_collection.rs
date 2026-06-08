@@ -1246,7 +1246,7 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
 ///    start or end of another selection should be absorbed into it
 ///
 /// Note: two selections that merely touch (one ends exactly where the other begins)
-/// but don't share any positions remain separate, see: https://github.com/zed-industries/zed/issues/24748
+/// but don't share any positions remain separate, see: https://github.com/zed-industries/flint/issues/24748
 fn should_merge<T: Ord + Copy>(a_start: T, a_end: T, b_start: T, b_end: T, sorted: bool) -> bool {
     let is_overlapping = if sorted {
         // When sorted, `a` starts before or at `b`, so overlap means `b` starts before `a` ends

@@ -1,6 +1,6 @@
 # Build eval-cli for Linux.
 #
-# Usage (from the zed repo root):
+# Usage (from the flint repo root):
 #   docker build --platform linux/amd64 -f crates/eval_cli/Dockerfile -t eval-cli-builder .
 #   docker cp "$(docker create eval-cli-builder)":/eval-cli ./target/eval-cli
 #

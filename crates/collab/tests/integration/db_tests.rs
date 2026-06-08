@@ -69,7 +69,7 @@ impl TestDb {
         let _guard = LOCK.lock();
         let mut rng = StdRng::from_os_rng();
         let url = format!(
-            "postgres://postgres@localhost/zed-test-{}",
+            "postgres://postgres@localhost/flint-test-{}",
             rng.random::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()

@@ -10,7 +10,7 @@
 //! Note that per DAP we don't know what the address space layout is, so we can't optimize off of it.
 //! Note that while we optimize for a paged layout, we also want to be able to represent memory that is not paged.
 //! This use case is relevant to embedded folks. Furthermore, we cater to default 4k page size.
-//! It is picked arbitrarily as a ubiquous default - other than that, the underlying format of Zed's memory storage should not be relevant
+//! It is picked arbitrarily as a ubiquous default - other than that, the underlying format of Flint's memory storage should not be relevant
 //! to the users of this module.
 
 use std::{collections::BTreeMap, ops::RangeInclusive, sync::Arc};

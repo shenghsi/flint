@@ -38,16 +38,16 @@ fn product_version() -> String {
     format!("{pkg_version}+{metadata}")
 }
 
-const ICON_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../zed/resources/windows");
+const ICON_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../flint/resources/windows");
 const MANIFEST_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/resources/manifest.xml");
 
 pub fn compile(manifest: bool) -> Result<(), Box<dyn std::error::Error>> {
     let channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
     let (icon_filename, product_name) = match channel {
-        "stable" => ("app-icon.ico", "Zed"),
-        "preview" => ("app-icon-preview.ico", "Zed Preview"),
-        "nightly" => ("app-icon-nightly.ico", "Zed Nightly"),
-        _ => ("app-icon-dev.ico", "Zed Dev"),
+        "stable" => ("app-icon.ico", "Flint"),
+        "preview" => ("app-icon-preview.ico", "Flint Preview"),
+        "nightly" => ("app-icon-nightly.ico", "Flint Nightly"),
+        _ => ("app-icon-dev.ico", "Flint Dev"),
     };
     let icon = std::path::PathBuf::from(ICON_DIR).join(icon_filename);
     let icon_escaped = icon.to_string_lossy().replace('\\', "\\\\");
@@ -94,8 +94,8 @@ BEGIN
             VALUE "FileVersion", "{pkg_version}\0"
             VALUE "ProductName", "{product_name}\0"
             VALUE "ProductVersion", "{product_version}\0"
-            VALUE "CompanyName", "Zed Industries, Inc.\0"
-            VALUE "LegalCopyright", "Copyright 2022 - 2025 Zed Industries, Inc.\0"
+            VALUE "CompanyName", "Flint Industries, Inc.\0"
+            VALUE "LegalCopyright", "Copyright 2022 - 2025 Flint Industries, Inc.\0"
         END
     END
     BLOCK "VarFileInfo"
@@ -107,7 +107,7 @@ END
     );
 
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
-    let rc_path = out_dir.join("zed_resources.rc");
+    let rc_path = out_dir.join("flint_resources.rc");
     std::fs::write(&rc_path, rc_content)?;
 
     if let Ok(toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH") {

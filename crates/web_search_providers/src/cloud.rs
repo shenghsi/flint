@@ -40,7 +40,7 @@ impl State {
     }
 }
 
-pub const ZED_WEB_SEARCH_PROVIDER_ID: &str = "zed.dev";
+pub const ZED_WEB_SEARCH_PROVIDER_ID: &str = "flint.dev";
 
 impl WebSearchProvider for CloudWebSearchProvider {
     fn id(&self) -> WebSearchProviderId {
@@ -69,7 +69,7 @@ async fn perform_web_search(
     organization_id: Option<OrganizationId>,
     body: WebSearchBody,
 ) -> Result<WebSearchResponse> {
-    let url = client.http_client().build_zed_llm_url("/web_search", &[])?;
+    let url = client.http_client().build_flint_llm_url("/web_search", &[])?;
     let body = serde_json::to_string(&body)?;
     let mut response = client
         .authenticated_llm_request(&llm_api_token, organization_id, |token| {

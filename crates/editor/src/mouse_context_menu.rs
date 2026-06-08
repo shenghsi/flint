@@ -10,7 +10,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};
 use std::ops::Range;
 use workspace::OpenInTerminal;
-use zed_actions::preview::{
+use flint_actions::preview::{
     markdown::OpenPreview as OpenMarkdownPreview, svg::OpenPreview as OpenSvgPreview,
 };
 

@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Specifies the density of the UI.
-/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
+/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/flint/issues/18078)
 #[derive(
     Debug,
     Default,

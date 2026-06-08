@@ -19,7 +19,7 @@ use sqlez::{
 use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use ui::{App, SharedString};
 use util::path_list::PathList;
-use zed_env_vars::ZED_STATELESS;
+use flint_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
 pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
@@ -894,7 +894,7 @@ mod tests {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
         let thread_id = session_id("sandbox-temp-dir-thread");
         let temp_dir = tempfile::Builder::new()
-            .prefix("zed-agent-terminal-test-")
+            .prefix("flint-agent-terminal-test-")
             .tempdir()
             .unwrap()
             .keep();
@@ -923,7 +923,7 @@ mod tests {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
         let thread_id = session_id("sandbox-temp-dir-delete-thread");
         let temp_dir = tempfile::Builder::new()
-            .prefix("zed-agent-terminal-test-")
+            .prefix("flint-agent-terminal-test-")
             .tempdir()
             .unwrap()
             .keep();

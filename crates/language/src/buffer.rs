@@ -379,7 +379,7 @@ pub trait File: Send + Sync + Any {
     /// Converts this file into a protobuf message.
     fn to_proto(&self, cx: &App) -> rpc::proto::File;
 
-    /// Return whether Zed considers this to be a private file.
+    /// Return whether Flint considers this to be a private file.
     fn is_private(&self) -> bool;
 
     fn can_open(&self) -> bool {
@@ -393,7 +393,7 @@ pub trait File: Send + Sync + Any {
 /// indicator for new files.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum DiskState {
-    /// File created in Zed that has not been saved.
+    /// File created in Flint that has not been saved.
     New,
     /// File present on the filesystem.
     Present { mtime: MTime, size: u64 },

@@ -52,7 +52,7 @@ impl RenderOnce for SkillsIllustration {
                 h_flex()
                     .gap_2p5()
                     .child(skill_crease("brainstorming".into(), "global".into()))
-                    .child(skill_crease("borrow-checker-expert".into(), "zed".into())),
+                    .child(skill_crease("borrow-checker-expert".into(), "flint".into())),
             )
             .child(
                 h_flex()

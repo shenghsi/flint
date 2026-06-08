@@ -99,7 +99,7 @@ async fn send_anthropic_event(
     client: Arc<dyn HttpClient>,
     api_key: String,
 ) -> anyhow::Result<()> {
-    let uri = format!("{ANTHROPIC_API_URL}/v1/log/zed");
+    let uri = format!("{ANTHROPIC_API_URL}/v1/log/flint");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)

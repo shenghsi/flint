@@ -101,7 +101,7 @@ impl ConfiguredModel {
         self.model.id() == other.model.id() && self.provider.id() == other.provider.id()
     }
 
-    pub fn is_provided_by_zed(&self) -> bool {
+    pub fn is_provided_by_flint(&self) -> bool {
         self.provider.id() == ZED_CLOUD_PROVIDER_ID
     }
 }
@@ -180,13 +180,13 @@ impl LanguageModelRegistry {
     }
 
     pub fn providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
-        let zed_provider_id = LanguageModelProviderId("zed.dev".into());
+        let flint_provider_id = LanguageModelProviderId("flint.dev".into());
         let mut providers = Vec::with_capacity(self.providers.len());
-        if let Some(provider) = self.providers.get(&zed_provider_id) {
+        if let Some(provider) = self.providers.get(&flint_provider_id) {
             providers.push(provider.clone());
         }
         providers.extend(self.providers.values().filter_map(|p| {
-            if p.id() != zed_provider_id {
+            if p.id() != flint_provider_id {
                 Some(p.clone())
             } else {
                 None

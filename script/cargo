@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // ./script/cargo is a transparent wrapper around cargo that:
-// - When running in a clone of `./zed-industries/zed`
+// - When running in a clone of `./flint-industries/flint`
 // - outputs build timings to the ZED_DATA_DIR/build_timings
-// When Zed starts for staff-members it uploads the build timings to Snowflake
+// When Flint starts for staff-members it uploads the build timings to Snowflake
 // To use it:
 //  ./script/cargo --init
 // This will add a wrapper to your shell configuration files.
@@ -92,11 +92,11 @@ function generateAlias(shell, scriptDir) {
   switch (shell) {
     case "zsh":
     case "bash":
-      return `\n# Zed cargo timing wrapper\ncargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }\n`;
+      return `\n# Flint cargo timing wrapper\ncargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }\n`;
     case "fish":
-      return `\n# Zed cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n        return $status\n    else\n        command cargo $argv\n    end\nend\n`;
+      return `\n# Flint cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n        return $status\n    else\n        command cargo $argv\n    end\nend\n`;
     case "powershell":
-      return `\n# Zed cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        node \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
+      return `\n# Flint cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        node \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
     default:
       return `cargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }`;
   }
@@ -107,13 +107,13 @@ function aliasBlockRegex(shell) {
     case "zsh":
     case "bash":
       // Comment line + single-line cargo() { ... } function
-      return /\n?# Zed cargo timing wrapper\ncargo\(\) \{[^\n]*\}\n/;
+      return /\n?# Flint cargo timing wrapper\ncargo\(\) \{[^\n]*\}\n/;
     case "fish":
       // Comment line + multi-line function cargo...end block
-      return /\n?# Zed cargo timing wrapper\nfunction cargo\n[\s\S]*?\nend\n/;
+      return /\n?# Flint cargo timing wrapper\nfunction cargo\n[\s\S]*?\nend\n/;
     case "powershell":
       // Comment line + multi-line function cargo {...} block
-      return /\n?# Zed cargo timing wrapper\nfunction cargo \{[\s\S]*?\n\}\n/;
+      return /\n?# Flint cargo timing wrapper\nfunction cargo \{[\s\S]*?\n\}\n/;
     default:
       return null;
   }
@@ -135,7 +135,7 @@ function initShellAlias() {
   // Check if alias already exists; if so, replace it in-place
   if (fs.existsSync(configPath)) {
     const content = fs.readFileSync(configPath, "utf-8");
-    if (content.includes("Zed cargo timing wrapper")) {
+    if (content.includes("Flint cargo timing wrapper")) {
       const blockRegex = aliasBlockRegex(shell);
       const updated = blockRegex ? content.replace(blockRegex, "") : content;
       fs.writeFileSync(configPath, updated + alias);
@@ -166,7 +166,7 @@ function initShellAlias() {
   }
 }
 
-function isZedRepo() {
+function isFlintRepo() {
   try {
     const result = spawnSync("git", ["remote", "-v"], {
       encoding: "utf-8",
@@ -176,7 +176,7 @@ function isZedRepo() {
     if (result.status !== 0 || !result.stdout) {
       return false;
     }
-    return result.stdout.includes("zed-industries/zed");
+    return result.stdout.includes("flint-industries/flint");
   } catch {
     return false;
   }
@@ -254,8 +254,8 @@ async function main() {
     return;
   }
 
-  // If not in zed repo, just pass through to cargo
-  if (!isZedRepo()) {
+  // If not in flint repo, just pass through to cargo
+  if (!isFlintRepo()) {
     runCargoPassthrough(args);
     return;
   }

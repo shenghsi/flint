@@ -1,6 +1,6 @@
 //! Loopback OAuth 2.0 callback server and shared HTML response page.
 //!
-//! Used by Zed's OAuth-based sign-in flows (e.g. MCP servers, ChatGPT
+//! Used by Flint's OAuth-based sign-in flows (e.g. MCP servers, ChatGPT
 //! Subscription) to receive the authorization code redirect from the user's
 //! browser. The HTML response page rendered to the browser is kept alongside
 //! the server so all OAuth callback presentation lives in one place.
@@ -8,7 +8,7 @@
 /// Generate a styled HTML page for OAuth callback responses.
 ///
 /// Returns a complete HTML document (no HTTP headers) with a centered card
-/// layout styled to match Zed's dark theme. The `title` is rendered as a
+/// layout styled to match Flint's dark theme. The `title` is rendered as a
 /// heading and `message` as body text below it.
 ///
 /// When `is_error` is true, a red X icon is shown instead of the green
@@ -33,7 +33,7 @@ pub fn oauth_callback_page(title: &str, message: &str, is_error: bool) -> String
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — Zed</title>
+<title>{title} — Flint</title>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
@@ -98,7 +98,7 @@ pub fn oauth_callback_page(title: &str, message: &str, is_error: bool) -> String
   </div>
   <h1>{title}</h1>
   <p>{message}</p>
-  <div class="brand">Zed</div>
+  <div class="brand">Flint</div>
 </div>
 </body>
 </html>"#,
@@ -308,7 +308,7 @@ mod server {
                         200,
                         oauth_callback_page(
                             "Authorization Successful",
-                            "You can close this tab and return to Zed.",
+                            "You can close this tab and return to Flint.",
                             false,
                         ),
                     ),
@@ -318,7 +318,7 @@ mod server {
                             400,
                             oauth_callback_page(
                                 "Authorization Failed",
-                                "Something went wrong. Please try again from Zed.",
+                                "Something went wrong. Please try again from Flint.",
                                 true,
                             ),
                         )

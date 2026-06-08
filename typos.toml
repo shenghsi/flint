@@ -51,7 +51,7 @@ extend-exclude = [
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
     # File type extensions are not typos
-    "crates/zed/resources/windows/zed.iss",
+    "crates/flint/resources/windows/flint.iss",
     # typos-cli doesn't understand our `vˇariable` markup
     "crates/editor/src/hover_links.rs",
     # typos-cli doesn't understand `setis` is intentional test case

@@ -7,7 +7,7 @@ pub struct DebuggerSettings {
     ///
     /// Default: line
     pub stepping_granularity: SteppingGranularity,
-    /// Whether the breakpoints should be reused across Zed sessions.
+    /// Whether the breakpoints should be reused across Flint sessions.
     ///
     /// Default: true
     pub save_breakpoints: bool,
@@ -19,7 +19,7 @@ pub struct DebuggerSettings {
     ///
     /// Default: 2000ms
     pub timeout: u64,
-    /// Whether to log messages between active debug adapters and Zed
+    /// Whether to log messages between active debug adapters and Flint
     ///
     /// Default: true
     pub log_dap_communications: bool,

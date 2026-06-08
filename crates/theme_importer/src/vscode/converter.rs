@@ -9,7 +9,7 @@ use theme_settings::{
 use crate::ThemeMetadata;
 use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 
-use super::ZedSyntaxToken;
+use super::FlintSyntaxToken;
 
 pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<FontWeightContent> {
     match font_style {
@@ -215,7 +215,7 @@ impl VsCodeThemeConverter {
     fn convert_syntax_theme(&self) -> Result<IndexMap<String, HighlightStyleContent>> {
         let mut highlight_styles = IndexMap::default();
 
-        for syntax_token in ZedSyntaxToken::iter() {
+        for syntax_token in FlintSyntaxToken::iter() {
             let override_match = self
                 .syntax_overrides
                 .get(&syntax_token.to_string())

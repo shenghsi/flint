@@ -14,10 +14,10 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
         .with_site_config(config)
         .with_vendored_text_measurer()
         .with_diagram_id(&diagram_id);
-    // Apply merman's raster-safe pipeline before Zed-specific styling. The
+    // Apply merman's raster-safe pipeline before Flint-specific styling. The
     // pipeline handles generic rasterizer compatibility cleanup: foreignObject
     // fallback text, unsupported CSS removal, and invalid SVG attribute cleanup.
-    // Zed also strips merman's existing `!important` declarations before
+    // Flint also strips merman's existing `!important` declarations before
     // injecting its own theme CSS so host styling wins consistently in usvg/resvg.
     let pipeline = merman::render::SvgPipeline::resvg_safe()
         .with_postprocessor(merman::render::CssOverridePostprocessor::strip_existing_important());

@@ -74,7 +74,7 @@ util.workspace = true
 uuid.workspace = true
 watch.workspace = true
 web_search.workspace = true
-zed_env_vars.workspace = true
+flint_env_vars.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]

@@ -58,7 +58,7 @@ impl PathWithRange {
     pub fn new(str: impl AsRef<str>) -> Self {
         let str = str.as_ref();
         // Sometimes the model will include a language at the start,
-        // e.g. "```rust zed/crates/markdown/src/markdown.rs#L1"
+        // e.g. "```rust flint/crates/markdown/src/markdown.rs#L1"
         // We just discard that.
         let str = match str.trim_end().rfind(' ') {
             Some(space) => &str[space + 1..],

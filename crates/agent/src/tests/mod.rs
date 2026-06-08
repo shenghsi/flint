@@ -1812,9 +1812,9 @@ async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAp
         LanguageModelToolUse {
             id: "tool_1".into(),
             name: "issue_read".into(),
-            raw_input: json!({"issue_url": "https://github.com/zed-industries/zed/issues/47404"})
+            raw_input: json!({"issue_url": "https://github.com/zed-industries/flint/issues/47404"})
                 .to_string(),
-            input: json!({"issue_url": "https://github.com/zed-industries/zed/issues/47404"}),
+            input: json!({"issue_url": "https://github.com/zed-industries/flint/issues/47404"}),
             is_input_complete: true,
             thought_signature: None,
         },
@@ -7161,7 +7161,7 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
     fs.insert_tree(
         "/root",
         json!({
-            ".zed": {
+            ".flint": {
                 "settings.json": "{}"
             },
             "README.md": "# Hello"
@@ -7200,13 +7200,13 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
         language_registry,
     ));
 
-    // Editing a file inside .zed/ should still prompt even with global default: allow,
+    // Editing a file inside .flint/ should still prompt even with global default: allow,
     // because local settings paths are sensitive and require confirmation regardless.
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
     let _task = cx.update(|cx| {
         tool.run(
             ToolInput::resolved(crate::EditFileToolInput {
-                path: "root/.zed/settings.json".into(),
+                path: "root/.flint/settings.json".into(),
                 edits: vec![],
             }),
             event_stream,

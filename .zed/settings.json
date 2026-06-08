@@ -33,7 +33,7 @@
     "Rust": {
       "tasks": {
         "variables": {
-          "RUST_DEFAULT_PACKAGE_RUN": "zed",
+          "RUST_DEFAULT_PACKAGE_RUN": "flint",
         },
       },
     },

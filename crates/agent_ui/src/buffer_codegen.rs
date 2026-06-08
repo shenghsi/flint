@@ -650,7 +650,7 @@ impl CodegenAlternative {
 
         // Make a new snapshot and re-resolve anchor in case the document was modified.
         // This can happen often if the editor loses focus and is saved + reformatted,
-        // as in https://github.com/zed-industries/zed/issues/39088
+        // as in https://github.com/zed-industries/flint/issues/39088
         self.snapshot = self.buffer.read(cx).snapshot(cx);
         self.range = self.snapshot.anchor_after(self.range.start)
             ..self.snapshot.anchor_after(self.range.end);
@@ -1829,7 +1829,7 @@ mod tests {
     #[gpui::test]
     async fn test_allows_model_to_output_backticks(cx: &mut TestAppContext) {
         init_test(cx);
-        let text = "- Improved; `cmd+click` behavior. Now requires `cmd` to be pressed before the click starts or it doesn't run. ([#44579](https://github.com/zed-industries/zed/pull/44579); thanks [Zachiah](https://github.com/Zachiah))";
+        let text = "- Improved; `cmd+click` behavior. Now requires `cmd` to be pressed before the click starts or it doesn't run. ([#44579](https://github.com/zed-industries/flint/pull/44579); thanks [Zachiah](https://github.com/Zachiah))";
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {

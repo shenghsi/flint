@@ -135,7 +135,7 @@ impl ActionStatistics {
 }
 
 #[doc(hidden)]
-/// UNSTABLE only for use in the profiler and zed-reliability
+/// UNSTABLE only for use in the profiler and flint-reliability
 #[derive(Copy, Clone)]
 pub struct ActionTiming {
     pub name: &'static str,

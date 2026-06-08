@@ -149,9 +149,9 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
 /// Recomputes and sets the [`LanguageModelRegistry`]'s environment fallback
 /// model based on currently authenticated providers.
 ///
-/// Prefers the Zed cloud provider so that, once the user is signed in, we
-/// always pick a Zed-hosted model over models from other authenticated
-/// providers in the environment. If the Zed cloud provider is authenticated
+/// Prefers the Flint cloud provider so that, once the user is signed in, we
+/// always pick a Flint-hosted model over models from other authenticated
+/// providers in the environment. If the Flint cloud provider is authenticated
 /// but hasn't finished loading its models yet, we don't fall back to another
 /// provider to avoid flickering between providers during sign in.
 pub fn update_environment_fallback_model(cx: &mut App) {

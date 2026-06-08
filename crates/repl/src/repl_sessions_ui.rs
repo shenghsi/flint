@@ -238,7 +238,7 @@ impl Render for ReplSessionsPage {
             )
         });
 
-        // When there are no kernel specifications, show a link to the Zed docs explaining how to
+        // When there are no kernel specifications, show a link to the Flint docs explaining how to
         // install kernels. It can be assumed they don't have a running kernel if we have no
         // specifications.
         if kernel_specifications.is_empty() {
@@ -255,7 +255,7 @@ impl Render for ReplSessionsPage {
                             .child(Label::new("Install Kernels"))
                             .on_click(move |_, _, cx| {
                                 cx.open_url(
-                                    "https://zed.dev/docs/repl#language-specific-instructions",
+                                    "https://flint.dev/docs/repl#language-specific-instructions",
                                 )
                             }),
                     ),

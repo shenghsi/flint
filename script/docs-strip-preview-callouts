@@ -6,7 +6,7 @@
 #   script/docs-strip-preview-callouts [--dry-run]
 #
 # This script finds and removes all Preview-related callouts from docs:
-#   > **Preview:** This feature is available in Zed Preview...
+#   > **Preview:** This feature is available in Flint Preview...
 #   > **Changed in Preview (v0.XXX).** See [release notes]...
 #
 # Then creates a PR with the changes.
@@ -205,7 +205,7 @@ $(echo "$files_with_callouts" | sed "s|$REPO_ROOT/|• |")
 
 Removes callouts like:
 \`\`\`markdown
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+> **Preview:** This feature is available in Flint Preview. It will be included in the next Stable release.
 \`\`\`
 
 And:

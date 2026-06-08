@@ -5,7 +5,7 @@ with an assignee or another `state:` label.
 
 Requires `requests` library and a GitHub access token with "Issues (write)"
 permission passed as an environment variable. Was used as a quick-and-dirty
-one-off-bulk-operation script to surface older untriaged issues in the `zed`
+one-off-bulk-operation script to surface older untriaged issues in the `flint`
 repository. Leaving it here for reference only; there's no error handling or
 guardrails, you've been warned.
 """
@@ -21,8 +21,8 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 GITHUB_API_BASE_URL = "https://api.github.com"
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "flint-industries"
+REPO_NAME = "flint"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 HEADERS = {
     "Authorization": f"token {GITHUB_TOKEN}",

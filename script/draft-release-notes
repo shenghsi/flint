@@ -32,7 +32,7 @@ async function main() {
     execFileSync("rm", ["-rf", "target/shallow_clone"]);
     execFileSync("git", [
       "clone",
-      "https://github.com/zed-industries/zed",
+      "https://github.com/flint-industries/flint",
       "target/shallow_clone",
       "--filter=tree:0",
       "--no-checkout",
@@ -60,11 +60,11 @@ async function main() {
   let skipped = [];
 
   for (const commit of newCommits) {
-    let link = "https://github.com/zed-industries/zed/pull/" + commit.pr;
+    let link = "https://github.com/flint-industries/flint/pull/" + commit.pr;
     let notes = commit.releaseNotes;
     if (commit.pr == "") {
-      link = "https://github.com/zed-industries/zed/commits/" + commit.hash;
-    } else if (!notes.includes("zed-industries/zed/issues")) {
+      link = "https://github.com/flint-industries/flint/commits/" + commit.hash;
+    } else if (!notes.includes("flint-industries/flint/issues")) {
       notes = notes + " ([#" + commit.pr + "](" + link + "))";
     }
 
@@ -78,7 +78,7 @@ async function main() {
   }
 
   if (releaseNotes.length === 0) {
-    const compareUrl = `https://github.com/zed-industries/zed/compare/${priorTag}...${tag}#commits_bucket`;
+    const compareUrl = `https://github.com/flint-industries/flint/compare/${priorTag}...${tag}#commits_bucket`;
     console.log(`No public-facing changes in this release. [View the commits](${compareUrl}).\n`);
   } else {
     console.log(releaseNotes.join("\n") + "\n");

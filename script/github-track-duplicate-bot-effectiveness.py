@@ -31,11 +31,11 @@ import requests
 
 GITHUB_API = "https://api.github.com"
 GRAPHQL_URL = "https://api.github.com/graphql"
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "flint-industries"
+REPO_NAME = "flint"
 STAFF_TEAM_SLUG = "staff"
-BOT_LOGIN = "zed-community-bot[bot]"
-BOT_APP_SLUG = "zed-community-bot"
+BOT_LOGIN = "flint-community-bot[bot]"
+BOT_APP_SLUG = "flint-community-bot"
 # Strings that identify a comment posted by the duplicate-detection bot. Any
 # match counts as a bot comment for classification purposes. A single comment
 # can contain both markers (v3+ produces this when there are both confident

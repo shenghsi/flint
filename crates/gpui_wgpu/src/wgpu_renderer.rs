@@ -639,7 +639,7 @@ impl WgpuRenderer {
                 "BUG: dual_source_blending flag is true but device does not \
                  have DUAL_SOURCE_BLENDING enabled (device features: {:?}). \
                  Falling back to mono text rendering. Please report this at \
-                 https://github.com/zed-industries/zed/issues",
+                 https://github.com/zed-industries/flint/issues",
                 device.features(),
             );
         }

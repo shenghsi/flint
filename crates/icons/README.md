@@ -1,8 +1,8 @@
-# Zed Icons
+# Flint Icons
 
 ## Guidelines
 
-Icons are a big part of Zed, and they're how we convey hundreds of actions without relying on labeled buttons.
+Icons are a big part of Flint, and they're how we convey hundreds of actions without relying on labeled buttons.
 When introducing a new icon, it's important to ensure consistency with the existing set, which follows these guidelines:
 
 1. The SVG view box should be 16x16.
@@ -15,7 +15,7 @@ When introducing a new icon, it's important to ensure consistency with the exist
 ## Sourcing
 
 Most icons are created by sourcing them from [Lucide](https://lucide.dev/).
-Then, they're modified, adjusted, cleaned up, and simplified depending on their use and overall fit with Zed.
+Then, they're modified, adjusted, cleaned up, and simplified depending on their use and overall fit with Flint.
 
 Sometimes, we may use other sources like [Phosphor](https://phosphoricons.com/), but we also design many icons completely from scratch.
 
@@ -26,4 +26,4 @@ To introduce a new icon, add the `.svg` file to the `assets/icon` directory and 
 - SVG files in the assets folder follow a snake_case name format.
 - Icons in the `icons.rs` file follow the PascalCase name format.
 
-Make sure to tag a member of Zed's design team so we can review and adjust any newly introduced icon.
+Make sure to tag a member of Flint's design team so we can review and adjust any newly introduced icon.

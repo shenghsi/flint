@@ -1,18 +1,18 @@
 [
   {
-    "label": "Debug Zed (CodeLLDB)",
+    "label": "Debug Flint (CodeLLDB)",
     "adapter": "CodeLLDB",
     "build": {
-      "label": "Build Zed",
+      "label": "Build Flint",
       "command": "cargo",
       "args": ["build"]
     }
   },
   {
-    "label": "Debug Zed (GDB)",
+    "label": "Debug Flint (GDB)",
     "adapter": "GDB",
     "build": {
-      "label": "Build Zed",
+      "label": "Build Flint",
       "command": "cargo",
       "args": ["build"]
     }

@@ -193,7 +193,7 @@ impl DockerExecConnection {
             _ => version.to_string(),
         };
         let binary_name = format!(
-            "zed-remote-server-{}-{}",
+            "flint-remote-server-{}-{}",
             release_channel.dev_name(),
             version_str
         );
@@ -451,7 +451,7 @@ impl DockerExecConnection {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::debug!("failed to change ownership for via chown: {stderr}",);
         anyhow::bail!(
-            "failed to change ownership for zed_remote_server via chown: {}",
+            "failed to change ownership for flint_remote_server via chown: {}",
             stderr,
         );
     }

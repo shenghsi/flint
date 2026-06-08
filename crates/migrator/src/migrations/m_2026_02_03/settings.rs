@@ -43,7 +43,7 @@ fn migrate_provider_field(obj: &mut serde_json::Map<String, Value>, field_name: 
 
     let provider_name = match name {
         "sweep" | "mercury" => name,
-        "zeta2" => "zed",
+        "zeta2" => "flint",
         _ => return,
     };
 

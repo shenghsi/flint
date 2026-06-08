@@ -1,7 +1,7 @@
 use crate::{
     CloudRequestTimeoutError, CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
-    EditPredictionStore, ZedUpdateRequiredError, buffer_path_with_id_fallback,
+    EditPredictionStore, FlintUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     data_collection::UncommittedDiffResult,
     prediction::EditPredictionResult,
@@ -496,7 +496,7 @@ fn handle_api_response<T>(
                     .ok();
             }
 
-            if err.is::<ZedUpdateRequiredError>() {
+            if err.is::<FlintUpdateRequiredError>() {
                 cx.update(|cx| {
                     this.update(cx, |this, _cx| {
                         this.update_required = true;
@@ -505,12 +505,12 @@ fn handle_api_response<T>(
 
                     let error_message: SharedString = err.to_string().into();
                     show_app_notification(
-                        NotificationId::unique::<ZedUpdateRequiredError>(),
+                        NotificationId::unique::<FlintUpdateRequiredError>(),
                         cx,
                         move |cx| {
                             cx.new(|cx| {
                                 ErrorMessagePrompt::new(error_message.clone(), cx)
-                                    .with_link_button("Update Zed", "https://zed.dev/releases")
+                                    .with_link_button("Update Flint", "https://flint.dev/releases")
                             })
                         },
                     );
@@ -683,7 +683,7 @@ pub(crate) fn edit_prediction_accepted(
 
         let url = client
             .http_client()
-            .build_zed_llm_url("/predict_edits/accept", &[])?;
+            .build_flint_llm_url("/predict_edits/accept", &[])?;
         EditPredictionStore::send_api_request::<()>(
             move |builder| Ok(builder.uri(url.as_ref()).body(body.clone().into())?),
             client,

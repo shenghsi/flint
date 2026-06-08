@@ -1,5 +1,5 @@
 {
-  description = "Zed is a minimal code editor crafted for speed and collaboration with humans and AI.";
+  description = "Flint is a minimal code editor crafted for speed and collaboration with humans and AI.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -30,10 +30,10 @@
 
   nixConfig = {
     extra-substituters = [
-      "https://zed.cachix.org"
+      "https://flint.cachix.org"
     ];
     extra-trusted-public-keys = [
-      "zed.cachix.org-1:/pHQ6dpMsAZk2DiP4WCL0p9YDNKWj2Q5FL20bNmw1cU="
+      "flint.cachix.org-1:/pHQ6dpMsAZk2DiP4WCL0p9YDNKWj2Q5FL20bNmw1cU="
     ];
   };
 }

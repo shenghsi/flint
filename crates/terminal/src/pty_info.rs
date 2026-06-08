@@ -72,7 +72,7 @@ pub(crate) struct ProcessInfo {
     pub(crate) argv: Vec<String>,
 }
 
-/// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
+/// Fetches Flint-relevant Pseudo-Terminal (PTY) process information
 pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
@@ -172,7 +172,7 @@ impl PtyProcessInfo {
         self.load()
     }
 
-    /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed
+    /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Flint-relevant info has changed
     pub(crate) fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
         if self.task.lock().is_some() {
             return;

@@ -47,4 +47,4 @@ case "$confirmation" in
 esac
 
 gh workflow run "deploy_docs.yml" --ref "$workflow_ref" -f channel="$channel" -f checkout_ref="$branch"
-echo "Follow along at: https://github.com/zed-industries/zed/actions/workflows/deploy_docs.yml"
+echo "Follow along at: https://github.com/flint-industries/flint/actions/workflows/deploy_docs.yml"

@@ -75,7 +75,7 @@ pub fn suggest_on_worktree_updated(
                     .any(|wt| !find_configs_in_snapshot(wt.read(cx)).is_empty());
                 if has_configs {
                     cx.on_next_frame(window, move |_workspace, window, cx| {
-                        window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
+                        window.dispatch_action(Box::new(flint_actions::OpenDevContainer), cx);
                     });
                 } else {
                     log::warn!("--dev-container: no devcontainer configuration found in project");
@@ -131,7 +131,7 @@ pub fn suggest_on_worktree_updated(
                 .primary_icon_color(Color::Success)
                 .primary_on_click({
                     move |window, cx| {
-                        window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
+                        window.dispatch_action(Box::new(flint_actions::OpenDevContainer), cx);
                     }
                 })
                 .secondary_message("Don't Show Again")

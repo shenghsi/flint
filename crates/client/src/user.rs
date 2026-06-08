@@ -779,9 +779,9 @@ impl UserStore {
             use cloud_api_client::Plan;
 
             return match plan.as_str() {
-                "free" => Some(Plan::ZedFree),
-                "trial" => Some(Plan::ZedProTrial),
-                "pro" => Some(Plan::ZedPro),
+                "free" => Some(Plan::FlintFree),
+                "trial" => Some(Plan::FlintProTrial),
+                "pro" => Some(Plan::FlintPro),
                 _ => {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
@@ -894,7 +894,7 @@ impl UserStore {
                     KnownOrUnknown::Known(plan) => plan,
                     KnownOrUnknown::Unknown(_) => {
                         // If we get a plan that we don't recognize, fall back to the Free plan.
-                        Plan::ZedFree
+                        Plan::FlintFree
                     }
                 };
 

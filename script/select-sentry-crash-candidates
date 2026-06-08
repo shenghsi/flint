@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 
 SENTRY_BASE_URL = "https://sentry.io/api/0"
-DEFAULT_SENTRY_ORG = "zed-dev"
+DEFAULT_SENTRY_ORG = "flint-dev"
 DEFAULT_QUERY = "is:unresolved issue.category:error"
 
 

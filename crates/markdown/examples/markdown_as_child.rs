@@ -49,13 +49,13 @@ impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let markdown_style = MarkdownStyle {
             base_text_style: gpui::TextStyle {
-                font_family: "Zed Mono".into(),
+                font_family: "Flint Mono".into(),
                 color: cx.theme().colors().text,
                 ..Default::default()
             },
             code_block: StyleRefinement {
                 text: gpui::TextStyleRefinement {
-                    font_family: Some("Zed Mono".into()),
+                    font_family: Some("Flint Mono".into()),
                     background_color: Some(cx.theme().colors().editor_background),
                     ..Default::default()
                 },
@@ -68,7 +68,7 @@ impl Render for HelloWorld {
                 ..Default::default()
             },
             inline_code: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
+                font_family: Some("Flint Mono".into()),
                 background_color: Some(cx.theme().colors().editor_background),
                 ..Default::default()
             },

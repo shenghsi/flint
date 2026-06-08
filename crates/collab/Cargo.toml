@@ -1,5 +1,5 @@
 [package]
-authors = ["Nathan Sobo <nathan@zed.dev>"]
+authors = ["Nathan Sobo <nathan@flint.dev>"]
 default-run = "collab"
 edition.workspace = true
 name = "collab"
@@ -133,5 +133,5 @@ unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
-zed_actions.workspace = true
+flint_actions.workspace = true
 zlog.workspace = true

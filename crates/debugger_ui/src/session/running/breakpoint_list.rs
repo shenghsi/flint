@@ -29,7 +29,7 @@ use ui::{
 };
 use util::rel_path::RelPath;
 use workspace::Workspace;
-use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
+use flint_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
 actions!(
     debugger,

@@ -11,7 +11,7 @@ pub struct AudioSettings {
     pub input_audio_device: Option<DeviceId>,
 }
 
-/// Configuration of audio in Zed
+/// Configuration of audio in Flint
 impl Settings for AudioSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let audio = &content.audio.as_ref().unwrap();

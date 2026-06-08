@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 publish = false
 license = "Apache-2.0"
-description = "A collection of utility structs and functions used by Zed and GPUI"
+description = "A collection of utility structs and functions used by Flint and GPUI"
 
 
 [lints]

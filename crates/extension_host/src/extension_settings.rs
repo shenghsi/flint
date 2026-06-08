@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 #[derive(Debug, Default, Clone, RegisterSetting)]
 pub struct ExtensionSettings {
-    /// The extensions that should be automatically installed by Zed.
+    /// The extensions that should be automatically installed by Flint.
     ///
     /// This is used to make functionality provided by extensions (e.g., language support)
     /// available out-of-the-box.

@@ -1,5 +1,5 @@
 [package]
-name = "zed_test_extension"
+name = "flint_test_extension"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true

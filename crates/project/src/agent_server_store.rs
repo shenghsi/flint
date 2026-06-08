@@ -1438,7 +1438,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 /// cmd.exe), and the quotes our shell builder emits are PowerShell string-literal syntax that PS
 /// strips during parsing. PS only re-adds CRT-style transport quotes around native command args
 /// containing whitespace, so `package@<=0.25.3` reaches cmd.exe bare and the unquoted `<` is
-/// interpreted as input redirection. See zed-industries/zed#55921.
+/// interpreted as input redirection. See zed-industries/flint#55921.
 fn bounded_npm_package_spec(package_spec: &str) -> String {
     let Some((package_name, version)) = package_spec.rsplit_once('@') else {
         return package_spec.to_string();

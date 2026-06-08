@@ -5,6 +5,6 @@ fn main() {
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("ProjectPath", "#[derive(Hash, Eq)]")
         .type_attribute("Anchor", "#[derive(Hash, Eq)]")
-        .compile_protos(&["proto/zed.proto"], &["proto"])
+        .compile_protos(&["proto/flint.proto"], &["proto"])
         .unwrap();
 }

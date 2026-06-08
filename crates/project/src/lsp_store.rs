@@ -6919,7 +6919,7 @@ impl LspStore {
         let mut new_label = match completion_item {
             Some(completion_item) => {
                 // Some language servers always return `detail` lazily via resolve, regardless of
-                // the resolvable properties Zed advertises. Regenerate labels here to handle this.
+                // the resolvable properties Flint advertises. Regenerate labels here to handle this.
                 // See: https://github.com/yioneko/vtsls/issues/213
                 let language = snapshot.language();
                 match language {
@@ -7169,7 +7169,7 @@ impl LspStore {
                             // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
                             // and the primary completion is just an insertion (empty range), then this is likely
                             // an auto-import scenario and should not be considered overlapping
-                            // https://github.com/zed-industries/zed/issues/26136
+                            // https://github.com/zed-industries/flint/issues/26136
                             let is_file_start_auto_import = {
                                 let snapshot = buffer.snapshot();
                                 let primary_start_point = primary.start.to_point(&snapshot);
@@ -7198,7 +7198,7 @@ impl LspStore {
                             };
 
                             //Skip additional edits which overlap with the primary completion edit
-                            //https://github.com/zed-industries/zed/pull/1871
+                            //https://github.com/zed-industries/flint/pull/1871
                             if !has_overlap {
                                 buffer.edit([(range, text)], None, cx);
                             }

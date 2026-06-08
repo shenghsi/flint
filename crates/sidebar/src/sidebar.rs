@@ -68,10 +68,10 @@ use workspace::{
     notifications::NotificationId, sidebar_side_context_menu,
 };
 
-use zed_actions::OpenRecent;
-use zed_actions::editor::{MoveDown, MoveUp};
+use flint_actions::OpenRecent;
+use flint_actions::editor::{MoveDown, MoveUp};
 
-use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
+use flint_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
 
 use crate::thread_switcher::{
     ThreadSwitcher, ThreadSwitcherEntry, ThreadSwitcherEvent, ThreadSwitcherSelection,
@@ -1377,10 +1377,10 @@ impl Sidebar {
         let resolve_agent_icon = |agent_id: &AgentId| -> (IconName, Option<SharedString>) {
             let agent = Agent::from(agent_id.clone());
             let icon = match agent {
-                Agent::NativeAgent => IconName::ZedAgent,
+                Agent::NativeAgent => IconName::FlintAgent,
                 Agent::Custom { .. } => IconName::Terminal,
 
-                _ => IconName::ZedAgent,
+                _ => IconName::FlintAgent,
             };
             let icon_from_external_svg = agent_server_store
                 .as_ref()
@@ -6320,8 +6320,8 @@ impl Sidebar {
             ThreadEntryWorkspace::Closed { .. } => None,
         };
 
-        let is_zed_thread = thread.metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref();
-        let can_open_as_markdown = thread.is_live || is_zed_thread;
+        let is_flint_thread = thread.metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref();
+        let can_open_as_markdown = thread.is_live || is_flint_thread;
         let folder_paths = thread.metadata.folder_paths().clone();
 
         right_click_menu(context_menu_id)
@@ -6357,7 +6357,7 @@ impl Sidebar {
                             }
                         });
 
-                        if is_zed_thread {
+                        if is_flint_thread {
                             menu = menu.entry("Regenerate Thread Title", None, {
                                 let session_id = session_id.clone();
                                 let sidebar = sidebar.clone();
@@ -6402,7 +6402,7 @@ impl Sidebar {
                                         }
                                     }
 
-                                    if is_zed_thread
+                                    if is_flint_thread
                                         && let Some(active_workspace) = &active_workspace
                                     {
                                         Self::open_closed_native_thread_as_markdown(
@@ -7527,7 +7527,7 @@ impl Sidebar {
         render_import_onboarding_banner(
             "acp",
             "Looking for threads from external agents?",
-            "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client.",
+            "Import threads from agents like Claude Agent, Codex, and more, whether started in Flint or another client.",
             if verbose_labels {
                 "Import Threads from External Agents"
             } else {

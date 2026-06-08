@@ -2834,7 +2834,7 @@ mod test {
             ),
             // If you are in the close quote and it is the only quote in the buffer, it should replace inside the quote
             // This is not working with the core motion ci' for this special edge case, so I am happy to fix it in MiniQuotes :)
-            // Bug reference: https://github.com/zed-industries/zed/issues/23889
+            // Bug reference: https://github.com/zed-industries/flint/issues/23889
             ("c i q", "'quote«'ˇ»", "'ˇ'", Mode::Insert),
             // Single quotes
             (

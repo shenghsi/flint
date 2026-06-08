@@ -590,7 +590,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                 deterministic.advance_clock(RECEIVE_TIMEOUT);
                 server.start().await.unwrap();
                 deterministic.advance_clock(CLEANUP_TIMEOUT);
-                let environment = &server.app_state.config.zed_environment;
+                let environment = &server.app_state.config.flint_environment;
                 let (stale_room_ids, _) = server
                     .app_state
                     .db

@@ -6,7 +6,7 @@ lint:
   except:
     # Since we use post_build instead of buf this doesn't matter
     - PACKAGE_DIRECTORY_MATCH
-    # This is internal to Zed only so we don't enforce versions
+    # This is internal to Flint only so we don't enforce versions
     - PACKAGE_VERSION_SUFFIX
     # Style rules we don't enforce
     - ENUM_VALUE_PREFIX

@@ -14,7 +14,7 @@ struct WindowShadow {}
 // 1. We need a way of calculating which edge or corner the mouse is on,
 //    and then dispatch on that
 // 2. We need to improve the shadow rendering significantly
-// 3. We need to implement the techniques in here in Zed
+// 3. We need to implement the techniques in here in Flint
 
 impl Render for WindowShadow {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {

@@ -74,7 +74,7 @@ pub struct CreateThreadToolInput {
     pub agent: Option<String>,
 
     /// Optional model override as `provider/model-id` (e.g.,
-    /// `anthropic/claude-haiku-4-latest`). Only meaningful for Zed's native
+    /// `anthropic/claude-haiku-4-latest`). Only meaningful for Flint's native
     /// agent. Omit to use the user's configured default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,

@@ -1,5 +1,5 @@
 syntax = "proto3";
-package zed.messages;
+package flint.messages;
 
 message PeerId {
   uint32 owner_id = 1;

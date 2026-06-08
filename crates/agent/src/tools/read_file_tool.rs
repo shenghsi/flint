@@ -1320,7 +1320,7 @@ mod test {
                     "test.rs": "mod tests { fn test_it() {} }",
                     "fixture.sql": "CREATE TABLE users (id INT, name VARCHAR(255));"
                 },
-                ".zed": {
+                ".flint": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/fixture.*"],
                         "private_files": ["**/secret.rs", "**/config.toml"]
@@ -1343,7 +1343,7 @@ mod test {
                     "README.md": "# Public Documentation",
                     "internal.md": "# Internal Secrets and Configuration"
                 },
-                ".zed": {
+                ".flint": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/internal.*"],
                         "private_files": ["**/private.js", "**/data.json"]

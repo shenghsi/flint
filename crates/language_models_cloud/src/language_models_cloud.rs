@@ -57,7 +57,7 @@ pub trait CloudLlmTokenProvider: Send + Sync {
     fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
 }
 
-/// Sends an authenticated request to the Zed LLM service, retrying once with
+/// Sends an authenticated request to the Flint LLM service, retrying once with
 /// a refreshed token if the server signals that the cached LLM token is
 /// expired or otherwise rejected. Returns the raw response so callers can
 /// inspect headers and stream the body.
@@ -119,7 +119,7 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         app_version: Option<Version>,
         body: CompletionBody,
     ) -> Result<PerformLlmCompletionResponse> {
-        let url = http_client.build_zed_llm_url("/completions", &[])?;
+        let url = http_client.build_flint_llm_url("/completions", &[])?;
         let body = serde_json::to_string(&body)?;
         let mut response =
             authenticated_llm_request(http_client, token_provider, auth_context, |token| {
@@ -184,7 +184,7 @@ struct ApiError {
     headers: HeaderMap<HeaderValue>,
 }
 
-/// Represents error responses from Zed's cloud API.
+/// Represents error responses from Flint's cloud API.
 ///
 /// Example JSON for an upstream HTTP error:
 /// ```json
@@ -344,7 +344,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
     }
 
     fn telemetry_id(&self) -> String {
-        format!("zed.dev/{}", self.model.id)
+        format!("flint.dev/{}", self.model.id)
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
@@ -642,7 +642,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         token_provider: &TP,
         auth_context: TP::AuthContext,
     ) -> Result<ListModelsResponse> {
-        let url = http_client.build_zed_llm_url("/models", &[])?;
+        let url = http_client.build_flint_llm_url("/models", &[])?;
         let mut response =
             authenticated_llm_request(http_client, token_provider, auth_context, |token| {
                 Ok(http_client::Request::builder()
@@ -923,7 +923,7 @@ mod tests {
             ),
         }
 
-        // Regular 500 error without upstream_http_error should remain ApiInternalServerError for Zed
+        // Regular 500 error without upstream_http_error should remain ApiInternalServerError for Flint
         let error_body = "Regular internal server error";
 
         let api_error = ApiError {

@@ -394,8 +394,8 @@ impl DebugAdapter for GoDebugAdapter {
         })
     }
 
-    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
-        let mut args = match &zed_scenario.request {
+    async fn config_from_flint_format(&self, flint_scenario: FlintDebugConfig) -> Result<DebugScenario> {
+        let mut args = match &flint_scenario.request {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
                     "request": "attach",
@@ -423,13 +423,13 @@ impl DebugAdapter for GoDebugAdapter {
 
         let map = args.as_object_mut().unwrap();
 
-        if let Some(stop_on_entry) = zed_scenario.stop_on_entry {
+        if let Some(stop_on_entry) = flint_scenario.stop_on_entry {
             map.insert("stopOnEntry".into(), stop_on_entry.into());
         }
 
         Ok(DebugScenario {
-            adapter: zed_scenario.adapter,
-            label: zed_scenario.label,
+            adapter: flint_scenario.adapter,
+            label: flint_scenario.label,
             build: None,
             config: args,
             tcp_connection: None,

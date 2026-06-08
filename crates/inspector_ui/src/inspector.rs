@@ -8,7 +8,7 @@ use workspace::AppState;
 use crate::div_inspector::DivInspector;
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
+    cx.on_action(|_: &flint_actions::dev::ToggleInspector, cx| {
         let Some(active_window) = cx
             .active_window()
             .context("no active window to toggle inspector")
@@ -139,9 +139,9 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
                 .font_buffer(cx)
                 .text_xs()
                 .child(source_location_string)
-                .tooltip(Tooltip::text("Click to open by running Zed CLI"))
+                .tooltip(Tooltip::text("Click to open by running Flint CLI"))
                 .on_click(move |_, _window, cx| {
-                    cx.background_spawn(open_zed_source_location(source_location))
+                    cx.background_spawn(open_flint_source_location(source_location))
                         .detach_and_log_err(cx);
                 }),
         )
@@ -157,7 +157,7 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
         )
 }
 
-async fn open_zed_source_location(
+async fn open_flint_source_location(
     location: &'static std::panic::Location<'static>,
 ) -> anyhow::Result<()> {
     let mut path = Path::new(env!("ZED_REPO_DIR")).to_path_buf();
@@ -169,15 +169,15 @@ async fn open_zed_source_location(
         location.column()
     );
 
-    let output = new_command("zed")
+    let output = new_command("flint")
         .arg(&path_arg)
         .output()
         .await
-        .with_context(|| format!("running zed to open {path_arg} failed"))?;
+        .with_context(|| format!("running flint to open {path_arg} failed"))?;
 
     if !output.status.success() {
         Err(anyhow!(
-            "running zed to open {path_arg} failed with stderr: {}",
+            "running flint to open {path_arg} failed with stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         ))
     } else {

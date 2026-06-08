@@ -524,7 +524,7 @@ impl Telemetry {
         match &mut event {
             Event::Flexible(event) => event
                 .event_properties
-                .insert("event_source".into(), "zed".into()),
+                .insert("event_source".into(), "flint".into()),
         };
 
         if state.flush_events_task.is_none() {
@@ -598,11 +598,11 @@ impl Telemetry {
             .method(Method::POST)
             .uri(
                 self.http_client
-                    .build_zed_api_url("/telemetry/events", &[])?
+                    .build_flint_api_url("/telemetry/events", &[])?
                     .as_ref(),
             )
             .header("Content-Type", "application/json")
-            .header("x-zed-checksum", checksum)
+            .header("x-flint-checksum", checksum)
             .body(json_bytes.into())?)
     }
 

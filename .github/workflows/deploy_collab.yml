@@ -9,7 +9,7 @@ on:
     - collab-production
 jobs:
   style:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     name: Check formatting and Clippy lints
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
@@ -100,10 +100,10 @@ jobs:
       run: |
         docker build -f Dockerfile-collab \
           --build-arg "GITHUB_SHA=$GITHUB_SHA" \
-          --tag "registry.digitalocean.com/zed/collab:$GITHUB_SHA" \
+          --tag "registry.digitalocean.com/flint/collab:$GITHUB_SHA" \
           .
     - name: deploy_collab::publish::publish_docker_image
-      run: docker push "registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
+      run: docker push "registry.digitalocean.com/flint/collab:${GITHUB_SHA}"
     - name: deploy_collab::publish::prune_docker_system
       run: docker system prune --filter 'until=72h' -f
   deploy:
@@ -147,7 +147,7 @@ jobs:
 
         ZED_DO_CERTIFICATE_ID="$(doctl compute certificate list --format ID --no-header)"
         export ZED_DO_CERTIFICATE_ID
-        export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
+        export ZED_IMAGE_ID="registry.digitalocean.com/flint/collab:${GITHUB_SHA}"
 
         export ZED_SERVICE_NAME=collab
         export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT

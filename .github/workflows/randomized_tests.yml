@@ -13,12 +13,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  ZED_SERVER_URL: https://zed.dev
+  ZED_SERVER_URL: https://flint.dev
 
 jobs:
   tests:
     name: Run randomized tests
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'flint-industries'
     runs-on:
       - namespace-profile-16x32-ubuntu-2204
     steps:

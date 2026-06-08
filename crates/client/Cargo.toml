@@ -61,7 +61,7 @@ tokio.workspace = true
 url.workspace = true
 util.workspace = true
 worktree.workspace = true
-zed_credentials_provider.workspace = true
+flint_credentials_provider.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

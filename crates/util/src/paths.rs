@@ -24,11 +24,11 @@ pub fn home_dir() -> &'static PathBuf {
     HOME_DIR.get_or_init(|| {
         if cfg!(any(test, feature = "test-support")) {
             if cfg!(target_os = "macos") {
-                PathBuf::from("/Users/zed")
+                PathBuf::from("/Users/flint")
             } else if cfg!(target_os = "windows") {
-                PathBuf::from("C:\\Users\\zed")
+                PathBuf::from("C:\\Users\\flint")
             } else {
-                PathBuf::from("/home/zed")
+                PathBuf::from("/home/flint")
             }
         } else {
             dirs::home_dir().expect("failed to determine home directory")
@@ -1683,8 +1683,8 @@ mod tests {
     #[test]
     fn test_normalize_uses_path_style_separator() {
         assert_eq!(
-            PathStyle::Posix.normalize("/home/user/dev/../worktrees/./zed"),
-            "/home/user/worktrees/zed"
+            PathStyle::Posix.normalize("/home/user/dev/../worktrees/./flint"),
+            "/home/user/worktrees/flint"
         );
         assert_eq!(
             PathStyle::Windows.normalize("C:\\Users\\user\\dev\\worktrees"),
@@ -2582,9 +2582,9 @@ mod tests {
         );
 
         assert_eq!(
-            PathWithPosition::parse_str("app-editors:zed-0.143.6:20240710-201212.log:34:"),
+            PathWithPosition::parse_str("app-editors:flint-0.143.6:20240710-201212.log:34:"),
             PathWithPosition {
-                path: PathBuf::from("app-editors:zed-0.143.6:20240710-201212.log"),
+                path: PathBuf::from("app-editors:flint-0.143.6:20240710-201212.log"),
                 row: Some(34),
                 column: None,
             }
@@ -2827,7 +2827,7 @@ mod tests {
 
     // #[perf]
     // fn project_search() {
-    //     let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
+    //     let path = Path::new("/Users/someonetoignore/work/flint/flint.dev/node_modules");
     //     let path_matcher =
     //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
     //     assert!(

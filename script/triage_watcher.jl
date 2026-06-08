@@ -1,5 +1,5 @@
 ## Triage Watcher v0.1
-# This is a small script to watch for new issues on the Zed repository and open them in a new browser tab interactively.
+# This is a small script to watch for new issues on the Flint repository and open them in a new browser tab interactively.
 #
 ## Installing Julia
 #
@@ -8,7 +8,7 @@
 #
 ## Running this script:
 # 1. It only works on Macos/Linux
-# Open a new Julia repl with `julia` inside the `zed` repo
+# Open a new Julia repl with `julia` inside the `flint` repo
 # 2. Paste the following code
 # 3. Whenever you close your computer, just type the Up arrow on the REPL + enter to rerun the loop again to resume
 function get_issues()
@@ -22,7 +22,7 @@ while true
     new_nums = get_issues()
     # Open each new issue in a new browser tab
     for issue_num in setdiff(new_nums, nums)
-        url = "https://github.com/zed-industries/zed/issues/" * issue_num
+        url = "https://github.com/flint-industries/flint/issues/" * issue_num
         println("\nOpening $url")
         open_tab = `/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome $url`
         try

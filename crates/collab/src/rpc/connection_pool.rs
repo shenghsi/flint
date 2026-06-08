@@ -20,15 +20,15 @@ struct ConnectedPrincipal {
 }
 
 #[derive(Clone, Debug, Serialize, PartialOrd, PartialEq, Eq, Ord)]
-pub struct ZedVersion(pub Version);
+pub struct FlintVersion(pub Version);
 
-impl fmt::Display for ZedVersion {
+impl fmt::Display for FlintVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl ZedVersion {
+impl FlintVersion {
     pub fn can_collaborate(&self) -> bool {
         // v0.204.1 was the first version after the auto-update bug.
         // We reject any clients older than that to hope we can persuade them to upgrade.
@@ -44,7 +44,7 @@ impl ZedVersion {
 pub struct Connection {
     pub user_id: UserId,
     pub admin: bool,
-    pub zed_version: ZedVersion,
+    pub flint_version: FlintVersion,
 }
 
 impl ConnectionPool {
@@ -64,14 +64,14 @@ impl ConnectionPool {
         connection_id: ConnectionId,
         user_id: UserId,
         admin: bool,
-        zed_version: ZedVersion,
+        flint_version: FlintVersion,
     ) {
         self.connections.insert(
             connection_id,
             Connection {
                 user_id,
                 admin,
-                zed_version,
+                flint_version,
             },
         );
         let connected_user = self.connected_users.entry(user_id).or_default();

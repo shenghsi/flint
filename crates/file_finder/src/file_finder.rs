@@ -49,7 +49,7 @@ use workspace::{
     ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
     notifications::NotifyResultExt, pane,
 };
-use zed_actions::search::ToggleIncludeIgnored;
+use flint_actions::search::ToggleIncludeIgnored;
 
 actions!(
     file_finder,

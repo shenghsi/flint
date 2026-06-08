@@ -75,7 +75,7 @@ impl ScrollbarVisibility for GitPanelScrollbarAccessor {
         // Once this is fixed we can extend the GitPanelSettings with a `scrollbar.axis`
         // so we can show each axis based on the settings.
         //
-        // We should fix this. PR: https://github.com/zed-industries/zed/pull/19495
+        // We should fix this. PR: https://github.com/zed-industries/flint/pull/19495
         GitPanelSettings::get_global(cx)
             .scrollbar
             .show

@@ -54,7 +54,7 @@ type RequestHandler = Box<dyn Fn(RequestId, Option<Box<RawValue>>, &App) -> Task
 impl McpServer {
     pub fn new(cx: &AsyncApp) -> Task<Result<Self>> {
         let task = cx.background_spawn(async move {
-            let temp_dir = tempfile::Builder::new().prefix("zed-mcp").tempdir()?;
+            let temp_dir = tempfile::Builder::new().prefix("flint-mcp").tempdir()?;
             let socket_path = temp_dir.path().join("mcp.sock");
             let listener = UnixListener::bind(&socket_path).context("creating mcp socket")?;
 

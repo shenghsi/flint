@@ -19,7 +19,7 @@ use ui::{
     prelude::*,
 };
 use util::ResultExt as _;
-use zed_actions::agent::ToggleModelSelector;
+use flint_actions::agent::ToggleModelSelector;
 
 use crate::ui::documentation_aside_side;
 use crate::{
@@ -990,7 +990,7 @@ mod tests {
 
     impl AgentServer for TestAgentServer {
         fn logo(&self) -> IconName {
-            IconName::ZedAssistant
+            IconName::FlintAssistant
         }
 
         fn agent_id(&self) -> AgentId {

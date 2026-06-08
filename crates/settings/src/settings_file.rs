@@ -63,15 +63,15 @@ mod tests {
     async fn test_watch_config_file_reloads_when_parent_dir_is_symlink(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let fs = FakeFs::new(cx.background_executor.clone());
-        let config_settings_path = PathBuf::from("/root/.config/zed/settings.json");
-        let target_settings_path = PathBuf::from("/root/dotfiles/zed/settings.json");
+        let config_settings_path = PathBuf::from("/root/.config/flint/settings.json");
+        let target_settings_path = PathBuf::from("/root/dotfiles/flint/settings.json");
 
         fs.insert_tree(
             Path::new("/root"),
             json!({
                 ".config": {},
                 "dotfiles": {
-                    "zed": {
+                    "flint": {
                         "settings.json": "A"
                     }
                 }
@@ -80,8 +80,8 @@ mod tests {
         .await;
 
         fs.create_symlink(
-            Path::new("/root/.config/zed"),
-            PathBuf::from("/root/dotfiles/zed"),
+            Path::new("/root/.config/flint"),
+            PathBuf::from("/root/dotfiles/flint"),
         )
         .await
         .unwrap();

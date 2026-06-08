@@ -45,8 +45,8 @@ pub struct Example {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub qa: Vec<Option<QaResult>>,
 
-    /// The Zed version used to generate this example.
-    pub zed_version: Option<String>,
+    /// The Flint version used to generate this example.
+    pub flint_version: Option<String>,
 
     /// The application state used to process this example.
     #[serde(skip)]
@@ -312,6 +312,6 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
         score: Vec::new(),
         qa: Vec::new(),
         state: None,
-        zed_version: None,
+        flint_version: None,
     })
 }

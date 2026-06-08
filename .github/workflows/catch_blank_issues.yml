@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   add-triage-label:
-    if: github.repository == 'zed-industries/zed'
+    if: github.repository == 'flint-industries/flint'
     runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 5
     steps:
@@ -20,7 +20,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: flint-industries
 
       - id: check-staff
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
@@ -29,7 +29,7 @@ jobs:
           script: |
             try {
               const response = await github.rest.teams.getMembershipForUserInOrg({
-                org: 'zed-industries',
+                org: 'flint-industries',
                 team_slug: 'staff',
                 username: context.payload.sender.login
               });

@@ -10,7 +10,7 @@ on:
         type: string
 jobs:
   run_bump_patch_version:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: generate-token
@@ -28,7 +28,7 @@ jobs:
     - id: channel
       name: bump_patch_version::run_bump_patch_version::read_channel
       run: |
-        channel="$(cat crates/zed/RELEASE_CHANNEL)"
+        channel="$(cat crates/flint/RELEASE_CHANNEL)"
 
         tag_suffix=""
         case $channel in
@@ -43,7 +43,7 @@ jobs:
             ;;
         esac
 
-        version=$(script/get-crate-version zed)
+        version=$(script/get-crate-version flint)
 
         {
             echo "channel=$channel"
@@ -57,7 +57,7 @@ jobs:
     - id: bump-version
       name: bump_patch_version::run_bump_patch_version::bump_version
       run: |
-        version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
+        version="$(cargo set-version -p flint --bump patch 2>&1 | sed 's/.* //')"
         echo "version=$version" >> "$GITHUB_OUTPUT"
     - id: commit
       name: steps::bot_commit

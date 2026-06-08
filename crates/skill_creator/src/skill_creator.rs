@@ -57,7 +57,7 @@ pub enum SkillCreatorOpenMode {
         initial_url: Option<String>,
     },
     /// Review and install a skill whose full `SKILL.md` contents are
-    /// supplied inline, e.g. from a `zed://skill` share link. The form is
+    /// supplied inline, e.g. from a `flint://skill` share link. The form is
     /// pre-filled with the parsed skill so the recipient can review it and
     /// pick a scope before saving.
     Install {
@@ -866,7 +866,7 @@ impl SkillCreator {
             .child(self.url_editor.clone())
             .child(match &self.url_import_status {
                 UrlImportStatus::Idle => Label::new(
-                    "Paste a GitHub .md URL. Zed will fetch it and fill out the skill form.",
+                    "Paste a GitHub .md URL. Flint will fetch it and fill out the skill form.",
                 )
                 .size(LabelSize::Small)
                 .color(Color::Muted)
@@ -935,7 +935,7 @@ impl SkillCreator {
         let sep = std::path::MAIN_SEPARATOR;
         let scope_hint: SharedString = match selected.as_ref() {
             Some(ScopeChoice::Global) => SharedString::from(format!(
-                "Available across every Zed project. \
+                "Available across every Flint project. \
                 Saved to {GLOBAL_SKILLS_DIR_DISPLAY}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}."
             )),
             Some(ScopeChoice::Project { root_name, .. }) => SharedString::from(format!(

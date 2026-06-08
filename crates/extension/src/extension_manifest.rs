@@ -231,7 +231,7 @@ pub struct AgentServerManifestEntry {
     /// ```
     ///
     /// For Node.js-based agents, you can use "node" as the cmd to automatically
-    /// use Zed's managed Node.js runtime instead of relying on the user's PATH:
+    /// use Flint's managed Node.js runtime instead of relying on the user's PATH:
     /// ```toml
     /// [agent_servers.nodeagent.targets.darwin-aarch64]
     /// archive = "https://example.com/nodeagent.zip"

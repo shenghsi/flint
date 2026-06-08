@@ -470,7 +470,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     });
 
     fs.insert_tree(
-        "/code/project1/.zed",
+        "/code/project1/.flint",
         json!({
             "settings.json": r#"
                   {
@@ -557,7 +557,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     fs.insert_tree(
-        path!("/code/project1/.zed"),
+        path!("/code/project1/.flint"),
         json!({
             "settings.json": r#"
           {
@@ -796,7 +796,7 @@ async fn test_remote_cancel_language_server_work(
     let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     fs.insert_tree(
-        path!("/code/project1/.zed"),
+        path!("/code/project1/.flint"),
         json!({
             "settings.json": r#"
           {
@@ -1777,7 +1777,7 @@ async fn test_remote_archive_git_operations_are_supported(
 
     cx.update(|cx| {
         repository.update(cx, |repository, _| {
-            repository.update_ref("refs/zed-tests/archive-checkpoint".to_string(), head_sha)
+            repository.update_ref("refs/flint-tests/archive-checkpoint".to_string(), head_sha)
         })
     })
     .await
@@ -1788,7 +1788,7 @@ async fn test_remote_archive_git_operations_are_supported(
 
     cx.update(|cx| {
         repository.update(cx, |repository, _| {
-            repository.delete_ref("refs/zed-tests/archive-checkpoint".to_string())
+            repository.delete_ref("refs/flint-tests/archive-checkpoint".to_string())
         })
     })
     .await
@@ -2371,7 +2371,7 @@ async fn test_remote_apply_code_action_skips_unadvertised_command(
     let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     fs.insert_tree(
-        path!("/code/project1/.zed"),
+        path!("/code/project1/.flint"),
         json!({
             "settings.json": r#"
           {

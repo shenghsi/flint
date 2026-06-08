@@ -86,7 +86,7 @@ impl Bitbucket {
         }
 
         // TODO: detecting self hosted instances by checking whether "bitbucket" is in the url or not
-        // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
+        // is not very reliable. See https://github.com/zed-industries/flint/issues/26393 for more
         // information.
         if !host.contains("bitbucket") {
             bail!("not a BitBucket URL");
@@ -306,14 +306,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
         let parsed_remote = Bitbucket::public_instance()
-            .parse_remote_url("git@bitbucket.org:zed-industries/zed.git")
+            .parse_remote_url("git@bitbucket.org:zed-industries/flint.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             }
         );
     }
@@ -321,14 +321,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_https_url() {
         let parsed_remote = Bitbucket::public_instance()
-            .parse_remote_url("https://bitbucket.org/zed-industries/zed.git")
+            .parse_remote_url("https://bitbucket.org/zed-industries/flint.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             }
         );
     }
@@ -336,21 +336,21 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
         let parsed_remote = Bitbucket::public_instance()
-            .parse_remote_url("https://thorstenballzed@bitbucket.org/zed-industries/zed.git")
+            .parse_remote_url("https://thorstenballzed@bitbucket.org/zed-industries/flint.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             }
         );
     }
 
     #[test]
     fn test_parse_remote_url_given_self_hosted_ssh_url() {
-        let remote_url = "git@bitbucket.company.com:zed-industries/zed.git";
+        let remote_url = "git@bitbucket.company.com:zed-industries/flint.git";
 
         let parsed_remote = Bitbucket::from_remote_url(remote_url)
             .unwrap()
@@ -361,14 +361,14 @@ mod tests {
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             }
         );
     }
 
     #[test]
     fn test_parse_remote_url_given_self_hosted_https_url() {
-        let remote_url = "https://bitbucket.company.com/zed-industries/zed.git";
+        let remote_url = "https://bitbucket.company.com/zed-industries/flint.git";
 
         let parsed_remote = Bitbucket::from_remote_url(remote_url)
             .unwrap()
@@ -379,12 +379,12 @@ mod tests {
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             }
         );
 
         // Test with "scm" in the path
-        let remote_url = "https://bitbucket.company.com/scm/zed-industries/zed.git";
+        let remote_url = "https://bitbucket.company.com/scm/zed-industries/flint.git";
 
         let parsed_remote = Bitbucket::from_remote_url(remote_url)
             .unwrap()
@@ -395,12 +395,12 @@ mod tests {
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             }
         );
 
         // Test with only "scm" as owner
-        let remote_url = "https://bitbucket.company.com/scm/zed.git";
+        let remote_url = "https://bitbucket.company.com/scm/flint.git";
 
         let parsed_remote = Bitbucket::from_remote_url(remote_url)
             .unwrap()
@@ -411,14 +411,14 @@ mod tests {
             parsed_remote,
             ParsedGitRemote {
                 owner: "scm".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             }
         );
     }
 
     #[test]
     fn test_parse_remote_url_given_self_hosted_https_url_with_username() {
-        let remote_url = "https://thorstenballzed@bitbucket.company.com/zed-industries/zed.git";
+        let remote_url = "https://thorstenballzed@bitbucket.company.com/zed-industries/flint.git";
 
         let parsed_remote = Bitbucket::from_remote_url(remote_url)
             .unwrap()
@@ -429,7 +429,7 @@ mod tests {
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             }
         );
     }
@@ -439,29 +439,29 @@ mod tests {
         let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             },
             BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), None),
         );
 
-        let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs";
+        let expected_url = "https://bitbucket.org/zed-industries/flint/src/f00b4r/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
     fn test_build_bitbucket_self_hosted_permalink() {
         let permalink =
-            Bitbucket::from_remote_url("git@bitbucket.company.com:zed-industries/zed.git")
+            Bitbucket::from_remote_url("git@bitbucket.company.com:zed-industries/flint.git")
                 .unwrap()
                 .build_permalink(
                     ParsedGitRemote {
                         owner: "zed-industries".into(),
-                        repo: "zed".into(),
+                        repo: "flint".into(),
                     },
                     BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), None),
                 );
 
-        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/zed/browse/main.rs?at=f00b4r";
+        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/flint/browse/main.rs?at=f00b4r";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -470,29 +470,29 @@ mod tests {
         let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             },
             BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(6..6)),
         );
 
-        let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-7";
+        let expected_url = "https://bitbucket.org/zed-industries/flint/src/f00b4r/main.rs#lines-7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
     fn test_build_bitbucket_self_hosted_permalink_with_single_line_selection() {
         let permalink =
-            Bitbucket::from_remote_url("https://bitbucket.company.com/zed-industries/zed.git")
+            Bitbucket::from_remote_url("https://bitbucket.company.com/zed-industries/flint.git")
                 .unwrap()
                 .build_permalink(
                     ParsedGitRemote {
                         owner: "zed-industries".into(),
-                        repo: "zed".into(),
+                        repo: "flint".into(),
                     },
                     BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(6..6)),
                 );
 
-        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/zed/browse/main.rs?at=f00b4r#7";
+        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/flint/browse/main.rs?at=f00b4r#7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -501,30 +501,30 @@ mod tests {
         let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
-                repo: "zed".into(),
+                repo: "flint".into(),
             },
             BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(23..47)),
         );
 
         let expected_url =
-            "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-24:48";
+            "https://bitbucket.org/zed-industries/flint/src/f00b4r/main.rs#lines-24:48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
     fn test_build_bitbucket_self_hosted_permalink_with_multi_line_selection() {
         let permalink =
-            Bitbucket::from_remote_url("git@bitbucket.company.com:zed-industries/zed.git")
+            Bitbucket::from_remote_url("git@bitbucket.company.com:zed-industries/flint.git")
                 .unwrap()
                 .build_permalink(
                     ParsedGitRemote {
                         owner: "zed-industries".into(),
-                        repo: "zed".into(),
+                        repo: "flint".into(),
                     },
                     BuildPermalinkParams::new("f00b4r", &repo_path("main.rs"), Some(23..47)),
                 );
 
-        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/zed/browse/main.rs?at=f00b4r#24-48";
+        let expected_url = "https://bitbucket.company.com/projects/zed-industries/repos/flint/browse/main.rs?at=f00b4r#24-48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -534,7 +534,7 @@ mod tests {
 
         let remote = ParsedGitRemote {
             owner: "zed-industries".into(),
-            repo: "zed".into(),
+            repo: "flint".into(),
         };
 
         let bitbucket = Bitbucket::public_instance();
@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(pr.number, 123);
         assert_eq!(
             pr.url.as_str(),
-            "https://bitbucket.org/zed-industries/zed/pull-requests/123"
+            "https://bitbucket.org/zed-industries/flint/pull-requests/123"
         );
     }
 
@@ -564,11 +564,11 @@ mod tests {
 
         let remote = ParsedGitRemote {
             owner: "zed-industries".into(),
-            repo: "zed".into(),
+            repo: "flint".into(),
         };
 
         let bitbucket =
-            Bitbucket::from_remote_url("https://bitbucket.company.com/zed-industries/zed.git")
+            Bitbucket::from_remote_url("https://bitbucket.company.com/zed-industries/flint.git")
                 .unwrap();
 
         // Test message without PR reference
@@ -586,7 +586,7 @@ mod tests {
         assert_eq!(pr.number, 123);
         assert_eq!(
             pr.url.as_str(),
-            "https://bitbucket.company.com/projects/zed-industries/repos/zed/pull-requests/123"
+            "https://bitbucket.company.com/projects/zed-industries/repos/flint/pull-requests/123"
         );
     }
 }

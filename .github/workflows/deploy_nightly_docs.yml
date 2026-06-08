@@ -7,10 +7,10 @@ on:
     - main
 jobs:
   deploy_docs:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
     permissions:
       contents: read
-    uses: zed-industries/zed/.github/workflows/deploy_docs.yml@main
+    uses: flint-industries/flint/.github/workflows/deploy_docs.yml@main
     secrets:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
       DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}

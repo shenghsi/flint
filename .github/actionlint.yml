@@ -37,7 +37,7 @@ self-hosted-runner:
 
 # Disable shellcheck because it doesn't like powershell
 # This should have been triggered with initial rollout of actionlint
-# but https://github.com/zed-industries/zed/pull/36693
+# but https://github.com/flint-industries/flint/pull/36693
 # somehow caused actionlint to actually check those windows jobs
 # where previously they were being skipped. Likely caused by an
 # unknown bug in actionlint where parsing of `runs-on: [ ]`

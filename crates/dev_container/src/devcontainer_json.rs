@@ -127,12 +127,12 @@ impl std::fmt::Display for FeatureOptionValue {
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq, Default)]
-pub(crate) struct ZedCustomizationsWrapper {
-    pub(crate) zed: ZedCustomization,
+pub(crate) struct FlintCustomizationsWrapper {
+    pub(crate) flint: FlintCustomization,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Default)]
-pub(crate) struct ZedCustomization {
+pub(crate) struct FlintCustomization {
     #[serde(default)]
     pub(crate) extensions: Vec<String>,
 }
@@ -221,7 +221,7 @@ pub(crate) struct DevContainer {
     pub(crate) mounts: Option<Vec<MountDefinition>>,
     pub(crate) features: Option<HashMap<String, FeatureOptions>>,
     pub(crate) override_feature_install_order: Option<Vec<String>>,
-    pub(crate) customizations: Option<ZedCustomizationsWrapper>,
+    pub(crate) customizations: Option<FlintCustomizationsWrapper>,
     pub(crate) build: Option<ContainerBuild>,
     #[serde(default, deserialize_with = "deserialize_app_port")]
     pub(crate) app_port: Vec<String>,
@@ -306,22 +306,22 @@ impl DevContainer {
 }
 
 // Custom deserializer that parses the entire customizations object as a
-// serde_json_lenient::Value first, then extracts the "zed" portion.
+// serde_json_lenient::Value first, then extracts the "flint" portion.
 // This avoids a bug in serde_json_lenient's `ignore_value` codepath which
 // does not handle trailing commas in skipped values.
-impl<'de> Deserialize<'de> for ZedCustomizationsWrapper {
+impl<'de> Deserialize<'de> for FlintCustomizationsWrapper {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let value = Value::deserialize(deserializer)?;
-        let zed = value
-            .get("zed")
-            .map(|zed_value| serde_json_lenient::from_value::<ZedCustomization>(zed_value.clone()))
+        let flint = value
+            .get("flint")
+            .map(|flint_value| serde_json_lenient::from_value::<FlintCustomization>(flint_value.clone()))
             .transpose()
             .map_err(serde::de::Error::custom)?
             .unwrap_or_default();
-        Ok(ZedCustomizationsWrapper { zed })
+        Ok(FlintCustomizationsWrapper { flint })
     }
 }
 
@@ -629,8 +629,8 @@ mod test {
         devcontainer_json::{
             ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
             HostRequirements, LifecycleCommand, LifecycleScript, MountDefinition, OnAutoForward,
-            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe, ZedCustomization,
-            ZedCustomizationsWrapper, deserialize_devcontainer_json,
+            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe, FlintCustomization,
+            FlintCustomizationsWrapper, deserialize_devcontainer_json,
         },
     };
 
@@ -646,7 +646,7 @@ mod test {
                       "GitHub.vscode-pull-request-github",
                     ],
                   },
-                  "zed": {
+                  "flint": {
                     "extensions": ["vue", "ruby"],
                   },
                   "codespaces": {
@@ -673,8 +673,8 @@ mod test {
         let devcontainer = result.expect("ok");
         assert_eq!(
             devcontainer.customizations,
-            Some(ZedCustomizationsWrapper {
-                zed: ZedCustomization {
+            Some(FlintCustomizationsWrapper {
+                flint: FlintCustomization {
                     extensions: vec!["vue".to_string(), "ruby".to_string()]
                 }
             })
@@ -682,8 +682,8 @@ mod test {
     }
 
     #[test]
-    fn should_deserialize_customizations_without_zed_key() {
-        let json_without_zed = r#"
+    fn should_deserialize_customizations_without_flint_key() {
+        let json_without_flint = r#"
             {
                 "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
                 "customizations": {
@@ -694,18 +694,18 @@ mod test {
             }
         "#;
 
-        let result = deserialize_devcontainer_json(json_without_zed);
+        let result = deserialize_devcontainer_json(json_without_flint);
 
         assert!(
             result.is_ok(),
-            "Should handle missing zed key in customizations, but got: {:?}",
+            "Should handle missing flint key in customizations, but got: {:?}",
             result.err()
         );
         let devcontainer = result.expect("ok");
         assert_eq!(
             devcontainer.customizations,
-            Some(ZedCustomizationsWrapper {
-                zed: ZedCustomization { extensions: vec![] }
+            Some(FlintCustomizationsWrapper {
+                flint: FlintCustomization { extensions: vec![] }
             })
         );
     }
@@ -815,7 +815,7 @@ mod test {
                     "vscode": {
                         // Just confirm that this can be included and ignored
                     },
-                    "zed": {
+                    "flint": {
                         "extensions": [
                             "html"
                         ]
@@ -947,8 +947,8 @@ mod test {
                     target: "/workspaces/app".to_string(),
                     mount_type: Some("bind".to_string())
                 }),
-                customizations: Some(ZedCustomizationsWrapper {
-                    zed: ZedCustomization {
+                customizations: Some(FlintCustomizationsWrapper {
+                    flint: FlintCustomization {
                         extensions: vec!["html".to_string()]
                     }
                 }),
@@ -1591,7 +1591,7 @@ mod test {
                     "vscode": {
                         // Just confirm that this can be included and ignored
                     },
-                    "zed": {
+                    "flint": {
                         "extensions": [
                             "html"
                         ]
@@ -1629,7 +1629,7 @@ mod test {
                     "vscode": {
                         // Just confirm that this can be included and ignored
                     },
-                    "zed": {
+                    "flint": {
                         "extensions": [
                             "html"
                         ]
@@ -1666,7 +1666,7 @@ mod test {
                     "vscode": {
                         // Just confirm that this can be included and ignored
                     },
-                    "zed": {
+                    "flint": {
                         "extensions": [
                             "html"
                         ]

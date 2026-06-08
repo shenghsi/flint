@@ -49,7 +49,7 @@ pub fn codestral_api_key(cx: &App) -> Option<Arc<str>> {
 }
 
 pub fn load_codestral_api_key(cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-    let credentials_provider = zed_credentials_provider::global(cx);
+    let credentials_provider = flint_credentials_provider::global(cx);
     let api_url = codestral_api_url(cx);
     codestral_api_key_state(cx).update(cx, |key_state, cx| {
         key_state.load_if_needed(api_url, |s| s, credentials_provider, cx)

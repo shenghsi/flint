@@ -1,21 +1,21 @@
 ---
-title: Debugger - Zed
-description: Debug code in Zed with the Debug Adapter Protocol (DAP). Breakpoints, stepping, variable inspection across multiple languages.
+title: Debugger - Flint
+description: Debug code in Flint with the Debug Adapter Protocol (DAP). Breakpoints, stepping, variable inspection across multiple languages.
 ---
 
 # Debugger
 
-Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
+Flint uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
 DAP is a standardized protocol that defines how debuggers, editors, and IDEs communicate with each other.
-It allows Zed to support various debuggers without needing to implement language-specific debugging logic.
-Zed implements the client side of the protocol, and various _debug adapters_ implement the server side.
+It allows Flint to support various debuggers without needing to implement language-specific debugging logic.
+Flint implements the client side of the protocol, and various _debug adapters_ implement the server side.
 
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
 
 ## Supported Languages
 
-To debug code written in a specific language, Zed needs to find a debug adapter for that language. Some debug adapters are provided by Zed without additional setup, and some are provided by [language extensions](./extensions/debugger-extensions.md). The following languages currently have debug adapters available:
+To debug code written in a specific language, Flint needs to find a debug adapter for that language. Some debug adapters are provided by Flint without additional setup, and some are provided by [language extensions](./extensions/debugger-extensions.md). The following languages currently have debug adapters available:
 
 <!-- keep this sorted -->
 
@@ -33,7 +33,7 @@ To debug code written in a specific language, Zed needs to find a debug adapter 
 
 > If your language isn't listed, you can contribute by adding a debug adapter for it. Check out our [debugger extensions](./extensions/debugger-extensions.md) documentation for more information.
 
-Follow those links for language- and adapter-specific information and examples, or read on for more about Zed's general debugging features that apply to all adapters.
+Follow those links for language- and adapter-specific information and examples, or read on for more about Flint's general debugging features that apply to all adapters.
 
 ## Getting Started
 
@@ -41,7 +41,7 @@ For most languages, the fastest way to get started is to run {#action debugger::
 
 You can open the same modal by clicking the "plus" button at the top right of the debug panel.
 
-For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
+For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the `.flint/debug.json` file in your project root. This file should be an array of configuration objects:
 
 ```json [debug]
 [
@@ -58,33 +58,33 @@ For languages that don't provide preconfigured debug tasks (this includes C, C++
 ]
 ```
 
-Check the documentation for your language for example configurations covering typical use-cases. Once you've added configurations to `.zed/debug.json`, they'll appear in the list in the new process modal.
+Check the documentation for your language for example configurations covering typical use-cases. Once you've added configurations to `.flint/debug.json`, they'll appear in the list in the new process modal.
 
-Zed will also load debug configurations from `.vscode/launch.json`, and show them in the new process modal if no configurations are found in `.zed/debug.json`.
+Flint will also load debug configurations from `.vscode/launch.json`, and show them in the new process modal if no configurations are found in `.flint/debug.json`.
 
 #### Global debug configurations
 
-If you run the same launch profiles across multiple projects, you can store them once in your user configuration. Invoke {#action zed::OpenDebugTasks} from the command palette to open the global `debug.json` file; Zed creates it next to your user `settings.json` and keeps it in sync with the debugger UI. The file lives at:
+If you run the same launch profiles across multiple projects, you can store them once in your user configuration. Invoke {#action flint::OpenDebugTasks} from the command palette to open the global `debug.json` file; Flint creates it next to your user `settings.json` and keeps it in sync with the debugger UI. The file lives at:
 
-- **macOS:** `~/Library/Application Support/Zed/debug.json`
-- **Linux/BSD:** `$XDG_CONFIG_HOME/zed/debug.json` (falls back to `~/.config/zed/debug.json`)
-- **Windows:** `%APPDATA%\Zed\debug.json`
+- **macOS:** `~/Library/Application Support/Flint/debug.json`
+- **Linux/BSD:** `$XDG_CONFIG_HOME/flint/debug.json` (falls back to `~/.config/flint/debug.json`)
+- **Windows:** `%APPDATA%\Flint\debug.json`
 
-Populate this file with the same array of objects you would place in `.zed/debug.json`. Any scenarios defined there are merged into every workspace, so your favorite launch presets appear automatically in the "New Debug Session" dialog.
+Populate this file with the same array of objects you would place in `.flint/debug.json`. Any scenarios defined there are merged into every workspace, so your favorite launch presets appear automatically in the "New Debug Session" dialog.
 
 ### Launching & Attaching
 
-Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
+Flint debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
 Which one you choose depends on what you are trying to achieve.
 
-When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program.
+When launching a new instance, Flint (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program.
 Running unit tests or a debug build of your application is a good use case for launching.
 
 Compared to launching, attaching to an existing process might seem inferior, but that's far from the truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
 
 ## Configuration
 
-Zed requires the `adapter` and `label` fields for all debug tasks. In addition, Zed will use the `build` field to run any necessary setup steps before the debugger starts [(see below)](#build-tasks), and can accept a `tcp_connection` field to connect to an existing process.
+Flint requires the `adapter` and `label` fields for all debug tasks. In addition, Flint will use the `build` field to run any necessary setup steps before the debugger starts [(see below)](#build-tasks), and can accept a `tcp_connection` field to connect to an existing process.
 
 All other fields are provided by the debug adapter and can contain [task variables](./tasks.md#variables). Most adapters support `request`, `program`, and `cwd`:
 
@@ -93,11 +93,11 @@ All other fields are provided by the debug adapter and can contain [task variabl
   {
     // The label for the debug configuration and used to identify the debug session inside the debug panel & new process modal
     "label": "Example Start debugger config",
-    // The debug adapter that Zed should use to debug the program
+    // The debug adapter that Flint should use to debug the program
     "adapter": "Example adapter name",
     // Request:
-    //  - launch: Zed will launch the program if specified, or show a debug terminal with the right configuration
-    //  - attach: Zed will attach to a running program to debug it, or when the process_id is not specified, will show a process picker (only supported for node currently)
+    //  - launch: Flint will launch the program if specified, or show a debug terminal with the right configuration
+    //  - attach: Flint will attach to a running program to debug it, or when the process_id is not specified, will show a process picker (only supported for node currently)
     "request": "launch",
     // The program to debug. This field supports path resolution with ~ or . symbols.
     "program": "path_to_program",
@@ -111,7 +111,7 @@ Check your debug adapter's documentation for more information on the fields it s
 
 ### Build tasks
 
-Zed allows embedding a Zed task in the `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
+Flint allows embedding a Flint task in the `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
 ```json [debug]
 [
@@ -144,7 +144,7 @@ Build tasks can also refer to the existing tasks by unsubstituted label:
 
 ### Automatic scenario creation
 
-Given a Zed task, Zed can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
+Given a Flint task, Flint can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
 Automatic scenario creation is currently supported for Rust, Go, Python, JavaScript, and TypeScript.
 
 ## Breakpoints
@@ -165,7 +165,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ## Working with Split Panes
 
-When debugging with multiple split panes open, Zed shows the active debug line in one pane and preserves your layout in others. If you have the same file open in multiple panes, the debugger picks a pane where the file is already the active tab—it won't switch tabs in panes where the file is inactive.
+When debugging with multiple split panes open, Flint shows the active debug line in one pane and preserves your layout in others. If you have the same file open in multiple panes, the debugger picks a pane where the file is already the active tab—it won't switch tabs in panes where the file is inactive.
 
 Once the debugger picks a pane, it continues using that pane for subsequent breakpoints during the session. If you drag the tab with the active debug line to a different split, the debugger tracks the move and uses the new pane.
 
@@ -177,10 +177,10 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 - `dock`: Determines the position of the debug panel in the UI.
 - `stepping_granularity`: Determines the stepping granularity.
-- `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
+- `save_breakpoints`: Whether the breakpoints should be reused across Flint sessions.
 - `button`: Whether to show the debug button in the status bar.
 - `timeout`: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
-- `log_dap_communications`: Whether to log messages between active debug adapters and Zed.
+- `log_dap_communications`: Whether to log messages between active debug adapters and Flint.
 - `format_dap_log_messages`: Whether to format DAP messages when adding them to the debug adapter logger.
 
 ### Dock
@@ -243,7 +243,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 ### Save Breakpoints
 
-- Description: Whether the breakpoints should be saved across Zed sessions.
+- Description: Whether the breakpoints should be saved across Flint sessions.
 - Default: `true`
 - Setting: `debugger.save_breakpoints`
 
@@ -315,7 +315,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 ### Log Dap Communications
 
-- Description: Whether to log messages between active debug adapters and Zed. (Used for DAP development)
+- Description: Whether to log messages between active debug adapters and Flint. (Used for DAP development)
 - Default: false
 - Setting: debugger.log_dap_communications
 
@@ -351,11 +351,11 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 ### Customizing Debug Adapters
 
-- Description: Custom program path and arguments to override how Zed launches a specific debug adapter.
+- Description: Custom program path and arguments to override how Flint launches a specific debug adapter.
 - Default: Adapter-specific
 - Setting: `dap.$ADAPTER.binary` and `dap.$ADAPTER.args`
 
-You can pass `binary`, `args`, or both. `binary` should be a path to a _debug adapter_ (like `lldb-dap`) not a _debugger_ (like `lldb` itself). The `args` setting overrides any arguments that Zed would otherwise pass to the adapter.
+You can pass `binary`, `args`, or both. `binary` should be a path to a _debug adapter_ (like `lldb-dap`) not a _debugger_ (like `lldb` itself). The `args` setting overrides any arguments that Flint would otherwise pass to the adapter.
 
 ```json [settings]
 {
@@ -377,7 +377,7 @@ The Debugger supports the following theme options:
 
 ## Troubleshooting
 
-If you're running into problems with the debugger, please [open a GitHub issue](https://github.com/zed-industries/zed/issues/new?template=04_bug_debugger.yml), providing as much context as possible. There are also some features you can use to gather more information about the problem:
+If you're running into problems with the debugger, please [open a GitHub issue](https://github.com/zed-industries/flint/issues/new?template=04_bug_debugger.yml), providing as much context as possible. There are also some features you can use to gather more information about the problem:
 
-- When you have a session running in the debug panel, you can run the {#action dev::CopyDebugAdapterArguments} action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
-- You can also use the {#action dev::OpenDebugAdapterLogs} action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.
+- When you have a session running in the debug panel, you can run the {#action dev::CopyDebugAdapterArguments} action to copy a JSON blob to the clipboard that describes how Flint initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
+- You can also use the {#action dev::OpenDebugAdapterLogs} action to see a trace of all of Flint's communications with debug adapters during the most recent debug sessions.

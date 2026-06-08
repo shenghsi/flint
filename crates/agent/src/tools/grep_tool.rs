@@ -1042,7 +1042,7 @@ mod tests {
         fs.insert_tree(
             path!("/worktree1"),
             json!({
-                ".zed": {
+                ".flint": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/fixture.*"],
                         "private_files": ["**/secret.rs"]
@@ -1065,7 +1065,7 @@ mod tests {
         fs.insert_tree(
             path!("/worktree2"),
             json!({
-                ".zed": {
+                ".flint": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/internal.*"],
                         "private_files": ["**/private.js", "**/data.json"]

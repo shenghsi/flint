@@ -1,5 +1,5 @@
 [package]
-name = "zed_proto"
+name = "flint_proto"
 version = "0.3.2"
 edition.workspace = true
 publish.workspace = true
