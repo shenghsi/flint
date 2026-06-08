@@ -67,10 +67,7 @@ function CheckEnvironmentVariables {
     }
 
     $requiredVars = @(
-        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL',
-        'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
-        'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
-        'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
+        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL'
     )
 
     foreach ($var in $requiredVars) {
@@ -78,6 +75,30 @@ function CheckEnvironmentVariables {
             Write-Error "$var is not set"
             exit 1
         }
+    }
+
+    $signingVars = @(
+        'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
+        'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
+        'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
+    )
+
+    $script:canCodeSign = $true
+    foreach ($var in $signingVars) {
+        if (-not (Test-Path "env:$var")) {
+            Write-Output "Azure signing variable $var is not set, code signing will be skipped"
+            $script:canCodeSign = $false
+            break
+        }
+    }
+
+    if ($script:canCodeSign) {
+        $env:AZURE_SIGNING_TENANT_ID = $env:AZURE_TENANT_ID
+        $env:AZURE_SIGNING_CLIENT_ID = $env:AZURE_CLIENT_ID
+        $env:AZURE_SIGNING_CLIENT_SECRET = $env:AZURE_CLIENT_SECRET
+        $env:AZURE_SIGNING_ACCOUNT_NAME = $env:ACCOUNT_NAME
+        $env:AZURE_SIGNING_CERT_PROFILE_NAME = $env:CERT_PROFILE_NAME
+        $env:AZURE_SIGNING_ENDPOINT = $env:ENDPOINT
     }
 }
 
@@ -128,7 +149,7 @@ function BuildRemoteServer {
     # Create zipped remote server binary
     $remoteServerSrc = (Resolve-Path ".\$CargoOutDir\remote_server.exe").Path
 
-    if ($env:CI) {
+    if ($env:CI -and $script:canCodeSign) {
         Write-Output "Code signing remote_server.exe"
         & "$innoDir\sign.ps1" $remoteServerSrc
     }
@@ -172,8 +193,7 @@ function UploadToSentry {
         catch {
             Write-Output "Sentry upload attempt $i failed: $_"
             if ($i -eq 3) {
-                Write-Output "All sentry upload attempts failed"
-                throw
+                Write-Output "All sentry upload attempts failed, continuing without upload"
             }
             Start-Sleep -Seconds 2
         }
@@ -200,7 +220,10 @@ function MakeAppx {
 }
 
 function SignFlintAndItsFriends {
-    if (-not $env:CI) {
+    if (-not $env:CI -or -not $script:canCodeSign) {
+        if ($env:CI) {
+            Write-Output "Azure signing not configured, skipping code signing"
+        }
         return
     }
 
@@ -340,7 +363,7 @@ function BuildInstaller {
     }
 
     $innoArgs = @($issFilePath) + $defs
-    if($env:CI) {
+    if($env:CI -and $script:canCodeSign) {
         $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
         $innoArgs += "/sDefaultsign=`"$signTool`""
     }

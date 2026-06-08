@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 set -euxo pipefail
-source script/lib/blob-store.sh
 
 # Function for displaying help info
 help_info() {

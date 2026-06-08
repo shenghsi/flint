@@ -58,52 +58,67 @@ install_sccache() {
 }
 
 configure_sccache() {
-    if [[ -z "${R2_ACCOUNT_ID:-}" ]]; then
-        echo "R2_ACCOUNT_ID not set, skipping sccache configuration"
-        return
-    fi
-
-    echo "Configuring sccache with Cloudflare R2..."
-
-    local bucket="${SCCACHE_BUCKET:-sccache-flint}"
-    local key_prefix="${SCCACHE_KEY_PREFIX:-sccache/}"
-    local base_dir="${GITHUB_WORKSPACE:-$(pwd)}"
-
     # Use the absolute path to sccache binary for RUSTC_WRAPPER to avoid
     # any PATH race conditions between GITHUB_PATH and GITHUB_ENV
     local sccache_bin="${SCCACHE_DIR}/sccache"
+    local base_dir="${GITHUB_WORKSPACE:-$(pwd)}"
 
-    # Set in current process
-    export SCCACHE_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-    export SCCACHE_BUCKET="${bucket}"
-    export SCCACHE_REGION="auto"
-    export SCCACHE_S3_KEY_PREFIX="${key_prefix}"
-    export SCCACHE_BASEDIR="${base_dir}"
-    export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
-    export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
-    export RUSTC_WRAPPER="${sccache_bin}"
+    if [[ -n "${R2_ACCOUNT_ID:-}" ]]; then
+        echo "Configuring sccache with Cloudflare R2..."
 
-    # Also write to GITHUB_ENV for subsequent steps
-    if [[ -n "${GITHUB_ENV:-}" ]]; then
-        {
-            echo "SCCACHE_ENDPOINT=${SCCACHE_ENDPOINT}"
-            echo "SCCACHE_BUCKET=${SCCACHE_BUCKET}"
-            echo "SCCACHE_REGION=${SCCACHE_REGION}"
-            echo "SCCACHE_S3_KEY_PREFIX=${SCCACHE_S3_KEY_PREFIX}"
-            echo "SCCACHE_BASEDIR=${SCCACHE_BASEDIR}"
-            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
-            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
-            echo "RUSTC_WRAPPER=${RUSTC_WRAPPER}"
-        } >> "$GITHUB_ENV"
+        local bucket="${SCCACHE_BUCKET:-sccache-flint}"
+        local key_prefix="${SCCACHE_KEY_PREFIX:-sccache/}"
+
+        export SCCACHE_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+        export SCCACHE_BUCKET="${bucket}"
+        export SCCACHE_REGION="auto"
+        export SCCACHE_S3_KEY_PREFIX="${key_prefix}"
+        export SCCACHE_BASEDIR="${base_dir}"
+        export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
+        export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
+        export RUSTC_WRAPPER="${sccache_bin}"
+
+        if [[ -n "${GITHUB_ENV:-}" ]]; then
+            {
+                echo "SCCACHE_ENDPOINT=${SCCACHE_ENDPOINT}"
+                echo "SCCACHE_BUCKET=${SCCACHE_BUCKET}"
+                echo "SCCACHE_REGION=${SCCACHE_REGION}"
+                echo "SCCACHE_S3_KEY_PREFIX=${SCCACHE_S3_KEY_PREFIX}"
+                echo "SCCACHE_BASEDIR=${SCCACHE_BASEDIR}"
+                echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+                echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+                echo "RUSTC_WRAPPER=${RUSTC_WRAPPER}"
+            } >> "$GITHUB_ENV"
+        fi
+
+        echo "✓ sccache configured with Cloudflare R2 (bucket: ${bucket})"
+    elif [[ -n "${ACTIONS_CACHE_URL:-}" && -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
+        echo "Configuring sccache with GitHub Actions cache..."
+
+        export SCCACHE_GHA_ENABLED="on"
+        export SCCACHE_BASEDIR="${base_dir}"
+        export RUSTC_WRAPPER="${sccache_bin}"
+
+        if [[ -n "${GITHUB_ENV:-}" ]]; then
+            {
+                echo "SCCACHE_GHA_ENABLED=${SCCACHE_GHA_ENABLED}"
+                echo "SCCACHE_BASEDIR=${SCCACHE_BASEDIR}"
+                echo "RUSTC_WRAPPER=${RUSTC_WRAPPER}"
+            } >> "$GITHUB_ENV"
+        fi
+
+        echo "✓ sccache configured with GitHub Actions cache"
+    else
+        echo "Neither R2 nor GitHub Actions cache credentials detected, skipping sccache configuration"
+        return
     fi
-
-    echo "✓ sccache configured with Cloudflare R2 (bucket: ${bucket})"
 }
 
 show_config() {
     echo "=== sccache configuration ==="
     echo "sccache version: $(sccache --version)"
     echo "RUSTC_WRAPPER: ${RUSTC_WRAPPER:-<not set>}"
+    echo "SCCACHE_GHA_ENABLED: ${SCCACHE_GHA_ENABLED:-<not set>}"
     echo "SCCACHE_BUCKET: ${SCCACHE_BUCKET:-<not set>}"
     echo "SCCACHE_ENDPOINT: ${SCCACHE_ENDPOINT:-<not set>}"
     echo "SCCACHE_REGION: ${SCCACHE_REGION:-<not set>}"

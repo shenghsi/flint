@@ -25,6 +25,12 @@ switch ($channel) {
     "preview" {
         $expectedTagName = "v$version-pre"
     }
+    "dev" {
+        $expectedTagName = "v$version-dev"
+    }
+    "nightly" {
+        $expectedTagName = "v$version-nightly"
+    }
     default {
         Write-Error "can't publish a release on channel $channel"
         exit 1

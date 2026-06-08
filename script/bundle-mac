@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-source script/lib/blob-store.sh
 
 build_flag="--release"
 target_dir="release"
@@ -320,8 +319,7 @@ function upload_debug_symbols() {
             else
                 echo "Sentry upload failed on attempt $attempt"
                 if [ $attempt -eq 3 ]; then
-                    echo "All sentry upload attempts failed"
-                    exit 1
+                    echo "All sentry upload attempts failed, continuing without upload"
                 fi
             fi
         done
