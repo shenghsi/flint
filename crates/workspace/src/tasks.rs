@@ -2,7 +2,7 @@ use std::process::ExitStatus;
 
 use anyhow::Result;
 use collections::HashSet;
-#[cfg(any())]
+#[cfg(test)]
 use gpui::Entity;
 use gpui::{AppContext, AsyncWindowContext, Context, Task, TaskExt, WeakEntity};
 #[cfg(any())]

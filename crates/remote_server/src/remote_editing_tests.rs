@@ -4,7 +4,7 @@
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 use languages::rust_lang;
 
 use extension::ExtensionHostProxy;
@@ -39,7 +39,7 @@ use std::{
     sync::Arc,
 };
 use unindent::Unindent as _;
-use util::{path, path_list::PathList, paths::PathMatcher, rel_path::rel_path};
+use util::{path, paths::PathMatcher, rel_path::rel_path};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {

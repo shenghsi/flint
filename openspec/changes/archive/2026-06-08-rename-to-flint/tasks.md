@@ -22,6 +22,6 @@
 ## 5. Verify and smoke test
 
 - [x] 5.1 Build with `cargo build --package flint --bin flint` and confirm success
-- [ ] 5.2 Run `./target/debug/flint` and verify: title bar shows "Flint", menus show "About Flint", config at `~/.config/flint/`
-- [ ] 5.3 Install an extension from Zed's registry and confirm it loads
-- [ ] 5.4 Run `./script/clippy` and fix any new warnings
+- [x] 5.2 Run `./target/debug/flint` and verify: title bar shows "Flint", menus show "About Flint", config at `~/.config/flint/`
+- [x] 5.3 Install an extension from Zed's registry and confirm it loads
+- [x] 5.4 Run `./script/clippy` and fix any new warnings

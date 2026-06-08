@@ -4,7 +4,6 @@ use paths::tasks_file;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use settings::SettingsLocation;
-use std::path::Path;
 use std::sync::Arc;
 use util::rel_path::rel_path;
 

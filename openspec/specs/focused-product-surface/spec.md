@@ -1,33 +1,30 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Core review and writing surfaces remain available
 The application SHALL retain terminal, project navigation, editor, git review,
 diff, search, settings, theme, keymap, Markdown, and title bar surfaces.
 The title bar SHALL render with visible content (at minimum the project name)
 for every open project. The terminal panel icon SHALL be visible in the
-status bar by default.
+status bar by default. The application SHALL identify as "Flint" in all
+user-visible surfaces (title bar, menus, about dialog, URL scheme) while
+preserving extension compatibility with the upstream Zed extension ecosystem.
 
 #### Scenario: Core workspace opens with retained surfaces
 - **WHEN** a user opens a project
 - **THEN** the user can open terminal sessions, browse project files, view diffs,
   inspect git status, search content, edit files, and open Markdown files
 
-### Requirement: Product pruning proceeds before dependency pruning
-The implementation MUST remove user-facing registration and startup paths for
-retired features before removing workspace members and crate dependencies.
+#### Scenario: App identity shows Flint branding
+- **WHEN** a user opens the application
+- **THEN** the app menu shows "About Flint", "Quit Flint", and "Hide Flint"
+- **AND** the binary is named `flint`
+- **AND** config is stored in platform-appropriate Flint directories
 
-#### Scenario: Feature surface is removed before crate deletion
-- **WHEN** a retired feature is selected for removal
-- **THEN** app startup registration, menu entries, action exposure, settings
-  defaults, and panel loading are removed or disabled before the crate is
-  removed from the workspace
+#### Scenario: URL scheme uses flint://
+- **WHEN** a `flint://` URL is opened by the OS
+- **THEN** the Flint application handles it and opens the corresponding resource
 
-### Requirement: Retired native AI settings are not required
-The application SHALL NOT require native model provider settings, Zed agent
-settings, ACP server settings, or MCP settings for its default terminal-agent
-workflows.
-
-#### Scenario: User runs terminal agents without native AI setup
-- **WHEN** no native model provider, ACP server, or MCP settings are configured
-- **THEN** Codex and Claude terminal-thread launch actions can still be used
-  through configured terminal commands
+#### Scenario: Existing Zed extensions load without modification
+- **WHEN** a user installs an extension from the Zed extension registry
+- **THEN** the extension loads and functions correctly without recompilation
+- **AND** the WIT namespace `zed:extension` is preserved unchanged
