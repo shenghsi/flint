@@ -809,12 +809,12 @@ pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Re
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
         if let wasmparser::Payload::CustomSection(s) =
             part.context("error parsing wasm extension")?
-            && s.name() == "flint:api-version"
+            && s.name() == "zed:api-version"
         {
             version = parse_wasm_extension_version_custom_section(s.data());
             if version.is_none() {
                 bail!(
-                    "extension {} has invalid flint:api-version section: {:?}",
+                    "extension {} has invalid zed:api-version section: {:?}",
                     extension_id,
                     s.data()
                 );
@@ -827,7 +827,7 @@ pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Re
     //
     // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
     // earlier as an `Err` rather than as a panic.
-    version.with_context(|| format!("extension {extension_id} has no flint:api-version section"))
+    version.with_context(|| format!("extension {extension_id} has no zed:api-version section"))
 }
 
 fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<Version> {

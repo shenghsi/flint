@@ -43,6 +43,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
         MenuItem::action("Terminal", terminal_panel::ToggleFocus),
         MenuItem::separator(),
+        MenuItem::action("Extensions", flint_actions::Extensions::default()),
         MenuItem::action("Terminal Threads", terminal_threads::OpenTerminalThreads),
         MenuItem::action("New Codex Thread", terminal_threads::NewCodexThread),
         MenuItem::action("New Claude Thread", terminal_threads::NewClaudeThread),
@@ -331,7 +332,6 @@ mod tests {
             "Collab Panel",
             "Debugger Panel",
             "Terminal Panel",
-            "Extensions",
             "Start Debugger",
             "Edit debug.json...",
             "Continue",
@@ -354,6 +354,7 @@ mod tests {
         }
 
         assert!(labels.iter().any(|label| label == "Terminal"));
+        assert!(labels.iter().any(|label| label == "Extensions"));
         assert!(labels.iter().any(|label| label == "Project Panel"));
         assert!(labels.iter().any(|label| label == "Open Settings File"));
         assert!(labels.iter().any(|label| label == "Find in Project"));

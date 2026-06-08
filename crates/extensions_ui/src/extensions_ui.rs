@@ -49,10 +49,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(move |workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
+    cx.observe_new(move |workspace: &mut Workspace, _window, _cx| {
         workspace
             .register_action(
                 move |workspace, action: &flint_actions::Extensions, window, cx| {
@@ -146,8 +143,6 @@ pub fn init(cx: &mut App) {
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
                                         workspace.show_error(
-                                            // NOTE: using `anyhow::context` here ends up not printing
-                                            // the error
                                             &format!("Failed to install dev extension: {}", err),
                                             cx,
                                         );
@@ -160,7 +155,11 @@ pub fn init(cx: &mut App) {
                     })
                     .detach();
             });
+    })
+    .detach();
 
+    cx.observe_new(move |workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else { return };
         cx.subscribe_in(workspace.project(), window, |_, _, event, window, cx| {
             if let project::Event::LanguageNotFound(buffer) = event {
                 extension_suggest::suggest(buffer.clone(), window, cx);
