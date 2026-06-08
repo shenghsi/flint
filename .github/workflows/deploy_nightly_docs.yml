@@ -1,24 +1,10 @@
-# Generated from xtask::workflows::deploy_nightly_docs
-# Rebuild with `cargo xtask workflows`.
 name: deploy_nightly_docs
 on:
   push:
     branches:
-    - main
+      - main
 jobs:
   deploy_docs:
-    if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
-    permissions:
-      contents: read
-    uses: flint-industries/flint/.github/workflows/deploy_docs.yml@main
-    secrets:
-      DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
-      DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-    with:
-      channel: nightly
-      checkout_ref: ${{ github.sha }}
-defaults:
-  run:
-    shell: bash -euxo pipefail {0}
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "Docs deployment skipped — no docs infrastructure configured for this fork"
