@@ -6,14 +6,7 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
 on:
-  merge_group: {}
-  pull_request:
-    branches:
-    - '**'
-  push:
-    branches:
-    - main
-    - v[0-9]+.[0-9]+.x
+  workflow_dispatch: {}
 jobs:
   orchestrate:
     if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions')
