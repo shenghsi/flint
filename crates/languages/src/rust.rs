@@ -1986,7 +1986,7 @@ mod tests {
                 .await,
             Some(CodeLabel::new(
                 "extern crate flint".to_string(),
-                13..16,
+                13..18,
                 vec![(0..6, highlight_keyword), (7..12, highlight_keyword),],
             ))
         );

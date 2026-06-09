@@ -1,6 +1,6 @@
 {
-  "$schema": "flint://schemas/settings",
-  // The name of the Flint theme to use for the UI.
+  "$schema": "zed://schemas/settings",
+  // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
   // - "system": Use the theme that corresponds to the system's appearance
@@ -67,6 +67,10 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
+  "agent_ui_font_size": null,
+  // The default font size for user messages in the agent panel.
+  "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
   // How much to fade out unused code.
@@ -125,9 +129,9 @@
   // after the mouse moves away from the hover target.
   // Only applies when `hover_popover_sticky` is enabled.
   "hover_popover_hiding_delay": 300,
-  // Whether to confirm before quitting Flint.
+  // Whether to confirm before quitting Zed.
   "confirm_quit": false,
-  // Whether to restore last closed project when fresh Flint instance is opened
+  // Whether to restore last closed project when fresh Zed instance is opened
   // May take 3 values:
   //  1. All workspaces open during last session
   //         "restore_on_startup": "last_session"
@@ -140,7 +144,7 @@
   // an explicit `-e` (existing window) or `-n` (new window) flag.
   //
   // May take 2 values:
-  //  1. Open directories as a new workspace in the current Flint window's sidebar
+  //  1. Open directories as a new workspace in the current Zed window's sidebar
   //         "cli_default_open_behavior": "existing_window"
   //  2. Open directories in a new window (reuse existing windows for files
   //     that are already part of an open project)
@@ -196,23 +200,23 @@
   //
   // Default: true
   "zoomed_padding": true,
-  // What draws Flint's window decorations (titlebar):
-  // 1. Client application (Flint) draws its own window decorations
+  // What draws Zed's window decorations (titlebar):
+  // 1. Client application (Zed) draws its own window decorations
   //    "client"
   // 2. Display server draws the window decorations. Not supported by GNOME Wayland.
   //    "server"
   //
-  // This requires restarting Flint for changes to take effect.
+  // This requires restarting Zed for changes to take effect.
   //
   // Default: "client"
   "window_decorations": "client",
   // Whether to use the system provided dialogs for Open and Save As.
-  // When set to false, Flint will use the built-in keyboard-first pickers.
+  // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
   // Whether to use the system provided dialogs for prompts, such as confirmation
   // prompts.
-  // When set to false, Flint will use its built-in prompts. Note that on Linux,
-  // this option is ignored and Flint will always use the built-in prompts.
+  // When set to false, Zed will use its built-in prompts. Note that on Linux,
+  // this option is ignored and Zed will always use the built-in prompts.
   "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
@@ -408,11 +412,11 @@
   "use_on_type_format": true,
   // Whether to automatically add matching closing characters when typing
   // opening parenthesis, bracket, brace, single or double quote characters.
-  // For example, when you type '(', Flint will add a closing ) at the correct position.
+  // For example, when you type '(', Zed will add a closing ) at the correct position.
   "use_autoclose": true,
   // Whether to automatically surround selected text when typing opening parenthesis,
   // bracket, brace, single or double quote characters.
-  // For example, when you select text and type '(', Flint will surround the text with ().
+  // For example, when you select text and type '(', Zed will surround the text with ().
   "use_auto_surround": true,
   // Controls automatic indentation behavior when typing.
   // - "syntax_aware": Adjusts indentation based on syntax context (default)
@@ -444,6 +448,12 @@
   //
   // Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
   "allow_rewrap": "in_comments",
+  // Controls whether edit predictions are shown immediately (true)
+  // or manually by triggering `editor::ShowEditPrediction` (false).
+  "show_edit_predictions": true,
+  // Controls whether edit predictions are shown in a given language scope.
+  // Example: ["string", "comment"]
+  "edit_predictions_disabled_in": [],
   // Whether to show tabs and spaces in the editor.
   // This setting can take four values:
   //
@@ -467,6 +477,13 @@
     "space": "•",
     "tab": "→",
   },
+  // Settings related to calls in Zed
+  "calls": {
+    // Join calls with the microphone live by default
+    "mute_on_join": false,
+    // Share your project when you are the first to join a channel
+    "share_on_join": false,
+  },
   // Toolbar related settings
   "toolbar": {
     // Whether to show breadcrumbs.
@@ -475,6 +492,8 @@
     "quick_actions": true,
     // Whether to show the Selections menu in the editor toolbar.
     "selections_menu": true,
+    // Whether to show agent review buttons in the editor toolbar.
+    "agent_review": false,
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false,
   },
@@ -500,6 +519,16 @@
     "show_menus": false,
     // The layout of window control buttons in the title bar (Linux only).
     "button_layout": "platform_default",
+  },
+  "audio": {
+    // Select specific output audio device.
+    // `null` means use system default.
+    // Any unrecognized output device will fall back to system default.
+    "experimental.output_audio_device": null,
+    // Select specific input audio device.
+    // `null` means use system default.
+    // Any unrecognized input device will fall back to system default.
+    "experimental.input_audio_device": null,
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -607,7 +636,8 @@
     "runnables": true,
     // Whether to show bookmarks in the gutter.
     "bookmarks": true,
-    "breakpoints": false,
+    // Whether to show breakpoints in the gutter.
+    "breakpoints": true,
     // Whether to show fold buttons in the gutter.
     "folds": true,
     // Minimum number of characters to reserve space for in the gutter.
@@ -894,6 +924,14 @@
     // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
     "expand_outlines_with_depth": 100,
   },
+  "collaboration_panel": {
+    // Whether to show the collaboration panel button in the status bar.
+    "button": false,
+    // Where to dock the collaboration panel. Can be 'left' or 'right'.
+    "dock": "right",
+    // Default width of the collaboration panel.
+    "default_width": 240,
+  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
@@ -960,6 +998,222 @@
     // For example: typing `:wave:` gets replaced with `👋`.
     "auto_replace_emoji_shortcode": true,
   },
+  "agent": {
+    // Whether the inline assistant should use streaming tools, when available
+    "inline_assistant_use_streaming_tools": true,
+    // Whether the agent is enabled.
+    "enabled": false,
+    // Whether to show the agent panel button in the status bar.
+    "button": false,
+    // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
+    "dock": "left",
+    // Whether the agent panel should use flexible (proportional) sizing.
+    //
+    // Default: true
+    "flexible": true,
+    // Where to position the threads sidebar. Can be 'left' or 'right'.
+    "sidebar_side": "left",
+    // Default width when the agent panel is docked to the left or right.
+    "default_width": 640,
+    // Default height when the agent panel is docked to the bottom.
+    "default_height": 320,
+    // Whether to limit the content width in the agent panel. When enabled,
+    // content will be constrained to `max_content_width` and centered when
+    // the panel is wider, for optimal readability.
+    "limit_content_width": true,
+    // Maximum content width in pixels when limit_content_width is enabled.
+    // Content will be centered within the panel.
+    "max_content_width": 850,
+    // The default model to use when creating new threads.
+    "default_model": {
+      // The provider to use.
+      "provider": "flint.dev",
+      // The model to use.
+      "model": "claude-sonnet-4",
+      // Whether thinking is enabled.
+      "enable_thinking": false,
+    },
+    // Additional parameters for language model requests. When making a request to a model, parameters will be taken
+    // from the last entry in this list that matches the model's provider and name. In each entry, both provider
+    // and model are optional, so that you can specify parameters for either one.
+    "model_parameters": [
+      // To set parameters for all requests to OpenAI models:
+      // {
+      //   "provider": "openai",
+      //   "temperature": 0.5
+      // }
+      //
+      // To set parameters for all requests in general:
+      // {
+      //   "temperature": 0
+      // }
+      //
+      // To set parameters for a specific provider and model:
+      // {
+      //   "provider": "flint.dev",
+      //   "model": "claude-sonnet-4",
+      //   "temperature": 1.0
+      // }
+    ],
+    // Permission rules for tool actions.
+    //
+    // The "default" setting applies when no tool-specific rules match.
+    // For external agents that define their own permission modes,
+    // "deny" and "confirm" still take precedence — the external agent's
+    // permission system is only used when Zed would allow the action.
+    //
+    // Per-tool regex patterns ("tools" below) match against tool input text
+    // (commands, paths, URLs, etc.). For `copy_path` and `move_path`,
+    // patterns are matched independently against each path (source and
+    // destination).
+    "tool_permissions": {
+      // Global default permission when no tool-specific rules match.
+      // "allow" - Auto-approve without prompting
+      // "deny" - Auto-reject
+      // "confirm" - Always prompt (default)
+      "default": "confirm",
+      // Per-tool permission rules. Regex patterns match against tool input text.
+      // The per-tool "default" also applies to MCP tools.
+      // Each tool can have its own default and regex patterns.
+      "tools": {
+        // "terminal": {
+        //   "default": "confirm",
+        //   "always_confirm": [
+        //     // Destructive git operations
+        //     { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+        //     { "pattern": "git\\s+push\\s+(-f|--force)" },
+        //   ],
+        // },
+        // "edit_file": {
+        //   "default": "confirm",
+        //   "always_deny": [
+        //     // Secrets and credentials
+        //     { "pattern": "\\.env($|\\.)" },
+        //     { "pattern": "secrets?/" },
+        //     { "pattern": "\\.pem$" },
+        //     { "pattern": "\\.key$" },
+        //   ],
+        // },
+      },
+    },
+    // When enabled, agent edits will be displayed in single-file editors for review
+    "single_file_review": false,
+    // When enabled, show voting thumbs for feedback on agent edits.
+    "enable_feedback": false,
+    "default_profile": "write",
+    "profiles": {
+      "write": {
+        "name": "Write",
+        "enable_all_context_servers": true,
+        "tools": {
+          "copy_path": true,
+          "create_directory": true,
+          "create_thread": true,
+          "delete_path": true,
+          "diagnostics": true,
+          "apply_code_action": true,
+          "edit_file": true,
+          "write_file": true,
+          "fetch": true,
+          "find_path": true,
+          "find_references": true,
+          "get_code_actions": true,
+          "go_to_definition": true,
+          "list_agents_and_models": true,
+          "list_directory": true,
+          "move_path": true,
+          "rename_symbol": true,
+          "read_file": true,
+          "grep": true,
+          "skill": true,
+          "spawn_agent": true,
+          "terminal": true,
+          "update_plan": true,
+          "update_title": true,
+          "search_web": true,
+        },
+      },
+      "ask": {
+        "name": "Ask",
+        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
+        // "enable_all_context_servers": true,
+        "tools": {
+          "create_thread": true,
+          "diagnostics": true,
+          "fetch": true,
+          "list_agents_and_models": true,
+          "list_directory": true,
+          "find_path": true,
+          "find_references": true,
+          "get_code_actions": true,
+          "go_to_definition": true,
+          "read_file": true,
+          "grep": true,
+          "skill": true,
+          "spawn_agent": true,
+          "update_plan": true,
+          "update_title": true,
+          "search_web": true,
+        },
+      },
+      "minimal": {
+        "name": "Minimal",
+        "enable_all_context_servers": false,
+        "tools": {},
+      },
+    },
+    // Where to show notifications when the agent has either completed
+    // its response, or else needs confirmation before it can run a
+    // tool action.
+    // "primary_screen" - Show the notification only on your primary screen (default)
+    // "all_screens" - Show these notifications on all screens
+    // "never" - Never show these notifications
+    "notify_when_agent_waiting": "never",
+    // When to play a sound when the agent has either completed
+    // its response, or needs user input.
+    // "never" - Never play the sound
+    // "when_hidden" - Only play the sound when the agent panel is not visible
+    // "always" - Always play the sound
+    //
+    // Default: never
+    "play_sound_when_agent_done": "never",
+    // Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    //
+    // Default: true
+    "expand_edit_card": true,
+    // Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    //
+    // Default: true
+    "expand_terminal_card": true,
+    // How thinking blocks should be displayed by default in the agent panel.
+    //
+    // Default: auto
+    "thinking_display": "auto",
+    // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
+    // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
+    //
+    // Default: true
+    "cancel_generation_on_terminal_stop": true,
+    // Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
+    //
+    // Default: false
+    "use_modifier_to_send": false,
+    // Minimum number of lines to display in the agent message editor.
+    //
+    // Default: 4
+    "message_editor_min_lines": 4,
+    // Whether to show turn statistics (elapsed time during generation, final turn duration).
+    //
+    // Default: false
+    "show_turn_stats": false,
+    // Whether to show the merge conflict indicator in the status bar
+    // that offers to resolve conflicts using the agent.
+    //
+    // Default: true
+    "show_merge_conflict_indicator": false,
+  },
+  // Whether the screen sharing icon is shown in the os status bar.
+  "show_call_status_icon": false,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
   // Whether to perform linked edits of associated ranges, if the language server supports it.
@@ -999,7 +1253,7 @@
   //
   // 1. Never automatically save:
   //     "autosave": "off",
-  // 2. Save when changing focus away from the Flint window:
+  // 2. Save when changing focus away from the Zed window:
   //     "autosave": "on_window_change",
   // 3. Save when changing focus away from a specific buffer:
   //     "autosave": "on_focus_change",
@@ -1115,11 +1369,11 @@
     // Default: true
     "skip_focus_for_active_in_search": true,
     // Whether to use gitignored files when searching.
-    // Only the file Flint had indexed will be used, not necessary all the gitignored files.
+    // Only the file Zed had indexed will be used, not necessary all the gitignored files.
     //
     // Can accept 3 values:
     //   * "all": Use all gitignored files
-    //   * "indexed": Use only the files Flint had indexed
+    //   * "indexed": Use only the files Zed had indexed
     //   * "smart": Be smart and search for ignored when called from a gitignored worktree
     "include_ignored": "smart",
     // Whether to include text channels in file finder results.
@@ -1160,7 +1414,7 @@
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take multiple values:
   //
-  // 1. Default. Format files using Flint's Prettier integration (if applicable),
+  // 1. Default. Format files using Zed's Prettier integration (if applicable),
   //    or falling back to formatting via language server:
   //     "formatter": "auto"
   // 2. Format code using the current language server:
@@ -1174,7 +1428,7 @@
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  // 5. Format code using Flint's Prettier integration:
+  // 5. Format code using Zed's Prettier integration:
   //     "formatter": "prettier"
   // 6. Format code using a code action
   //     "formatter": {"code_action": "source.fixAll.eslint"}
@@ -1206,6 +1460,8 @@
   //
   // A value of 0 disables modelines support.
   "modeline_lines": 5,
+  // What debuggers are preferred by default for all languages.
+  "debuggers": [],
   // Whether to enable word diff highlighting in the editor.
   //
   // When enabled, changed words within modified lines are highlighted
@@ -1213,18 +1469,18 @@
   //
   // Default: true
   "word_diff_enabled": true,
-  // Control what info is collected by Flint.
+  // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
     "diagnostics": false,
-    // Send anonymized usage data like what languages you're using Flint with.
+    // Send anonymized usage data like what languages you're using Zed with.
     "metrics": false,
   },
-  // Whether to disable all AI features in Flint.
+  // Whether to disable all AI features in Zed.
   //
   // Default: false
   "disable_ai": true,
-  // Automatically update Flint. This setting may be ignored on Linux if
+  // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": false,
   // How to render LSP `textDocument/documentColor` colors in the editor.
@@ -1252,7 +1508,7 @@
     //
     // Default: true
     "include_warnings": true,
-    // Settings for using LSP pull diagnostics mechanism in Flint.
+    // Settings for using LSP pull diagnostics mechanism in Zed.
     "lsp_pull_diagnostics": {
       // Whether to pull for diagnostics or not.
       "enabled": true,
@@ -1279,7 +1535,7 @@
       "max_severity": null,
     },
   },
-  // Files or globs of files that will be excluded by Flint entirely. They will be skipped during file
+  // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
   // scans, file searches, and not be displayed in the project file tree. Takes precedence over `file_scan_inclusions`.
   "file_scan_exclusions": [
     "**/.git",
@@ -1294,9 +1550,9 @@
     "**/.classpath",
     "**/.settings",
   ],
-  // Files or globs of files that will be included by Flint, even when ignored by git. This is useful
+  // Files or globs of files that will be included by Zed, even when ignored by git. This is useful
   // for files that are not tracked by git, but are still important to your project. Note that globs
-  // that are overly broad can slow down Flint's file scanning. `file_scan_exclusions` takes
+  // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
   // When to scan content of linked directories.
@@ -1373,15 +1629,15 @@
     // When the resolved directory is outside the project root, the
     // project's directory name is automatically appended so that
     // sibling repos don't collide. For example, with the default
-    // "../worktrees" and a project at ~/code/flint, worktrees are
-    // created under ~/code/worktrees/flint/.
+    // "../worktrees" and a project at ~/code/zed, worktrees are
+    // created under ~/code/worktrees/zed/.
     //
     // When the resolved directory is inside the project root, no
     // extra component is added (it's already project-scoped).
     //
     // Examples:
     //   "../worktrees" — ~/code/worktrees/<project>/ (default)
-    //   ".git/flint-worktrees" — <project>/.git/flint-worktrees/
+    //   ".git/zed-worktrees" — <project>/.git/zed-worktrees/
     //   "my-worktrees" — <project>/my-worktrees/
     //
     // Trailing slashes are ignored.
@@ -1420,6 +1676,72 @@
   // 3. Don't load direnv configuration at all.
   //      "load_direnv": "disabled"
   "load_direnv": "direct",
+  "edit_predictions": {
+    // Which edit prediction provider to use.
+    "provider": "flint",
+    // A list of globs representing files that edit predictions should be disabled for.
+    // There's a sensible default list of globs already included.
+    // Any addition to this list will be merged with the default list.
+    // Globs are matched relative to the worktree root,
+    // except when starting with a slash (/) or equivalent in Windows.
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/.dev.vars",
+      "**/secrets.yml",
+      "**/.zed/settings.json", // zed project settings
+      "/**/zed/settings.json", // zed user settings
+      "/**/zed/keymap.json",
+    ],
+    // When to show edit predictions previews in buffer.
+    // This setting takes two possible values:
+    // 1. Display predictions inline when there are no language server completions available.
+    //     "mode": "eager"
+    // 2. Display predictions inline only when holding a modifier key (alt by default).
+    //     "mode": "subtle"
+    "mode": "eager",
+    // Copilot-specific settings
+    // "copilot": {
+    //   "enterprise_uri": "",
+    //   "proxy": "",
+    //   "proxy_no_verify": false
+    //   "enable_next_edit_suggestions": true
+    // },
+    "copilot": {
+      "enterprise_uri": null,
+      "proxy": null,
+      "proxy_no_verify": null,
+      "enable_next_edit_suggestions": false,
+    },
+    "codestral": {
+      "api_url": "https://codestral.mistral.ai",
+      "model": "codestral-latest",
+      "max_tokens": 150,
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b-base",
+      "prompt_format": "infer",
+      "max_output_tokens": 64,
+    },
+    "open_ai_compatible_api": {
+      "api_url": "",
+      "model": "",
+      "prompt_format": "infer",
+      "max_output_tokens": 64,
+    },
+    // Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    // Data is only captured when the project is detected as open source.
+    // Possible values:
+    //   - "default": use the preference previously set via the status-bar toggle,
+    //     or false if no preference has been stored.
+    //   - "yes": allow data collection for files in open-source projects.
+    //   - "no": never allow data collection.
+    "allow_data_collection": "default",
+  },
   // Settings specific to journaling
   "journal": {
     // The path of the directory where journal entries are stored
@@ -1460,10 +1782,6 @@
     "shell": {
       "env": {},
     },
-  },
-  // Markdown files remain normal editor buffers in either mode.
-  "markdown": {
-    "open_mode": "editable_rendered",
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1509,7 +1827,7 @@
     //    this platform's home directory  (if we can find it)
     //      "working_directory": {
     //        "always": {
-    //          "directory": "~/flint/projects/"
+    //          "directory": "~/zed/projects/"
     //        }
     //      }
     "working_directory": "current_project_directory",
@@ -1559,7 +1877,7 @@
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
-    "button": true,
+    "button": false,
     // Any key-value pairs added to this list will be added to the terminal's
     // environment. Use `:` to separate multiple values.
     "env": {
@@ -1710,13 +2028,13 @@
   "tasks": {
     "variables": {},
     "enabled": true,
-    // Use LSP tasks over Flint language extension ones.
+    // Use LSP tasks over Zed language extension ones.
     // If no LSP tasks are returned due to error/timeout or regular execution,
-    // Flint language extension tasks will be used instead.
+    // Zed language extension tasks will be used instead.
     //
-    // Other Flint tasks will still be shown:
-    // * Flint task from either of the task config file
-    // * Flint task from history (e.g. one-off task was spawned before)
+    // Other Zed tasks will still be shown:
+    // * Zed task from either of the task config file
+    // * Zed task from history (e.g. one-off task was spawned before)
     //
     // Default: true
     "prefer_lsp": true,
@@ -1735,9 +2053,9 @@
   //
   "file_types": {
     "JSONC": [
-      "**/.flint/*.json",
+      "**/.zed/*.json",
       "**/.vscode/**/*.json",
-      "**/{flint,Flint}/{settings,keymap,tasks,debug}.json",
+      "**/{zed,Zed}/{settings,keymap,tasks,debug}.json",
       "tsconfig*.json",
     ],
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
@@ -1746,20 +2064,20 @@
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
   //
-  // Note: changing this setting currently requires restarting Flint.
+  // Note: changing this setting currently requires restarting Zed.
   "node": {
-    // By default, Flint will look for `node` and `npm` on your `$PATH`, and use the
+    // By default, Zed will look for `node` and `npm` on your `$PATH`, and use the
     // existing executables if their version is recent enough. Set this to `true`
-    // to prevent this, and force Flint to always download and install its own
+    // to prevent this, and force Zed to always download and install its own
     // version of Node.
     "ignore_system_version": false,
     // You can also specify alternative paths to Node and NPM. If you specify
-    // `path`, but not `npm_path`, Flint will assume that `npm` is located at
+    // `path`, but not `npm_path`, Zed will assume that `npm` is located at
     // `${path}/../npm`.
     "path": null,
     "npm_path": null,
   },
-  // The extensions that Flint should automatically install on startup.
+  // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings
   // and change the value to `false`.
@@ -1809,7 +2127,7 @@
     // When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
     // contains the word prefix before your cursor and `replace` contains the whole word.
     //
-    // Effectively, this setting just changes whether Flint will use the received range for `insert` or `replace`, so the results may
+    // Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
     // differ depending on the underlying LSP server.
     //
     // Possible values:
@@ -1865,6 +2183,7 @@
       "tab_size": 2,
     },
     "Diff": {
+      "show_edit_predictions": false,
       "remove_trailing_whitespace_on_save": false,
       "ensure_final_newline_on_save": false,
     },
@@ -1890,6 +2209,7 @@
       "code_actions_on_format": {
         "source.organizeImports": true,
       },
+      "debuggers": ["Delve"],
     },
     "GraphQL": {
       "prettier": {
@@ -1983,6 +2303,7 @@
           "name": "ruff",
         },
       },
+      "debuggers": ["Debugpy"],
       "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
     },
     "Ruby": {
@@ -1998,6 +2319,7 @@
       ],
     },
     "Rust": {
+      "debuggers": ["CodeLLDB"],
     },
     "SCSS": {
       "prettier": {
@@ -2060,6 +2382,45 @@
       "language_servers": ["zls", "..."],
     },
   },
+  // Different settings for specific language models.
+  "language_models": {
+    "anthropic": {
+      "api_url": "https://api.anthropic.com",
+    },
+    "bedrock": {},
+    "google": {
+      "api_url": "https://generativelanguage.googleapis.com",
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+    },
+    "openai": {
+      "api_url": "https://api.openai.com/v1",
+    },
+    "openai_compatible": {},
+    "opencode": {
+      "api_url": "https://opencode.ai/zen",
+    },
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1",
+    },
+    "lmstudio": {
+      "api_url": "http://localhost:1234/api/v0",
+    },
+    "deepseek": {
+      "api_url": "https://api.deepseek.com/v1",
+    },
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1",
+    },
+    "vercel_ai_gateway": {
+      "api_url": "https://ai-gateway.vercel.sh/v1",
+    },
+    "x_ai": {
+      "api_url": "https://api.x.ai/v1",
+    },
+    "flint.dev": {},
+  },
   "session": {
     // Whether or not to restore unsaved buffers on restart.
     //
@@ -2075,7 +2436,7 @@
     // Default: false
     "trust_all_worktrees": false,
   },
-  // Flint's Prettier integration settings.
+  // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
@@ -2103,13 +2464,22 @@
     // "rust-analyzer": {
     //     // A special flag for rust-analyzer integration, to use server-provided tasks
     //     enable_lsp_tasks": true,
-    //     // These initialization options are merged into Flint's defaults
+    //     // These initialization options are merged into Zed's defaults
     //     "initialization_options": {
     //         "check": {
     //             "command": "clippy" // rust-analyzer.check.command (default: "check")
     //         }
     //     }
     // }
+  },
+  // DAP Specific settings.
+  "dap": {
+    // Specify the DAP name as a key here.
+    "CodeLLDB": {
+      "env": {
+        "RUST_LOG": "info",
+      },
+    },
   },
   // Common language server settings.
   "global_lsp_settings": {
@@ -2153,7 +2523,7 @@
     //   }
     // ]
     //
-    // Default rules are viewable via the "flint: show default semantic token rules" action.
+    // Default rules are viewable via the "zed: show default semantic token rules" action.
     "semantic_token_rules": [],
   },
   // Jupyter settings
@@ -2193,6 +2563,7 @@
     "custom_digraphs": {},
     // When enabled, edit predictions are shown in Vim normal mode.
     // By default, edit predictions are only shown in insert and replace modes.
+    "show_edit_predictions_in_normal_mode": false,
     // Cursor shape for each mode.
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
     "cursor_shape": {
@@ -2212,14 +2583,14 @@
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
-  "server_url": "https://zed.dev",
-  // Settings overrides to use when using Flint Preview.
-  // Mostly useful for developers who are managing multiple instances of Flint.
+  "server_url": "https://flint.dev",
+  // Settings overrides to use when using Zed Preview.
+  // Mostly useful for developers who are managing multiple instances of Zed.
   "preview": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using Flint Nightly.
-  // Mostly useful for developers who are managing multiple instances of Flint.
+  // Settings overrides to use when using Zed Nightly.
+  // Mostly useful for developers who are managing multiple instances of Zed.
   "nightly": {
     // "theme": "Andromeda"
     "instrumentation": {
@@ -2228,13 +2599,13 @@
       },
     },
   },
-  // Settings overrides to use when using Flint Stable.
-  // Mostly useful for developers who are managing multiple instances of Flint.
+  // Settings overrides to use when using Zed Stable.
+  // Mostly useful for developers who are managing multiple instances of Zed.
   "stable": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using Flint Dev.
-  // Mostly useful for developers who are managing multiple instances of Flint.
+  // Settings overrides to use when using Zed Dev.
+  // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
     "instrumentation": {
@@ -2267,7 +2638,7 @@
   // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
   // `socks5h`. `http` will be used when no scheme is specified.
   //
-  // By default no proxy will be used, or Flint will try get proxy settings from
+  // By default no proxy will be used, or Zed will try get proxy settings from
   // environment variables. If certain hosts should not be proxied,
   // set the `no_proxy` environment variable and provide a comma-separated list.
   //
@@ -2285,7 +2656,7 @@
   "command_aliases": {},
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
-  // Flint's ssh support will pull configuration from your ~/.ssh too.
+  // Zed's ssh support will pull configuration from your ~/.ssh too.
   // Examples:
   // [
   //   {
@@ -2293,7 +2664,7 @@
   //     // "port": 22, "username": "test", "args": ["-i", "/home/user/.ssh/id_rsa"]
   //     "projects": [
   //       {
-  //         "paths": ["/home/user/code/flint"]
+  //         "paths": ["/home/user/code/zed"]
   //       }
   //     ]
   //   }
@@ -2301,19 +2672,44 @@
   "ssh_connections": [],
   // Whether to read ~/.ssh/config for ssh connection sources.
   "read_ssh_config": true,
+  // Default timeout in seconds for all context server tool calls.
+  // Individual servers can override this in their configuration.
+  // Examples:
+  // "context_servers": {
+  //   "my-stdio-server": {
+  //     "command": "/path/to/server",
+  //     "timeout": 120  // Override: 2 minutes for this server
+  //   },
+  // }
+  // Default: 60
+  "context_server_timeout": 60,
+  // Configures context servers for use by the agent.
+  "context_servers": {},
+  // Configures agent servers available in the agent panel.
+  "agent_servers": {},
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "timeout": 2000,
+    "dock": "bottom",
+    "log_dap_communications": true,
+    "format_dap_log_messages": true,
+    "button": false,
+  },
   // Configures any number of settings profiles that are temporarily applied
   // when selected from `settings profile selector: toggle`.
   //
   // Each profile has an optional `base` ("user" or "default") and a `settings`
   // object. When `base` is "user" (the default), the profile applies on top of
   // your user settings. When `base` is "default", user settings are ignored and
-  // the profile applies on top of Flint's defaults.
+  // the profile applies on top of Zed's defaults.
   //
   // Examples:
   // "profiles": {
   //   "Presenting": {
   //     "base": "default",
   //     "settings": {
+  //       "agent_ui_font_size": 20.0,
   //       "buffer_font_size": 20.0,
   //       "theme": "One Light",
   //       "ui_font_size": 20.0
@@ -2340,7 +2736,7 @@
   // Configuration for developer-oriented instrumentation tools that can be
   // toggled at runtime.
   "instrumentation": {
-    // Performance profiler, accessed via the `flint: open performance profiler`
+    // Performance profiler, accessed via the `zed: open performance profiler`
     // action. Collects timing data for foreground and background executor
     // tasks. Enabling this may lead to increased memory usage, hence it's
     // disabled by default for regular builds.
