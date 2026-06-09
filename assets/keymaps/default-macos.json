@@ -704,6 +704,20 @@
     },
   },
   {
+    "context": "Editor && edit_prediction",
+    "bindings": {
+      "alt-tab": "editor::AcceptEditPrediction",
+      "ctrl-cmd-right": "editor::AcceptNextWordEditPrediction",
+      "ctrl-cmd-down": "editor::AcceptNextLineEditPrediction",
+    },
+  },
+  {
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
+    "bindings": {
+      "tab": "editor::AcceptEditPrediction",
+    },
+  },
+  {
     "context": "Editor && showing_code_actions",
     "use_key_equivalents": true,
     "bindings": {

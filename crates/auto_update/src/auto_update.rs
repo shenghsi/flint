@@ -1186,7 +1186,7 @@ mod tests {
     impl Global for InstallOverride {}
 
     #[gpui::test]
-    fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {
+    fn test_auto_update_defaults_to_false(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let mut store = SettingsStore::new(cx, &settings::default_settings());
             store

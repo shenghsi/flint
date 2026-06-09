@@ -13573,10 +13573,10 @@ mod disable_ai_settings_tests {
         cx.update(|cx| {
             settings::init(cx);
 
-            // Test 1: Default is false (AI enabled)
+            // Flint default is disable_ai: true
             assert!(
-                !DisableAiSettings::get_global(cx).disable_ai,
-                "Default should allow AI"
+                DisableAiSettings::get_global(cx).disable_ai,
+                "Flint default should disable AI"
             );
         });
 
@@ -13621,10 +13621,10 @@ mod disable_ai_settings_tests {
         cx.update(|cx| {
             settings::init(cx);
 
-            // Default should allow AI
+            // Flint default is disable_ai: true
             assert!(
-                !DisableAiSettings::get_global(cx).disable_ai,
-                "Default should allow AI"
+                DisableAiSettings::get_global(cx).disable_ai,
+                "Flint default should disable AI"
             );
         });
 
@@ -13639,6 +13639,7 @@ mod disable_ai_settings_tests {
         };
 
         // Test: Project-level disable_ai=true should disable AI for files in that project
+        // (already true by default, project settings merge via SaturatingBool OR)
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store
                 .set_local_settings(
@@ -13657,43 +13658,15 @@ mod disable_ai_settings_tests {
                 settings.disable_ai,
                 "Project-level disable_ai=true should disable AI for files in that project"
             );
-            // Global should now also be true since project-level disable_ai is merged into global
             assert!(
                 DisableAiSettings::get_global(cx).disable_ai,
                 "Global setting should be affected by project-level disable_ai=true"
             );
         });
 
-        // Test: Setting project-level to false should allow AI for that project
+        // Test: Project-level false cannot override the default true — SaturatingBool only
+        // allows transitioning from false to true, never back.
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store
-                .set_local_settings(
-                    worktree_id,
-                    LocalSettingsPath::InWorktree(project_path.clone()),
-                    LocalSettingsKind::Settings,
-                    Some(r#"{ "disable_ai": false }"#),
-                    cx,
-                )
-                .unwrap();
-        });
-
-        cx.update(|cx| {
-            let settings = DisableAiSettings::get(Some(settings_location), cx);
-            assert!(
-                !settings.disable_ai,
-                "Project-level disable_ai=false should allow AI"
-            );
-            // Global should also be false now
-            assert!(
-                !DisableAiSettings::get_global(cx).disable_ai,
-                "Global setting should be false when project-level is false"
-            );
-        });
-
-        // Test: User-level true + project-level false = AI disabled (saturation)
-        let disable_true = serde_json::json!({ "disable_ai": true }).to_string();
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.set_user_settings(&disable_true, cx).unwrap();
             store
                 .set_local_settings(
                     worktree_id,
@@ -13709,7 +13682,11 @@ mod disable_ai_settings_tests {
             let settings = DisableAiSettings::get(Some(settings_location), cx);
             assert!(
                 settings.disable_ai,
-                "Project-level false cannot override user-level true (SaturatingBool)"
+                "Project-level false cannot override default true (SaturatingBool)"
+            );
+            assert!(
+                DisableAiSettings::get_global(cx).disable_ai,
+                "Global stays true even when project-level is false"
             );
         });
     }
