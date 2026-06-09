@@ -4,6 +4,7 @@ pub mod popover_menu;
 
 use anyhow::Result;
 
+use flint_actions::editor::{MoveDown, MoveUp};
 use gpui::{
     Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
     Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, Render,
@@ -23,7 +24,6 @@ use ui::{
 };
 use ui_input::{ErasedEditor, ErasedEditorEvent};
 use workspace::{ModalView, item::Settings};
-use flint_actions::editor::{MoveDown, MoveUp};
 
 enum ElementContainer {
     List(ListState),

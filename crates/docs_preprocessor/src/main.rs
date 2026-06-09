@@ -664,7 +664,9 @@ fn handle_postprocessing() -> Result<()> {
         .expect("has output")
         .as_table_mut()
         .expect("output is table");
-    let flint_html = output.remove("flint-html").expect("flint-html output defined");
+    let flint_html = output
+        .remove("flint-html")
+        .expect("flint-html output defined");
     let default_description = flint_html
         .get("default-description")
         .expect("Default description not found")

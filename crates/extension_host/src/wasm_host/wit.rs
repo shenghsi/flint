@@ -13,7 +13,7 @@ use gpui::BackgroundExecutor;
 use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
-use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate, FlintDebugConfig};
+use task::{DebugRequest, DebugScenario, FlintDebugConfig, SpawnInTerminal, TaskTemplate};
 
 use latest::dap::StartDebuggingRequestArgumentsRequest;
 

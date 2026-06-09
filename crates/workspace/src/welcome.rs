@@ -11,11 +11,11 @@ use gpui::{
 };
 use menu::{SelectNext, SelectPrevious};
 
+use flint_actions::{Extensions, OpenKeymap, OpenOnboarding, OpenSettings, command_palette};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
-use flint_actions::{Extensions, OpenKeymap, OpenOnboarding, OpenSettings, command_palette};
 
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize, JsonSchema, Action)]
 #[action(namespace = welcome)]

@@ -9,8 +9,8 @@ use crate::tasks::workflow_checks::{self};
 
 mod after_release;
 mod autofix_pr;
-mod bump_patch_version;
 mod bump_flint_version;
+mod bump_patch_version;
 mod cherry_pick;
 mod compare_perf;
 mod compliance_check;

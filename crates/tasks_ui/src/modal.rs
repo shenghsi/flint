@@ -18,9 +18,9 @@ use ui::{
     prelude::*,
 };
 
+pub use flint_actions::{Rerun, Spawn};
 use util::{ResultExt, truncate_and_trailoff};
 use workspace::{ModalView, Workspace};
-pub use flint_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
 pub struct TasksModalDelegate {

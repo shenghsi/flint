@@ -1,7 +1,7 @@
+use flint_actions::dev;
 use gpui::{App, Menu, MenuItem, OsAction};
 use release_channel::ReleaseChannel;
 use terminal_view::{terminal_panel, terminal_threads};
-use flint_actions::dev;
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use flint_actions::Quit;
@@ -76,7 +76,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     MenuItem::separator(),
                     MenuItem::action("Open Keymap", flint_actions::OpenKeymap),
                     MenuItem::action("Open Keymap File", flint_actions::OpenKeymapFile),
-                    MenuItem::action("Open Default Key Bindings", flint_actions::OpenDefaultKeymap),
+                    MenuItem::action(
+                        "Open Default Key Bindings",
+                        flint_actions::OpenDefaultKeymap,
+                    ),
                     MenuItem::separator(),
                     MenuItem::action(
                         "Select Theme...",

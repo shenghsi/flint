@@ -1,11 +1,11 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+pub mod flint_urls;
 mod llm_token;
 mod proxy;
 pub mod telemetry;
 pub mod user;
-pub mod flint_urls;
 
 use anyhow::{Context as _, Result, anyhow};
 use async_tungstenite::tungstenite::{

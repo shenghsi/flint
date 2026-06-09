@@ -11,6 +11,7 @@ use workspace::{Toast, notifications::NotificationId};
 mod blame_ui;
 pub mod clone;
 
+use flint_actions;
 use git::{
     repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
@@ -25,7 +26,6 @@ use project_diff::ProjectDiff;
 use time::OffsetDateTime;
 use ui::prelude::*;
 use workspace::{ModalView, OpenMode, Workspace, notifications::DetachAndPromptErr};
-use flint_actions;
 
 use crate::{commit_view::CommitView, git_panel::GitPanel, text_diff_view::TextDiffView};
 

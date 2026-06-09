@@ -11,6 +11,7 @@ use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use flint_actions::ExtensionCategoryFilter;
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
@@ -33,7 +34,6 @@ use workspace::{
     Workspace,
     item::{Item, ItemEvent},
 };
-use flint_actions::ExtensionCategoryFilter;
 
 use crate::components::ExtensionCard;
 use crate::extension_version_selector::{

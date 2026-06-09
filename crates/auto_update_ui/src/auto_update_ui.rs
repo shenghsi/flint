@@ -5,6 +5,7 @@ use auto_update::{AutoUpdater, release_notes_url};
 use client::flint_urls;
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
+use flint_actions::ShowUpdateNotification;
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TaskExt, Window, actions,
     prelude::*,
@@ -24,7 +25,6 @@ use workspace::{
         simple_message_notification::MessageNotification,
     },
 };
-use flint_actions::ShowUpdateNotification;
 
 actions!(
     auto_update,

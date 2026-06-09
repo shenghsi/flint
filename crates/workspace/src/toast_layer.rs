@@ -3,12 +3,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use flint_actions::toast;
 use gpui::{
     AnyView, DismissEvent, Entity, EntityId, FocusHandle, ManagedView, MouseButton, Subscription,
     Task,
 };
 use ui::{animation::DefaultAnimations, prelude::*};
-use flint_actions::toast;
 
 use crate::Workspace;
 

@@ -289,19 +289,20 @@ mod tests {
 
     #[test]
     fn test_build_sourcehut_self_hosted_permalink_with_git_suffix() {
-        let permalink = SourceHut::from_remote_url("https://sourcehut.org/~zed-industries/flint.git")
-            .unwrap()
-            .build_permalink(
-                ParsedGitRemote {
-                    owner: "zed-industries".into(),
-                    repo: "flint.git".into(),
-                },
-                BuildPermalinkParams::new(
-                    "faa6f979be417239b2e070dbbf6392b909224e0b",
-                    &repo_path("crates/editor/src/git/permalink.rs"),
-                    None,
-                ),
-            );
+        let permalink =
+            SourceHut::from_remote_url("https://sourcehut.org/~zed-industries/flint.git")
+                .unwrap()
+                .build_permalink(
+                    ParsedGitRemote {
+                        owner: "zed-industries".into(),
+                        repo: "flint.git".into(),
+                    },
+                    BuildPermalinkParams::new(
+                        "faa6f979be417239b2e070dbbf6392b909224e0b",
+                        &repo_path("crates/editor/src/git/permalink.rs"),
+                        None,
+                    ),
+                );
 
         let expected_url = "https://sourcehut.org/~zed-industries/flint.git/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())

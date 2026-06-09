@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use gpui::{App, Task};
 use language::LanguageName;
 use semver::Version;
-use task::{SpawnInTerminal, FlintDebugConfig};
+use task::{FlintDebugConfig, SpawnInTerminal};
 use util::rel_path::RelPath;
 
 pub use crate::capabilities::*;

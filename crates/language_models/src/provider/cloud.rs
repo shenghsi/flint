@@ -1,6 +1,6 @@
 use ai_onboarding::YoungAccountBanner;
 use anyhow::Result;
-use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, flint_urls};
+use client::{Client, RefreshLlmTokenListener, UserStore, flint_urls, global_llm_token};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
 use cloud_api_types::Plan;
@@ -17,9 +17,9 @@ use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
-use settings::SettingsStore;
 pub use settings::FlintDotDevAvailableModel as AvailableModel;
 pub use settings::FlintDotDevAvailableProvider as AvailableProvider;
+use settings::SettingsStore;
 use std::sync::Arc;
 use std::time::Duration;
 use ui::{TintColor, prelude::*};
@@ -455,7 +455,9 @@ impl RenderOnce for FlintAiConfiguration {
                     Button::new("upgrade", "Upgrade to Pro")
                         .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                         .full_width()
-                        .on_click(|_, _, cx| cx.open_url(&flint_urls::upgrade_to_flint_pro_url(cx))),
+                        .on_click(|_, _, cx| {
+                            cx.open_url(&flint_urls::upgrade_to_flint_pro_url(cx))
+                        }),
                 )
             } else {
                 this.text_sm()

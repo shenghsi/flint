@@ -1208,7 +1208,8 @@ mod git_worktrees {
 
         // Valid: subdirectory
         assert!(
-            worktrees_directory_for_repo(work_dir, ".git/flint-worktrees", PathStyle::Posix).is_ok()
+            worktrees_directory_for_repo(work_dir, ".git/flint-worktrees", PathStyle::Posix)
+                .is_ok()
         );
         assert!(worktrees_directory_for_repo(work_dir, "my-worktrees", PathStyle::Posix).is_ok());
 

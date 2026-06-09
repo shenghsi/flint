@@ -1,10 +1,10 @@
 use client::telemetry;
 use extension_host::ExtensionStore;
+use flint_actions::feedback::{EmailFlint, FileBugReport, RequestFeature};
 use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
 use workspace::Workspace;
-use flint_actions::feedback::{EmailFlint, FileBugReport, RequestFeature};
 
 actions!(
     flint,

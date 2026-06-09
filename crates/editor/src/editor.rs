@@ -153,6 +153,8 @@ use edit_prediction_types::{
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{LineWithInvisibles, PositionMap, layout_line};
+pub use flint_actions::editor::RevealInFileManager;
+use flint_actions::editor::{MoveDown, MoveUp};
 use futures::{
     FutureExt,
     future::{self, Shared},
@@ -276,8 +278,6 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyResultExt, NotifyTaskExt},
     searchable::SearchEvent,
 };
-pub use flint_actions::editor::RevealInFileManager;
-use flint_actions::editor::{MoveDown, MoveUp};
 
 #[cfg(any())]
 use crate::inlays::InlineValueCache;

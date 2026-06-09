@@ -86,8 +86,8 @@ mod prediction;
 pub mod udiff;
 
 mod capture_example;
-pub mod open_ai_compatible;
 mod flint_edit_prediction_delegate;
+pub mod open_ai_compatible;
 pub mod zeta;
 
 #[cfg(test)]
@@ -108,9 +108,9 @@ use crate::onboarding_modal::FlintPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
+pub use flint_edit_prediction_delegate::FlintEditPredictionDelegate;
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
-pub use flint_edit_prediction_delegate::FlintEditPredictionDelegate;
 
 actions!(
     edit_prediction,

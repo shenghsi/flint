@@ -295,19 +295,17 @@ impl RunningMode {
         let breakpoint_store = breakpoint_store.downgrade();
         cx.spawn(async move |cx| match cx.background_spawn(task).await {
             Ok(breakpoints) => {
-                let breakpoints =
-                    breakpoints
-                        .into_iter()
-                        .zip(raw_breakpoints)
-                        .filter_map(|(dap_bp, flint_bp)| {
-                            Some((
-                                flint_bp,
-                                BreakpointSessionState {
-                                    id: dap_bp.id?,
-                                    verified: dap_bp.verified,
-                                },
-                            ))
-                        });
+                let breakpoints = breakpoints.into_iter().zip(raw_breakpoints).filter_map(
+                    |(dap_bp, flint_bp)| {
+                        Some((
+                            flint_bp,
+                            BreakpointSessionState {
+                                id: dap_bp.id?,
+                                verified: dap_bp.verified,
+                            },
+                        ))
+                    },
+                );
                 breakpoint_store
                     .update(cx, |this, _| {
                         this.mark_breakpoints_verified(session_id, &abs_path, breakpoints);

@@ -4221,7 +4221,9 @@ async fn test_upsell_dismissed_when_dismissed_key_set(cx: &mut TestAppContext) {
 
     cx.update(|cx| assert!(!should_show_upsell_modal(cx)));
 
-    kvp.delete_kvp(FlintPredictUpsell::KEY.into()).await.unwrap();
+    kvp.delete_kvp(FlintPredictUpsell::KEY.into())
+        .await
+        .unwrap();
 }
 
 #[gpui::test]
@@ -4241,7 +4243,9 @@ async fn test_upsell_dismissed_via_dismissable_api(cx: &mut TestAppContext) {
 
     cx.update(|cx| assert!(!should_show_upsell_modal(cx)));
 
-    kvp.delete_kvp(FlintPredictUpsell::KEY.into()).await.unwrap();
+    kvp.delete_kvp(FlintPredictUpsell::KEY.into())
+        .await
+        .unwrap();
 }
 
 #[ctor::ctor(unsafe)]

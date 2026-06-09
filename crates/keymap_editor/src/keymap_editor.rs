@@ -43,8 +43,8 @@ use workspace::{
     register_serializable_item, with_active_or_new_workspace,
 };
 
-pub use ui_components::*;
 use flint_actions::{ChangeKeybinding, OpenKeymap};
+pub use ui_components::*;
 
 use crate::{
     action_completion_provider::ActionCompletionProvider,

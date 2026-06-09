@@ -30,12 +30,12 @@ use project::{
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 
-use fs::Fs;
-use settings::{DiffViewStyle, SeedQuerySetting, Settings, update_settings_file};
-use std::{any::TypeId, sync::Arc};
 use flint_actions::{
     OpenSettingsAt, outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath,
 };
+use fs::Fs;
+use settings::{DiffViewStyle, SeedQuerySetting, Settings, update_settings_file};
+use std::{any::TypeId, sync::Arc};
 
 use ui::{
     BASE_REM_SIZE_IN_PX, IconButtonShape, PlatformStyle, TextSize, Tooltip, prelude::*,

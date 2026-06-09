@@ -6,6 +6,7 @@ use std::{
 };
 
 use command_palette_hooks::CommandPaletteFilter;
+use flint_actions::OpenPerformanceProfiler;
 use gpui::{
     App, AppContext, ClipboardItem, Context, Div, Entity, Hsla, InteractiveElement,
     ParentElement as _, ProfilingCollector, Render, SerializedLocation, SerializedTaskTiming,
@@ -26,7 +27,6 @@ use workspace::{
         WithScrollbar, h_flex, v_flex,
     },
 };
-use flint_actions::OpenPerformanceProfiler;
 
 const NANOS_PER_MS: u128 = 1_000_000;
 const VISIBLE_WINDOW_NANOS: u128 = 10 * 1_000_000_000;

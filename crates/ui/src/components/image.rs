@@ -173,6 +173,9 @@ mod tests {
 
     #[test]
     fn vector_path() {
-        assert_eq!(VectorName::FlintLogo.path().as_ref(), "images/flint_logo.svg");
+        assert_eq!(
+            VectorName::FlintLogo.path().as_ref(),
+            "images/flint_logo.svg"
+        );
     }
 }

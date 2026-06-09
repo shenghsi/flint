@@ -36,11 +36,11 @@ use ui::{
 };
 use util::ResultExt as _;
 
+use flint_actions::{OpenBrowser, OpenSettingsAt};
 use workspace::{
     HideStatusItem, StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
-use flint_actions::{OpenBrowser, OpenSettingsAt};
 
 use crate::{RatePredictions, rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag};
 
@@ -598,7 +598,10 @@ impl EditPredictionButton {
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(IconPosition::Start, is_current && !is_disabled_flint_provider)
+                        .toggleable(
+                            IconPosition::Start,
+                            is_current && !is_disabled_flint_provider,
+                        )
                         .disabled(is_disabled_flint_provider)
                         .when(is_disabled_flint_provider, |item| {
                             item.documentation_aside(DocumentationSide::Left, move |_cx| {
@@ -1209,14 +1212,18 @@ impl EditPredictionButton {
                             },
                             |_window, cx| cx.open_url(&flint_urls::account_url(cx)),
                         )
-                        .entry("Upgrade to Flint Pro or contact us.", None, |_window, cx| {
-                            telemetry::event!(
-                                "Edit Prediction Menu Action",
-                                action = "upsell_clicked",
-                                reason = "account_age",
-                            );
-                            cx.open_url(&flint_urls::account_url(cx))
-                        })
+                        .entry(
+                            "Upgrade to Flint Pro or contact us.",
+                            None,
+                            |_window, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Menu Action",
+                                    action = "upsell_clicked",
+                                    reason = "account_age",
+                                );
+                                cx.open_url(&flint_urls::account_url(cx))
+                            },
+                        )
                         .separator();
                 } else if self.user_store.read(cx).has_overdue_invoices() {
                     menu = menu

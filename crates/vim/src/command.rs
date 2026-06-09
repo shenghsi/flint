@@ -6,6 +6,7 @@ use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
+use flint_actions::{OpenDocs, RevealTarget};
 use futures::AsyncWriteExt as _;
 use gpui::{
     Action, App, AppContext as _, Context, Global, Keystroke, Task, TaskExt, WeakEntity, Window,
@@ -38,7 +39,6 @@ use util::{
 };
 use workspace::{Item, SaveIntent, Workspace, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
-use flint_actions::{OpenDocs, RevealTarget};
 
 use crate::{
     ToggleMarksView, ToggleRegistersView, Vim, VimSettings,

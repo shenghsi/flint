@@ -317,7 +317,9 @@ impl<'de> Deserialize<'de> for FlintCustomizationsWrapper {
         let value = Value::deserialize(deserializer)?;
         let flint = value
             .get("flint")
-            .map(|flint_value| serde_json_lenient::from_value::<FlintCustomization>(flint_value.clone()))
+            .map(|flint_value| {
+                serde_json_lenient::from_value::<FlintCustomization>(flint_value.clone())
+            })
             .transpose()
             .map_err(serde::de::Error::custom)?
             .unwrap_or_default();
@@ -627,10 +629,11 @@ mod test {
     use crate::{
         devcontainer_api::DevContainerError,
         devcontainer_json::{
-            ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
-            HostRequirements, LifecycleCommand, LifecycleScript, MountDefinition, OnAutoForward,
-            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe, FlintCustomization,
-            FlintCustomizationsWrapper, deserialize_devcontainer_json,
+            ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions,
+            FlintCustomization, FlintCustomizationsWrapper, ForwardPort, HostRequirements,
+            LifecycleCommand, LifecycleScript, MountDefinition, OnAutoForward,
+            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe,
+            deserialize_devcontainer_json,
         },
     };
 

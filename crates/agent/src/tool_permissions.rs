@@ -2267,7 +2267,10 @@ mod tests {
         assert_eq!(normalize_path("a/b/../c"), "a/c");
         assert_eq!(normalize_path("a/./b/c"), "a/b/c");
         assert_eq!(normalize_path("a/b/./c/../d"), "a/b/d");
-        assert_eq!(normalize_path(".flint/settings.json"), ".flint/settings.json");
+        assert_eq!(
+            normalize_path(".flint/settings.json"),
+            ".flint/settings.json"
+        );
         assert_eq!(normalize_path("a/b/c"), "a/b/c");
     }
 
@@ -2392,7 +2395,13 @@ mod tests {
     #[test]
     fn decide_permission_for_path_no_change_when_already_simple() {
         // When path has no `.` or `..` segments, behavior matches decide_permission_from_settings
-        let decision = path_perm("copy_path", ".flint/settings.json", &["^\\.flint/"], &[], &[]);
+        let decision = path_perm(
+            "copy_path",
+            ".flint/settings.json",
+            &["^\\.flint/"],
+            &[],
+            &[],
+        );
         assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
     }
 

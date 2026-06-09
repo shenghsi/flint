@@ -13,6 +13,7 @@ pub use sqlez;
 pub use sqlez_macros;
 pub use uuid;
 
+use flint_env_vars::ZED_STATELESS;
 pub use release_channel::RELEASE_CHANNEL;
 use release_channel::ReleaseChannel;
 use sqlez::domain::Migrator;
@@ -24,7 +25,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{LazyLock, atomic::Ordering};
 use util::{ResultExt, maybe};
-use flint_env_vars::ZED_STATELESS;
 
 /// A migration registered via `static_connection!` and collected at link time.
 pub struct DomainMigration {

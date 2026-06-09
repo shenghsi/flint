@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use askpass::AskPassDelegate;
 use collections::HashSet;
+use flint_actions::NewWorktreeBranchTarget;
 use fs::Fs;
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
@@ -21,7 +22,6 @@ use ui::prelude::*;
 use workspace::{
     MultiWorkspace, OpenMode, PreviousWorkspaceState, ToastView, Workspace, dock::DockPosition,
 };
-use flint_actions::NewWorktreeBranchTarget;
 
 use git::repository::{FetchOptions, Remote};
 

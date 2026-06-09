@@ -196,7 +196,9 @@ impl FlintSyntaxToken {
             FlintSyntaxToken::Boolean => vec!["constant.language"],
             FlintSyntaxToken::Comment => vec!["comment"],
             FlintSyntaxToken::CommentDoc => vec!["comment.block.documentation"],
-            FlintSyntaxToken::Constant => vec!["constant", "constant.language", "constant.character"],
+            FlintSyntaxToken::Constant => {
+                vec!["constant", "constant.language", "constant.character"]
+            }
             FlintSyntaxToken::Constructor => {
                 vec![
                     "entity.name.tag",

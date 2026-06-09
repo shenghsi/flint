@@ -3912,7 +3912,7 @@ mod tests {
             },
             cx,
         );
-        assert_eq!(rendered.text_for_range(0..26), "tags:\n  - flint\nBody");
+        assert_eq!(rendered.text_for_range(0..28), "tags:\n  - flint\nBody");
     }
 
     fn render_markdown_with_code_span_link(

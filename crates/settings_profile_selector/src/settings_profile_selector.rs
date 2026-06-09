@@ -281,6 +281,7 @@ fn display_name(profile_name: &Option<String>) -> String {
 mod tests {
     use super::*;
     use editor;
+    use flint_actions::settings_profile_selector;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
     use project::{FakeFs, Project};
@@ -288,7 +289,6 @@ mod tests {
     use settings::Settings;
     use theme_settings::ThemeSettings;
     use workspace::{self, AppState, MultiWorkspace};
-    use flint_actions::settings_profile_selector;
 
     async fn init_test(
         user_settings_json: serde_json::Value,

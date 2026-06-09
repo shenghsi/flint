@@ -1698,8 +1698,10 @@ impl Editor {
                     Some(Either::Left(url)) => {
                         cx.update(|window, cx| {
                             if parse_flint_link(&url, cx).is_some() {
-                                window
-                                    .dispatch_action(Box::new(flint_actions::OpenFlintUrl { url }), cx);
+                                window.dispatch_action(
+                                    Box::new(flint_actions::OpenFlintUrl { url }),
+                                    cx,
+                                );
                             } else {
                                 cx.open_url(&url);
                             }

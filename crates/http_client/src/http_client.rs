@@ -292,7 +292,11 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Flint Cloud URL using the given path and query params.
-    pub fn build_flint_cloud_url_with_query(&self, path: &str, query: impl Serialize) -> Result<Url> {
+    pub fn build_flint_cloud_url_with_query(
+        &self,
+        path: &str,
+        query: impl Serialize,
+    ) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://cloud.zed.dev",

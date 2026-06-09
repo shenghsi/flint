@@ -13,6 +13,7 @@ use command_palette_hooks::{
     GlobalCommandPaletteInterceptor,
 };
 
+use flint_actions::{OpenFlintUrl, command_palette::Toggle};
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -26,7 +27,6 @@ use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use flint_actions::{OpenFlintUrl, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
     command_palette_hooks::init(cx);

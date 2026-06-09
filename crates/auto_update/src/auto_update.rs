@@ -1306,7 +1306,10 @@ mod tests {
         cx.update(|cx| cx.restart());
         let path = will_restart.await.unwrap().unwrap();
         assert_eq!(path, tmp_dir.path().join("flint"));
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-flint-update>");
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "<fake-flint-update>"
+        );
     }
 
     #[test]

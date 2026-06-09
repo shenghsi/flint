@@ -871,8 +871,11 @@ mod linux {
 
                 // libexec is the standard, lib/flint is for Arch (and other non-libexec distros),
                 // ./flint is for the target directory in development builds.
-                let possible_locations =
-                    ["../libexec/flint-editor", "../lib/flint/flint-editor", "./flint"];
+                let possible_locations = [
+                    "../libexec/flint-editor",
+                    "../lib/flint/flint-editor",
+                    "./flint",
+                ];
                 possible_locations
                     .iter()
                     .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
@@ -1052,7 +1055,12 @@ mod flatpak {
             && args.flint.is_none()
         {
             args.flint = Some("/app/libexec/flint-editor".into());
-            unsafe { env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update flint") };
+            unsafe {
+                env::set_var(
+                    "ZED_UPDATE_EXPLANATION",
+                    "Please use flatpak to update flint",
+                )
+            };
         }
         args
     }
@@ -1209,7 +1217,11 @@ mod windows {
 
                 // ../Flint.exe is the standard, lib/flint is for MSYS2, ./flint.exe is for the target
                 // directory in development builds.
-                let possible_locations = ["../Flint.exe", "../lib/flint/flint-editor.exe", "./flint.exe"];
+                let possible_locations = [
+                    "../Flint.exe",
+                    "../lib/flint/flint-editor.exe",
+                    "./flint.exe",
+                ];
                 possible_locations
                     .iter()
                     .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))

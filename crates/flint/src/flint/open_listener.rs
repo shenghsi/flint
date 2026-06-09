@@ -1672,7 +1672,8 @@ mod tests {
             OpenRequest::parse(
                 RawOpenRequest {
                     urls: vec![
-                        "flint://git/clone/?repo=https://github.com/zed-industries/flint.git".into(),
+                        "flint://git/clone/?repo=https://github.com/zed-industries/flint.git"
+                            .into(),
                     ],
                     ..Default::default()
                 },
