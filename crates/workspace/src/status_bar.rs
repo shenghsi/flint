@@ -1,9 +1,6 @@
-use crate::{
-    ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
-    sidebar_side_context_menu,
-};
+use crate::{ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar};
 use gpui::{
-    Anchor, AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render,
+    AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render,
     SharedString, Styled, Subscription, WeakEntity, Window,
 };
 use settings::{SettingsContent, update_settings_file};
@@ -201,42 +198,29 @@ impl StatusBar {
         let has_notifications = sidebar.has_notifications;
         let indicator_border = cx.theme().colors().status_bar_background;
 
-        let toggle = sidebar_side_context_menu("sidebar-status-toggle-menu", cx)
-            .anchor(if on_right {
-                Anchor::BottomRight
+        let toggle = IconButton::new(
+            "toggle-workspace-sidebar",
+            if on_right {
+                IconName::ThreadsSidebarRightClosed
             } else {
-                Anchor::BottomLeft
-            })
-            .attach(if on_right {
-                Anchor::TopRight
-            } else {
-                Anchor::TopLeft
-            })
-            .trigger(move |_is_active, _window, _cx| {
-                IconButton::new(
-                    "toggle-workspace-sidebar",
-                    if on_right {
-                        IconName::ThreadsSidebarRightClosed
-                    } else {
-                        IconName::ThreadsSidebarLeftClosed
-                    },
-                )
-                .icon_size(IconSize::Small)
-                .when(has_notifications, |this| {
-                    this.indicator(Indicator::dot().color(Color::Accent))
-                        .indicator_border_color(Some(indicator_border))
-                })
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                })
-                .on_click(move |_, window, cx| {
-                    if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-                        multi_workspace.update(cx, |multi_workspace, cx| {
-                            multi_workspace.toggle_sidebar(window, cx);
-                        });
-                    }
-                })
-            });
+                IconName::ThreadsSidebarLeftClosed
+            },
+        )
+        .icon_size(IconSize::Small)
+        .when(has_notifications, |this| {
+            this.indicator(Indicator::dot().color(Color::Accent))
+                .indicator_border_color(Some(indicator_border))
+        })
+        .tooltip(move |_, cx| {
+            Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+        })
+        .on_click(move |_, window, cx| {
+            if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                multi_workspace.update(cx, |multi_workspace, cx| {
+                    multi_workspace.toggle_sidebar(window, cx);
+                });
+            }
+        });
 
         h_flex()
             .gap_0p5()

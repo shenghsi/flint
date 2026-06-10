@@ -2,10 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use cloud_api_client::{
+use cloud_api_types::{
     AuthenticatedUser, GetAuthenticatedUserResponse, KnownOrUnknown, Plan, PlanInfo,
 };
-use cloud_llm_client::{CurrentUsage, UsageData, UsageLimit};
 use futures::{StreamExt, stream::BoxStream};
 use gpui::{AppContext as _, TestAppContext};
 use http_client::{AsyncBody, Method, Request, http};
@@ -257,12 +256,6 @@ pub fn make_get_authenticated_user_response(
         plan: PlanInfo {
             plan: KnownOrUnknown::Known(Plan::FlintPro),
             subscription_period: None,
-            usage: CurrentUsage {
-                edit_predictions: UsageData {
-                    used: 250,
-                    limit: UsageLimit::Unlimited,
-                },
-            },
             trial_started_at: None,
             is_account_too_young: false,
             has_overdue_invoices: false,

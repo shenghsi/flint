@@ -2,7 +2,6 @@
 pub mod test;
 
 pub mod flint_urls;
-mod llm_token;
 mod proxy;
 pub mod telemetry;
 pub mod user;
@@ -14,9 +13,6 @@ use async_tungstenite::tungstenite::{
     http::{HeaderValue, Request, StatusCode},
 };
 use clock::SystemClock;
-use cloud_api_client::LlmApiToken;
-use cloud_api_client::websocket_protocol::MessageToClient;
-use cloud_api_client::{ClientApiError, CloudApiClient};
 use cloud_api_types::OrganizationId;
 use credentials_provider::CredentialsProvider;
 use feature_flags::FeatureFlagAppExt as _;
@@ -27,7 +23,7 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, TaskExt, WeakEntity, actions};
-use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -55,7 +51,6 @@ use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
 
-pub use llm_token::*;
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
@@ -198,8 +193,6 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     });
 }
 
-pub type MessageToClientHandler = Box<dyn Fn(&MessageToClient, &mut App) + Send + Sync + 'static>;
-
 struct GlobalClient(Arc<Client>);
 
 impl Global for GlobalClient {}
@@ -208,12 +201,10 @@ pub struct Client {
     id: AtomicU64,
     peer: Arc<Peer>,
     http: Arc<HttpClientWithUrl>,
-    cloud_client: Arc<CloudApiClient>,
     telemetry: Arc<Telemetry>,
     credentials_provider: ClientCredentialsProvider,
     state: RwLock<ClientState>,
     handler_set: Mutex<ProtoMessageHandlerSet>,
-    message_to_client_handlers: Mutex<Vec<MessageToClientHandler>>,
     sign_out_tx: Mutex<Option<mpsc::UnboundedSender<()>>>,
 
     #[allow(clippy::type_complexity)]
@@ -333,11 +324,7 @@ impl Status {
 struct ClientState {
     credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),
-    /// Bumped each time the cloud websocket finishes its handshake. Starts at `0` so
-    /// subscribers can distinguish "no connection yet" from a real reconnect.
-    cloud_connection_id: (watch::Sender<u64>, watch::Receiver<u64>),
     _reconnect_task: Option<Task<()>>,
-    _cloud_connection_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -438,9 +425,7 @@ impl Default for ClientState {
         Self {
             credentials: None,
             status: watch::channel_with(Status::SignedOut),
-            cloud_connection_id: watch::channel_with(0),
             _reconnect_task: None,
-            _cloud_connection_task: None,
         }
     }
 }
@@ -561,12 +546,10 @@ impl Client {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(clock, http.clone(), cx),
-            cloud_client: Arc::new(CloudApiClient::new(http.clone())),
             http,
             credentials_provider: ClientCredentialsProvider::new(cx),
             state: Default::default(),
             handler_set: Default::default(),
-            message_to_client_handlers: Mutex::new(Vec::new()),
             sign_out_tx: Mutex::new(None),
 
             #[cfg(any(test, feature = "test-support"))]
@@ -600,10 +583,6 @@ impl Client {
         self.credentials_provider.provider.clone()
     }
 
-    pub fn cloud_client(&self) -> Arc<CloudApiClient> {
-        self.cloud_client.clone()
-    }
-
     pub fn set_id(&self, id: u64) -> &Self {
         self.id.store(id, Ordering::SeqCst);
         self
@@ -613,7 +592,6 @@ impl Client {
     pub fn teardown(&self) {
         let mut state = self.state.write();
         state._reconnect_task.take();
-        state._cloud_connection_task.take();
         self.handler_set.lock().clear();
         self.peer.teardown();
     }
@@ -673,13 +651,6 @@ impl Client {
     }
 
     /// Watches successful cloud websocket reconnections.
-    ///
-    /// The value is bumped each time the websocket handshake completes. The
-    /// initial `0` means no reconnection yet.
-    pub fn cloud_connection_id(&self) -> watch::Receiver<u64> {
-        self.state.read().cloud_connection_id.1.clone()
-    }
-
     fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncApp) {
         log::info!("set status on client {}: {:?}", self.id(), status);
         let mut state = self.state.write();
@@ -739,7 +710,6 @@ impl Client {
             Status::SignedOut | Status::UpgradeRequired => {
                 self.telemetry.set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
-                state._cloud_connection_task.take();
             }
             _ => {}
         }
@@ -890,9 +860,7 @@ impl Client {
         let mut credentials = None;
 
         let old_credentials = self.state.read().credentials.clone();
-        if let Some(old_credentials) = old_credentials
-            && self.validate_credentials(&old_credentials, cx).await?
-        {
+        if let Some(old_credentials) = old_credentials {
             credentials = Some(old_credentials);
         }
 
@@ -900,14 +868,7 @@ impl Client {
             && try_provider
             && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await
         {
-            if self.validate_credentials(&stored_credentials, cx).await? {
-                credentials = Some(stored_credentials);
-            } else {
-                self.credentials_provider
-                    .delete_credentials(cx)
-                    .await
-                    .log_err();
-            }
+            credentials = Some(stored_credentials);
         }
 
         if credentials.is_none() {
@@ -940,8 +901,6 @@ impl Client {
 
         let credentials = credentials.unwrap();
         self.set_id(credentials.user_id);
-        self.cloud_client
-            .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
         self.state.write().credentials = Some(credentials.clone());
         self.set_status(
             if is_reauthenticating {
@@ -953,84 +912,6 @@ impl Client {
         );
 
         Ok(credentials)
-    }
-
-    async fn validate_credentials(
-        self: &Arc<Self>,
-        credentials: &Credentials,
-        cx: &AsyncApp,
-    ) -> Result<bool> {
-        match self
-            .cloud_client
-            .validate_credentials(credentials.user_id as u32, &credentials.access_token)
-            .await
-        {
-            Ok(valid) => Ok(valid),
-            Err(err) => {
-                self.set_status(Status::AuthenticationError, cx);
-                Err(anyhow!("failed to validate credentials: {}", err))
-            }
-        }
-    }
-
-    /// Maintains a WebSocket connection with Cloud for receiving updates from the server.
-    ///
-    /// The connection is re-established with exponential backoff if it drops or fails to
-    /// establish.
-    fn connect_to_cloud(self: &Arc<Self>, cx: &AsyncApp) {
-        let this = self.clone();
-        let task = cx.spawn(async move |cx| {
-            #[cfg(any(test, feature = "test-support"))]
-            let mut rng = StdRng::seed_from_u64(0);
-            #[cfg(not(any(test, feature = "test-support")))]
-            let mut rng = StdRng::from_os_rng();
-
-            let mut delay = INITIAL_RECONNECTION_DELAY;
-            loop {
-                match Self::run_cloud_connection(&this, cx).await {
-                    Ok(()) => {
-                        log::info!("cloud websocket disconnected, will reconnect");
-                        delay = INITIAL_RECONNECTION_DELAY;
-                    }
-                    Err(err) => {
-                        log::warn!(
-                            "cloud websocket connect failed: {err:#}; retrying in {delay:?}"
-                        );
-                    }
-                }
-
-                let jitter = Duration::from_millis(rng.random_range(0..delay.as_millis() as u64));
-                cx.background_executor().timer(delay + jitter).await;
-                delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
-            }
-        });
-        self.state.write()._cloud_connection_task = Some(task);
-    }
-
-    /// Runs a single attempt of the cloud websocket connection, returning once the connection
-    /// closes (cleanly or otherwise) or fails to establish.
-    async fn run_cloud_connection(self: &Arc<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let connect_task = cx.update({
-            let cloud_client = self.cloud_client.clone();
-            move |cx| cloud_client.connect(cx)
-        })?;
-        let connection = connect_task.await?;
-
-        let (mut messages, _cloud_io_task) = cx.update(|cx| connection.spawn(cx));
-
-        {
-            let mut state = self.state.write();
-            let mut cloud_connection_id = state.cloud_connection_id.0.borrow_mut();
-            *cloud_connection_id = cloud_connection_id.saturating_add(1);
-        }
-
-        while let Some(message) = messages.next().await {
-            if let Some(message) = message.log_err() {
-                self.handle_message_to_client(message, cx);
-            }
-        }
-
-        Ok(())
     }
 
     /// Performs a sign-in and also (optionally) connects to Collab.
@@ -1058,8 +939,6 @@ impl Client {
         });
 
         let credentials = self.sign_in(try_provider, cx).await?;
-
-        self.connect_to_cloud(cx);
 
         cx.update(move |cx| {
             cx.spawn({
@@ -1600,94 +1479,36 @@ impl Client {
         })
     }
 
-    pub async fn cached_llm_token(
+    pub async fn get_authenticated_user(
         &self,
-        llm_token: &LlmApiToken,
-        organization_id: Option<OrganizationId>,
-    ) -> Result<String> {
-        let system_id = self.telemetry().system_id().map(|x| x.to_string());
-        let cloud_client = self.cloud_client();
-        match llm_token
-            .cached(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                Err(ClientApiError::Unauthorized).context("Failed to create LLM token")
-            }
-            Err(err) => Err(anyhow::Error::from(err)),
+        system_id: Option<String>,
+    ) -> Result<cloud_api_types::GetAuthenticatedUserResponse> {
+        let credentials = self
+            .state
+            .read()
+            .credentials
+            .clone()
+            .ok_or_else(|| anyhow!("not authenticated"))?;
+        let url = self.http.build_flint_cloud_url("/client/users/me")?;
+        let mut request = Request::get(url.as_str())
+            .header("Authorization", credentials.authorization_header());
+        if let Some(system_id) = system_id {
+            request =
+                request.header(cloud_api_types::ZED_SYSTEM_ID_HEADER_NAME, system_id.clone());
         }
-    }
-
-    /// Sends an authenticated request to the Flint LLM service, retrying once
-    /// with a refreshed token if the server signals that the cached LLM
-    /// token is expired or otherwise rejected. Returns the raw response so
-    /// callers can inspect headers and stream the body.
-    pub async fn authenticated_llm_request(
-        &self,
-        llm_token: &LlmApiToken,
-        organization_id: Option<OrganizationId>,
-        build_request: impl Fn(&str) -> Result<http_client::Request<http_client::AsyncBody>>,
-    ) -> Result<http_client::Response<http_client::AsyncBody>> {
-        let http_client = self.http_client();
-        let token = self
-            .cached_llm_token(llm_token, organization_id.clone())
-            .await?;
-        let response = http_client.send(build_request(&token)?).await?;
-        if !response.needs_llm_token_refresh()
-            && response.status() != http_client::http::StatusCode::UNAUTHORIZED
-        {
-            return Ok(response);
-        }
-        log::info!("LLM token rejected; refreshing and retrying request");
-        let token = self.refresh_llm_token(llm_token, organization_id).await?;
-        http_client.send(build_request(&token)?).await
-    }
-
-    pub async fn refresh_llm_token(
-        &self,
-        llm_token: &LlmApiToken,
-        organization_id: Option<OrganizationId>,
-    ) -> Result<String> {
-        let system_id = self.telemetry().system_id().map(|x| x.to_string());
-        let cloud_client = self.cloud_client();
-        match llm_token
-            .refresh(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
-            }
-            Err(err) => return Err(anyhow::Error::from(err)),
-        }
-    }
-
-    pub async fn clear_and_refresh_llm_token(
-        &self,
-        llm_token: &LlmApiToken,
-        organization_id: Option<OrganizationId>,
-    ) -> Result<String> {
-        let system_id = self.telemetry().system_id().map(|x| x.to_string());
-        let cloud_client = self.cloud_client();
-        match llm_token
-            .clear_and_refresh(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
-            }
-            Err(err) => return Err(anyhow::Error::from(err)),
-        }
+        let mut response = self.http.send(request.body(AsyncBody::default())?).await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "failed to get authenticated user: {}",
+            response.status().as_u16()
+        );
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        Ok(serde_json::from_str(&body)?)
     }
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {
         self.state.write().credentials = None;
-        self.cloud_client.clear_credentials();
         self.disconnect(cx);
 
         if self.has_credentials(cx).await {
@@ -1843,23 +1664,6 @@ impl Client {
                 .respond_with_unhandled_message(sender_id.into(), request_id, type_name)
                 .log_err();
         }
-    }
-
-    pub fn add_message_to_client_handler(
-        self: &Arc<Client>,
-        handler: impl Fn(&MessageToClient, &mut App) + Send + Sync + 'static,
-    ) {
-        self.message_to_client_handlers
-            .lock()
-            .push(Box::new(handler));
-    }
-
-    fn handle_message_to_client(self: &Arc<Client>, message: MessageToClient, cx: &AsyncApp) {
-        cx.update(|cx| {
-            for handler in self.message_to_client_handlers.lock().iter() {
-                handler(&message, cx);
-            }
-        });
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {

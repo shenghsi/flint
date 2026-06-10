@@ -4,11 +4,10 @@ use collections::HashMap;
 use fs::Fs;
 use gpui::Rgba;
 use paths::{cursor_settings_file_paths, vscode_settings_file_paths};
-use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::{
     num::{NonZeroU32, NonZeroUsize},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 
@@ -172,8 +171,6 @@ impl VsCodeSettings {
 
     pub fn settings_content(&self) -> SettingsContent {
         SettingsContent {
-            agent: self.agent_settings_content(),
-            agent_servers: None,
             auto_update: None,
             base_keymap: Some(BaseKeymapContent::VSCode),
             credentials_url: None,
@@ -191,7 +188,6 @@ impl VsCodeSettings {
             hide_mouse: None,
             image_viewer: None,
             journal: None,
-            language_models: None,
             line_indicator_format: None,
             log: None,
             markdown: None,
@@ -223,15 +219,6 @@ impl VsCodeSettings {
             feature_flags: None,
             instrumentation: None,
         }
-    }
-
-    fn agent_settings_content(&self) -> Option<AgentSettingsContent> {
-        let enabled = self.read_bool("chat.agent.enabled");
-        skip_default(AgentSettingsContent {
-            enabled: enabled,
-            button: enabled,
-            ..Default::default()
-        })
     }
 
     fn editor_settings_content(&self) -> EditorSettingsContent {
@@ -505,7 +492,6 @@ impl VsCodeSettings {
     fn project_settings_content(&self) -> ProjectSettingsContent {
         ProjectSettingsContent {
             all_languages: AllLanguageSettingsContent {
-                edit_predictions: self.edit_predictions_settings_content(),
                 defaults: self.default_language_settings_content(),
                 languages: Default::default(),
                 file_types: self.file_types(),
@@ -514,11 +500,8 @@ impl VsCodeSettings {
             lsp: Default::default(),
             terminal: None,
             dap: Default::default(),
-            context_servers: self.context_servers(),
-            context_server_timeout: None,
             load_direnv: None,
             git_hosting_providers: None,
-            disable_ai: None,
         }
     }
 
@@ -540,7 +523,6 @@ impl VsCodeSettings {
                 ..Default::default()
             }),
             debuggers: None,
-            edit_predictions_disabled_in: None,
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
             line_ending: self.read_enum("files.eol", |s| match s {
@@ -586,7 +568,6 @@ impl VsCodeSettings {
             show_completion_documentation: None,
             colorize_brackets: self.read_bool("editor.bracketPairColorization.enabled"),
             show_completions_on_input: self.read_bool("editor.suggestOnTriggerCharacters"),
-            show_edit_predictions: self.read_bool("editor.inlineSuggest.enabled"),
             show_whitespaces: self.read_enum("editor.renderWhitespace", |s| {
                 Some(match s {
                     "boundary" => ShowWhitespaceSetting::Boundary,
@@ -639,23 +620,6 @@ impl VsCodeSettings {
         skip_default(associations)
     }
 
-    fn edit_predictions_settings_content(&self) -> Option<EditPredictionSettingsContent> {
-        let disabled_globs = self
-            .read_value("cursor.general.globalCursorIgnoreList")?
-            .as_array()?;
-
-        skip_default(EditPredictionSettingsContent {
-            disabled_globs: skip_default(
-                disabled_globs
-                    .iter()
-                    .filter_map(|glob| glob.as_str())
-                    .map(|s| s.to_string())
-                    .collect(),
-            ),
-            ..Default::default()
-        })
-    }
-
     fn outline_panel_settings_content(&self) -> Option<OutlinePanelSettingsContent> {
         skip_default(OutlinePanelSettingsContent {
             file_icons: self.read_bool("outline.icons"),
@@ -686,38 +650,6 @@ impl VsCodeSettings {
             }),
             ..Default::default()
         })
-    }
-
-    fn context_servers(&self) -> HashMap<Arc<str>, ContextServerSettingsContent> {
-        #[derive(Deserialize)]
-        struct VsCodeContextServerCommand {
-            command: PathBuf,
-            args: Option<Vec<String>>,
-            env: Option<HashMap<String, String>>,
-            // note: we don't support envFile and type
-        }
-        let Some(mcp) = self.read_value("mcp").and_then(|v| v.as_object()) else {
-            return Default::default();
-        };
-        mcp.iter()
-            .filter_map(|(k, v)| {
-                Some((
-                    k.clone().into(),
-                    ContextServerSettingsContent::Stdio {
-                        enabled: true,
-                        remote: false,
-                        command: serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
-                            .ok()
-                            .map(|cmd| ContextServerCommand {
-                                path: cmd.command,
-                                args: cmd.args.unwrap_or_default(),
-                                env: cmd.env,
-                                timeout: None,
-                            })?,
-                    },
-                ))
-            })
-            .collect()
     }
 
     fn item_settings_content(&self) -> Option<ItemSettingsContent> {
@@ -973,8 +905,6 @@ impl VsCodeSettings {
             buffer_font_weight: self.read_f32("editor.fontWeight").map(FontWeightContent),
             buffer_line_height: None,
             buffer_font_features: None,
-            agent_ui_font_size: None,
-            agent_buffer_font_size: None,
             git_commit_buffer_font_size: None,
             markdown_preview_font_family: None,
             markdown_preview_code_font_family: None,

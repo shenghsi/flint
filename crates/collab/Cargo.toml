@@ -74,7 +74,6 @@ util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-agent = { workspace = true, features = ["test-support"] }
 async-trait.workspace = true
 async-channel.workspace = true
 
@@ -104,7 +103,6 @@ gpui_tokio.workspace = true
 
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
-language_model = { workspace = true, features = ["test-support"] }
 livekit_client =  { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true
@@ -113,7 +111,6 @@ node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
-prompt_store.workspace = true
 recent_projects = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
