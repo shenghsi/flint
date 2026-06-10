@@ -4705,7 +4705,9 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     .await;
 
     cx.update(|cx| {
-        settings::init(cx);
+        let settings = SettingsStore::new(cx, settings::test_settings());
+        cx.set_global(settings);
+        SettingsStore::observe_active_settings_profile_name(cx).detach();
 
         match model {
             TestModel::Fake => {}

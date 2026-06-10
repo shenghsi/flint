@@ -1210,6 +1210,9 @@ mod tests {
 
         cx.update(|cx| {
             settings::init(cx);
+            SettingsStore::update(cx, |store, cx| {
+                let _ = store.set_user_settings(r#"{"auto_update": true}"#, cx);
+            });
 
             let current_version = semver::Version::new(0, 100, 0);
             release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
