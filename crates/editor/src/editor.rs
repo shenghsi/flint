@@ -1937,13 +1937,38 @@ impl Editor {
                             }
                         }
                     }
-                    project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
+                    project::Event::LanguageServerBufferRegistered {
+                        buffer_id,
+                        server_id,
+                        ..
+                    } => {
                         let buffer_id = *buffer_id;
+                        let server_id = *server_id;
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             editor.register_buffer(buffer_id, cx);
                             editor.refresh_runnables(Some(buffer_id), window, cx);
                             editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                            // Use LanguageServerRegistered (which invalidates the LspStore
+                            // cache) only the first time a server is seen for this buffer.
+                            // Subsequent LanguageServerBufferRegistered events for the same
+                            // server (e.g. re-emitted by refresh_server_tree on settings
+                            // changes) do not represent new data and should not cause a
+                            // cache clear + re-fetch.
+                            let is_new_server = editor
+                                .inlay_hints
+                                .as_mut()
+                                .is_some_and(|ih| ih.is_new_server_for_buffer(buffer_id, server_id));
+                            if is_new_server {
+                                editor.refresh_inlay_hints(
+                                    InlayHintRefreshReason::LanguageServerRegistered(buffer_id),
+                                    cx,
+                                );
+                            } else {
+                                editor.refresh_inlay_hints(
+                                    InlayHintRefreshReason::NewLinesShown,
+                                    cx,
+                                );
+                            }
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions_for_selection(window, cx);
                             editor.refresh_document_highlights(cx);

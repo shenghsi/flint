@@ -55,6 +55,11 @@ pub struct LspInlayHintData {
     hint_chunk_fetching: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
     invalidate_hints_for_buffers: HashSet<BufferId>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
+    /// Tracks which (buffer_id, server_id) pairs have been seen so that
+    /// re-registrations from refresh_server_tree (on settings changes) are
+    /// not mistaken for a genuinely new server and do not trigger a cache
+    /// invalidation + re-fetch.
+    known_server_ids_by_buffer: HashMap<BufferId, HashSet<LanguageServerId>>,
 }
 
 impl LspInlayHintData {
@@ -70,7 +75,23 @@ impl LspInlayHintData {
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
+            known_server_ids_by_buffer: HashMap::default(),
         }
+    }
+
+    /// Returns `true` and records the registration if this `(buffer_id, server_id)` pair
+    /// has not been seen before. Returns `false` for re-registrations (e.g., those emitted
+    /// by `refresh_server_tree` after a settings change), so callers can avoid spurious
+    /// cache invalidations.
+    pub fn is_new_server_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        server_id: LanguageServerId,
+    ) -> bool {
+        self.known_server_ids_by_buffer
+            .entry(buffer_id)
+            .or_default()
+            .insert(server_id)
     }
 
     pub fn modifiers_override(&mut self, new_override: bool) -> Option<bool> {
@@ -224,6 +245,7 @@ impl LspInlayHintData {
         for buffer_id in removed_buffer_ids {
             self.hint_refresh_tasks.remove(buffer_id);
             self.hint_chunk_fetching.remove(buffer_id);
+            self.known_server_ids_by_buffer.remove(buffer_id);
         }
     }
 }
@@ -236,6 +258,11 @@ pub enum InlayHintRefreshReason {
     NewLinesShown,
     BufferEdited(BufferId),
     ServerRemoved,
+    /// A new language server registered for the given buffer. The LspStore
+    /// cache for the buffer may be incomplete (only covering previously
+    /// registered servers), so it must be cleared and re-fetched from all
+    /// currently registered servers.
+    LanguageServerRegistered(BufferId),
     RefreshRequested {
         server_id: LanguageServerId,
         request_id: Option<usize>,
@@ -308,6 +335,7 @@ impl Editor {
             InlayHintRefreshReason::SettingsChange(_)
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::BuffersRemoved(_)
+            | InlayHintRefreshReason::LanguageServerRegistered(_)
             | InlayHintRefreshReason::ModifiersChanged(_) => None,
             _may_need_lsp_call => self.inlay_hints.as_ref().and_then(|inlay_hints| {
                 if invalidate_cache.should_invalidate() {
@@ -330,6 +358,13 @@ impl Editor {
             InlayHintRefreshReason::NewLinesShown
             | InlayHintRefreshReason::RefreshRequested { .. }
             | InlayHintRefreshReason::BuffersRemoved(_) => false,
+            InlayHintRefreshReason::LanguageServerRegistered(buffer_id) => {
+                invalidate_hints_for_buffers.insert(buffer_id);
+                semantics_provider.invalidate_inlay_hints(&invalidate_hints_for_buffers, cx);
+                visible_excerpts
+                    .retain(|(snapshot, _, _)| snapshot.remote_id() == buffer_id);
+                false
+            }
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
                     .buffer()
@@ -544,6 +579,7 @@ impl Editor {
             InlayHintRefreshReason::ServerRemoved => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
+            InlayHintRefreshReason::LanguageServerRegistered(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::RefreshRequested {
                 server_id,
                 request_id,
@@ -4502,9 +4538,9 @@ let c = 3;"#
             },
         );
 
-        let (buffer, _buffer_handle) = project
+        let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
+                project.open_local_buffer(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();
