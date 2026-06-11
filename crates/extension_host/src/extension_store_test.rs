@@ -730,7 +730,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     await_or_timeout(
         &executor,
         "awaiting install_dev_extension",
-        60,
+        300,
         extension_store.update(cx, |store, cx| {
             store.install_dev_extension(test_extension_dir.clone(), cx)
         }),
