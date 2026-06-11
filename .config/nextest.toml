@@ -13,6 +13,7 @@ test-group = 'sequential-db-tests'
 [[profile.default.overrides]]
 filter = 'package(worktree) and test(test_random_worktree_changes)'
 priority = 100
+slow-timeout = { period = "300s", terminate-after = 1 }
 
 [[profile.default.overrides]]
 filter = 'package(extension_host) and test(test_extension_store_with_test_extension)'
