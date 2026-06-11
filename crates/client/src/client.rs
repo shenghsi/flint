@@ -851,7 +851,10 @@ impl Client {
         match response.status() {
             status if status.is_success() => Ok(true),
             StatusCode::UNAUTHORIZED => Ok(false),
-            status => Err(anyhow!("failed to validate credentials: {}", status.as_u16())),
+            status => Err(anyhow!(
+                "failed to validate credentials: {}",
+                status.as_u16()
+            )),
         }
     }
 

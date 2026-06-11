@@ -1954,20 +1954,17 @@ impl Editor {
                             // server (e.g. re-emitted by refresh_server_tree on settings
                             // changes) do not represent new data and should not cause a
                             // cache clear + re-fetch.
-                            let is_new_server = editor
-                                .inlay_hints
-                                .as_mut()
-                                .is_some_and(|ih| ih.is_new_server_for_buffer(buffer_id, server_id));
+                            let is_new_server = editor.inlay_hints.as_mut().is_some_and(|ih| {
+                                ih.is_new_server_for_buffer(buffer_id, server_id)
+                            });
                             if is_new_server {
                                 editor.refresh_inlay_hints(
                                     InlayHintRefreshReason::LanguageServerRegistered(buffer_id),
                                     cx,
                                 );
                             } else {
-                                editor.refresh_inlay_hints(
-                                    InlayHintRefreshReason::NewLinesShown,
-                                    cx,
-                                );
+                                editor
+                                    .refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                             }
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions_for_selection(window, cx);

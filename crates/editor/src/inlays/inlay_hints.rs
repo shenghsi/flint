@@ -361,8 +361,7 @@ impl Editor {
             InlayHintRefreshReason::LanguageServerRegistered(buffer_id) => {
                 invalidate_hints_for_buffers.insert(buffer_id);
                 semantics_provider.invalidate_inlay_hints(&invalidate_hints_for_buffers, cx);
-                visible_excerpts
-                    .retain(|(snapshot, _, _)| snapshot.remote_id() == buffer_id);
+                visible_excerpts.retain(|(snapshot, _, _)| snapshot.remote_id() == buffer_id);
                 false
             }
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
@@ -579,7 +578,9 @@ impl Editor {
             InlayHintRefreshReason::ServerRemoved => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
-            InlayHintRefreshReason::LanguageServerRegistered(_) => InvalidationStrategy::BufferEdited,
+            InlayHintRefreshReason::LanguageServerRegistered(_) => {
+                InvalidationStrategy::BufferEdited
+            }
             InlayHintRefreshReason::RefreshRequested {
                 server_id,
                 request_id,
