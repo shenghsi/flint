@@ -35,4 +35,3 @@ pub fn upgrade_to_flint_pro_url(cx: &App) -> String {
 pub fn terms_of_service(cx: &App) -> String {
     format!("{server_url}/terms-of-service", server_url = server_url(cx))
 }
-

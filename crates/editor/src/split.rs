@@ -5914,11 +5914,7 @@ mod tests {
             rhs_editor.splice_inlays(
                 &[],
                 vec![
-                    Inlay::debugger(
-                        0,
-                        snapshot.anchor_after(Point::new(0, 3)),
-                        "\nINLAY_WITHIN",
-                    ),
+                    Inlay::debugger(0, snapshot.anchor_after(Point::new(0, 3)), "\nINLAY_WITHIN"),
                     Inlay::debugger(
                         1,
                         snapshot.anchor_after(Point::new(1, 3)),

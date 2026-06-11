@@ -73,4 +73,3 @@ pub struct UpdateSystemSettingsBody {
 pub struct SystemSettings {
     pub selected_organization_id: Option<OrganizationId>,
 }
-

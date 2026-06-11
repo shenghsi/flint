@@ -1,8 +1,6 @@
 //! Provides `language`-related settings.
 
-use crate::{
-    Buffer, BufferSnapshot, File, LanguageName, LanguageServerName, ModelineSettings,
-};
+use crate::{Buffer, BufferSnapshot, File, LanguageName, LanguageServerName, ModelineSettings};
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -16,9 +14,9 @@ use itertools::{Either, Itertools};
 use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
-    AutoIndentMode, CompletionSettingsContent, FormatOnSave,
-    Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
-    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    AutoIndentMode, CompletionSettingsContent, FormatOnSave, Formatter, FormatterList,
+    InlayHintKind, LanguageSettingsContent, LineEndingSetting, LspInsertMode, RewrapBehavior,
+    ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use std::{borrow::Cow, num::NonZeroU32, sync::Arc};
@@ -475,7 +473,6 @@ impl AllLanguageSettings {
             Cow::Borrowed(settings)
         }
     }
-
 }
 
 fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSettings) {

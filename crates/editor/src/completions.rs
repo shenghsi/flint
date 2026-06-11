@@ -92,9 +92,10 @@ impl Editor {
     }
 
     pub fn has_visible_completions_menu(&self) -> bool {
-        self.context_menu.borrow().as_ref().is_some_and(|menu| {
-            menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
-        })
+        self.context_menu
+            .borrow()
+            .as_ref()
+            .is_some_and(|menu| menu.visible() && matches!(menu, CodeContextMenu::Completions(_)))
     }
 
     pub(super) fn trigger_completion_on_input(

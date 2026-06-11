@@ -9,8 +9,8 @@ use collections::{HashMap, HashSet, hash_map::Entry};
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
-    App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task,
-    TaskExt, WeakEntity,
+    App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, TaskExt,
+    WeakEntity,
 };
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
@@ -205,10 +205,8 @@ impl UserStore {
                             if let Some(user_id) = client.user_id() {
                                 let system_id =
                                     client.telemetry().system_id().map(|id| id.to_string());
-                                let response = client
-                                    .get_authenticated_user(system_id)
-                                    .await
-                                    .log_err();
+                                let response =
+                                    client.get_authenticated_user(system_id).await.log_err();
 
                                 let current_user_and_response = if let Some(response) = response {
                                     let user = Arc::new(User {
@@ -967,4 +965,3 @@ impl Collaborator {
         })
     }
 }
-

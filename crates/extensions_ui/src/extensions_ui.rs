@@ -648,18 +648,23 @@ impl ExtensionsPage {
                                 }),
                             )
                             .child(
-                                Button::new(extension_button_id(&extension.id, ExtensionOperation::Remove), "Uninstall")
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Removing))
-                                    .on_click({
-                                        let extension_id = extension.id.clone();
-                                        move |_, _, cx| {
-                                            ExtensionStore::global(cx).update(cx, |store, cx| {
-                                                store.uninstall_extension(extension_id.clone(), cx).detach_and_log_err(cx);
-                                            });
-                                        }
-                                    }),
-                            )
+                                Button::new(
+                                    extension_button_id(&extension.id, ExtensionOperation::Remove),
+                                    "Uninstall",
+                                )
+                                .color(Color::Accent)
+                                .disabled(matches!(status, ExtensionStatus::Removing))
+                                .on_click({
+                                    let extension_id = extension.id.clone();
+                                    move |_, _, cx| {
+                                        ExtensionStore::global(cx).update(cx, |store, cx| {
+                                            store
+                                                .uninstall_extension(extension_id.clone(), cx)
+                                                .detach_and_log_err(cx);
+                                        });
+                                    }
+                                }),
+                            ),
                     ),
             )
             .child(

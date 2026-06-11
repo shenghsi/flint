@@ -1,7 +1,7 @@
 use crate::{ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar};
 use gpui::{
-    AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, WeakEntity, Window,
+    AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, SharedString,
+    Styled, Subscription, WeakEntity, Window,
 };
 use settings::{SettingsContent, update_settings_file};
 use std::{any::TypeId, sync::Arc};

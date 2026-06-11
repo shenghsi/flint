@@ -2187,7 +2187,6 @@ impl Vim {
                 if self.mode == Mode::Replace {
                     self.multi_replace(text, window, cx)
                 }
-
             }
         }
     }

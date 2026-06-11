@@ -168,7 +168,6 @@ fn view_release_notes_locally(
     .detach();
 }
 
-
 struct UpdateNotification;
 
 fn show_update_notification(cx: &mut App) {

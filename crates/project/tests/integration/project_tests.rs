@@ -13560,4 +13560,3 @@ async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.read_only(), "package.json should not be read-only");
     });
 }
-

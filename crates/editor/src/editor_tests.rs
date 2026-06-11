@@ -34752,7 +34752,6 @@ async fn test_diff_review_indicator_created_on_gutter_hover(cx: &mut TestAppCont
     });
 }
 
-
 /// Helper function to create a DiffHunkKey for testing.
 /// Uses Anchor::Min as a placeholder anchor since these tests don't need
 /// real buffer positioning.

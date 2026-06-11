@@ -8,7 +8,6 @@ use std::{
 
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
-
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};

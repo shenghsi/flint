@@ -1489,11 +1489,10 @@ impl Client {
             .clone()
             .ok_or_else(|| anyhow!("not authenticated"))?;
         let url = self.http.build_flint_cloud_url("/client/users/me")?;
-        let mut request = Request::get(url.as_str())
-            .header("Authorization", credentials.authorization_header());
+        let mut request =
+            Request::get(url.as_str()).header("Authorization", credentials.authorization_header());
         if let Some(system_id) = system_id {
-            request =
-                request.header(cloud_api_types::ZED_SYSTEM_ID_HEADER_NAME, system_id);
+            request = request.header(cloud_api_types::ZED_SYSTEM_ID_HEADER_NAME, system_id);
         }
         let mut response = self.http.send(request.body(AsyncBody::default())?).await?;
         anyhow::ensure!(

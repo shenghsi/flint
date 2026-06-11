@@ -173,7 +173,6 @@ impl Default for LspNotificationSettings {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DiagnosticSeverity {
     // No diagnostics are shown.

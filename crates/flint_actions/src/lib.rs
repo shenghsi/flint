@@ -226,7 +226,6 @@ pub mod dev {
     );
 }
 
-
 pub mod remote_debug {
     use gpui::actions;
 
@@ -617,7 +616,6 @@ actions!(
         OpenGitIntegrationOnboarding
     ]
 );
-
 
 pub mod debug_panel {
     use gpui::actions;

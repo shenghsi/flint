@@ -6,8 +6,8 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, Tiling, WeakEntity,
     Window, WindowId, actions, deferred, px,
 };
-pub use project::ProjectGroupKey;
 use project::Project;
+pub use project::ProjectGroupKey;
 use remote::RemoteConnectionOptions;
 use std::cell::Cell;
 use std::future::Future;
@@ -62,7 +62,6 @@ pub struct SidebarRenderState {
     pub open: bool,
     pub side: SidebarSide,
 }
-
 
 pub enum MultiWorkspaceEvent {
     ActiveWorkspaceChanged {
@@ -1511,7 +1510,7 @@ impl MultiWorkspace {
         cx.notify();
     }
 
-/// Detaches a workspace: clears session state, DB binding, cached
+    /// Detaches a workspace: clears session state, DB binding, cached
     /// group key, and emits `WorkspaceRemoved`. The DB row is preserved
     /// so the workspace still appears in the recent-projects list.
     fn detach_workspace(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
