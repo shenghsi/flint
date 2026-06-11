@@ -375,6 +375,7 @@ function BuildInstaller {
     if($env:CI -and $script:canCodeSign) {
         $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
         $innoArgs += "/sDefaultsign=`"$signTool`""
+        $innoArgs += "/DCanSign=1"
     }
 
     # Execute Inno Setup
