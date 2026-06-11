@@ -39,9 +39,17 @@ function Get-VSArch {
     }
 }
 
+# Enable git long paths before cargo fetches git dependencies (needed for crates with deep test paths)
+git config --system core.longpaths true
+
 Push-Location
 $vsInstallPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-& "$vsInstallPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+# Launch-VsDevShell.ps1 only accepts x86/amd64 for -HostArch; omit it on ARM runners
+if ($OSArchitecture -eq "aarch64") {
+    & "$vsInstallPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture)
+} else {
+    & "$vsInstallPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+}
 Pop-Location
 
 $target = "$Architecture-pc-windows-msvc"

@@ -87,6 +87,8 @@ cargo build --release --target "${target_triple}" --package flint --package cli
 # from influencing dynamic libraries required by it.
 if [[ "$remote_server_triple" == "$musl_triple" ]]; then
     export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
+    # Use musl-gcc so aws-lc-sys C sources don't pull in glibc C23 symbols absent in musl
+    export "CC_${musl_triple//-/_}=musl-gcc"
 fi
 cargo build --release --target "${remote_server_triple}" --package remote_server
 
