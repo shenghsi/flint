@@ -843,6 +843,18 @@ impl Client {
             .is_some()
     }
 
+    async fn validate_credentials(&self, credentials: &Credentials) -> Result<bool> {
+        let url = self.http.build_flint_cloud_url("/client/users/me")?;
+        let request =
+            Request::get(url.as_str()).header("Authorization", credentials.authorization_header());
+        let response = self.http.send(request.body(AsyncBody::default())?).await?;
+        match response.status() {
+            status if status.is_success() => Ok(true),
+            StatusCode::UNAUTHORIZED => Ok(false),
+            status => Err(anyhow!("failed to validate credentials: {}", status.as_u16())),
+        }
+    }
+
     pub async fn sign_in(
         self: &Arc<Self>,
         try_provider: bool,
@@ -858,16 +870,32 @@ impl Client {
 
         let mut credentials = None;
 
-        let old_credentials = self.state.read().credentials.clone();
-        if let Some(old_credentials) = old_credentials {
-            credentials = Some(old_credentials);
+        let cached_credentials = self.state.read().credentials.clone();
+        if let Some(cached_credentials) = cached_credentials {
+            match self.validate_credentials(&cached_credentials).await {
+                Ok(true) => credentials = Some(cached_credentials),
+                Ok(false) => {
+                    self.state.write().credentials = None;
+                }
+                Err(err) => {
+                    self.set_status(Status::AuthenticationError, cx);
+                    return Err(err);
+                }
+            }
         }
 
         if credentials.is_none()
             && try_provider
             && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await
         {
-            credentials = Some(stored_credentials);
+            match self.validate_credentials(&stored_credentials).await {
+                Ok(true) => credentials = Some(stored_credentials),
+                Ok(false) => {}
+                Err(err) => {
+                    self.set_status(Status::AuthenticationError, cx);
+                    return Err(err);
+                }
+            }
         }
 
         if credentials.is_none() {
