@@ -328,13 +328,6 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 let mut renderer = None;
                 let mut highlight_style = match inlay.id {
-                    InlayId::EditPrediction(_) => self.highlight_styles.edit_prediction.map(|s| {
-                        if inlay.text().chars().all(|c| c.is_whitespace()) {
-                            s.whitespace
-                        } else {
-                            s.insertion
-                        }
-                    }),
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
                     InlayId::ReplResult(_) => {
@@ -793,7 +786,7 @@ impl InlayMap {
                         &text,
                     )
                 } else {
-                    Inlay::edit_prediction(
+                    Inlay::debugger(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
                         &text,
@@ -1580,7 +1573,7 @@ mod tests {
                         .anchor_before(MultiBufferOffset(3)),
                     "|123|",
                 ),
-                Inlay::edit_prediction(
+                Inlay::debugger(
                     post_inc(&mut next_inlay_id),
                     buffer
                         .read(cx)
@@ -1815,7 +1808,7 @@ mod tests {
                         .anchor_before(MultiBufferOffset(4)),
                     "|456|",
                 ),
-                Inlay::edit_prediction(
+                Inlay::debugger(
                     post_inc(&mut next_inlay_id),
                     buffer
                         .read(cx)

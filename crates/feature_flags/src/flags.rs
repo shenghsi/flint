@@ -1,4 +1,4 @@
-use crate::{EnumFeatureFlag, FeatureFlag, PresenceFlag, register_feature_flag};
+use crate::{FeatureFlag, PresenceFlag, register_feature_flag};
 
 pub struct NotebookFeatureFlag;
 
@@ -26,14 +26,6 @@ impl FeatureFlag for AcpBetaFeatureFlag {
     type Value = PresenceFlag;
 }
 register_feature_flag!(AcpBetaFeatureFlag);
-
-pub struct AgentSharingFeatureFlag;
-
-impl FeatureFlag for AgentSharingFeatureFlag {
-    const NAME: &'static str = "agent-sharing";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AgentSharingFeatureFlag);
 
 pub struct HandoffFeatureFlag;
 
@@ -134,27 +126,6 @@ impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
 }
 register_feature_flag!(ProjectPanelUndoRedoFeatureFlag);
 
-/// Controls how agent thread worktree chips are labeled in the sidebar.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, EnumFeatureFlag)]
-pub enum AgentThreadWorktreeLabel {
-    #[default]
-    Both,
-    Worktree,
-    Branch,
-}
-
-pub struct AgentThreadWorktreeLabelFlag;
-
-impl FeatureFlag for AgentThreadWorktreeLabelFlag {
-    const NAME: &'static str = "agent-thread-worktree-label";
-    type Value = AgentThreadWorktreeLabel;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(AgentThreadWorktreeLabelFlag);
-
 pub struct AutoWatchFeatureFlag;
 
 impl FeatureFlag for AutoWatchFeatureFlag {
@@ -163,17 +134,3 @@ impl FeatureFlag for AutoWatchFeatureFlag {
 }
 register_feature_flag!(AutoWatchFeatureFlag);
 
-/// Wraps agent-run terminal commands in an OS-level sandbox where supported
-/// (currently macOS Seatbelt only). When off, terminal commands run with the
-/// agent's full ambient permissions, as they always have.
-pub struct SandboxingFeatureFlag;
-
-impl FeatureFlag for SandboxingFeatureFlag {
-    const NAME: &'static str = "sandboxing";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(SandboxingFeatureFlag);

@@ -1,7 +1,7 @@
 //! Provides `language`-related settings.
 
 use crate::{
-    Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName, ModelineSettings,
+    Buffer, BufferSnapshot, File, LanguageName, LanguageServerName, ModelineSettings,
 };
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
@@ -21,7 +21,7 @@ pub use settings::{
     LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
-use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use std::{borrow::Cow, num::NonZeroU32, sync::Arc};
 use text::ToOffset;
 
 /// Returns the settings for all languages from the provided file.

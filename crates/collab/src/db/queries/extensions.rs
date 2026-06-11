@@ -274,14 +274,8 @@ impl Database {
                                 .provides
                                 .contains(&ExtensionProvides::LanguageServers),
                         ),
-                        provides_context_servers: ActiveValue::Set(
-                            version
-                                .provides
-                                .contains(&ExtensionProvides::ContextServers),
-                        ),
-                        provides_agent_servers: ActiveValue::Set(
-                            version.provides.contains(&ExtensionProvides::AgentServers),
-                        ),
+                        provides_context_servers: ActiveValue::Set(false),
+                        provides_agent_servers: ActiveValue::Set(false),
                         provides_slash_commands: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::SlashCommands),
                         ),

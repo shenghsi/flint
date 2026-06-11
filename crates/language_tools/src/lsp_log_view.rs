@@ -1263,7 +1263,6 @@ fn initialize_new_editor(
         editor.set_show_bookmarks(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_read_only(true);
-        editor.set_show_edit_predictions(Some(false), window, cx);
         editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
         if move_to_end {
             editor.move_to_end(&MoveToEnd, window, cx);

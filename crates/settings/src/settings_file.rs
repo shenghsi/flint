@@ -130,18 +130,6 @@ pub fn test_settings() -> &'static str {
             crate::default_settings().as_ref(),
         )
         .unwrap();
-        // Tests need AI features enabled to test AI-related functionality.
-        util::merge_non_null_json_value_into(
-            serde_json::json!({
-                "disable_ai": false,
-                "edit_predictions": {
-                    "copilot": {
-                        "enable_next_edit_suggestions": true
-                    }
-                }
-            }),
-            &mut value,
-        );
         #[cfg(not(target_os = "windows"))]
         util::merge_non_null_json_value_into(
             serde_json::json!({

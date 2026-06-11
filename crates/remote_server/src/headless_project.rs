@@ -14,7 +14,7 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    AgentRegistryStore, LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment,
+    LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment,
     ProjectPath, ToolchainStore, WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     git_store::GitStore,
@@ -199,9 +199,7 @@ impl HeadlessProject {
             lsp_store
         });
 
-        AgentRegistryStore::init_global(cx, fs.clone(), http_client.clone());
-
-        cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
         language_extension::init(
             language_extension::LspAccess::ViaLspStore(lsp_store.clone()),
             proxy.clone(),

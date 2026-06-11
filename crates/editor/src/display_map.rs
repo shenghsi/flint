@@ -1827,7 +1827,7 @@ impl DisplaySnapshot {
             language_aware,
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
-                edit_prediction: Some(editor_style.edit_prediction_styles),
+                edit_prediction: None,
             },
         )
         .flat_map({
@@ -3136,7 +3136,7 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.splice_inlays(
                 &[],
-                vec![Inlay::edit_prediction(
+                vec![Inlay::debugger(
                     0,
                     buffer_snapshot.anchor_after(MultiBufferOffset(0)),
                     "\n",

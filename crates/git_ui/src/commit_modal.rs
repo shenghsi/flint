@@ -5,8 +5,7 @@ use crate::git_panel::{
 use crate::git_panel_settings::GitPanelSettings;
 use flint_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 use git::repository::CommitOptions;
-use git::{Amend, Commit, GenerateCommitMessage, Signoff};
-use project::DisableAiSettings;
+use git::{Amend, Commit, Signoff};
 use settings::Settings;
 use ui::{
     ContextMenu, KeybindingHint, PopoverMenu, PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
@@ -599,13 +598,6 @@ impl Render for CommitModal {
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
-            .when(!DisableAiSettings::get_global(cx).disable_ai, |this| {
-                this.on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
-                    this.git_panel.update(cx, |panel, cx| {
-                        panel.generate_commit_message(cx);
-                    })
-                }))
-            })
             .on_action(
                 cx.listener(|this, _: &flint_actions::git::Branch, window, cx| {
                     this.toggle_branch_selector(window, cx);

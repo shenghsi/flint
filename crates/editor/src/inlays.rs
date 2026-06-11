@@ -93,14 +93,6 @@ impl Inlay {
         }
     }
 
-    pub fn edit_prediction<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
-        Self {
-            id: InlayId::EditPrediction(id),
-            position,
-            content: InlayContent::Text(text.into()),
-        }
-    }
-
     pub fn debugger<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::DebuggerValue(id),

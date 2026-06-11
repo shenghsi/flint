@@ -9,7 +9,7 @@ use collections::{HashMap, HashSet, hash_map::Entry};
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task,
+    App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task,
     TaskExt, WeakEntity,
 };
 use postage::{sink::Sink, watch};

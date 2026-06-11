@@ -2328,7 +2328,7 @@ mod tests {
     use project::{Project, ProjectPath};
     use semver::Version;
     use serde_json::json;
-    use settings::{SaturatingBool, SettingsStore, watch_config_file};
+    use settings::{SettingsStore, watch_config_file};
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -4974,11 +4974,7 @@ mod tests {
             let expected_namespaces = vec![
                 "action",
                 "activity_indicator",
-                "agent",
-                "agents_sidebar",
                 "app_menu",
-                "assistant",
-                "assistant2",
                 "auto_update",
                 "branch_picker",
                 "branches",
@@ -4987,7 +4983,6 @@ mod tests {
                 "client",
                 "collab",
                 "command_palette",
-                "context_server",
                 "csv",
                 "debug_panel",
                 "debugger",
@@ -5010,7 +5005,6 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
-                "flint_predict_onboarding",
                 "welcome",
                 "line_ending_selector",
                 "lsp_tool",
@@ -5406,28 +5400,6 @@ mod tests {
             new_content_str.contains("UNIQUEVALUE"),
             "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
         );
-    }
-
-    #[gpui::test]
-    async fn test_disable_ai_crash(cx: &mut gpui::TestAppContext) {
-        let app_state = init_test(cx);
-        cx.update(init);
-        let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
-
-        cx.run_until_parked();
-
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |settings_store, cx| {
-                settings_store.update_user_settings(cx, |settings| {
-                    settings.project.disable_ai = Some(SaturatingBool(true));
-                });
-            });
-        });
-
-        cx.run_until_parked();
-
-        // If this panics, the test has failed
     }
 
     #[gpui::test]

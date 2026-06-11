@@ -54,14 +54,6 @@ impl Model {
             provides.insert(ExtensionProvides::LanguageServers);
         }
 
-        if self.provides_context_servers {
-            provides.insert(ExtensionProvides::ContextServers);
-        }
-
-        if self.provides_agent_servers {
-            provides.insert(ExtensionProvides::AgentServers);
-        }
-
         if self.provides_slash_commands {
             provides.insert(ExtensionProvides::SlashCommands);
         }

@@ -213,9 +213,6 @@ impl ExtensionFilter {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum Feature {
-    AgentClaude,
-    AgentCodex,
-    AgentGemini,
     ExtensionBasedpyright,
     ExtensionRuff,
     ExtensionTailwind,
@@ -237,12 +234,6 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
-            (
-                Feature::AgentClaude,
-                vec!["claude", "claude code", "claude agent"],
-            ),
-            (Feature::AgentCodex, vec!["codex", "codex cli"]),
-            (Feature::AgentGemini, vec!["gemini", "gemini cli"]),
             (
                 Feature::ExtensionBasedpyright,
                 vec!["basedpyright", "pyright"],
@@ -622,8 +613,6 @@ impl ExtensionsPage {
 
         let repository_url = extension.repository.clone();
 
-        let can_configure = !extension.context_servers.is_empty();
-
         ExtensionCard::new()
             .child(
                 h_flex()
@@ -671,33 +660,6 @@ impl ExtensionsPage {
                                         }
                                     }),
                             )
-                            .when(can_configure, |this| {
-                                this.child(
-                                    Button::new(
-                                        SharedString::from(format!("configure-{}", extension.id)),
-                                        "Configure",
-                                    )
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Installing))
-                                    .on_click({
-                                        let manifest = Arc::new(extension.clone());
-                                        move |_, _, cx| {
-                                            if let Some(events) =
-                                                extension::ExtensionEvents::try_global(cx)
-                                            {
-                                                events.update(cx, |this, cx| {
-                                                    this.emit(
-                                                        extension::Event::ConfigureExtensionRequested(
-                                                            manifest.clone(),
-                                                        ),
-                                                        cx,
-                                                    )
-                                                });
-                                            }
-                                        }
-                                    }),
-                                )
-                            }),
                     ),
             )
             .child(
@@ -802,7 +764,8 @@ impl ExtensionsPage {
                                             .iter()
                                             .filter_map(|provides| {
                                                 match provides {
-                                                    ExtensionProvides::AgentServers
+                                                    ExtensionProvides::ContextServers
+                                                    | ExtensionProvides::AgentServers
                                                     | ExtensionProvides::SlashCommands
                                                     | ExtensionProvides::IndexedDocsProviders => {
                                                         return None;
@@ -1019,10 +982,7 @@ impl ExtensionsPage {
             };
         }
 
-        let is_configurable = extension
-            .manifest
-            .provides
-            .contains(&ExtensionProvides::ContextServers);
+        let is_configurable = false;
 
         match status.clone() {
             ExtensionStatus::NotInstalled => ExtensionCardButtons {
@@ -1512,24 +1472,6 @@ impl ExtensionsPage {
 
         for feature in &self.upsells {
             let banner = match feature {
-                Feature::AgentClaude => self.render_feature_upsell_banner(
-                    "Claude Agent support is built-in to Flint!".into(),
-                    "https://flint.dev/docs/ai/external-agents#claude-agent".into(),
-                    false,
-                    cx,
-                ),
-                Feature::AgentCodex => self.render_feature_upsell_banner(
-                    "Codex CLI support is built-in to Flint!".into(),
-                    "https://flint.dev/docs/ai/external-agents#codex-cli".into(),
-                    false,
-                    cx,
-                ),
-                Feature::AgentGemini => self.render_feature_upsell_banner(
-                    "Gemini CLI support is built-in to Flint!".into(),
-                    "https://flint.dev/docs/ai/external-agents#gemini-cli".into(),
-                    false,
-                    cx,
-                ),
                 Feature::ExtensionBasedpyright => self.render_feature_upsell_banner(
                     "Basedpyright (Python language server) support is built-in to Flint!".into(),
                     "https://flint.dev/docs/languages/python#basedpyright".into(),

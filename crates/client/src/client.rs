@@ -13,7 +13,6 @@ use async_tungstenite::tungstenite::{
     http::{HeaderValue, Request, StatusCode},
 };
 use clock::SystemClock;
-use cloud_api_types::OrganizationId;
 use credentials_provider::CredentialsProvider;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{
@@ -1494,7 +1493,7 @@ impl Client {
             .header("Authorization", credentials.authorization_header());
         if let Some(system_id) = system_id {
             request =
-                request.header(cloud_api_types::ZED_SYSTEM_ID_HEADER_NAME, system_id.clone());
+                request.header(cloud_api_types::ZED_SYSTEM_ID_HEADER_NAME, system_id);
         }
         let mut response = self.http.send(request.body(AsyncBody::default())?).await?;
         anyhow::ensure!(
