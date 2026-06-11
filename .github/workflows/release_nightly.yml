@@ -37,6 +37,8 @@ jobs:
       - check_nightly_tag
     if: needs.check_nightly_tag.outputs.skip != 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -247,6 +249,8 @@ jobs:
       - bundle_windows_x86_64
       - bundle_windows_aarch64
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
