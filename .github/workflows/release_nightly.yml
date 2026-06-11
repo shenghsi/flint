@@ -271,6 +271,6 @@ jobs:
           mv ./artifacts/flint-remote-server-windows-aarch64.zip/flint-remote-server-windows-aarch64.zip release-artifacts/flint-remote-server-windows-aarch64.zip
           mv ./artifacts/flint-remote-server-windows-x86_64.zip/flint-remote-server-windows-x86_64.zip release-artifacts/flint-remote-server-windows-x86_64.zip
 
-          gh release upload nightly release-artifacts/* --clobber
+          gh release upload nightly release-artifacts/* --clobber --repo ${{ github.repository }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
