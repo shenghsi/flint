@@ -686,7 +686,7 @@ mod tests {
     use util::path;
 
     use multi_buffer::{MultiBufferRow, ToPoint as _};
-    use text::Point;
+    use text::{Point, ToOffset as _};
 
     use super::{CODE_LENS_SEPARATOR, displayed_title};
     use crate::{
@@ -1610,19 +1610,29 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(500));
         cx.run_until_parked();
 
+        let expected_after_scroll_resolved = editor.update(cx, |editor, cx| {
+            let mut expected_resolved = HashSet::default();
+            for (buffer_snapshot, visible_range, _) in editor.visible_buffer_ranges(cx) {
+                for line in &lens_lines {
+                    let lens_offset = Point::new(*line, 0).to_offset(&buffer_snapshot);
+                    if lens_offset >= visible_range.start.0
+                        && lens_offset <= visible_range.end.0
+                        && !initial_resolved.contains(line)
+                    {
+                        expected_resolved.insert(*line);
+                    }
+                }
+            }
+            expected_resolved
+        });
+
         let after_scroll_resolved = resolved_lines
             .lock()
             .unwrap()
             .drain(..)
             .collect::<HashSet<_>>();
-        // Once the lenses are first applied we insert a placeholder block per
-        // lens row so the line is reserved while the resolve is in flight.
-        // Those placeholder blocks add display height, so after scrolling to
-        // the end the visible buffer-row range is slightly smaller than it
-        // would be without them, and lens row 60 is just outside it.
         assert_eq!(
-            after_scroll_resolved,
-            HashSet::from_iter([70, 80, 90]),
+            after_scroll_resolved, expected_after_scroll_resolved,
             "Only newly visible lenses at the bottom should be resolved, not middle ones"
         );
     }
