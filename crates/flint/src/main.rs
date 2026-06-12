@@ -472,6 +472,7 @@ fn main() {
     });
 
     app.run(move |cx| {
+        log::info!("init: app.run started");
         cx.set_global(app_db);
         let db_trusted_paths = match workspace::WorkspaceDb::global(cx).fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
@@ -483,6 +484,7 @@ fn main() {
         trusted_worktrees::init(db_trusted_paths, cx);
         menu::init();
         flint_actions::init();
+        log::info!("init: basic globals");
 
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
@@ -490,6 +492,7 @@ fn main() {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
+        log::info!("init: settings");
         zlog_settings::init(cx);
         flint::watch_settings_files(fs.clone(), cx);
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
@@ -577,6 +580,7 @@ fn main() {
         );
 
         Client::set_global(client.clone(), cx);
+        log::info!("init: client");
 
         flint::init(cx);
         #[cfg(target_os = "macos")]
@@ -585,10 +589,12 @@ fn main() {
         client::init(&client, cx);
         title_bar::init(cx);
         feature_flags::FeatureFlagStore::init(cx);
+        log::info!("init: project/client/title_bar");
 
         let system_id = cx.foreground_executor().block_on(system_id).ok();
         let installation_id = cx.foreground_executor().block_on(installation_id).ok();
         let session = cx.foreground_executor().block_on(session);
+        log::info!("init: system_id/installation_id/session");
 
         let telemetry = client.telemetry();
         telemetry.start(
@@ -647,6 +653,7 @@ fn main() {
 
         auto_update::init(client.clone(), cx);
         reliability::init(client.clone(), cx);
+        log::info!("init: auto_update/reliability");
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
@@ -673,14 +680,17 @@ fn main() {
         dev_container::init(cx);
 
         load_embedded_fonts(cx);
+        log::info!("init: theme/fonts");
 
         editor::init(cx);
         image_viewer::init(cx);
         repl::notebook::init(cx);
         diagnostics::init(cx);
+        log::info!("init: editor/image_viewer/repl/diagnostics");
 
         workspace::init(app_state.clone(), cx);
         ui_prompt::init(cx);
+        log::info!("init: workspace");
 
         go_to_line::init(cx);
         file_finder::init(cx);
@@ -713,6 +723,7 @@ fn main() {
         language_tools::init(cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         git_ui::init(cx);
+        log::info!("init: vim/terminal/panels/notifications/git");
         if ENABLE_RETIRED_PRODUCT_SURFACES {
             feedback::init(cx);
         }
@@ -730,6 +741,7 @@ fn main() {
         which_key::init(cx);
         #[cfg(target_os = "windows")]
         etw_tracing::init(cx);
+        log::info!("init: ui components complete");
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -813,7 +825,9 @@ fn main() {
             }
         }
 
+        log::info!("init: menus/crash_handler setup");
         initialize_workspace(app_state.clone(), cx);
+        log::info!("init: workspace initialized, opening window");
 
         cx.activate(true);
 
