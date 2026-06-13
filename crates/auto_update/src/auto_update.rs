@@ -621,6 +621,17 @@ impl AutoUpdater {
         };
         let http_client = client.http_client();
 
+        if asset == "flint-remote-server" {
+            return get_remote_server_from_github(
+                release_channel,
+                &version,
+                os,
+                arch,
+                http_client,
+            )
+            .await;
+        }
+
         let path = format!("/releases/{}/{}/asset", release_channel.dev_name(), version,);
         let url = http_client.build_flint_cloud_url_with_query(
             &path,
@@ -877,6 +888,50 @@ impl AutoUpdater {
             Ok(kvp.read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?.is_some())
         })
     }
+}
+
+async fn get_remote_server_from_github(
+    release_channel: ReleaseChannel,
+    version: &str,
+    os: &str,
+    arch: &str,
+    http_client: Arc<HttpClientWithUrl>,
+) -> Result<ReleaseAsset> {
+    const REPO: &str = "zed-industries/flint";
+
+    let extension = if os == "windows" { "zip" } else { "gz" };
+    let asset_name = format!("flint-remote-server-{os}-{arch}.{extension}");
+
+    let http: Arc<dyn HttpClient> = http_client;
+    let release = match release_channel {
+        ReleaseChannel::Nightly => {
+            http_client::github::get_release_by_tag_name(REPO, "nightly", http).await?
+        }
+        _ if version == "latest" => {
+            let pre_release = matches!(release_channel, ReleaseChannel::Preview);
+            http_client::github::latest_github_release(REPO, true, pre_release, http).await?
+        }
+        _ => {
+            let tag = format!("v{version}");
+            http_client::github::get_release_by_tag_name(REPO, &tag, http).await?
+        }
+    };
+
+    let asset = release
+        .assets
+        .iter()
+        .find(|a| a.name == asset_name)
+        .with_context(|| {
+            format!(
+                "no asset named {asset_name} in release {}",
+                release.tag_name
+            )
+        })?;
+
+    Ok(ReleaseAsset {
+        version: release.tag_name.clone(),
+        url: asset.browser_download_url.clone(),
+    })
 }
 
 async fn download_remote_server_binary(
