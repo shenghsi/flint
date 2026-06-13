@@ -622,14 +622,8 @@ impl AutoUpdater {
         let http_client = client.http_client();
 
         if asset == "flint-remote-server" {
-            return get_remote_server_from_github(
-                release_channel,
-                &version,
-                os,
-                arch,
-                http_client,
-            )
-            .await;
+            return get_remote_server_from_github(release_channel, &version, os, arch, http_client)
+                .await;
         }
 
         let path = format!("/releases/{}/{}/asset", release_channel.dev_name(), version,);
