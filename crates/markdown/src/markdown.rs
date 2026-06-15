@@ -1,4 +1,5 @@
 pub mod html;
+mod latex;
 mod mermaid;
 pub mod parser;
 mod path_range;
@@ -10,6 +11,10 @@ use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
 use language::LanguageName;
 
+use latex::{
+    MathState, ParsedMarkdownMathEquation, RenderedMathImage, extract_math_equations,
+    render_display_math, rendered_inline_math,
+};
 use log::Level;
 use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
@@ -347,7 +352,8 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
-    _mermaid_theme_subscription: Option<Subscription>,
+    math_state: MathState,
+    _theme_subscription: Option<Subscription>,
     mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
@@ -363,6 +369,7 @@ pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
+    pub render_latex_equations: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
 }
@@ -514,15 +521,17 @@ impl Markdown {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let theme_subscription = if options.render_mermaid_diagrams {
-            Some(
-                cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
-                    this.invalidate_mermaid_cache(cx);
-                }),
-            )
-        } else {
-            None
-        };
+        let theme_subscription =
+            if options.render_mermaid_diagrams || options.render_latex_equations {
+                Some(
+                    cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
+                        this.invalidate_mermaid_cache(cx);
+                        this.invalidate_math_cache(cx);
+                    }),
+                )
+            } else {
+                None
+            };
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -539,7 +548,8 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
-            _mermaid_theme_subscription: theme_subscription,
+            math_state: MathState::default(),
+            _theme_subscription: theme_subscription,
             mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
@@ -598,6 +608,16 @@ impl Markdown {
 
         self.mermaid_state.clear();
         self.mermaid_state.update(&self.parsed_markdown, cx);
+        cx.notify();
+    }
+
+    pub fn invalidate_math_cache(&mut self, cx: &mut Context<Self>) {
+        if !self.options.render_latex_equations || self.parsed_markdown.math_equations.is_empty() {
+            return;
+        }
+
+        self.math_state.clear();
+        self.math_state.update(&self.parsed_markdown, cx);
         cx.notify();
     }
 
@@ -863,6 +883,7 @@ impl Markdown {
         let should_parse_links_only = self.options.parse_links_only;
         let should_parse_html = self.options.parse_html;
         let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
+        let should_render_latex_equations = self.options.render_latex_equations;
         let should_parse_heading_slugs = self.options.parse_heading_slugs;
         let should_parse_metadata_blocks = self.options.render_metadata_blocks;
         let language_registry = self.language_registry.clone();
@@ -880,6 +901,7 @@ impl Markdown {
                         html_blocks: BTreeMap::default(),
                         metadata_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
+                        math_equations: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
                     },
@@ -892,6 +914,7 @@ impl Markdown {
                 should_parse_html,
                 should_parse_heading_slugs,
                 should_parse_metadata_blocks,
+                should_render_latex_equations,
             );
             let events = parsed.events;
             let language_names = parsed.language_names;
@@ -903,6 +926,11 @@ impl Markdown {
             let footnote_definitions = parsed.footnote_definitions;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
+            } else {
+                BTreeMap::default()
+            };
+            let math_equations = if should_render_latex_equations {
+                extract_math_equations(&events)
             } else {
                 BTreeMap::default()
             };
@@ -968,6 +996,7 @@ impl Markdown {
                     html_blocks,
                     metadata_blocks,
                     mermaid_diagrams,
+                    math_equations,
                     heading_slugs,
                     footnote_definitions,
                 },
@@ -994,6 +1023,12 @@ impl Markdown {
                 } else {
                     this.mermaid_state.clear();
                     this.mermaid_showing_code.clear();
+                }
+                if this.options.render_latex_equations {
+                    let parsed_markdown = this.parsed_markdown.clone();
+                    this.math_state.update(&parsed_markdown, cx);
+                } else {
+                    this.math_state.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1097,6 +1132,7 @@ pub struct ParsedMarkdown {
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
+    pub(crate) math_equations: BTreeMap<usize, ParsedMarkdownMathEquation>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
 }
@@ -1928,7 +1964,15 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (
+            parsed_markdown,
+            images,
+            active_root_block,
+            render_mermaid_diagrams,
+            mermaid_state,
+            render_latex_equations,
+            math_state,
+        ) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
@@ -1936,6 +1980,8 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.options.render_latex_equations,
+                markdown.math_state.clone(),
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -2600,6 +2646,34 @@ impl Element for MarkdownElement {
                     builder.push_text(&format!("[{label}]"), range.clone());
                     builder.pop_text_style();
                 }
+                MarkdownEvent::DisplayMath(_) => {
+                    let equation = render_latex_equations
+                        .then(|| parsed_markdown.math_equations.get(&range.start))
+                        .flatten();
+                    let element = equation.and_then(|equation| {
+                        render_display_math(equation, &math_state, &self.style)
+                    });
+                    if let Some(element) = element {
+                        builder.push_sourced_element(range.clone(), element);
+                    } else {
+                        // Not rendered yet, render failed, or rendering disabled;
+                        // show the source so the LaTeX is at least readable.
+                        builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    }
+                }
+                MarkdownEvent::InlineMath(_) => {
+                    let equation = render_latex_equations
+                        .then(|| parsed_markdown.math_equations.get(&range.start))
+                        .flatten();
+                    let rendered =
+                        equation.and_then(|equation| rendered_inline_math(equation, &math_state));
+                    if let Some(rendered) = rendered {
+                        builder.push_inline_math(rendered);
+                    } else {
+                        // Not rendered yet, render failed, or rendering disabled.
+                        builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    }
+                }
             }
         }
         if self.style.code_block_overflow_x_scroll {
@@ -3054,6 +3128,25 @@ impl MarkdownElementBuilder {
             .last_mut()
             .unwrap()
             .extend([child.into_any_element()]);
+    }
+
+    fn push_inline_math(&mut self, rendered: RenderedMathImage) {
+        // Lay the surrounding paragraph out as a wrapping row so the equation
+        // image flows on the text line, mirroring how inline images are handled.
+        self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_baseline());
+        let RenderedMathImage {
+            image,
+            width,
+            height,
+            vertical_align,
+        } = rendered;
+        // MathJax reports a negative vertical-align for the portion of the box
+        // below the baseline; offset the image downward by that amount.
+        let element = div()
+            .relative()
+            .bottom(px(vertical_align))
+            .child(img(ImageSource::Render(image)).w(px(width)).h(px(height)));
+        self.push_image_child(element);
     }
 
     fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
@@ -4167,7 +4260,8 @@ mod tests {
     #[test]
     fn test_table_checkbox_detection() {
         let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false, false, false).events;
+        let events =
+            crate::parser::parse_markdown_with_options(md, false, false, false, false).events;
 
         let mut in_table = false;
         let mut cell_texts: Vec<String> = Vec::new();
@@ -4209,7 +4303,8 @@ mod tests {
     #[test]
     fn test_table_checkbox_marker_source_range() {
         let md = "| Done |\n|------|\n|  [x]  |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false, false, false).events;
+        let events =
+            crate::parser::parse_markdown_with_options(md, false, false, false, false).events;
 
         let mut in_cell = false;
         let mut pending_text = String::new();
@@ -4486,7 +4581,7 @@ mod tests {
     }
 
     fn has_code_block(markdown: &str) -> bool {
-        let parsed_data = parse_markdown_with_options(markdown, false, false, false);
+        let parsed_data = parse_markdown_with_options(markdown, false, false, false, false);
         parsed_data
             .events
             .iter()

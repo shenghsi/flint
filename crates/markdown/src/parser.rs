@@ -212,6 +212,7 @@ pub(crate) fn parse_markdown_with_options(
     parse_html: bool,
     parse_heading_slugs: bool,
     parse_metadata_blocks: bool,
+    parse_math: bool,
 ) -> ParsedMarkdownData {
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
@@ -223,11 +224,15 @@ pub(crate) fn parse_markdown_with_options(
     let mut within_metadata = false;
     let mut current_metadata_block_start = None;
     let mut metadata_block_content_range: Option<Range<usize>> = None;
-    let parse_options = if parse_metadata_blocks {
-        PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
-    } else {
-        PARSE_OPTIONS
-    };
+    let mut parse_options = PARSE_OPTIONS;
+    if parse_metadata_blocks {
+        parse_options |= Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
+    }
+    // Gated: enabling math globally would misread `$5 and $10` or shell
+    // variables in prose as equations.
+    if parse_math {
+        parse_options |= Options::ENABLE_MATH;
+    }
     let mut parser = Parser::new_ext(text, parse_options)
         .into_offset_iter()
         .peekable();
@@ -629,7 +634,12 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 state.push_event(range, MarkdownEvent::TaskListMarker(checked))
             }
-            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
+            pulldown_cmark::Event::InlineMath(content) => {
+                state.push_event(range, MarkdownEvent::InlineMath(content.to_string()))
+            }
+            pulldown_cmark::Event::DisplayMath(content) => {
+                state.push_event(range, MarkdownEvent::DisplayMath(content.to_string()))
+            }
         }
     }
 
@@ -653,7 +663,7 @@ pub(crate) fn parse_markdown_with_options(
 }
 
 pub fn parse_markdown_events(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
-    parse_markdown_with_options(text, false, false, false).events
+    parse_markdown_with_options(text, false, false, false, false).events
 }
 
 fn build_footnote_definitions(
@@ -752,6 +762,10 @@ pub enum MarkdownEvent {
     Rule,
     /// A task list marker, rendered as a checkbox in HTML. Contains a true when it is checked.
     TaskListMarker(bool),
+    /// Inline math (`$...$`), containing the LaTeX source between the delimiters.
+    InlineMath(String),
+    /// Display math (`$$...$$`), containing the LaTeX source between the delimiters.
+    DisplayMath(String),
     /// Start of a root-level block (a top-level structural element like a paragraph, heading, list, etc.).
     RootStart,
     /// End of a root-level block. Contains the root block index.
@@ -908,10 +922,10 @@ mod tests {
     use super::MarkdownTag::*;
     use super::*;
 
-    const CONDITIONAL_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
-    const UNWANTED_OPTIONS: Options = Options::ENABLE_MATH
-        .union(Options::ENABLE_DEFINITION_LIST)
-        .union(Options::ENABLE_WIKILINKS);
+    const CONDITIONAL_OPTIONS: Options =
+        Options::ENABLE_YAML_STYLE_METADATA_BLOCKS.union(Options::ENABLE_MATH);
+    const UNWANTED_OPTIONS: Options =
+        Options::ENABLE_DEFINITION_LIST.union(Options::ENABLE_WIKILINKS);
 
     #[test]
     fn all_options_considered() {
@@ -936,9 +950,52 @@ mod tests {
     }
 
     #[test]
+    fn test_math_events_emitted_when_enabled() {
+        let parsed = parse_markdown_with_options(
+            "Inline $x^2$ here.\n\n$$E = mc^2$$",
+            false,
+            false,
+            false,
+            true,
+        );
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, InlineMath(source) if source == "x^2")),
+            "inline math should be emitted with its source"
+        );
+        assert!(
+            parsed.events.iter().any(
+                |(_, event)| matches!(event, DisplayMath(source) if source.contains("E = mc^2"))
+            ),
+            "display math should be emitted with its source"
+        );
+    }
+
+    #[test]
+    fn test_math_not_parsed_when_disabled() {
+        let parsed =
+            parse_markdown_with_options("Costs $5 and $10 today.", false, false, false, false);
+        assert!(
+            !parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, InlineMath(_) | DisplayMath(_))),
+            "dollar signs in prose must not be parsed as math when disabled"
+        );
+    }
+
+    #[test]
     fn test_yaml_style_metadata_block() {
         assert_eq!(
-            parse_markdown_with_options("---\ntitle: Post\n---\n# Heading", false, false, true),
+            parse_markdown_with_options(
+                "---\ntitle: Post\n---\n# Heading",
+                false,
+                false,
+                true,
+                false
+            ),
             ParsedMarkdownData {
                 events: vec![
                     (0..19, RootStart),
@@ -986,6 +1043,7 @@ mod tests {
             false,
             false,
             true,
+            false,
         );
         assert!(
             parsed
@@ -1002,6 +1060,7 @@ mod tests {
             false,
             false,
             true,
+            false,
         );
 
         assert_eq!(
@@ -1027,8 +1086,13 @@ mod tests {
 
     #[test]
     fn test_metadata_blocks_store_fallback_for_nested_yaml() {
-        let parsed =
-            parse_markdown_with_options("---\ntags:\n  - flint\n---\nBody", false, false, true);
+        let parsed = parse_markdown_with_options(
+            "---\ntags:\n  - flint\n---\nBody",
+            false,
+            false,
+            true,
+            false,
+        );
 
         assert_eq!(
             parsed.metadata_blocks,
@@ -1087,6 +1151,7 @@ mod tests {
                 "  <!--\nrdoc-file=string.c\n-->\nReturns",
                 false,
                 false,
+                false,
                 false
             ),
             ParsedMarkdownData {
@@ -1116,6 +1181,7 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "&nbsp;&nbsp; https://some.url some \\`&#9658;\\` text",
+                false,
                 false,
                 false,
                 false,
@@ -1160,6 +1226,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
             )
             .events,
             vec![
@@ -1192,6 +1259,7 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "-- --- ... \"double quoted\" 'single quoted' ----------",
+                false,
                 false,
                 false,
                 false,
@@ -1231,6 +1299,7 @@ mod tests {
                 "```rust\nfn main() {\n let a = 1;\n}\n```",
                 false,
                 false,
+                false,
                 false
             ),
             ParsedMarkdownData {
@@ -1261,7 +1330,7 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_markdown_with_options("    fn main() {}", false, false, false),
+            parse_markdown_with_options("    fn main() {}", false, false, false, false),
             ParsedMarkdownData {
                 events: vec![
                     (4..16, RootStart),
@@ -1287,7 +1356,7 @@ mod tests {
     }
 
     fn assert_code_block_does_not_emit_links(markdown: &str) {
-        let parsed = parse_markdown_with_options(markdown, false, false, false);
+        let parsed = parse_markdown_with_options(markdown, false, false, false, false);
         let mut code_block_depth = 0;
         let mut code_block_count = 0;
         let mut saw_text_inside_code_block = false;
@@ -1345,7 +1414,8 @@ mod tests {
                 "+++\ntitle = \"Example\"\n+++\n\nParagraph",
                 false,
                 false,
-                true
+                true,
+                false
             ),
             ParsedMarkdownData {
                 events: vec![
@@ -1385,6 +1455,7 @@ mod tests {
                 "+++\ntitle = \"Example\"\n+++\n\nParagraph",
                 false,
                 false,
+                false,
                 false
             ),
             ParsedMarkdownData {
@@ -1408,7 +1479,7 @@ mod tests {
 |------|---------|
 | [x]  | Fix bug |
 | [ ]  | Add feature |";
-        let parsed = parse_markdown_with_options(markdown, false, false, false);
+        let parsed = parse_markdown_with_options(markdown, false, false, false, false);
 
         let mut in_table = false;
         let mut saw_task_list_marker = false;
@@ -1485,6 +1556,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
         assert_eq!(
             parsed.events,
@@ -1516,6 +1588,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
         assert_eq!(parsed.footnote_definitions.len(), 2);
         assert!(parsed.footnote_definitions.contains_key("a"));
@@ -1531,6 +1604,7 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "https:/\\/example.com is equivalent to https://example&#46;com!",
+                false,
                 false,
                 false,
                 false,
@@ -1577,6 +1651,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
             )
             .events,
             [
@@ -1611,6 +1686,7 @@ mod tests {
             false,
             true,
             false,
+            false,
         );
         assert_eq!(parsed.heading_slugs.len(), 5);
         assert!(parsed.heading_slugs.contains_key("hello-world"));
@@ -1627,6 +1703,7 @@ mod tests {
             false,
             true,
             false,
+            false,
         );
         let first = parsed.heading_slugs.get("duplicate").copied();
         let second = parsed.heading_slugs.get("duplicate-1").copied();
@@ -1637,7 +1714,8 @@ mod tests {
 
     #[test]
     fn test_heading_slug_collision_with_dedup_suffix() {
-        let parsed = parse_markdown_with_options("# Foo\n\n## Foo\n\n## Foo 1", false, true, false);
+        let parsed =
+            parse_markdown_with_options("# Foo\n\n## Foo\n\n## Foo 1", false, true, false, false);
         assert_eq!(parsed.heading_slugs.len(), 3);
         assert!(parsed.heading_slugs.contains_key("foo"));
         assert!(parsed.heading_slugs.contains_key("foo-1"));
@@ -1649,7 +1727,7 @@ mod tests {
         use pulldown_cmark::BlockQuoteKind;
 
         let markdown = "\n> [!NOTE]\n> A note.\n\n> [!TIP]\n> A tip.\n\n> [!IMPORTANT]\n> Important.\n\n> [!WARNING]\n> A warning.\n\n> [!CAUTION]\n> A caution.\n\n> Plain quote.\n";
-        let parsed = parse_markdown_with_options(markdown, false, false, false);
+        let parsed = parse_markdown_with_options(markdown, false, false, false, false);
 
         let block_quote_kinds: Vec<_> = parsed
             .events

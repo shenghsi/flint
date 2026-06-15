@@ -228,11 +228,10 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
     )
 }
 
-/// We deliberately block rendering of some diagram types, even though `merman`
-/// supports them, because we have not yet written custom CSS to ensure text is
-/// readable.
+/// The diagram types `merman` can render at theme-aware DOM parity. Unlisted
+/// types fall through to a plain code block. `merman` may parse more than this;
+/// a type is only added here once its themed output is verified readable.
 fn is_supported_diagram_type(source: &str) -> bool {
-    /// If updating this list, also update the system prompt!
     const SUPPORTED_PREFIXES: &[&str] = &[
         "flowchart",
         "graph",
@@ -249,6 +248,22 @@ fn is_supported_diagram_type(source: &str) -> bool {
         "quadrantChart",
         "xychart-beta",
         "journey",
+        "sankey-beta",
+        "block-beta",
+        "kanban",
+        "architecture-beta",
+        "radar-beta",
+        "treemap",
+        "treemap-beta",
+        "requirementDiagram",
+        "packet-beta",
+        "packet",
+        "info",
+        "C4Context",
+        "C4Container",
+        "C4Component",
+        "C4Dynamic",
+        "C4Deployment",
     ];
     let first_token = source
         .trim_start()
@@ -667,7 +682,7 @@ mod tests {
     fn test_extract_mermaid_diagrams_parses_scale() {
         let markdown = "```mermaid 150\ngraph TD;\n```\n\n```rust\nfn main() {}\n```";
         let events =
-            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+            crate::parser::parse_markdown_with_options(markdown, false, false, false, false).events;
         let diagrams = extract_mermaid_diagrams(markdown, &events);
 
         assert_eq!(diagrams.len(), 1);
@@ -678,23 +693,29 @@ mod tests {
 
     #[test]
     fn test_unsupported_diagram_types_are_skipped() {
+        // `wardley-beta` and `venn-beta` are not yet supported by `merman`, so
+        // they should fall through to a plain code block. `sankey-beta` and the
+        // flowchart are supported and should be extracted.
         let markdown = concat!(
+            "```mermaid\nwardley-beta\n```\n\n",
+            "```mermaid\nvenn-beta\n```\n\n",
             "```mermaid\nsankey-beta\n```\n\n",
-            "```mermaid\nblock-beta\n```\n\n",
             "```mermaid\nflowchart TD\n    A --> B\n```",
         );
         let events =
-            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+            crate::parser::parse_markdown_with_options(markdown, false, false, false, false).events;
         let diagrams = extract_mermaid_diagrams(markdown, &events);
         assert_eq!(
             diagrams.len(),
-            1,
-            "Only the flowchart should be extracted; sankey and block should be skipped"
+            2,
+            "sankey and flowchart should be extracted; wardley and venn should be skipped"
         );
-        let diagram = diagrams.values().next().unwrap();
         assert!(
-            diagram.contents.contents.contains("flowchart"),
-            "The extracted diagram should be the flowchart"
+            diagrams
+                .values()
+                .all(|diagram| !diagram.contents.contents.contains("wardley")
+                    && !diagram.contents.contents.contains("venn")),
+            "Unsupported diagram types must not be extracted"
         );
     }
 

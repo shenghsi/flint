@@ -310,6 +310,7 @@ impl Editor {
                         MarkdownOptions {
                             parse_html: true,
                             render_mermaid_diagrams: true,
+                            render_latex_equations: true,
                             parse_heading_slugs: false,
                             render_metadata_blocks: true,
                             ..Default::default()

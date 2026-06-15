@@ -4321,6 +4321,7 @@ dependencies = [
  "language_selector",
  "language_tools",
  "languages",
+ "latex_render",
  "line_ending_selector",
  "log",
  "markdown",
@@ -7341,6 +7342,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "latex_render"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "gpui",
+ "log",
+ "node_runtime",
+ "serde",
+ "serde_json",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7791,6 +7807,7 @@ dependencies = [
  "html5ever 0.27.0",
  "language",
  "languages",
+ "latex_render",
  "linkify",
  "log",
  "markup5ever_rcdom",

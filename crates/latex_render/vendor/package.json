@@ -1,0 +1,14 @@
+{
+  "name": "flint-latex-render-bundle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build tooling for the bundled MathJax tex->SVG renderer used by the latex_render crate.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/render.js --bundle --platform=node --format=esm --external:node:* --outfile=mathjax-svg.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.0",
+    "mathjax-full": "3.2.2"
+  }
+}
