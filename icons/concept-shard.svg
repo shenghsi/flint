@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- macOS-style rounded square background -->
+  <rect width="512" height="512" rx="115" fill="#0e0e0e"/>
+
+  <!-- Stone shard: diamond with 4 facets, light source from upper-left -->
+  <!-- Upper-left face (highlight) -->
+  <polygon points="256,72 72,256 256,256" fill="#c0c4cc"/>
+  <!-- Upper-right face (mid-light) -->
+  <polygon points="256,72 440,256 256,256" fill="#909498"/>
+  <!-- Lower-left face (mid-shadow) -->
+  <polygon points="72,256 256,440 256,256" fill="#70747c"/>
+  <!-- Lower-right face (deep shadow) -->
+  <polygon points="440,256 256,440 256,256" fill="#4e5258"/>
+
+  <!-- Subtle inner facet lines -->
+  <line x1="256" y1="72" x2="256" y2="440" stroke="#ffffff" stroke-width="1.5" opacity="0.10"/>
+  <line x1="72"  y1="256" x2="440" y2="256" stroke="#ffffff" stroke-width="1.5" opacity="0.10"/>
+
+  <!-- Edge outline -->
+  <polygon points="256,72 440,256 256,440 72,256"
+           fill="none" stroke="#c8ccd4" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- Spark star at top  (cx=256, cy=44, outer=18, inner=6) -->
+  <path d="M 256 26 L 260.24 40.76 L 274 44 L 260.24 47.24 L 256 62 L 251.76 47.24 L 238 44 L 251.76 40.76 Z"
+        fill="#ffd534"/>
+
+  <!-- Spark star at bottom (cx=256, cy=468) -->
+  <path d="M 256 450 L 260.24 464.76 L 274 468 L 260.24 471.24 L 256 486 L 251.76 471.24 L 238 468 L 251.76 464.76 Z"
+        fill="#ffd534"/>
+</svg>

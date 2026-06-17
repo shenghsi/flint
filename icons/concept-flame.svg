@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Radial gradient: bright yellow core → amber → orange edge -->
+    <radialGradient id="flameGrad" cx="50%" cy="62%" r="52%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#fff5a0"/>
+      <stop offset="22%"  stop-color="#ffd534"/>
+      <stop offset="58%"  stop-color="#ffb420"/>
+      <stop offset="100%" stop-color="#ff8014"/>
+    </radialGradient>
+
+    <!-- Clip the gradient to the flame shape -->
+    <clipPath id="flameClip">
+      <path d="
+        M 256 72
+        C 310 92, 410 195, 400 302
+        C 390 382, 338 448, 256 452
+        C 174 448, 122 382, 112 302
+        C 102 195, 202 92, 256 72 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- macOS-style rounded square background -->
+  <rect width="512" height="512" rx="115" fill="#0e0e0e"/>
+
+  <!-- Flame body -->
+  <path d="
+      M 256 72
+      C 310 92, 410 195, 400 302
+      C 390 382, 338 448, 256 452
+      C 174 448, 122 382, 112 302
+      C 102 195, 202 92, 256 72 Z"
+    fill="url(#flameGrad)"/>
+
+  <!-- Spark star at the flame tip (cx=256, cy=52, outer=18, inner=6) -->
+  <path d="M 256 34 L 260.24 48.76 L 274 52 L 260.24 55.24 L 256 70 L 251.76 55.24 L 238 52 L 251.76 48.76 Z"
+        fill="#ffd534"/>
+</svg>
