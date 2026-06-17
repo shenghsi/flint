@@ -5,28 +5,28 @@
   <!--
     >_ prompt — pixel font, block=12px, top-left
     > is a 4-col × 7-row diagonal; _ is 5-col × 1-row (baseline only)
-    x-origin=102 (shifted +60 = one char cell right), y-origin=50
-    cols: 102 114 126 138   rows: 50 62 74 86 98 110 122
+    x-origin=222 (shifted +180 total = three char cells right), y-origin=50
+    cols: 222 234 246 258   rows: 50 62 74 86 98 110 122
   -->
 
   <!-- > -->
   <g fill="#e4e4e4">
-    <rect x="102" y="50"  width="12" height="12"/>  <!-- r0 c0 -->
-    <rect x="114" y="62"  width="12" height="12"/>  <!-- r1 c1 -->
-    <rect x="126" y="74"  width="12" height="12"/>  <!-- r2 c2 -->
-    <rect x="138" y="86"  width="12" height="12"/>  <!-- r3 c3 tip -->
-    <rect x="126" y="98"  width="12" height="12"/>  <!-- r4 c2 -->
-    <rect x="114" y="110" width="12" height="12"/>  <!-- r5 c1 -->
-    <rect x="102" y="122" width="12" height="12"/>  <!-- r6 c0 -->
+    <rect x="222" y="50"  width="12" height="12"/>  <!-- r0 c0 -->
+    <rect x="234" y="62"  width="12" height="12"/>  <!-- r1 c1 -->
+    <rect x="246" y="74"  width="12" height="12"/>  <!-- r2 c2 -->
+    <rect x="258" y="86"  width="12" height="12"/>  <!-- r3 c3 tip -->
+    <rect x="246" y="98"  width="12" height="12"/>  <!-- r4 c2 -->
+    <rect x="234" y="110" width="12" height="12"/>  <!-- r5 c1 -->
+    <rect x="222" y="122" width="12" height="12"/>  <!-- r6 c0 -->
   </g>
 
   <!-- _ cursor (amber) — 1-char gap then 5 cols at baseline -->
   <g fill="#ffd534">
-    <rect x="162" y="122" width="12" height="12"/>
-    <rect x="174" y="122" width="12" height="12"/>
-    <rect x="186" y="122" width="12" height="12"/>
-    <rect x="198" y="122" width="12" height="12"/>
-    <rect x="210" y="122" width="12" height="12"/>
+    <rect x="282" y="122" width="12" height="12"/>
+    <rect x="294" y="122" width="12" height="12"/>
+    <rect x="306" y="122" width="12" height="12"/>
+    <rect x="318" y="122" width="12" height="12"/>
+    <rect x="330" y="122" width="12" height="12"/>
   </g>
 
   <!--
