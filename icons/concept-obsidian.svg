@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Obsidian body: near-black with deep purple tint -->
+    <linearGradient id="obsidianGrad" x1="20%" y1="0%" x2="80%" y2="100%">
+      <stop offset="0%"   stop-color="#28203c"/>
+      <stop offset="35%"  stop-color="#1a1628"/>
+      <stop offset="100%" stop-color="#0d0c14"/>
+    </linearGradient>
+
+    <!-- Iridescent edge gleam (the sharp cutting edge) -->
+    <linearGradient id="gleamGrad"
+                    gradientUnits="userSpaceOnUse"
+                    x1="395" y1="108" x2="445" y2="272">
+      <stop offset="0%"   stop-color="#c0a0ff"/>
+      <stop offset="50%"  stop-color="#7850c0"/>
+      <stop offset="100%" stop-color="#4030a0" stop-opacity="0.3"/>
+    </linearGradient>
+
+    <!-- Spark glow at the sharp corner -->
+    <radialGradient id="sparkGlow" cx="392" cy="108" r="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#ffd534" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#ffd534" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background: near-black, barely purple -->
+  <rect width="512" height="512" rx="115" fill="#090710"/>
+
+  <!-- Obsidian shard — irregular 7-point polygon
+       Slightly asymmetric to look like a natural glass flake.
+       The right edge is the sharp "cutting edge" that catches light.
+  -->
+  <polygon points="256,68 392,108 450,268 400,425 136,448 68,262 128,112"
+           fill="url(#obsidianGrad)"
+           stroke="#2c2440" stroke-width="1.5" stroke-linejoin="round"/>
+
+  <!-- Upper-left face: very slight highlight (glassy reflection) -->
+  <polygon points="256,68 128,112 68,262 200,200"
+           fill="#ffffff" opacity="0.025"/>
+
+  <!-- Right cutting edge — iridescent gleam -->
+  <!-- Thick soft glow layer -->
+  <line x1="392" y1="108" x2="450" y2="268"
+        stroke="#8060d0" stroke-width="7" stroke-linecap="round" opacity="0.5"/>
+  <!-- Thin bright highlight on the edge -->
+  <line x1="392" y1="108" x2="450" y2="268"
+        stroke="#d0c0ff" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+
+  <!-- Spark glow halo at the sharp corner -->
+  <circle cx="392" cy="108" r="48" fill="url(#sparkGlow)"/>
+
+  <!-- Spark star at the sharp corner (outer r=16, inner r=5) -->
+  <path d="M 392 90 L 396.24 104.76 L 410 108 L 396.24 111.24 L 392 126 L 387.76 111.24 L 374 108 L 387.76 104.76 Z"
+        fill="#ffd534"/>
+</svg>
