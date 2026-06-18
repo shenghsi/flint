@@ -33,6 +33,16 @@ kind.
 - **THEN** the panel updates the displayed title or attention state for that
   thread
 
+### Requirement: Existing threads can be refocused
+The panel SHALL allow users to focus a live (already-open) terminal thread
+without spawning a duplicate process. This is distinct from resuming a
+historical thread, which starts a new terminal session.
+
+#### Scenario: User clicks a live thread
+- **WHEN** the user clicks a live Codex or Claude thread row in the panel
+- **THEN** the corresponding open terminal item is focused instead of
+  starting a new terminal process
+
 ## ADDED Requirements
 
 ### Requirement: Historical agent threads can be resumed
