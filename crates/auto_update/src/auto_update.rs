@@ -891,7 +891,7 @@ async fn get_remote_server_from_github(
     arch: &str,
     http_client: Arc<HttpClientWithUrl>,
 ) -> Result<ReleaseAsset> {
-    const REPO: &str = "zed-industries/flint";
+    const REPO: &str = "shenghsi/flint";
 
     let extension = if os == "windows" { "zip" } else { "gz" };
     let asset_name = format!("flint-remote-server-{os}-{arch}.{extension}");
