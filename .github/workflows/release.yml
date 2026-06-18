@@ -23,7 +23,12 @@ jobs:
       - name: Free disk space
         run: |
           df -h /
-          sudo rm -rf /Applications/Xcode_*.app 2>/dev/null || true
+          active_xcode="$(xcode-select -p | sed 's#/Contents/Developer$##')"
+          for xcode_app in /Applications/Xcode_*.app; do
+            if [ "$xcode_app" != "$active_xcode" ]; then
+              sudo rm -rf "$xcode_app" 2>/dev/null || true
+            fi
+          done
           sudo rm -rf /Users/runner/.rustup/toolchains/1.*-x86_64* 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
@@ -134,7 +139,12 @@ jobs:
       - name: Free disk space
         run: |
           df -h /
-          sudo rm -rf /Applications/Xcode_*.app 2>/dev/null || true
+          active_xcode="$(xcode-select -p | sed 's#/Contents/Developer$##')"
+          for xcode_app in /Applications/Xcode_*.app; do
+            if [ "$xcode_app" != "$active_xcode" ]; then
+              sudo rm -rf "$xcode_app" 2>/dev/null || true
+            fi
+          done
           sudo rm -rf /Users/runner/.rustup/toolchains/1.*-x86_64* 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
@@ -246,7 +256,12 @@ jobs:
       - name: Free disk space
         run: |
           df -h /
-          sudo rm -rf /Applications/Xcode_*.app 2>/dev/null || true
+          active_xcode="$(xcode-select -p | sed 's#/Contents/Developer$##')"
+          for xcode_app in /Applications/Xcode_*.app; do
+            if [ "$xcode_app" != "$active_xcode" ]; then
+              sudo rm -rf "$xcode_app" 2>/dev/null || true
+            fi
+          done
           sudo rm -rf /Users/runner/.rustup/toolchains/1.*-x86_64* 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
@@ -289,7 +304,12 @@ jobs:
       - name: Free disk space
         run: |
           df -h /
-          sudo rm -rf /Applications/Xcode_*.app 2>/dev/null || true
+          active_xcode="$(xcode-select -p | sed 's#/Contents/Developer$##')"
+          for xcode_app in /Applications/Xcode_*.app; do
+            if [ "$xcode_app" != "$active_xcode" ]; then
+              sudo rm -rf "$xcode_app" 2>/dev/null || true
+            fi
+          done
           sudo rm -rf /Users/runner/.rustup/toolchains/1.*-aarch64* 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
