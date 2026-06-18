@@ -24,6 +24,9 @@ instead of only tracking its own in-memory state.
 - Keep the registry code-level extensible (no user-facing custom-agent
   config)
 - Resolve agent home directories correctly across macOS, Linux, and Windows
+- Work correctly for remote (SSH) projects, where agent terminal threads and
+  their persisted session history live on the remote host, not the local
+  machine
 
 **Non-Goals:**
 
@@ -49,21 +52,39 @@ because it would make `terminal_view` own three separate concerns (terminal
 rendering, disk-history parsing for two different on-disk formats, and panel
 rendering) that don't otherwise relate to it.
 
-### Read agent config directories directly, not through the project `Fs` abstraction
+### Resolve the project's host before reading agent config directories, then read through `project.fs()`
 
-`~/.claude` and `~/.codex` are user-home config directories, not project
-files, so they don't go through `fs::Fs`/`FakeFs` (which models the
-*project* tree). Direct `smol::fs`/`std::fs` reads inside
-`cx.background_spawn` already have precedent (`auto_update.rs`,
-`git/repository.rs`, `client/telemetry.rs`). Path resolution uses
-`paths::home_dir()` (backed by the `dirs` crate, correct on macOS, Linux, and
-Windows) joined with `.claude`/`.codex`, overridden by
-`CLAUDE_CONFIG_DIR`/`CODEX_HOME` env vars when set.
+Terminal threads for a remote (SSH) project are spawned on the remote host
+(`crates/project/src/terminals.rs`'s `is_via_remote`/`create_remote_shell`),
+so a remote project's `~/.claude`/`~/.codex` directories live on that remote
+host, not the local machine. `project.fs()` already handles this
+transparently: for local projects it's the real local filesystem, for
+remote projects it's a proxy that talks to the remote `headless_project`
+server. Reading through it (instead of raw `std::fs`/`smol::fs`) means one
+code path is correct for both cases, and it stays consistent with this
+codebase's `FakeFs`-based testing convention.
 
-Alternative considered: route through `fs::Fs` for testability consistency.
-Rejected because that trait is scoped to project trees; tests instead
-override `CLAUDE_CONFIG_DIR`/`CODEX_HOME` to point at a tempdir of fixtures,
-exercising the same code path real usage does.
+`paths::home_dir()` only resolves the *local* machine's home directory, so
+it can't be used as-is to find the remote host's `$HOME`. Home-directory
+(and `CLAUDE_CONFIG_DIR`/`CODEX_HOME` override) resolution branches on the
+project's connection:
+
+- **Local project**: `paths::home_dir()` plus local `std::env::var(...)`
+  overrides — synchronous, no round trip.
+- **Remote project**: reuse `crates/project/src/environment.rs`'s existing
+  remote-environment resolution (`remote_directory_environment`, already
+  used to set up terminal/task environments) to fetch the remote host's env
+  map, read `$HOME` and any `CLAUDE_CONFIG_DIR`/`CODEX_HOME` overrides from
+  it. This is async and can fail (e.g. connection dropped); on failure, log
+  the error and treat that agent kind's historical scan for this project as
+  unavailable rather than empty — the panel distinguishes "no history" from
+  "couldn't scan" so a connection hiccup doesn't look like an empty history.
+
+Alternative considered: scope remote-project support out of v1 entirely
+(local-only, as originally drafted). Rejected once traced through
+`terminals.rs` — remote projects are an existing, supported Flint workflow,
+and silently showing wrong-host (or no) history for them would be an actual
+correctness gap rather than a reasonable cut corner.
 
 ### Two-tier dedup instead of a single robust matching scheme
 

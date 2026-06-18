@@ -20,10 +20,12 @@
 
 ## 4. History Providers
 
-- [ ] 4.1 Implement the Claude history provider: read `$CLAUDE_CONFIG_DIR`/`~/.claude/history.jsonl`, group by `sessionId` keeping the max-timestamp entry, filter by worktree-root match
-- [ ] 4.2 Implement the Codex history provider: list rollout files under `$CODEX_HOME`/`~/.codex/sessions` capped to the most recent ~200, read each file's first line for `cwd`/`id`/`timestamp`, join titles from `session_index.jsonl`
-- [ ] 4.3 Implement the two-tier dedup (exact id match; same-kind/same-project/launch-time heuristic) when building the merged live+historical view
-- [ ] 4.4 Add `fs.watch`-based refresh for both providers' source files/directories (debounced), avoiding polling
+- [ ] 4.1 Implement host-aware base-directory resolution: local projects use `paths::home_dir()` + local env var overrides; remote projects use `project::environment`'s remote-environment resolution (`remote_directory_environment`) to fetch `$HOME`/`CLAUDE_CONFIG_DIR`/`CODEX_HOME` from the remote host, surfacing a distinct "couldn't scan" state on resolution failure
+- [ ] 4.2 Implement the Claude history provider: read `<claude_home>/history.jsonl` via `project.fs()`, group by `sessionId` keeping the max-timestamp entry, filter by worktree-root match
+- [ ] 4.3 Implement the Codex history provider: list rollout files under `<codex_home>/sessions` via `project.fs()` capped to the most recent ~200, read each file's first line for `cwd`/`id`/`timestamp`, join titles from `session_index.jsonl`
+- [ ] 4.4 Implement the two-tier dedup (exact id match; same-kind/same-project/launch-time heuristic) when building the merged live+historical view
+- [ ] 4.5 Add `fs.watch`-based refresh for both providers' source files/directories (debounced), avoiding polling
+- [ ] 4.6 Add a remote-project test double (fake remote environment + `FakeFs`) exercising the remote resolution path, including the connection-failure case
 
 ## 5. Panel UI
 

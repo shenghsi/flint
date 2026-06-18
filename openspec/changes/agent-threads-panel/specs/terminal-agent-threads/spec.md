@@ -59,6 +59,17 @@ historical thread in a new center terminal session.
 - **THEN** the panel shows it once, as a live thread, not as a separate
   historical entry
 
+#### Scenario: Remote project's history is read from the remote host
+- **WHEN** the current workspace's project is a remote (SSH) connection
+- **THEN** historical threads are read from that remote host's persisted
+  session data, not the local machine's
+
+#### Scenario: Remote history cannot be read
+- **WHEN** the current workspace's project is a remote (SSH) connection and
+  resolving its environment or session data fails
+- **THEN** the affected agent kind's section indicates that history could
+  not be scanned, distinct from showing no history
+
 ### Requirement: Agent thread sections are capped and foldable
 Each agent kind's section SHALL display at most a configurable number of
 threads (default 5), SHALL offer a control to reveal the remaining threads,

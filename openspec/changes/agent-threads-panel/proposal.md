@@ -25,8 +25,9 @@ way to resume a past conversation with extra CLI flags like
 - Add per-agent history providers that read persisted session data
   (`~/.claude/history.jsonl`; `~/.codex/sessions/**` joined with
   `session_index.jsonl`), honoring `CLAUDE_CONFIG_DIR`/`CODEX_HOME`
-  overrides, and resolving the home directory correctly on macOS, Linux, and
-  Windows
+  overrides, resolving the home directory correctly on macOS, Linux, and
+  Windows, and resolving it on the correct host (local or remote) for SSH
+  projects via `project.fs()` and the existing remote-environment resolver
 - Merge live (currently-open terminal) and historical (resumable, on-disk)
   threads per agent section, deduplicated by exact session id (resumed
   threads) and a same-kind/same-project/launch-time heuristic (brand-new
