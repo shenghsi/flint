@@ -2874,14 +2874,22 @@ impl GitPanel {
         let Some(mut stdin) = child.stdin.take() else {
             anyhow::bail!("commit message generator stdin is unavailable");
         };
-        stdin
-            .write_all(prompt.as_bytes())
-            .await
-            .context("failed to write prompt to commit message generator")?;
-        stdin
-            .close()
-            .await
-            .context("failed to close commit message generator stdin")?;
+        // A short-lived generator command may exit (and close its end of the
+        // pipe) before we finish writing the prompt; that's not a real
+        // failure, so let the exit status/stderr below explain what happened.
+        match stdin.write_all(prompt.as_bytes()).await {
+            Ok(()) => {
+                if let Err(err) = stdin.close().await
+                    && err.kind() != ErrorKind::BrokenPipe
+                {
+                    return Err(err).context("failed to close commit message generator stdin");
+                }
+            }
+            Err(err) if err.kind() == ErrorKind::BrokenPipe => {}
+            Err(err) => {
+                return Err(err).context("failed to write prompt to commit message generator");
+            }
+        }
         drop(stdin);
 
         let output = child
