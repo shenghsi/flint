@@ -561,8 +561,6 @@
     },
   },
   {
-  {
-  {
     "context": "ThreadsSidebar",
     "use_key_equivalents": true,
     "bindings": {
