@@ -228,6 +228,35 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
     )
 }
 
+/// Skips a leading YAML frontmatter block (`---` ... `---`) before diagram-type
+/// detection. `merman` strips this same block before parsing, so without this
+/// a diagram that sets e.g. `layout` or `theme` via frontmatter has `---` as its
+/// first token and gets misdetected as unsupported.
+fn strip_frontmatter(source: &str) -> &str {
+    let trimmed = source.trim_start();
+    if !trimmed.starts_with("---") {
+        return source;
+    }
+
+    let mut lines = trimmed.split_inclusive('\n');
+    let Some(opening) = lines.next() else {
+        return source;
+    };
+    if opening.trim_end() != "---" {
+        return source;
+    }
+
+    let mut consumed = opening.len();
+    for line in lines {
+        consumed += line.len();
+        if line.trim_end() == "---" {
+            return &trimmed[consumed..];
+        }
+    }
+
+    source
+}
+
 /// The diagram types `merman` can render at theme-aware DOM parity. Unlisted
 /// types fall through to a plain code block. `merman` may parse more than this;
 /// a type is only added here once its themed output is verified readable.
@@ -265,7 +294,7 @@ fn is_supported_diagram_type(source: &str) -> bool {
         "C4Dynamic",
         "C4Deployment",
     ];
-    let first_token = source
+    let first_token = strip_frontmatter(source)
         .trim_start()
         .split(|c: char| c.is_whitespace() || c == '\n')
         .next()
@@ -716,6 +745,29 @@ mod tests {
                 .all(|diagram| !diagram.contents.contents.contains("wardley")
                     && !diagram.contents.contents.contains("venn")),
             "Unsupported diagram types must not be extracted"
+        );
+    }
+
+    #[test]
+    fn test_diagram_type_detected_through_frontmatter() {
+        // Diagrams that set `layout`/`theme` via a YAML frontmatter block have
+        // `---` as their literal first token; detection must look past it.
+        let markdown = concat!(
+            "```mermaid\n",
+            "---\n",
+            "config:\n",
+            "  layout: elk\n",
+            "---\n",
+            "flowchart TD\n    A --> B\n",
+            "```",
+        );
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+        assert_eq!(
+            diagrams.len(),
+            1,
+            "a flowchart with frontmatter should still be detected as supported"
         );
     }
 
