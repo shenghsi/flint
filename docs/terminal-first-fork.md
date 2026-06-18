@@ -171,8 +171,8 @@ Example setting shape:
 {
   "git": {
     "commit_message_generator": {
-      "command": "codex",
-      "args": [],
+      "command": "claude",
+      "args": ["-p", "--disallowedTools", "Bash,Edit,Write,Read,WebFetch,WebSearch"],
       "env": {},
       "cwd": null,
       "timeout_seconds": 30,

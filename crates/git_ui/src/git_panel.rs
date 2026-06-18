@@ -4400,13 +4400,24 @@ impl GitPanel {
                     if !can_commit {
                         Tooltip::simple("No Changes to Commit", cx)
                     } else if !generator_configured {
-                        Tooltip::simple("Configure a commit message generator command", cx)
+                        Tooltip::with_meta(
+                            "Configure a commit message generator command",
+                            None,
+                            "Set \"git.commit_message_generator.command\" in your settings.json (e.g. \"claude\" or \"codex\")",
+                            cx,
+                        )
                     } else if let Some(last_error) = last_error.as_ref() {
-                        Tooltip::simple(format!("Last generation failed: {last_error}"), cx)
+                        Tooltip::with_meta(
+                            format!("Last generation failed: {last_error}"),
+                            None,
+                            "Edit \"git.commit_message_generator\" in your settings.json to fix or change the command",
+                            cx,
+                        )
                     } else if let Some(generator_label) = generator_label.as_ref() {
-                        Tooltip::for_action_in(
+                        Tooltip::with_meta_in(
                             format!("Generate Commit Message with {generator_label}"),
-                            &git::GenerateCommitMessage,
+                            Some(&git::GenerateCommitMessage),
+                            "Change the command via \"git.commit_message_generator\" in your settings.json",
                             &editor_focus_handle,
                             cx,
                         )

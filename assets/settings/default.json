@@ -1414,10 +1414,16 @@
     "worktree_directory": "../worktrees",
     // External command used to generate commit messages. The prompt and compressed diff are sent on stdin.
     "commit_message_generator": {
-      // Command executable. Use "codex", "claude", or another command that writes the message to stdout.
-      "command": "codex",
-      // Arguments passed to the command.
-      "args": [],
+      // Command executable. Use "claude", "codex", or another command that reads a prompt on
+      // stdin and writes the message to stdout.
+      "command": "claude",
+      // Arguments passed to the command. "-p"/"--print" runs Claude Code non-interactively,
+      // reading the prompt from stdin and writing only the final response to stdout.
+      // "--disallowedTools" keeps it from reaching for tools when it only needs to turn a diff
+      // into a commit message. (For "codex", use ["exec", "-s", "read-only", "--color", "never"]
+      // instead — plain "codex" launches its interactive TUI, which hangs until the generator
+      // times out.)
+      "args": ["-p", "--disallowedTools", "Bash,Edit,Write,Read,WebFetch,WebSearch"],
       // Environment variables added to the command.
       "env": {},
       // Working directory for the command. Defaults to the repository root.
