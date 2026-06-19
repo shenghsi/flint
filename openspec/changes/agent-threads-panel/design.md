@@ -35,6 +35,13 @@ instead of only tracking its own in-memory state.
 - User-configurable custom agent definitions via settings.json
 - Perfect dedup for multiple concurrent same-kind threads in the same project
   (documented heuristic limitation, see Decisions)
+- Detecting that a historical session is currently live in a terminal Flint
+  didn't spawn (e.g. the user ran `claude --resume <id>` directly in iTerm,
+  or over a bare SSH shell). The history providers can't distinguish "this
+  session ended" from "this session is open elsewhere" — only sessions
+  launched through Flint are tracked as live. Resuming a session that's
+  already open elsewhere is the user's responsibility, no different from
+  manually running a resume command twice in two terminals
 - Incremental/paginated "Show more" (v1 reveals everything once expanded)
 - Persisting fold/unfold state across restarts
 
