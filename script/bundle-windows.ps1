@@ -94,7 +94,10 @@ function CheckEnvironmentVariables {
 
     $script:canCodeSign = $true
     foreach ($var in $signingVars) {
-        if (-not (Test-Path "env:$var")) {
+        # GitHub Actions interpolates an unset `vars.*`/`secrets.*` reference as an
+        # empty string rather than leaving the env var unset, so `Test-Path` alone
+        # would not catch a missing value here.
+        if ([string]::IsNullOrWhiteSpace([System.Environment]::GetEnvironmentVariable($var))) {
             Write-Output "Azure signing variable $var is not set, code signing will be skipped"
             $script:canCodeSign = $false
             break
