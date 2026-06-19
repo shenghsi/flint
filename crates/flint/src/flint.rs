@@ -4977,6 +4977,7 @@ mod tests {
             let expected_namespaces = vec![
                 "action",
                 "activity_indicator",
+                "agent_threads",
                 "app_menu",
                 "auto_update",
                 "branch_picker",
@@ -5038,7 +5039,6 @@ mod tests {
                 "task",
                 "terminal",
                 "terminal_panel",
-                "terminal_thread",
                 "theme",
                 "theme_selector",
                 "toast",

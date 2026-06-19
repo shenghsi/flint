@@ -22,7 +22,7 @@ use codex_history::CodexHistoryProvider;
 use history::AgentHistoryProvider;
 
 actions!(
-    agent_thread,
+    agent_threads,
     [
         /// Starts a new Codex agent thread.
         NewCodexThread,

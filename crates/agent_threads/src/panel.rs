@@ -8,8 +8,8 @@ use futures::StreamExt;
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton, MouseDownEvent, ParentElement,
-    Pixels, Point, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
-    anchored, deferred, div,
+    Pixels, Point, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, anchored,
+    deferred, div,
 };
 use settings::{DockSide, Settings};
 use ui::{
@@ -28,14 +28,6 @@ use crate::store::{
     merge_threads,
 };
 use crate::{AgentKindDefinition, AgentThreadSettings, HistoricalThread, agent_kind_registry};
-
-actions!(
-    agent_threads_panel,
-    [
-        /// Opens the agent threads panel.
-        OpenAgentThreads,
-    ]
-);
 
 enum HistoricalState {
     Loading,
