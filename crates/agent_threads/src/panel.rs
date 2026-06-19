@@ -764,12 +764,18 @@ mod tests {
         })
     }
 
-    fn wait_for_live_count(cx: &mut TestAppContext, project_root: &str, expected: usize) {
-        for _ in 0..10 {
+    // Spawning the underlying process (and on Windows, setting up its ConPTY)
+    // happens on a real OS thread, so registration can lag behind a plain
+    // `run_until_parked()` by more than a few milliseconds under CI load.
+    // Interleave real timer ticks so that background completion has a chance
+    // to land between polls instead of racing a tight, time-frozen loop.
+    async fn wait_for_live_count(cx: &mut TestAppContext, project_root: &str, expected: usize) {
+        for _ in 0..50 {
             cx.run_until_parked();
             if live_codex_threads(cx, project_root).len() >= expected {
                 return;
             }
+            cx.executor().timer(Duration::from_millis(50)).await;
         }
     }
 
@@ -787,6 +793,21 @@ mod tests {
                 views
             })
             .expect("failed to collect terminal views")
+    }
+
+    // See `wait_for_live_count` for why this can't be a single `run_until_parked()`.
+    async fn wait_for_terminal_view_count(
+        window_handle: &WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+        expected: usize,
+    ) {
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if terminal_views(window_handle, cx).len() >= expected {
+                return;
+            }
+            cx.executor().timer(Duration::from_millis(50)).await;
+        }
     }
 
     fn active_item_id(
@@ -815,7 +836,7 @@ mod tests {
         let window_handle = init_workspace(cx, "/root").await;
 
         launch_codex_thread(&window_handle, cx);
-        wait_for_live_count(cx, "/root", 1);
+        wait_for_live_count(cx, "/root", 1).await;
 
         let metadata = live_codex_threads(cx, "/root");
         assert_eq!(metadata.len(), 1);
@@ -833,7 +854,7 @@ mod tests {
         let window_handle = init_workspace(cx, "/root").await;
 
         launch_codex_thread(&window_handle, cx);
-        wait_for_live_count(cx, "/root", 1);
+        wait_for_live_count(cx, "/root", 1).await;
 
         let terminal_item_id = live_codex_threads(cx, "/root")[0].terminal_item_id;
         assert_eq!(terminal_views(&window_handle, cx).len(), 1);
@@ -960,7 +981,7 @@ mod tests {
                 });
             })
             .expect("failed to resume thread");
-        cx.run_until_parked();
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let terminal_views = terminal_views(&window_handle, cx);
         assert_eq!(terminal_views.len(), 1);
@@ -1005,7 +1026,7 @@ mod tests {
                 });
             })
             .expect("failed to resume thread with options");
-        cx.run_until_parked();
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let terminal_views = terminal_views(&window_handle, cx);
         assert_eq!(terminal_views.len(), 1);
