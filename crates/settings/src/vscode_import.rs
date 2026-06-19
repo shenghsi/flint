@@ -208,7 +208,7 @@ impl VsCodeSettings {
             tabs: self.item_settings_content(),
             telemetry: self.telemetry_settings_content(),
             terminal: self.terminal_settings_content(),
-            terminal_threads: None,
+            agent_threads: None,
             theme: Box::new(self.theme_settings_content()),
             title_bar: None,
             vim: None,

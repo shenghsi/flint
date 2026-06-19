@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
+    "crates/agent_threads",
     "crates/askpass",
     "crates/assets",
     "crates/auto_update",
@@ -209,6 +210,7 @@ edition = "2024"
 #
 
 activity_indicator = { path = "crates/activity_indicator" }
+agent_threads = { path = "crates/agent_threads" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 auto_update = { path = "crates/auto_update" }

@@ -630,6 +630,20 @@ pub mod debug_panel {
     );
 }
 
+pub mod agent_threads {
+    use gpui::actions;
+
+    actions!(
+        agent_threads,
+        [
+            /// Toggles the agent threads panel.
+            Toggle,
+            /// Toggles focus on the agent threads panel.
+            ToggleFocus
+        ]
+    );
+}
+
 actions!(
     debugger,
     [

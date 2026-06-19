@@ -1,7 +1,7 @@
 use flint_actions::dev;
 use gpui::{App, Menu, MenuItem, OsAction};
 use release_channel::ReleaseChannel;
-use terminal_view::{terminal_panel, terminal_threads};
+use terminal_view::terminal_panel;
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use flint_actions::Quit;
@@ -44,10 +44,9 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Terminal", terminal_panel::ToggleFocus),
         MenuItem::separator(),
         MenuItem::action("Extensions", flint_actions::Extensions::default()),
-        MenuItem::action("Terminal Threads", terminal_threads::OpenTerminalThreads),
-        MenuItem::action("New Codex Thread", terminal_threads::NewCodexThread),
-        MenuItem::action("New Claude Thread", terminal_threads::NewClaudeThread),
-        MenuItem::action("New Shell Thread", terminal_threads::NewShellThread),
+        MenuItem::action("Agent Threads", flint_actions::agent_threads::ToggleFocus),
+        MenuItem::action("New Codex Thread", agent_threads::NewCodexThread),
+        MenuItem::action("New Claude Thread", agent_threads::NewClaudeThread),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),

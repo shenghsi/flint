@@ -129,6 +129,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_threads"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "collections",
+ "editor",
+ "flint_actions",
+ "fs",
+ "futures 0.3.32",
+ "gpui",
+ "log",
+ "paths",
+ "pretty_assertions",
+ "project",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "settings_macros",
+ "task",
+ "terminal",
+ "terminal_view",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4264,6 +4296,7 @@ name = "flint"
 version = "0.1.0"
 dependencies = [
  "activity_indicator",
+ "agent_threads",
  "anyhow",
  "ashpd",
  "askpass",
