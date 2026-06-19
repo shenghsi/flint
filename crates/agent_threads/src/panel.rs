@@ -23,7 +23,10 @@ use workspace::{
 };
 
 use crate::history::{self, project_worktree_roots};
-use crate::store::{self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent, merge_threads};
+use crate::store::{
+    self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
+    merge_threads,
+};
 use crate::{AgentKindDefinition, AgentThreadSettings, HistoricalThread, agent_kind_registry};
 
 actions!(
@@ -87,7 +90,9 @@ impl AgentThreadsPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        workspace.update_in(&mut cx, |workspace, window, cx| Self::new(workspace, window, cx))
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            Self::new(workspace, window, cx)
+        })
     }
 
     fn new(
@@ -175,7 +180,9 @@ impl AgentThreadsPanel {
                             host
                         }
                         Err(error) => {
-                            log::warn!("agent_threads: failed to scan {kind_id} history: {error:#}");
+                            log::warn!(
+                                "agent_threads: failed to scan {kind_id} history: {error:#}"
+                            );
                             this.update(cx, |this, cx| {
                                 if let Some(section) = this.sections.get_mut(kind_id) {
                                     section.historical = HistoricalState::Unavailable;
@@ -192,14 +199,21 @@ impl AgentThreadsPanel {
                     if events.next().await.is_none() {
                         return;
                     }
-                    cx.background_executor().timer(Duration::from_millis(300)).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(300))
+                        .await;
                 }
             });
             self._history_tasks.push(task);
         }
     }
 
-    fn launch_new(&mut self, kind: &AgentKindDefinition, window: &mut Window, cx: &mut Context<Self>) {
+    fn launch_new(
+        &mut self,
+        kind: &AgentKindDefinition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -234,7 +248,9 @@ impl AgentThreadsPanel {
         cx: &mut Context<Self>,
     ) {
         self.store
-            .update(cx, |store, cx| store.focus_thread(terminal_item_id, window, cx))
+            .update(cx, |store, cx| {
+                store.focus_thread(terminal_item_id, window, cx)
+            })
             .log_err();
     }
 
@@ -306,19 +322,20 @@ impl AgentThreadsPanel {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        let subscription = cx.subscribe_in(
-            &context_menu,
-            window,
-            |this, _, _: &gpui::DismissEvent, window, cx| {
-                if this.context_menu.as_ref().is_some_and(|(menu, _, _)| {
-                    menu.focus_handle(cx).contains_focused(window, cx)
-                }) {
-                    cx.focus_self(window);
-                }
-                this.context_menu.take();
-                cx.notify();
-            },
-        );
+        let subscription =
+            cx.subscribe_in(
+                &context_menu,
+                window,
+                |this, _, _: &gpui::DismissEvent, window, cx| {
+                    if this.context_menu.as_ref().is_some_and(|(menu, _, _)| {
+                        menu.focus_handle(cx).contains_focused(window, cx)
+                    }) {
+                        cx.focus_self(window);
+                    }
+                    this.context_menu.take();
+                    cx.notify();
+                },
+            );
         self.context_menu = Some((context_menu, position, subscription));
         cx.notify();
     }
@@ -349,7 +366,9 @@ impl AgentThreadsPanel {
 
         let kind_id = kind.id;
         let header = h_flex()
-            .id(SharedString::from(format!("agent-thread-section-header-{kind_id}")))
+            .id(SharedString::from(format!(
+                "agent-thread-section-header-{kind_id}"
+            )))
             .w_full()
             .justify_between()
             .items_center()
@@ -365,13 +384,19 @@ impl AgentThreadsPanel {
                             SharedString::from(format!("agent-thread-disclosure-{kind_id}")),
                             !collapsed,
                         )
-                        .on_toggle_expanded(Some(Arc::new(cx.listener(move |this, _, _, cx| {
-                            this.toggle_section_collapsed(kind_id);
-                            cx.notify();
-                        }))
+                        .on_toggle_expanded(Some(Arc::new(cx.listener(
+                            move |this, _, _, cx| {
+                                this.toggle_section_collapsed(kind_id);
+                                cx.notify();
+                            },
+                        ))
                             as Arc<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>)),
                     )
-                    .child(Icon::new(kind.icon).size(IconSize::Small).color(Color::Muted))
+                    .child(
+                        Icon::new(kind.icon)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .child(Label::new(kind.label.clone()).size(LabelSize::Small))
                     .child(
                         Label::new(total.to_string())
@@ -400,7 +425,9 @@ impl AgentThreadsPanel {
             if rows.is_empty() {
                 let message = scan_status
                     .map(SharedString::new_static)
-                    .unwrap_or_else(|| SharedString::from(format!("No {} threads yet", kind.label)));
+                    .unwrap_or_else(|| {
+                        SharedString::from(format!("No {} threads yet", kind.label))
+                    });
                 body_children.push(
                     Label::new(message)
                         .size(LabelSize::Small)
@@ -431,7 +458,9 @@ impl AgentThreadsPanel {
         }
 
         v_flex()
-            .id(SharedString::from(format!("agent-thread-section-{kind_id}")))
+            .id(SharedString::from(format!(
+                "agent-thread-section-{kind_id}"
+            )))
             .w_full()
             .child(header)
             .children(body_children)
@@ -450,7 +479,11 @@ impl AgentThreadsPanel {
         }
     }
 
-    fn render_live_row(&mut self, metadata: AgentThreadMetadata, cx: &mut Context<Self>) -> AnyElement {
+    fn render_live_row(
+        &mut self,
+        metadata: AgentThreadMetadata,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let terminal_item_id = metadata.terminal_item_id;
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
@@ -463,15 +496,13 @@ impl AgentThreadsPanel {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.focus_live_thread(terminal_item_id, window, cx);
             }))
-            .child(
-                Icon::new(IconName::Circle)
-                    .size(IconSize::Indicator)
-                    .color(if metadata.has_attention {
-                        Color::Accent
-                    } else {
-                        Color::Success
-                    }),
-            )
+            .child(Icon::new(IconName::Circle).size(IconSize::Indicator).color(
+                if metadata.has_attention {
+                    Color::Accent
+                } else {
+                    Color::Success
+                },
+            ))
             .child(Label::new(metadata.title).size(LabelSize::Small).truncate())
             .into_any_element()
     }
@@ -482,7 +513,8 @@ impl AgentThreadsPanel {
         thread: HistoricalThread,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let row_id = SharedString::from(format!("agent-thread-historical-row-{}", thread.session_id));
+        let row_id =
+            SharedString::from(format!("agent-thread-historical-row-{}", thread.session_id));
         let options_button_id =
             SharedString::from(format!("agent-thread-resume-options-{}", thread.session_id));
         let click_kind = kind.clone();
@@ -521,7 +553,11 @@ impl AgentThreadsPanel {
                     .min_w_0()
                     .flex_1()
                     .gap_2()
-                    .child(Icon::new(IconName::HistoryRerun).size(IconSize::Small).color(Color::Muted))
+                    .child(
+                        Icon::new(IconName::HistoryRerun)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .child(
                         Label::new(thread.title)
                             .size(LabelSize::Small)
@@ -534,15 +570,17 @@ impl AgentThreadsPanel {
                     .shape(IconButtonShape::Square)
                     .icon_size(IconSize::Small)
                     .tooltip(Tooltip::text("Resume with options"))
-                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                        this.deploy_resume_options_menu(
-                            menu_kind_for_button.clone(),
-                            menu_thread_for_button.clone(),
-                            event.position(),
-                            window,
-                            cx,
-                        );
-                    })),
+                    .on_click(
+                        cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                            this.deploy_resume_options_menu(
+                                menu_kind_for_button.clone(),
+                                menu_thread_for_button.clone(),
+                                event.position(),
+                                window,
+                                cx,
+                            );
+                        }),
+                    ),
             )
             .into_any_element()
     }
@@ -670,7 +708,11 @@ mod tests {
         });
     }
 
-    fn configure_echo_threads(cx: &mut TestAppContext, root_path: &str, max_visible_threads_per_agent: usize) {
+    fn configure_echo_threads(
+        cx: &mut TestAppContext,
+        root_path: &str,
+        max_visible_threads_per_agent: usize,
+    ) {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.agent_threads = Some(AgentThreadSettingsContent {
@@ -755,7 +797,10 @@ mod tests {
             .expect("failed to collect terminal views")
     }
 
-    fn active_item_id(window_handle: &WindowHandle<MultiWorkspace>, cx: &mut TestAppContext) -> gpui::EntityId {
+    fn active_item_id(
+        window_handle: &WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) -> gpui::EntityId {
         window_handle
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace
@@ -929,7 +974,11 @@ mod tests {
         assert_eq!(terminal_views.len(), 1);
         let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
         let spawned = terminal.read_with(cx, |terminal, _| {
-            terminal.task().expect("terminal should have a task").spawned_task.clone()
+            terminal
+                .task()
+                .expect("terminal should have a task")
+                .spawned_task
+                .clone()
         });
         assert_eq!(spawned.command, Some("echo".to_string()));
         assert_eq!(spawned.args, vec!["resume", "session-a"]);
@@ -970,11 +1019,19 @@ mod tests {
         assert_eq!(terminal_views.len(), 1);
         let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
         let spawned = terminal.read_with(cx, |terminal, _| {
-            terminal.task().expect("terminal should have a task").spawned_task.clone()
+            terminal
+                .task()
+                .expect("terminal should have a task")
+                .spawned_task
+                .clone()
         });
         assert_eq!(
             spawned.args,
-            vec!["resume", "session-a", "--dangerously-bypass-approvals-and-sandbox"]
+            vec![
+                "resume",
+                "session-a",
+                "--dangerously-bypass-approvals-and-sandbox"
+            ]
         );
     }
 }

@@ -114,7 +114,9 @@ mod tests {
 
     async fn host_with_history(cx: &TestAppContext, content: &str) -> AgentHistoryHost {
         let fs = FakeFs::new(cx.executor());
-        fs.create_dir(std::path::Path::new("/claude-home")).await.unwrap();
+        fs.create_dir(std::path::Path::new("/claude-home"))
+            .await
+            .unwrap();
         fs.insert_file("/claude-home/history.jsonl", content.as_bytes().to_vec())
             .await;
         AgentHistoryHost {
@@ -166,7 +168,9 @@ mod tests {
     #[gpui::test]
     async fn scan_returns_empty_when_no_history_file_exists(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
-        fs.create_dir(std::path::Path::new("/claude-home")).await.unwrap();
+        fs.create_dir(std::path::Path::new("/claude-home"))
+            .await
+            .unwrap();
         let host = AgentHistoryHost {
             fs: fs as Arc<dyn fs::Fs>,
             base_dir: PathBuf::from("/claude-home"),

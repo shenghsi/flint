@@ -139,7 +139,8 @@ async fn read_session_meta(
     }
     let timestamp = chrono::DateTime::parse_from_rfc3339(&parsed.payload.timestamp)
         .map(|dt| {
-            SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(dt.timestamp_millis().max(0) as u64)
+            SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_millis(dt.timestamp_millis().max(0) as u64)
         })
         .unwrap_or(SystemTime::UNIX_EPOCH);
     Some((parsed.payload.id, parsed.payload.cwd, timestamp))
@@ -203,7 +204,8 @@ mod tests {
         for (relative_path, content) in rollout_files {
             let full_path = PathBuf::from("/codex-home/sessions").join(relative_path);
             fs.create_dir(full_path.parent().unwrap()).await.unwrap();
-            fs.insert_file(&full_path, content.as_bytes().to_vec()).await;
+            fs.insert_file(&full_path, content.as_bytes().to_vec())
+                .await;
         }
         fs.create_dir(Path::new("/codex-home")).await.unwrap();
         if let Some(index_content) = session_index {
@@ -244,7 +246,8 @@ mod tests {
         assert_eq!(
             threads[0].last_activity_at,
             chrono::DateTime::parse_from_rfc3339("2026-06-18T20:23:14.000Z")
-                .map(|dt| SystemTime::UNIX_EPOCH + Duration::from_millis(dt.timestamp_millis() as u64))
+                .map(|dt| SystemTime::UNIX_EPOCH
+                    + Duration::from_millis(dt.timestamp_millis() as u64))
                 .unwrap()
         );
     }

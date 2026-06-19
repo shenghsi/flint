@@ -18,6 +18,7 @@ use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
 
+use agent_threads::AgentThreadsPanel;
 use breadcrumbs::Breadcrumbs;
 use client::flint_urls;
 use collections::VecDeque;
@@ -47,7 +48,6 @@ use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationT
 use migrator::migrate_keymap;
 use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
-use agent_threads::AgentThreadsPanel;
 use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use project::{DirectoryLister, ProjectItem};

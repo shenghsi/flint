@@ -131,7 +131,9 @@ impl AgentThreadStore {
             .map(|entry| &entry.metadata)
             .filter(|metadata| {
                 metadata.kind_id == kind_id
-                    && project_roots.iter().any(|root| root == &metadata.project_root)
+                    && project_roots
+                        .iter()
+                        .any(|root| root == &metadata.project_root)
             })
             .cloned()
             .collect()
@@ -228,7 +230,11 @@ impl AgentThreadStore {
             });
         self.subscriptions.insert(
             terminal_item_id,
-            vec![item_subscription, terminal_subscription, release_subscription],
+            vec![
+                item_subscription,
+                terminal_subscription,
+                release_subscription,
+            ],
         );
         cx.emit(AgentThreadStoreEvent::Updated);
         cx.notify();
@@ -250,7 +256,12 @@ impl AgentThreadStore {
         cx.notify();
     }
 
-    fn update_attention(&mut self, terminal_item_id: EntityId, has_attention: bool, cx: &mut Context<Self>) {
+    fn update_attention(
+        &mut self,
+        terminal_item_id: EntityId,
+        has_attention: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(entry) = self.threads.get_mut(&terminal_item_id) else {
             return;
         };
@@ -275,7 +286,15 @@ pub fn launch_new_thread(
 ) {
     let settings = AgentThreadSettings::get_global(cx);
     let command = settings.command_for_kind(kind.id).clone();
-    spawn_thread(workspace, kind.id, kind.label.clone(), command, None, window, cx);
+    spawn_thread(
+        workspace,
+        kind.id,
+        kind.label.clone(),
+        command,
+        None,
+        window,
+        cx,
+    );
 }
 
 pub fn resume_thread(
@@ -421,7 +440,9 @@ mod tests {
     fn row_session_ids(rows: &[AgentThreadRow]) -> Vec<String> {
         rows.iter()
             .map(|row| match row {
-                AgentThreadRow::Live(metadata) => format!("live:{}", metadata.terminal_item_id.as_u64()),
+                AgentThreadRow::Live(metadata) => {
+                    format!("live:{}", metadata.terminal_item_id.as_u64())
+                }
                 AgentThreadRow::Historical(thread) => format!("historical:{}", thread.session_id),
             })
             .collect()
@@ -429,7 +450,10 @@ mod tests {
 
     #[test]
     fn unrelated_live_and_historical_entries_both_appear() {
-        let rows = merge_threads(vec![live(1, 100, None)], vec![historical("session-old", 10)]);
+        let rows = merge_threads(
+            vec![live(1, 100, None)],
+            vec![historical("session-old", 10)],
+        );
 
         assert_eq!(
             row_session_ids(&rows),
@@ -496,7 +520,10 @@ mod tests {
         // sort order, not dedup.
         let rows = merge_threads(
             vec![live(1, 5, Some("unrelated-session"))],
-            vec![historical("session-newest", 30), historical("session-oldest", 1)],
+            vec![
+                historical("session-newest", 30),
+                historical("session-oldest", 1),
+            ],
         );
 
         assert_eq!(

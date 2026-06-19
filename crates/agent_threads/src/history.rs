@@ -101,7 +101,10 @@ fn base_dir_from_env(
 }
 
 fn first_worktree_root(project: &Project, cx: &App) -> Option<Arc<std::path::Path>> {
-    project.visible_worktrees(cx).next().map(|worktree| worktree.read(cx).abs_path())
+    project
+        .visible_worktrees(cx)
+        .next()
+        .map(|worktree| worktree.read(cx).abs_path())
 }
 
 pub fn project_worktree_roots(project: &Project, cx: &App) -> Vec<PathBuf> {
