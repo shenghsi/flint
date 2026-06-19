@@ -1,4 +1,4 @@
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Terminal-backed agent thread launchers exist
 The application SHALL provide launch actions for agent kinds in a code-level
@@ -33,24 +33,6 @@ kind.
 - **THEN** the panel updates the displayed title or attention state for that
   thread
 
-### Requirement: Terminal threads do not use ACP
-Terminal-backed Codex and Claude threads SHALL NOT depend on ACP, ACP registry
-installation, ACP session state, or ACP server settings.
-
-#### Scenario: ACP configuration is absent
-- **WHEN** no ACP registry, ACP server, or external-agent settings exist
-- **THEN** configured Codex and Claude terminal thread launchers still work
-
-### Requirement: CLI ownership boundaries are preserved
-The application SHALL allow the CLI or TUI running in the terminal to own
-authentication, model selection, subscriptions, tool configuration, skills,
-instructions, and MCP configuration.
-
-#### Scenario: Agent CLI prompts for login
-- **WHEN** a launched agent CLI requires authentication
-- **THEN** the authentication prompt remains inside the terminal session and the
-  application does not require native provider credentials
-
 ### Requirement: Existing threads can be refocused
 The panel SHALL allow users to focus a live (already-open) terminal thread
 without spawning a duplicate process. This is distinct from resuming a
@@ -60,6 +42,8 @@ historical thread, which starts a new terminal session.
 - **WHEN** the user clicks a live Codex or Claude thread row in the panel
 - **THEN** the corresponding open terminal item is focused instead of
   starting a new terminal process
+
+## ADDED Requirements
 
 ### Requirement: Historical agent threads can be resumed
 The application SHALL read each registered agent kind's persisted session
@@ -126,4 +110,3 @@ additional command-line options, defined per registered agent kind.
   Codex thread
 - **THEN** the application opens a center terminal session running the
   configured Codex resume command with the corresponding additional flag
-</content>

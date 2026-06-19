@@ -3,7 +3,6 @@ pub mod terminal_element;
 pub mod terminal_panel;
 mod terminal_path_like_target;
 pub mod terminal_scrollbar;
-pub mod terminal_threads;
 
 use editor::{
     Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
@@ -106,7 +105,6 @@ pub struct RenameTerminal;
 
 pub fn init(cx: &mut App) {
     terminal_panel::init(cx);
-    terminal_threads::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
 

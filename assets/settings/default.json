@@ -1477,8 +1477,9 @@
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
   },
-  // Terminal-backed Codex, Claude, and shell thread launchers.
-  "terminal_threads": {
+  // Agent thread panel: launch commands and per-section display limits for
+  // Codex and Claude terminal threads.
+  "agent_threads": {
     "codex": {
       "command": "codex",
       "args": [],
@@ -1489,9 +1490,7 @@
       "args": [],
       "env": {},
     },
-    "shell": {
-      "env": {},
-    },
+    "max_visible_threads_per_agent": 5,
   },
   // Settings specific to the terminal
   "terminal": {

@@ -1,4 +1,5 @@
 mod action;
+mod agent_threads;
 mod editor;
 mod extension;
 mod fallible_options;
@@ -8,12 +9,12 @@ pub mod merge_from;
 mod project;
 mod serde_helper;
 mod terminal;
-mod terminal_threads;
 mod theme;
 mod title_bar;
 mod workspace;
 
 pub use action::{ActionName, ActionWithArguments};
+pub use agent_threads::*;
 pub use editor::*;
 pub use extension::*;
 pub use fallible_options::*;
@@ -27,7 +28,6 @@ pub use serde_helper::{
 };
 use settings_json::parse_json_with_comments;
 pub use terminal::*;
-pub use terminal_threads::*;
 pub use theme::*;
 pub use title_bar::*;
 pub use workspace::*;
@@ -169,8 +169,9 @@ pub struct SettingsContent {
 
     pub repl: Option<ReplSettingsContent>,
 
-    /// Terminal-backed Codex, Claude, and shell thread launch configuration.
-    pub terminal_threads: Option<TerminalThreadSettingsContent>,
+    /// Agent thread panel launch commands and display limits for Codex and
+    /// Claude.
+    pub agent_threads: Option<AgentThreadSettingsContent>,
 
     /// Whether or not to enable Helix mode.
     ///
