@@ -510,6 +510,7 @@ jobs:
       - bundle_windows_x86_64
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: ./artifacts/
@@ -540,6 +541,7 @@ jobs:
       - upload_release_assets
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
       - name: Validate all expected assets are present
         run: |
           EXPECTED_ASSETS='["Flint-aarch64.dmg", "Flint-x86_64.dmg", "flint-linux-aarch64.tar.gz", "flint-linux-x86_64.tar.gz", "Flint-x86_64.exe", "Flint-aarch64.exe", "flint-remote-server-macos-aarch64.gz", "flint-remote-server-macos-x86_64.gz", "flint-remote-server-linux-aarch64.gz", "flint-remote-server-linux-x86_64.gz", "flint-remote-server-windows-aarch64.zip", "flint-remote-server-windows-x86_64.zip"]'
