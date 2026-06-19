@@ -686,8 +686,16 @@ mod tests {
     use project::{FakeFs, Project};
     use settings::{AgentThreadCommandContent, AgentThreadSettingsContent, SettingsStore};
     use std::path::Path;
+    use std::sync::LazyLock;
     use terminal_view::TerminalView;
     use workspace::MultiWorkspace;
+
+    // Tests that actually spawn the echo command need a `cwd` that exists on
+    // disk: a fake "/root" works for FakeFs-only assertions, but on Windows
+    // there's no such absolute path, so the real PTY/process spawn fails
+    // before the terminal is ever registered.
+    static SPAWNING_TEST_ROOT: LazyLock<String> =
+        LazyLock::new(|| std::env::temp_dir().to_string_lossy().into_owned());
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -832,13 +840,14 @@ mod tests {
     async fn launching_a_new_thread_registers_it_as_live(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
-        configure_echo_threads(cx, "/root", 5);
-        let window_handle = init_workspace(cx, "/root").await;
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
 
         launch_codex_thread(&window_handle, cx);
-        wait_for_live_count(cx, "/root", 1).await;
+        wait_for_live_count(cx, root, 1).await;
 
-        let metadata = live_codex_threads(cx, "/root");
+        let metadata = live_codex_threads(cx, root);
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0].kind_id, "codex");
         assert!(metadata[0].resumed_session_id.is_none());
@@ -850,13 +859,14 @@ mod tests {
     ) {
         cx.executor().allow_parking();
         init_test(cx);
-        configure_echo_threads(cx, "/root", 5);
-        let window_handle = init_workspace(cx, "/root").await;
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
 
         launch_codex_thread(&window_handle, cx);
-        wait_for_live_count(cx, "/root", 1).await;
+        wait_for_live_count(cx, root, 1).await;
 
-        let terminal_item_id = live_codex_threads(cx, "/root")[0].terminal_item_id;
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
         assert_eq!(terminal_views(&window_handle, cx).len(), 1);
 
         // Switch focus away, then verify the panel's focus action brings the
@@ -964,13 +974,14 @@ mod tests {
     async fn resume_spawns_a_terminal_with_the_resume_command(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
-        configure_echo_threads(cx, "/root", 5);
-        let window_handle = init_workspace(cx, "/root").await;
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
 
         let thread = HistoricalThread {
             session_id: SharedString::from("session-a"),
             title: SharedString::from("Fix the bug"),
-            project_root: PathBuf::from("/root"),
+            project_root: PathBuf::from(root),
             last_activity_at: std::time::SystemTime::UNIX_EPOCH,
         };
 
@@ -995,20 +1006,21 @@ mod tests {
         });
         assert_eq!(spawned.command, Some("echo".to_string()));
         assert_eq!(spawned.args, vec!["resume", "session-a"]);
-        assert_eq!(spawned.cwd, Some(PathBuf::from("/root")));
+        assert_eq!(spawned.cwd, Some(PathBuf::from(root)));
     }
 
     #[gpui::test]
     async fn resume_with_options_appends_the_extra_flag(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
-        configure_echo_threads(cx, "/root", 5);
-        let window_handle = init_workspace(cx, "/root").await;
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
 
         let thread = HistoricalThread {
             session_id: SharedString::from("session-a"),
             title: SharedString::from("Fix the bug"),
-            project_root: PathBuf::from("/root"),
+            project_root: PathBuf::from(root),
             last_activity_at: std::time::SystemTime::UNIX_EPOCH,
         };
 
