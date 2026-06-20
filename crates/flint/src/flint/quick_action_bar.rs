@@ -10,6 +10,7 @@ use editor::actions::{
 use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
 use editor::{Editor, EditorSettings};
 use flint_actions::outline::ToggleOutline;
+use git_ui::solo_diff_view::SoloDiffView;
 use gpui::{
     Action, Anchor, AnchoredPositionMode, ClickEvent, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
@@ -25,7 +26,8 @@ use ui::{
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::item::ItemBufferKind;
 use workspace::{
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    item::ItemHandle, notifications::NotifyTaskExt,
 };
 
 const MAX_CODE_ACTION_MENU_LINES: u32 = 16;
@@ -115,6 +117,33 @@ impl Render for QuickActionBar {
         let has_available_code_actions = editor_value.has_available_code_actions_for_selection();
         let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
         let focus_handle = editor_value.focus_handle(cx);
+
+        let open_changes_button = (editor.buffer_kind(cx) == ItemBufferKind::Singleton
+            && editor.read(cx).buffer().read(cx).snapshot(cx).has_diff_hunks())
+        .then(|| {
+            let editor = editor.clone();
+            let workspace = self.workspace.clone();
+            IconButton::new("open_changes_icon", IconName::Diff)
+                .icon_size(IconSize::Small)
+                .style(ButtonStyle::Subtle)
+                .tooltip(Tooltip::text("Open Changes"))
+                .on_click(move |_, window, cx| {
+                    let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
+                        return;
+                    };
+                    let Some(project) = editor.read(cx).project().cloned() else {
+                        return;
+                    };
+                    SoloDiffView::open_or_focus_for_buffer(
+                        buffer,
+                        project,
+                        workspace.clone(),
+                        window,
+                        cx,
+                    )
+                    .detach_and_notify_err(workspace.clone(), window, cx);
+                })
+        });
 
         let search_button = (editor.buffer_kind(cx) == ItemBufferKind::Singleton).then(|| {
             QuickActionBarButton::new(
@@ -583,6 +612,7 @@ impl Render for QuickActionBar {
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
             .children(self.render_preview_button(self.workspace.clone(), cx))
+            .children(open_changes_button)
             .children(search_button)
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)

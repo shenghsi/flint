@@ -117,6 +117,36 @@ impl SoloDiffView {
         })
     }
 
+    pub fn open_or_focus_for_buffer(
+        buffer: Entity<Buffer>,
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+        let Some((repository, repo_path)) = project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+        else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "file is not part of a git repository"
+            )));
+        };
+        let Some(status_entry) = repository.read(cx).status_for_path(&repo_path) else {
+            return Task::ready(Err(anyhow::anyhow!("file has no changes to diff")));
+        };
+        let entry = GitStatusEntry {
+            repo_path: status_entry.repo_path,
+            status: status_entry.status,
+            staging: status_entry.status.staging(),
+            diff_stat: status_entry.diff_stat,
+        };
+        Self::open_or_focus(entry, repository, workspace, window, cx)
+    }
+
     fn new(
         project: Entity<Project>,
         repository: Entity<Repository>,
@@ -783,5 +813,147 @@ impl Render for SoloDiffGitToolbar {
                             })),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git::status::{FileStatus, StatusCode, TrackedStatus};
+    use gpui::TestAppContext;
+    use project::FakeFs;
+    use settings::SettingsStore;
+    use util::path;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_or_focus_for_buffer_opens_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            serde_json::json!({
+                ".git": {},
+                "modified.txt": "new content\n",
+                "staged.txt": "staged content\n",
+                "untracked.txt": "untracked content\n",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                (
+                    "modified.txt",
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Unmodified,
+                        worktree_status: StatusCode::Modified,
+                    }),
+                ),
+                (
+                    "staged.txt",
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Modified,
+                        worktree_status: StatusCode::Unmodified,
+                    }),
+                ),
+                ("untracked.txt", FileStatus::Untracked),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        for file_name in ["modified.txt", "staged.txt", "untracked.txt"] {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    let project_path = project
+                        .find_project_path(format!("/project/{file_name}"), cx)
+                        .unwrap_or_else(|| panic!("missing project path for {file_name}"));
+                    project.open_buffer(project_path, cx)
+                })
+                .await
+                .unwrap_or_else(|err| panic!("{file_name}: failed to open buffer: {err}"));
+
+            let solo_diff = cx
+                .update(|window, cx| {
+                    SoloDiffView::open_or_focus_for_buffer(
+                        buffer,
+                        project.clone(),
+                        workspace.downgrade(),
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap_or_else(|err| panic!("{file_name}: {err}"));
+
+            workspace.read_with(cx, |workspace, cx| {
+                assert_eq!(
+                    workspace.active_item_as::<SoloDiffView>(cx),
+                    Some(solo_diff),
+                    "{file_name} should open as the active SoloDiffView"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_or_focus_for_buffer_errors_without_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            serde_json::json!({
+                ".git": {},
+                "unchanged.txt": "same\n",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(path!("/project/.git").as_ref(), &[]);
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let project_path = project
+                    .find_project_path(path!("/project/unchanged.txt"), cx)
+                    .unwrap();
+                project.open_buffer(project_path, cx)
+            })
+            .await
+            .unwrap();
+
+        let result = cx
+            .update(|window, cx| {
+                SoloDiffView::open_or_focus_for_buffer(
+                    buffer,
+                    project.clone(),
+                    workspace.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .await;
+        assert!(result.is_err(), "unchanged file should not open a diff");
     }
 }
