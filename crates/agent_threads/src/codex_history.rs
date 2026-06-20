@@ -90,6 +90,7 @@ impl AgentHistoryProvider for CodexHistoryProvider {
                 last_activity_at: timestamp,
             });
         }
+        threads.sort_by_key(|thread| std::cmp::Reverse(thread.last_activity_at));
         Ok(threads)
     }
 

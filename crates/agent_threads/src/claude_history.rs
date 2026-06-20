@@ -29,6 +29,7 @@ struct HistoryRecord {
 struct ProjectHistoryLine {
     #[serde(rename = "sessionId")]
     session_id: Option<String>,
+    cwd: Option<String>,
     timestamp: Option<String>,
     message: Option<ProjectHistoryMessage>,
 }
@@ -57,7 +58,9 @@ impl AgentHistoryProvider for ClaudeHistoryProvider {
             }
         }
 
-        Ok(latest_by_session.into_values().collect())
+        let mut threads = latest_by_session.into_values().collect::<Vec<_>>();
+        threads.sort_by_key(|thread| std::cmp::Reverse(thread.last_activity_at));
+        Ok(threads)
     }
 
     fn resume_command(
@@ -163,6 +166,7 @@ async fn read_project_history_file(
     let mut session_id = file_path.file_stem()?.to_string_lossy().to_string();
     let mut title = None;
     let mut last_activity_at = UNIX_EPOCH;
+    let mut saw_matching_cwd = false;
 
     for line in content.lines() {
         let Ok(record) = serde_json::from_str::<ProjectHistoryLine>(line) else {
@@ -170,6 +174,13 @@ async fn read_project_history_file(
         };
         if let Some(record_session_id) = record.session_id {
             session_id = record_session_id;
+        }
+        if record
+            .cwd
+            .as_deref()
+            .is_some_and(|cwd| Path::new(cwd) == project_root)
+        {
+            saw_matching_cwd = true;
         }
         if let Some(timestamp) = record.timestamp.and_then(|timestamp| {
             chrono::DateTime::parse_from_rfc3339(&timestamp)
@@ -187,6 +198,10 @@ async fn read_project_history_file(
                 }
             }
         }
+    }
+
+    if !saw_matching_cwd {
+        return None;
     }
 
     Some(HistoricalThread {
@@ -347,6 +362,25 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn scan_orders_history_file_sessions_newest_first(cx: &mut TestAppContext) {
+        let content = [
+            history_line("session-older", "/root", "older prompt", 100),
+            history_line("session-newer", "/root", "newer prompt", 200),
+        ]
+        .join("\n");
+        let host = host_with_history(cx, &content).await;
+
+        let threads = ClaudeHistoryProvider
+            .scan(&host, &[PathBuf::from("/root")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 2);
+        assert_eq!(threads[0].session_id.as_ref(), "session-newer");
+        assert_eq!(threads[1].session_id.as_ref(), "session-older");
+    }
+
+    #[gpui::test]
     async fn scan_reads_project_history_session_titles(cx: &mut TestAppContext) {
         let content = project_history_line(
             "session-a",
@@ -371,6 +405,61 @@ mod tests {
                     + Duration::from_millis(timestamp.timestamp_millis() as u64))
                 .unwrap()
         );
+    }
+
+    #[gpui::test]
+    async fn scan_project_history_uses_current_project_and_newest_first(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let project_dir = PathBuf::from("/claude-home")
+            .join("projects")
+            .join(project_history_dir_name(Path::new("/root")));
+        fs.create_dir(&project_dir).await.unwrap();
+        fs.insert_file(
+            project_dir.join("session-older.jsonl"),
+            project_history_line(
+                "session-older",
+                "/root",
+                "older prompt",
+                "2026-06-18T20:23:14.000Z",
+            )
+            .into_bytes(),
+        )
+        .await;
+        fs.insert_file(
+            project_dir.join("session-newer.jsonl"),
+            project_history_line(
+                "session-newer",
+                "/root",
+                "newer prompt",
+                "2026-06-18T21:23:14.000Z",
+            )
+            .into_bytes(),
+        )
+        .await;
+        fs.insert_file(
+            project_dir.join("session-other-root.jsonl"),
+            project_history_line(
+                "session-other-root",
+                "/other-root",
+                "other root prompt",
+                "2026-06-18T22:23:14.000Z",
+            )
+            .into_bytes(),
+        )
+        .await;
+        let host = AgentHistoryHost {
+            fs: fs as Arc<dyn fs::Fs>,
+            base_dir: PathBuf::from("/claude-home"),
+        };
+
+        let threads = ClaudeHistoryProvider
+            .scan(&host, &[PathBuf::from("/root")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 2);
+        assert_eq!(threads[0].session_id.as_ref(), "session-newer");
+        assert_eq!(threads[1].session_id.as_ref(), "session-older");
     }
 
     #[gpui::test]
