@@ -1,11 +1,13 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::StreamExt;
 use gpui::SharedString;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::AgentLaunchCommand;
 use crate::history::{AgentHistoryHost, AgentHistoryProvider, HistoricalThread};
@@ -23,6 +25,20 @@ struct HistoryRecord {
     timestamp: u64,
 }
 
+#[derive(Deserialize)]
+struct ProjectHistoryLine {
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
+    timestamp: Option<String>,
+    message: Option<ProjectHistoryMessage>,
+}
+
+#[derive(Deserialize)]
+struct ProjectHistoryMessage {
+    role: Option<String>,
+    content: Value,
+}
+
 #[async_trait]
 impl AgentHistoryProvider for ClaudeHistoryProvider {
     async fn scan(
@@ -30,40 +46,18 @@ impl AgentHistoryProvider for ClaudeHistoryProvider {
         host: &AgentHistoryHost,
         project_roots: &[PathBuf],
     ) -> Result<Vec<HistoricalThread>> {
-        let history_path = host.base_dir.join("history.jsonl");
-        let content = match host.fs.load(&history_path).await {
-            Ok(content) => content,
-            Err(_) => return Ok(Vec::new()),
-        };
-
-        let mut latest_by_session: HashMap<String, HistoryRecord> = HashMap::default();
-        for line in content.lines() {
-            let Ok(record) = serde_json::from_str::<HistoryRecord>(line) else {
-                continue;
-            };
+        let mut latest_by_session = scan_history_file(host, project_roots).await;
+        for thread in scan_project_history_files(host, project_roots).await {
+            let session_id = thread.session_id.to_string();
             let is_newer = latest_by_session
-                .get(&record.session_id)
-                .is_none_or(|existing| record.timestamp >= existing.timestamp);
+                .get(&session_id)
+                .is_none_or(|existing| thread.last_activity_at >= existing.last_activity_at);
             if is_newer {
-                latest_by_session.insert(record.session_id.clone(), record);
+                latest_by_session.insert(session_id, thread);
             }
         }
 
-        Ok(latest_by_session
-            .into_values()
-            .filter_map(|record| {
-                let project_root = PathBuf::from(&record.project);
-                if !project_roots.iter().any(|root| root == &project_root) {
-                    return None;
-                }
-                Some(HistoricalThread {
-                    session_id: SharedString::from(record.session_id),
-                    title: SharedString::from(truncate_title(&record.display)),
-                    project_root,
-                    last_activity_at: UNIX_EPOCH + Duration::from_millis(record.timestamp),
-                })
-            })
-            .collect())
+        Ok(latest_by_session.into_values().collect())
     }
 
     fn resume_command(
@@ -83,13 +77,165 @@ impl AgentHistoryProvider for ClaudeHistoryProvider {
     }
 }
 
-fn truncate_title(display: &str) -> String {
-    let trimmed = display.trim();
-    if trimmed.chars().count() <= MAX_TITLE_CHARS {
-        trimmed.to_string()
+async fn scan_history_file(
+    host: &AgentHistoryHost,
+    project_roots: &[PathBuf],
+) -> HashMap<String, HistoricalThread> {
+    let history_path = host.base_dir.join("history.jsonl");
+    let Ok(content) = host.fs.load(&history_path).await else {
+        return HashMap::default();
+    };
+
+    let mut latest_by_session = HashMap::default();
+    for line in content.lines() {
+        let Ok(record) = serde_json::from_str::<HistoryRecord>(line) else {
+            continue;
+        };
+        let project_root = PathBuf::from(&record.project);
+        if !project_roots.iter().any(|root| root == &project_root) {
+            continue;
+        }
+        let Some(title) = normalize_title(&record.display) else {
+            continue;
+        };
+        let thread = HistoricalThread {
+            session_id: SharedString::from(record.session_id.clone()),
+            title: SharedString::from(title),
+            project_root,
+            last_activity_at: UNIX_EPOCH + Duration::from_millis(record.timestamp),
+        };
+        let is_newer =
+            latest_by_session
+                .get(&record.session_id)
+                .is_none_or(|existing: &HistoricalThread| {
+                    thread.last_activity_at >= existing.last_activity_at
+                });
+        if is_newer {
+            latest_by_session.insert(record.session_id, thread);
+        }
+    }
+    latest_by_session
+}
+
+async fn scan_project_history_files(
+    host: &AgentHistoryHost,
+    project_roots: &[PathBuf],
+) -> Vec<HistoricalThread> {
+    let mut threads = Vec::new();
+    for project_root in project_roots {
+        let project_dir = host
+            .base_dir
+            .join("projects")
+            .join(project_history_dir_name(project_root));
+        for file_path in list_jsonl_files(host, &project_dir).await {
+            if let Some(thread) = read_project_history_file(host, &file_path, project_root).await {
+                threads.push(thread);
+            }
+        }
+    }
+    threads
+}
+
+async fn list_jsonl_files(host: &AgentHistoryHost, dir: &Path) -> Vec<PathBuf> {
+    let Ok(mut entries) = host.fs.read_dir(dir).await else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    while let Some(entry) = entries.next().await {
+        if let Ok(path) = entry {
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+            {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+async fn read_project_history_file(
+    host: &AgentHistoryHost,
+    file_path: &Path,
+    project_root: &Path,
+) -> Option<HistoricalThread> {
+    let content = host.fs.load(file_path).await.ok()?;
+    let mut session_id = file_path.file_stem()?.to_string_lossy().to_string();
+    let mut title = None;
+    let mut last_activity_at = UNIX_EPOCH;
+
+    for line in content.lines() {
+        let Ok(record) = serde_json::from_str::<ProjectHistoryLine>(line) else {
+            continue;
+        };
+        if let Some(record_session_id) = record.session_id {
+            session_id = record_session_id;
+        }
+        if let Some(timestamp) = record.timestamp.and_then(|timestamp| {
+            chrono::DateTime::parse_from_rfc3339(&timestamp)
+                .ok()
+                .map(|timestamp| {
+                    UNIX_EPOCH + Duration::from_millis(timestamp.timestamp_millis().max(0) as u64)
+                })
+        }) {
+            last_activity_at = last_activity_at.max(timestamp);
+        }
+        if title.is_none() {
+            if let Some(message) = record.message {
+                if message.role.as_deref() == Some("user") {
+                    title = message_content_title(&message.content);
+                }
+            }
+        }
+    }
+
+    Some(HistoricalThread {
+        session_id: SharedString::from(session_id),
+        title: SharedString::from(title?),
+        project_root: project_root.to_path_buf(),
+        last_activity_at,
+    })
+}
+
+fn message_content_title(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str() {
+        return normalize_title(text);
+    }
+    let parts = content
+        .as_array()?
+        .iter()
+        .filter_map(|item| {
+            item.get("text")
+                .or_else(|| item.get("content"))
+                .and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    normalize_title(&parts)
+}
+
+fn project_history_dir_name(project_root: &Path) -> String {
+    project_root
+        .to_string_lossy()
+        .chars()
+        .map(|character| match character {
+            '/' | '\\' => '-',
+            _ => character,
+        })
+        .collect()
+}
+
+fn normalize_title(display: &str) -> Option<String> {
+    let title = display.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        None
+    } else if title.chars().count() <= MAX_TITLE_CHARS {
+        Some(title)
     } else {
-        let truncated: String = trimmed.chars().take(MAX_TITLE_CHARS).collect();
-        format!("{truncated}…")
+        Some(format!(
+            "{}…",
+            title.chars().take(MAX_TITLE_CHARS).collect::<String>()
+        ))
     }
 }
 
@@ -102,12 +248,25 @@ mod tests {
     use project::FakeFs;
     use std::sync::Arc;
 
-    fn jsonl_line(session_id: &str, project: &str, display: &str, timestamp: u64) -> String {
+    fn history_line(session_id: &str, project: &str, display: &str, timestamp: u64) -> String {
         serde_json::json!({
             "sessionId": session_id,
             "project": project,
             "display": display,
             "timestamp": timestamp,
+        })
+        .to_string()
+    }
+
+    fn project_history_line(session_id: &str, cwd: &str, content: &str, timestamp: &str) -> String {
+        serde_json::json!({
+            "sessionId": session_id,
+            "cwd": cwd,
+            "timestamp": timestamp,
+            "message": {
+                "role": "user",
+                "content": content,
+            },
         })
         .to_string()
     }
@@ -125,11 +284,33 @@ mod tests {
         }
     }
 
+    async fn host_with_project_history(
+        cx: &TestAppContext,
+        project_root: &str,
+        session_id: &str,
+        content: &str,
+    ) -> AgentHistoryHost {
+        let fs = FakeFs::new(cx.executor());
+        let project_dir = PathBuf::from("/claude-home")
+            .join("projects")
+            .join(project_root.replace('/', "-"));
+        fs.create_dir(&project_dir).await.unwrap();
+        fs.insert_file(
+            project_dir.join(format!("{session_id}.jsonl")),
+            content.as_bytes().to_vec(),
+        )
+        .await;
+        AgentHistoryHost {
+            fs: fs as Arc<dyn fs::Fs>,
+            base_dir: PathBuf::from("/claude-home"),
+        }
+    }
+
     #[gpui::test]
     async fn scan_keeps_the_latest_entry_per_session(cx: &mut TestAppContext) {
         let content = [
-            jsonl_line("session-a", "/root", "first prompt", 100),
-            jsonl_line("session-a", "/root", "second prompt", 200),
+            history_line("session-a", "/root", "first prompt", 100),
+            history_line("session-a", "/root", "second prompt", 200),
         ]
         .join("\n");
         let host = host_with_history(cx, &content).await;
@@ -150,8 +331,8 @@ mod tests {
     #[gpui::test]
     async fn scan_filters_by_project_root(cx: &mut TestAppContext) {
         let content = [
-            jsonl_line("session-a", "/root_a", "in root a", 100),
-            jsonl_line("session-b", "/root_b", "in root b", 100),
+            history_line("session-a", "/root_a", "in root a", 100),
+            history_line("session-b", "/root_b", "in root b", 100),
         ]
         .join("\n");
         let host = host_with_history(cx, &content).await;
@@ -163,6 +344,33 @@ mod tests {
 
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].session_id.as_ref(), "session-a");
+    }
+
+    #[gpui::test]
+    async fn scan_reads_project_history_session_titles(cx: &mut TestAppContext) {
+        let content = project_history_line(
+            "session-a",
+            "/root",
+            "Explain the release crash",
+            "2026-06-18T20:23:14.000Z",
+        );
+        let host = host_with_project_history(cx, "/root", "session-a", &content).await;
+
+        let threads = ClaudeHistoryProvider
+            .scan(&host, &[PathBuf::from("/root")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].session_id.as_ref(), "session-a");
+        assert_eq!(threads[0].title.as_ref(), "Explain the release crash");
+        assert_eq!(
+            threads[0].last_activity_at,
+            chrono::DateTime::parse_from_rfc3339("2026-06-18T20:23:14.000Z")
+                .map(|timestamp| UNIX_EPOCH
+                    + Duration::from_millis(timestamp.timestamp_millis() as u64))
+                .unwrap()
+        );
     }
 
     #[gpui::test]
@@ -188,7 +396,7 @@ mod tests {
     fn truncate_title_adds_ellipsis_past_the_limit() {
         let long_display = "x".repeat(100);
 
-        let title = truncate_title(&long_display);
+        let title = normalize_title(&long_display).unwrap();
 
         assert_eq!(title.chars().count(), MAX_TITLE_CHARS + 1);
         assert!(title.ends_with('…'));

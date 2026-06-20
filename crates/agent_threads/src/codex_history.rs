@@ -4,10 +4,11 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::StreamExt;
 use gpui::SharedString;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::AgentLaunchCommand;
 use crate::history::{AgentHistoryHost, AgentHistoryProvider, HistoricalThread};
@@ -16,6 +17,7 @@ use crate::history::{AgentHistoryHost, AgentHistoryProvider, HistoricalThread};
 /// history depth: only the most recent rollout files are opened to read
 /// their `cwd`.
 const MAX_ROLLOUT_FILES_SCANNED: usize = 200;
+const MAX_TITLE_CHARS: usize = 60;
 
 pub struct CodexHistoryProvider;
 
@@ -39,6 +41,13 @@ struct SessionIndexEntry {
     thread_name: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct HistoryEntry {
+    session_id: String,
+    text: String,
+    ts: u64,
+}
+
 #[async_trait]
 impl AgentHistoryProvider for CodexHistoryProvider {
     async fn scan(
@@ -53,7 +62,10 @@ impl AgentHistoryProvider for CodexHistoryProvider {
         rollout_files.sort_unstable_by(|left, right| right.cmp(left));
         rollout_files.truncate(MAX_ROLLOUT_FILES_SCANNED);
 
-        let titles = load_session_titles(host).await;
+        let mut titles = load_session_titles(host).await;
+        for (session_id, title) in load_history_titles(host).await {
+            titles.entry(session_id).or_insert(title);
+        }
 
         let mut threads = Vec::new();
         for file_path in rollout_files {
@@ -64,10 +76,13 @@ impl AgentHistoryProvider for CodexHistoryProvider {
             if !project_roots.iter().any(|root| root == &project_root) {
                 continue;
             }
-            let title = titles
-                .get(&id)
-                .cloned()
-                .unwrap_or_else(|| "Codex session".to_string());
+            let title = if let Some(title) = titles.get(&id).cloned() {
+                title
+            } else {
+                read_session_title(host, &file_path)
+                    .await
+                    .unwrap_or_else(|| "Codex session".to_string())
+            };
             threads.push(HistoricalThread {
                 session_id: SharedString::from(id),
                 title: SharedString::from(title),
@@ -154,12 +169,97 @@ async fn load_session_titles(host: &AgentHistoryHost) -> HashMap<String, String>
     let mut titles = HashMap::default();
     for line in content.lines() {
         if let Ok(entry) = serde_json::from_str::<SessionIndexEntry>(line) {
-            if let Some(thread_name) = entry.thread_name {
+            if let Some(thread_name) = entry.thread_name.and_then(normalize_title) {
                 titles.insert(entry.id, thread_name);
             }
         }
     }
     titles
+}
+
+async fn load_history_titles(host: &AgentHistoryHost) -> HashMap<String, String> {
+    let history_path = host.base_dir.join("history.jsonl");
+    let Ok(content) = host.fs.load(&history_path).await else {
+        return HashMap::default();
+    };
+    let mut latest_titles: HashMap<String, (u64, String)> = HashMap::default();
+    for line in content.lines() {
+        let Ok(entry) = serde_json::from_str::<HistoryEntry>(line) else {
+            continue;
+        };
+        let Some(title) = normalize_title(entry.text) else {
+            continue;
+        };
+        let existing_is_newer = latest_titles
+            .get(&entry.session_id)
+            .is_some_and(|(timestamp, _)| *timestamp > entry.ts);
+        if !existing_is_newer {
+            latest_titles.insert(entry.session_id, (entry.ts, title));
+        }
+    }
+    latest_titles
+        .into_iter()
+        .map(|(session_id, (_, title))| (session_id, title))
+        .collect()
+}
+
+async fn read_session_title(host: &AgentHistoryHost, file_path: &Path) -> Option<String> {
+    let reader = host.fs.open_sync(file_path).await.ok()?;
+    let buf_reader = std::io::BufReader::new(reader);
+    let mut seen_user_messages = HashSet::default();
+    for line in buf_reader.lines().map_while(|line| line.ok()) {
+        let Ok(parsed) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some(payload) = parsed.get("payload") else {
+            continue;
+        };
+        if let Some(title) = user_message_title(payload, &mut seen_user_messages) {
+            return Some(title);
+        }
+    }
+    None
+}
+
+fn user_message_title(payload: &Value, seen_user_messages: &mut HashSet<String>) -> Option<String> {
+    if payload.get("type").and_then(Value::as_str) == Some("user_message") {
+        let message = payload.get("message").and_then(Value::as_str)?;
+        return normalize_title(message.to_string());
+    }
+
+    if payload.get("role").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    let content = payload.get("content")?.as_array()?;
+    let mut parts = Vec::new();
+    for item in content {
+        let Some(text) = item
+            .get("text")
+            .or_else(|| item.get("content"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if seen_user_messages.insert(text.to_string()) {
+            parts.push(text);
+        }
+    }
+    normalize_title(parts.join(" "))
+}
+
+fn normalize_title(text: String) -> Option<String> {
+    let title = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        return None;
+    }
+    if title.chars().count() <= MAX_TITLE_CHARS {
+        Some(title)
+    } else {
+        Some(format!(
+            "{}…",
+            title.chars().take(MAX_TITLE_CHARS).collect::<String>()
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -195,10 +295,32 @@ mod tests {
         .to_string()
     }
 
+    fn history_line(id: &str, text: &str, timestamp: u64) -> String {
+        serde_json::json!({
+            "session_id": id,
+            "text": text,
+            "ts": timestamp,
+        })
+        .to_string()
+    }
+
+    fn user_message_line(message: &str) -> String {
+        serde_json::json!({
+            "timestamp": "2026-06-18T20:23:15.000Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": message,
+            },
+        })
+        .to_string()
+    }
+
     async fn host_with_fixture(
         cx: &TestAppContext,
         rollout_files: &[(&str, String)],
         session_index: Option<&str>,
+        history: Option<&str>,
     ) -> AgentHistoryHost {
         let fs = FakeFs::new(cx.executor());
         for (relative_path, content) in rollout_files {
@@ -212,6 +334,13 @@ mod tests {
             fs.insert_file(
                 "/codex-home/session_index.jsonl",
                 index_content.as_bytes().to_vec(),
+            )
+            .await;
+        }
+        if let Some(history_content) = history {
+            fs.insert_file(
+                "/codex-home/history.jsonl",
+                history_content.as_bytes().to_vec(),
             )
             .await;
         }
@@ -231,6 +360,7 @@ mod tests {
                 rollout,
             )],
             Some(&session_index_line("session-a", "Fix the bug")),
+            None,
         )
         .await;
 
@@ -253,7 +383,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn scan_falls_back_to_generic_title_when_missing_from_index(cx: &mut TestAppContext) {
+    async fn scan_falls_back_to_history_title_when_missing_from_index(cx: &mut TestAppContext) {
         let rollout = session_meta_line("session-a", "/root", "2026-06-18T20:23:14.000Z");
         let host = host_with_fixture(
             cx,
@@ -261,6 +391,40 @@ mod tests {
                 "2026/06/18/rollout-2026-06-18T20-23-14-session-a.jsonl",
                 rollout,
             )],
+            None,
+            Some(&history_line(
+                "session-a",
+                "Implement agent threads panel",
+                200,
+            )),
+        )
+        .await;
+
+        let threads = CodexHistoryProvider
+            .scan(&host, &[PathBuf::from("/root")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].title.as_ref(), "Implement agent threads panel");
+    }
+
+    #[gpui::test]
+    async fn scan_falls_back_to_rollout_user_message_when_indexes_are_missing(
+        cx: &mut TestAppContext,
+    ) {
+        let rollout = [
+            session_meta_line("session-a", "/root", "2026-06-18T20:23:14.000Z"),
+            user_message_line("Summarize this agent session"),
+        ]
+        .join("\n");
+        let host = host_with_fixture(
+            cx,
+            &[(
+                "2026/06/18/rollout-2026-06-18T20-23-14-session-a.jsonl",
+                rollout,
+            )],
+            None,
             None,
         )
         .await;
@@ -271,7 +435,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].title.as_ref(), "Codex session");
+        assert_eq!(threads[0].title.as_ref(), "Summarize this agent session");
     }
 
     #[gpui::test]
@@ -290,6 +454,7 @@ mod tests {
                     rollout_b,
                 ),
             ],
+            None,
             None,
         )
         .await;
@@ -320,6 +485,7 @@ mod tests {
                 ),
             ],
             None,
+            None,
         )
         .await;
 
@@ -341,6 +507,7 @@ mod tests {
                 "2026/06/18/rollout-2026-06-18T20-23-14-bad.jsonl",
                 "not json".to_string(),
             )],
+            None,
             None,
         )
         .await;
