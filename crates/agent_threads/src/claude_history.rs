@@ -242,7 +242,7 @@ fn project_history_dir_name(project_root: &Path) -> String {
 
 fn normalize_title(display: &str) -> Option<String> {
     let title = display.split_whitespace().collect::<Vec<_>>().join(" ");
-    if title.is_empty() {
+    if title.is_empty() || title.starts_with('/') {
         None
     } else if title.chars().count() <= MAX_TITLE_CHARS {
         Some(title)
@@ -405,6 +405,32 @@ mod tests {
                     + Duration::from_millis(timestamp.timestamp_millis() as u64))
                 .unwrap()
         );
+    }
+
+    #[gpui::test]
+    async fn scan_skips_slash_commands_when_deriving_project_history_title(
+        cx: &mut TestAppContext,
+    ) {
+        let content = [
+            project_history_line("session-a", "/root", "/clear", "2026-06-18T20:23:14.000Z"),
+            project_history_line("session-a", "/root", "/exit", "2026-06-18T20:24:14.000Z"),
+            project_history_line(
+                "session-a",
+                "/root",
+                "Fix the release crash",
+                "2026-06-18T20:25:14.000Z",
+            ),
+        ]
+        .join("\n");
+        let host = host_with_project_history(cx, "/root", "session-a", &content).await;
+
+        let threads = ClaudeHistoryProvider
+            .scan(&host, &[PathBuf::from("/root")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].title.as_ref(), "Fix the release crash");
     }
 
     #[gpui::test]
