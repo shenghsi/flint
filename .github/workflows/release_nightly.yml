@@ -69,11 +69,7 @@ jobs:
         with:
           node-version: "20"
       - name: Setup sccache
-        run: ./script/setup-sccache
-        env:
-          ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
-          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
-          SCCACHE_GHA_ENABLED: "on"
+        uses: ./.github/actions/setup-sccache
       - run: ./script/bundle-mac aarch64-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
@@ -100,11 +96,7 @@ jobs:
         with:
           node-version: "20"
       - name: Setup sccache
-        run: ./script/setup-sccache
-        env:
-          ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
-          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
-          SCCACHE_GHA_ENABLED: "on"
+        uses: ./.github/actions/setup-sccache
       - run: ./script/bundle-mac x86_64-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
@@ -130,11 +122,7 @@ jobs:
       - run: ./script/linux
       - run: ./script/download-wasi-sdk
       - name: Setup sccache
-        run: ./script/setup-sccache
-        env:
-          ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
-          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
-          SCCACHE_GHA_ENABLED: "on"
+        uses: ./.github/actions/setup-sccache
       - run: ./script/bundle-linux
       - uses: actions/upload-artifact@v4
         with:
@@ -162,11 +150,7 @@ jobs:
       - run: ./script/linux
       - run: ./script/download-wasi-sdk
       - name: Setup sccache
-        run: ./script/setup-sccache
-        env:
-          ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
-          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
-          SCCACHE_GHA_ENABLED: "on"
+        uses: ./.github/actions/setup-sccache
       - run: ./script/bundle-linux
       - uses: actions/upload-artifact@v4
         with:
@@ -190,12 +174,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup sccache
-        shell: pwsh
-        run: ./script/setup-sccache.ps1
-        env:
-          ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
-          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
-          SCCACHE_GHA_ENABLED: "on"
+        uses: ./.github/actions/setup-sccache
       - shell: pwsh
         run: script/bundle-windows.ps1 -Architecture x86_64
       - uses: actions/upload-artifact@v4
@@ -220,12 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup sccache
-        shell: pwsh
-        run: ./script/setup-sccache.ps1
-        env:
-          ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
-          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
-          SCCACHE_GHA_ENABLED: "on"
+        uses: ./.github/actions/setup-sccache
       - shell: pwsh
         run: script/bundle-windows.ps1 -Architecture aarch64
       - uses: actions/upload-artifact@v4

@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
-$SCCACHE_VERSION = "v0.10.0"
+$SCCACHE_VERSION = "v0.16.0"
 $SCCACHE_DIR = "./target/sccache"
 
 function Install-Sccache {
@@ -103,7 +103,7 @@ function Configure-Sccache {
 
         Write-Host "✓ sccache configured with Cloudflare R2 (bucket: $bucket)"
     }
-    elseif ($env:ACTIONS_CACHE_URL -and $env:ACTIONS_RUNTIME_TOKEN) {
+    elseif ($env:ACTIONS_RESULTS_URL -and $env:ACTIONS_RUNTIME_TOKEN) {
         Write-Host "Configuring sccache with GitHub Actions cache..."
 
         $env:SCCACHE_GHA_ENABLED = "on"

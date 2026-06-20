@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-SCCACHE_VERSION="v0.10.0"
+SCCACHE_VERSION="v0.16.0"
 # Use absolute path to avoid issues with working directory changes between steps
 SCCACHE_DIR="$(pwd)/target/sccache"
 
@@ -92,7 +92,7 @@ configure_sccache() {
         fi
 
         echo "✓ sccache configured with Cloudflare R2 (bucket: ${bucket})"
-    elif [[ -n "${ACTIONS_CACHE_URL:-}" && -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
+    elif [[ -n "${ACTIONS_RESULTS_URL:-}" && -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
         echo "Configuring sccache with GitHub Actions cache..."
 
         export SCCACHE_GHA_ENABLED="on"
