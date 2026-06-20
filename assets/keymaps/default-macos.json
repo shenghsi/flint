@@ -1252,7 +1252,6 @@
       "cmd-0": ["flint::ResetUiFontSize", { "persist": false }],
       "cmd-enter": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
-      "alt-shift-a": "onboarding::OpenAccount",
     },
   },
   {

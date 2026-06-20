@@ -174,7 +174,7 @@ impl Workspace {
             cx.new(|cx| {
                 ErrorMessagePrompt::new(err.to_string(), cx).with_link_button(
                     "See docs",
-                    "https://flint.dev/docs/linux#i-cant-open-any-files",
+                    "https://github.com/shenghsi/flint/blob/main/docs/src/linux.md#i-cant-open-any-files",
                 )
             })
         });

@@ -6138,7 +6138,6 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "serde_urlencoded",
  "sha2",
  "tempfile",
  "url",

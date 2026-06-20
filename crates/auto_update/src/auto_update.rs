@@ -13,7 +13,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs::File;
-use smol::{fs, io::AsyncReadExt};
+use smol::fs;
 use std::mem;
 use std::{
     env::{
@@ -41,7 +41,7 @@ impl std::fmt::Display for MissingDependencyError {
 }
 
 impl std::error::Error for MissingDependencyError {}
-const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
 const NIGHTLY_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 
@@ -110,16 +110,6 @@ actions!(
 pub enum VersionCheckType {
     Sha(AppCommitSha),
     Semantic(Version),
-}
-
-#[derive(Serialize, Debug)]
-pub struct AssetQuery<'a> {
-    asset: &'a str,
-    os: &'a str,
-    arch: &'a str,
-    metrics_id: Option<&'a str>,
-    system_id: Option<&'a str>,
-    is_staff: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -602,16 +592,6 @@ impl AutoUpdater {
     ) -> Result<ReleaseAsset> {
         let client = this.read_with(cx, |this, _| this.client.clone());
 
-        let (system_id, metrics_id, is_staff) = if client.telemetry().metrics_enabled() {
-            (
-                client.telemetry().system_id(),
-                client.telemetry().metrics_id(),
-                client.telemetry().is_staff(),
-            )
-        } else {
-            (None, None, None)
-        };
-
         let version = if let Some(mut version) = version {
             version.pre = semver::Prerelease::EMPTY;
             version.build = semver::BuildMetadata::EMPTY;
@@ -621,42 +601,23 @@ impl AutoUpdater {
         };
         let http_client = client.http_client();
 
-        if asset == "flint-remote-server" {
-            return get_remote_server_from_github(release_channel, &version, os, arch, http_client)
-                .await;
-        }
-
-        let path = format!("/releases/{}/{}/asset", release_channel.dev_name(), version,);
-        let url = http_client.build_flint_cloud_url_with_query(
-            &path,
-            AssetQuery {
-                os,
-                arch,
-                asset,
-                metrics_id: metrics_id.as_deref(),
-                system_id: system_id.as_deref(),
-                is_staff,
+        // Flint has no release backend of its own, so every release asset is
+        // fetched from this repo's own GitHub releases instead.
+        let asset_name = match asset {
+            "flint-remote-server" => {
+                let extension = if os == "windows" { "zip" } else { "gz" };
+                format!("flint-remote-server-{os}-{arch}.{extension}")
+            }
+            "flint" => match os {
+                "macos" => format!("Flint-{arch}.dmg"),
+                "linux" => format!("flint-linux-{arch}.tar.gz"),
+                "windows" => format!("Flint-{arch}.exe"),
+                unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
             },
-        )?;
+            other => anyhow::bail!("unknown release asset: {other}"),
+        };
 
-        let mut response = http_client
-            .get(url.as_str(), Default::default(), true)
-            .await?;
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-
-        anyhow::ensure!(
-            response.status().is_success(),
-            "failed to fetch release: {:?}",
-            String::from_utf8_lossy(&body),
-        );
-
-        serde_json::from_slice(body.as_slice()).with_context(|| {
-            format!(
-                "error deserializing release {:?}",
-                String::from_utf8_lossy(&body),
-            )
-        })
+        get_release_from_github(release_channel, &version, &asset_name, http_client).await
     }
 
     async fn update(this: Entity<Self>, cx: &mut AsyncApp) -> Result<()> {
@@ -884,17 +845,13 @@ impl AutoUpdater {
     }
 }
 
-async fn get_remote_server_from_github(
+async fn get_release_from_github(
     release_channel: ReleaseChannel,
     version: &str,
-    os: &str,
-    arch: &str,
+    asset_name: &str,
     http_client: Arc<HttpClientWithUrl>,
 ) -> Result<ReleaseAsset> {
     const REPO: &str = "shenghsi/flint";
-
-    let extension = if os == "windows" { "zip" } else { "gz" };
-    let asset_name = format!("flint-remote-server-{os}-{arch}.{extension}");
 
     let http: Arc<dyn HttpClient> = http_client;
     let release = match release_channel {

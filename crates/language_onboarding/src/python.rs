@@ -59,7 +59,7 @@ impl Render for BasedPyrightBanner {
                                         .label_size(LabelSize::Small)
                                         .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall).color(Color::Muted))
                                         .on_click(|_, _, cx| {
-                                            cx.open_url("https://flint.dev/docs/languages/python")
+                                            cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/languages/python.md")
                                         }),
                                 )
                                 .child(IconButton::new("dismiss", IconName::Close).icon_size(IconSize::Small).on_click(

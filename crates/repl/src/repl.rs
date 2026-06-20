@@ -26,7 +26,7 @@ pub use crate::repl_settings::ReplSettings;
 pub use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 
-pub const KERNEL_DOCS_URL: &str = "https://flint.dev/docs/repl#changing-kernels";
+pub const KERNEL_DOCS_URL: &str = "https://github.com/shenghsi/flint/blob/main/docs/src/repl.md#changing-kernels";
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(flint_dispatcher(cx));

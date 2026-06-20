@@ -656,7 +656,7 @@ fn run() -> Result<()> {
 
     anyhow::ensure!(
         args.dev_server_token.is_none(),
-        "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://flint.dev/docs/remote-development"
+        "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://github.com/shenghsi/flint/blob/main/docs/src/remote-development.md"
     );
 
     rayon::ThreadPoolBuilder::new()

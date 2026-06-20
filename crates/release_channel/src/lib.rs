@@ -7,7 +7,7 @@ use std::{env, str::FromStr, sync::LazyLock};
 use gpui::{App, Global};
 use semver::Version;
 
-const ZED_DOCS_URL: &str = "https://flint.dev/docs";
+const FLINT_DOCS_URL: &str = "https://github.com/shenghsi/flint/blob/main/docs/src";
 
 /// stable | dev | nightly | preview
 pub static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
@@ -235,20 +235,19 @@ impl ReleaseChannel {
         }
     }
 
-    /// Returns the Flint docs URL for this [`ReleaseChannel`] for the given
-    /// `slug`.
+    /// Returns the Flint docs URL for the given `slug`.
+    ///
+    /// Flint's docs live in this repo's own `docs/src` directory rather than
+    /// a hosted docs site, so there's no per-channel (nightly/preview) copy
+    /// to link to.
     pub fn docs_url(&self, slug: &str) -> String {
-        let channel_path_segment = match self {
-            Self::Dev | Self::Nightly => Some("nightly"),
-            Self::Preview => Some("preview"),
-            Self::Stable => None,
-        };
+        if slug.is_empty() {
+            return FLINT_DOCS_URL.to_string();
+        }
 
-        match channel_path_segment {
-            Some(channel) if slug.is_empty() => format!("{ZED_DOCS_URL}/{channel}"),
-            Some(channel) => format!("{ZED_DOCS_URL}/{channel}/{slug}"),
-            None if slug.is_empty() => ZED_DOCS_URL.to_string(),
-            None => format!("{ZED_DOCS_URL}/{slug}"),
+        match slug.split_once('#') {
+            Some((page, anchor)) => format!("{FLINT_DOCS_URL}/{page}.md#{anchor}"),
+            None => format!("{FLINT_DOCS_URL}/{slug}.md"),
         }
     }
 }
@@ -277,21 +276,14 @@ mod tests {
 
     #[test]
     fn test_docs_url_for_release_channel() {
+        let expected = "https://github.com/shenghsi/flint/blob/main/docs/src/settings.md";
+        assert_eq!(ReleaseChannel::Dev.docs_url("settings"), expected);
+        assert_eq!(ReleaseChannel::Nightly.docs_url("settings"), expected);
+        assert_eq!(ReleaseChannel::Preview.docs_url("settings"), expected);
+        assert_eq!(ReleaseChannel::Stable.docs_url("settings"), expected);
         assert_eq!(
-            ReleaseChannel::Dev.docs_url("settings"),
-            "https://flint.dev/docs/nightly/settings"
-        );
-        assert_eq!(
-            ReleaseChannel::Nightly.docs_url("settings"),
-            "https://flint.dev/docs/nightly/settings"
-        );
-        assert_eq!(
-            ReleaseChannel::Preview.docs_url("settings"),
-            "https://flint.dev/docs/preview/settings"
-        );
-        assert_eq!(
-            ReleaseChannel::Stable.docs_url("settings"),
-            "https://flint.dev/docs/settings"
+            ReleaseChannel::Stable.docs_url("tasks#custom-git-commands"),
+            "https://github.com/shenghsi/flint/blob/main/docs/src/tasks.md#custom-git-commands"
         );
     }
 }

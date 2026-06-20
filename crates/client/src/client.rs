@@ -1,7 +1,6 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-pub mod flint_urls;
 mod proxy;
 pub mod telemetry;
 pub mod user;

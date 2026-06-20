@@ -209,7 +209,7 @@ impl Render for KeyContextView {
                     .child(
                         Button::new("open_documentation", "Open Documentation")
                             .style(ButtonStyle::Filled)
-                            .on_click(|_, _, cx| cx.open_url("https://flint.dev/docs/key-bindings")),
+                            .on_click(|_, _, cx| cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/key-bindings.md")),
                     )
                     .child(
                         Button::new("view_default_keymap", "View Default Keymap")

@@ -55,8 +55,6 @@ actions!(
         /// Opens the keymap editor.
         #[action(deprecated_aliases = ["flint_actions::OpenKeymapEditor"])]
         OpenKeymap,
-        /// Opens account settings.
-        OpenAccountSettings,
         /// Opens server settings.
         OpenServerSettings,
         /// Quits the application.
@@ -382,7 +380,7 @@ pub mod feedback {
     actions!(
         feedback,
         [
-            /// Opens email client to send feedback to Flint support.
+            /// Opens a new GitHub issue to send feedback about Flint.
             EmailFlint,
             /// Opens the bug report form.
             FileBugReport,

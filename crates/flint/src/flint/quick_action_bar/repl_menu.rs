@@ -16,7 +16,7 @@ use util::ResultExt;
 
 use super::QuickActionBar;
 
-const ZED_REPL_DOCUMENTATION: &str = "https://flint.dev/docs/repl";
+const ZED_REPL_DOCUMENTATION: &str = "https://github.com/shenghsi/flint/blob/main/docs/src/repl.md";
 
 struct ReplMenuState {
     tooltip: SharedString,

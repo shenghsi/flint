@@ -290,7 +290,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action(
                     "Documentation",
                     super::OpenBrowser {
-                        url: "https://flint.dev/docs".into(),
+                        url: super::DOCS_URL.into(),
                     },
                 ),
                 MenuItem::action("Flint Repository", feedback::OpenFlintRepo),

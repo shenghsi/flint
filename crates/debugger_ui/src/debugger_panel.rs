@@ -647,7 +647,7 @@ impl DebugPanel {
         let documentation_button = || {
             IconButton::new("debug-open-documentation", IconName::CircleHelp)
                 .icon_size(IconSize::Small)
-                .on_click(move |_, _, cx| cx.open_url("https://flint.dev/docs/debugger"))
+                .on_click(move |_, _, cx| cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/debugger.md"))
                 .tooltip(Tooltip::text("Open Documentation"))
         };
 
@@ -1851,7 +1851,7 @@ impl Render for DebugPanel {
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .on_click(|_, _, cx| cx.open_url("https://flint.dev/docs/debugger")),
+                                .on_click(|_, _, cx| cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/debugger.md")),
                         )
                         .child(
                             Button::new(

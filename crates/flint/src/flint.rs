@@ -20,7 +20,6 @@ use assets::Assets;
 
 use agent_threads::AgentThreadsPanel;
 use breadcrumbs::Breadcrumbs;
-use client::flint_urls;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
@@ -81,8 +80,8 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 
 use flint_actions::{
-    About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenFlintUrl, OpenServerSettings,
-    OpenSettingsFile, OpenStatusPage, Quit,
+    About, OpenBrowser, OpenDocs, OpenFlintUrl, OpenServerSettings, OpenSettingsFile,
+    OpenStatusPage, Quit,
 };
 use workspace::{
     AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -94,8 +93,8 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 
-const DOCS_URL: &str = "https://flint.dev/docs/";
-const STATUS_URL: &str = "https://status.flint.dev";
+const DOCS_URL: &str = "https://github.com/shenghsi/flint/tree/main/docs/src";
+const STATUS_URL: &str = "https://github.com/shenghsi/flint";
 
 pub struct CrashHandler(pub Arc<crashes::Client>);
 
@@ -213,11 +212,6 @@ pub fn init(cx: &mut App) {
                 window,
                 cx,
             );
-        });
-    })
-    .on_action(|_: &OpenAccountSettings, cx| {
-        with_active_or_new_workspace(cx, |_, _, cx| {
-            cx.open_url(&flint_urls::account_url(cx));
         });
     })
     .on_action(|_: &OpenTasks, cx| {
@@ -537,7 +531,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             db::indoc! {r#"
             inotify_init returned {}
 
-            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://flint.dev/docs/linux
+            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://github.com/shenghsi/flint/blob/main/docs/src/linux.md
             "#},
             e
         );
@@ -551,7 +545,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
         cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
-                    cx.open_url("https://flint.dev/docs/linux#could-not-start-inotify");
+                    cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/linux.md#could-not-start-inotify");
                     cx.quit();
                 });
             }
@@ -568,7 +562,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             db::indoc! {r#"
             ReadDirectoryChangesW initialization failed: {}
 
-            This may occur on network filesystems and WSL paths. For troubleshooting see: https://flint.dev/docs/windows
+            This may occur on network filesystems and WSL paths. For troubleshooting see: https://github.com/shenghsi/flint/blob/main/docs/src/windows.md
             "#},
             e
         );
@@ -582,7 +576,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
         cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
-                    cx.open_url("https://flint.dev/docs/windows");
+                    cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/windows.md");
                     cx.quit()
                 });
             }
@@ -600,14 +594,14 @@ fn show_software_emulation_warning_if_needed(
         let (graphics_api, docs_url, open_url) = if cfg!(target_os = "windows") {
             (
                 "DirectX",
-                "https://flint.dev/docs/windows",
-                "https://flint.dev/docs/windows",
+                "https://github.com/shenghsi/flint/blob/main/docs/src/windows.md",
+                "https://github.com/shenghsi/flint/blob/main/docs/src/windows.md",
             )
         } else {
             (
                 "Vulkan",
-                "https://flint.dev/docs/linux",
-                "https://flint.dev/docs/linux#flint-fails-to-open-windows",
+                "https://github.com/shenghsi/flint/blob/main/docs/src/linux.md",
+                "https://github.com/shenghsi/flint/blob/main/docs/src/linux.md#flint-fails-to-open-windows",
             )
         };
         let message = format!(

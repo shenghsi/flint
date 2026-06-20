@@ -150,7 +150,7 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     eprintln!(
-        "Flint failed to open a window: {e:?}. See https://flint.dev/docs/linux for troubleshooting steps."
+        "Flint failed to open a window: {e:?}. See https://github.com/shenghsi/flint/blob/main/docs/src/linux.md for troubleshooting steps."
     );
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
@@ -173,7 +173,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
                     Notification::new("Flint failed to launch")
                         .body(Some(
                             format!(
-                                "{e:?}. See https://flint.dev/docs/linux for troubleshooting steps."
+                                "{e:?}. See https://github.com/shenghsi/flint/blob/main/docs/src/linux.md for troubleshooting steps."
                             )
                             .as_str(),
                         ))

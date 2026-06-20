@@ -2349,7 +2349,7 @@ impl RemoteServerProjects {
                                             )
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
-                                                    "https://flint.dev/docs/remote-development",
+                                                    "https://github.com/shenghsi/flint/blob/main/docs/src/remote-development.md",
                                                 );
                                             }),
                                     ),

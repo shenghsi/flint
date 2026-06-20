@@ -33,7 +33,7 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
         "Darwin" => RemoteOs::MacOs,
         "Linux" => RemoteOs::Linux,
         _ => anyhow::bail!(
-            "Prebuilt remote servers are not yet available for {os:?}. See https://flint.dev/docs/remote-development"
+            "Prebuilt remote servers are not yet available for {os:?}. See https://github.com/shenghsi/flint/blob/main/docs/src/remote-development.md"
         ),
     };
 
@@ -48,7 +48,7 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
         RemoteArch::X86_64
     } else {
         anyhow::bail!(
-            "Prebuilt remote servers are not yet available for {arch:?}. See https://flint.dev/docs/remote-development"
+            "Prebuilt remote servers are not yet available for {arch:?}. See https://github.com/shenghsi/flint/blob/main/docs/src/remote-development.md"
         )
     };
 

@@ -1,4 +1,4 @@
-//! See [Telemetry in Flint](https://flint.dev/docs/telemetry) for additional information.
+//! See [Telemetry in Flint](https://github.com/shenghsi/flint/blob/main/docs/src/telemetry.md) for additional information.
 
 use semver::Version;
 use serde::{Deserialize, Serialize};

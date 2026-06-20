@@ -1,4 +1,4 @@
-//! See [Telemetry in Flint](https://flint.dev/docs/telemetry) for additional information.
+//! See [Telemetry in Flint](https://github.com/shenghsi/flint/blob/main/docs/src/telemetry.md) for additional information.
 use futures::channel::mpsc;
 pub use serde_json;
 use std::sync::OnceLock;

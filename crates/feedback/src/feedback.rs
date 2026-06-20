@@ -16,14 +16,14 @@ actions!(
     ]
 );
 
-const ZED_REPO_URL: &str = "https://github.com/zed-industries/flint";
+const ZED_REPO_URL: &str = "https://github.com/shenghsi/flint";
 
-const REQUEST_FEATURE_URL: &str = "https://github.com/zed-industries/flint/discussions/new/choose";
+const REQUEST_FEATURE_URL: &str = "https://github.com/shenghsi/flint/discussions/new/choose";
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {
     format!(
         concat!(
-            "https://github.com/zed-industries/flint/issues/new",
+            "https://github.com/shenghsi/flint/issues/new",
             "?",
             "template=10_bug_report.yml",
             "&",
@@ -35,7 +35,7 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
 
 fn email_flint_url(specs: &SystemSpecs) -> String {
     format!(
-        concat!("mailto:hi@flint.dev", "?", "body={}"),
+        concat!("https://github.com/shenghsi/flint/issues/new", "?", "body={}"),
         email_body(specs)
     )
 }

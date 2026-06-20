@@ -546,7 +546,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                                 .color(Color::Muted),
                         )
                         .on_click(cx.listener(|_, _, _, cx| {
-                            cx.open_url("https://flint.dev/docs/themes");
+                            cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/themes.md");
                         })),
                 )
                 .child(

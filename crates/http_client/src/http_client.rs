@@ -12,7 +12,6 @@ use http::{HeaderName, HeaderValue};
 
 use futures::future::BoxFuture;
 use parking_lot::Mutex;
-use serde::Serialize;
 use std::sync::Arc;
 #[cfg(feature = "test-support")]
 use std::{any::type_name, fmt};
@@ -291,23 +290,6 @@ impl HttpClientWithUrl {
         };
 
         Ok(Url::parse(&format!("{}{}", base_api_url, path))?)
-    }
-
-    /// Builds a Flint Cloud URL using the given path and query params.
-    pub fn build_flint_cloud_url_with_query(
-        &self,
-        path: &str,
-        query: impl Serialize,
-    ) -> Result<Url> {
-        let base_url = self.base_url();
-        let base_api_url = match base_url.as_ref() {
-            "https://zed.dev" => "https://cloud.zed.dev",
-            "https://staging.zed.dev" => "https://cloud.zed.dev",
-            "http://localhost:3000" => "http://localhost:8787",
-            other => other,
-        };
-        let query = serde_urlencoded::to_string(&query)?;
-        Ok(Url::parse(&format!("{}{}?{}", base_api_url, path, query))?)
     }
 
     /// Builds a Flint LLM URL using the given path.

@@ -255,7 +255,7 @@ impl Render for ReplSessionsPage {
                             .child(Label::new("Install Kernels"))
                             .on_click(move |_, _, cx| {
                                 cx.open_url(
-                                    "https://flint.dev/docs/repl#language-specific-instructions",
+                                    "https://github.com/shenghsi/flint/blob/main/docs/src/repl.md#language-specific-instructions",
                                 )
                             }),
                     ),
