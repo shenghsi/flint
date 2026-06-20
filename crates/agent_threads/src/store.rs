@@ -286,7 +286,7 @@ pub fn launch_new_thread(
 ) {
     let settings = AgentThreadSettings::get_global(cx);
     let command = settings.command_for_kind(kind.id).clone();
-    spawn_thread(workspace, kind, command, None, window, cx);
+    spawn_thread(workspace, kind, kind.label.clone(), command, None, window, cx);
 }
 
 pub fn resume_thread(
@@ -306,6 +306,7 @@ pub fn resume_thread(
     spawn_thread(
         workspace,
         kind,
+        thread.title.clone(),
         command,
         Some(thread.session_id.clone()),
         window,
@@ -316,6 +317,7 @@ pub fn resume_thread(
 fn spawn_thread(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
+    summary: SharedString,
     command: AgentLaunchCommand,
     resumed_session_id: Option<SharedString>,
     window: &mut Window,
@@ -330,7 +332,7 @@ fn spawn_thread(
     };
     let kind_id = kind.id;
     let kind_icon = kind.icon;
-    let label = kind.label.to_string();
+    let label = summary.to_string();
     let command_label = command_label(&command, &label);
     let task = SpawnInTerminal {
         full_label: label.clone(),

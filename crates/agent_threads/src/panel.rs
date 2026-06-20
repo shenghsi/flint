@@ -1007,6 +1007,7 @@ mod tests {
         assert_eq!(spawned.command, Some("echo".to_string()));
         assert_eq!(spawned.args, vec!["resume", "session-a"]);
         assert_eq!(spawned.cwd, Some(PathBuf::from(root)));
+        assert_eq!(spawned.full_label, "Fix the bug");
     }
 
     #[gpui::test]
