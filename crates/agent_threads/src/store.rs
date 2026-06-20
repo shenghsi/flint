@@ -286,15 +286,7 @@ pub fn launch_new_thread(
 ) {
     let settings = AgentThreadSettings::get_global(cx);
     let command = settings.command_for_kind(kind.id).clone();
-    spawn_thread(
-        workspace,
-        kind.id,
-        kind.label.clone(),
-        command,
-        None,
-        window,
-        cx,
-    );
+    spawn_thread(workspace, kind, command, None, window, cx);
 }
 
 pub fn resume_thread(
@@ -313,8 +305,7 @@ pub fn resume_thread(
     let command = provider.resume_command(&base, thread, extra_args);
     spawn_thread(
         workspace,
-        kind.id,
-        kind.label.clone(),
+        kind,
         command,
         Some(thread.session_id.clone()),
         window,
@@ -324,8 +315,7 @@ pub fn resume_thread(
 
 fn spawn_thread(
     workspace: &mut Workspace,
-    kind_id: &'static str,
-    kind_label: SharedString,
+    kind: &AgentKindDefinition,
     command: AgentLaunchCommand,
     resumed_session_id: Option<SharedString>,
     window: &mut Window,
@@ -338,7 +328,9 @@ fn spawn_thread(
     else {
         return;
     };
-    let label = kind_label.to_string();
+    let kind_id = kind.id;
+    let kind_icon = kind.icon;
+    let label = kind.label.to_string();
     let command_label = command_label(&command, &label);
     let task = SpawnInTerminal {
         full_label: label.clone(),
@@ -370,6 +362,9 @@ fn spawn_thread(
         let terminal_view = terminal_view
             .upgrade()
             .ok_or_else(|| anyhow!("agent thread terminal closed before registration"))?;
+        terminal_view.update(cx, |terminal_view, cx| {
+            terminal_view.set_tab_icon_override(Some(kind_icon), cx);
+        });
         let store = cx.update(|_, cx| AgentThreadStore::global(cx))?;
         store.update(cx, |store, cx| {
             store.register(

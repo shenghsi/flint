@@ -140,6 +140,9 @@ pub struct TerminalView {
     blinking_terminal_enabled: bool,
     needs_serialize: bool,
     custom_title: Option<String>,
+    /// Overrides the tab icon, e.g. to show the originating agent's icon for
+    /// terminals launched from the agent threads panel.
+    tab_icon_override: Option<IconName>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -293,6 +296,7 @@ impl TerminalView {
             scroll_handle,
             needs_serialize: false,
             custom_title: None,
+            tab_icon_override: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
@@ -401,6 +405,14 @@ impl TerminalView {
         if self.custom_title != label {
             self.custom_title = label;
             self.needs_serialize = true;
+            cx.emit(ItemEvent::UpdateTab);
+            cx.notify();
+        }
+    }
+
+    pub fn set_tab_icon_override(&mut self, icon: Option<IconName>, cx: &mut Context<Self>) {
+        if self.tab_icon_override != icon {
+            self.tab_icon_override = icon;
             cx.emit(ItemEvent::UpdateTab);
             cx.notify();
         }
@@ -1414,29 +1426,32 @@ impl Item for TerminalView {
             .cloned()
             .unwrap_or_else(|| terminal.title(true));
 
-        let (icon, icon_color, rerun_button) = match terminal.task() {
-            Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Running => (
-                    IconName::PlayFilled,
-                    Color::Disabled,
-                    TerminalView::rerun_button(terminal_task),
-                ),
-                TaskStatus::Unknown => (
-                    IconName::Warning,
-                    Color::Warning,
-                    TerminalView::rerun_button(terminal_task),
-                ),
-                TaskStatus::Completed { success } => {
-                    let rerun_button = TerminalView::rerun_button(terminal_task);
+        let (icon, icon_color, rerun_button) = match self.tab_icon_override {
+            Some(icon) => (icon, Color::Default, None),
+            None => match terminal.task() {
+                Some(terminal_task) => match &terminal_task.status {
+                    TaskStatus::Running => (
+                        IconName::PlayFilled,
+                        Color::Disabled,
+                        TerminalView::rerun_button(terminal_task),
+                    ),
+                    TaskStatus::Unknown => (
+                        IconName::Warning,
+                        Color::Warning,
+                        TerminalView::rerun_button(terminal_task),
+                    ),
+                    TaskStatus::Completed { success } => {
+                        let rerun_button = TerminalView::rerun_button(terminal_task);
 
-                    if *success {
-                        (IconName::Check, Color::Success, rerun_button)
-                    } else {
-                        (IconName::XCircle, Color::Error, rerun_button)
+                        if *success {
+                            (IconName::Check, Color::Success, rerun_button)
+                        } else {
+                            (IconName::XCircle, Color::Error, rerun_button)
+                        }
                     }
-                }
+                },
+                None => (IconName::Terminal, Color::Muted, None),
             },
-            None => (IconName::Terminal, Color::Muted, None),
         };
 
         let self_handle = self.self_handle.clone();

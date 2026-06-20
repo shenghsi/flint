@@ -69,7 +69,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
         AgentKindDefinition {
             id: "codex",
             label: SharedString::new_static("Codex"),
-            icon: IconName::Sparkle,
+            icon: IconName::AiOpenAi,
             default_command: "codex",
             home_env_var: "CODEX_HOME",
             home_dir_name: ".codex",
@@ -82,7 +82,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
         AgentKindDefinition {
             id: "claude",
             label: SharedString::new_static("Claude"),
-            icon: IconName::Sparkle,
+            icon: IconName::AiClaude,
             default_command: "claude",
             home_env_var: "CLAUDE_CONFIG_DIR",
             home_dir_name: ".claude",
