@@ -359,6 +359,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
 }
 
 pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
+    agent_threads::init(cx);
+
     let mut _on_close_subscription = bind_on_window_closed(cx);
     cx.observe_global::<SettingsStore>(move |cx| {
         // A 1.92 regression causes unused-assignment to trigger on this variable.
@@ -959,6 +961,14 @@ fn register_actions(
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &flint_actions::agent_threads::ToggleFocus,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                workspace.toggle_panel_focus::<AgentThreadsPanel>(window, cx);
             },
         )
         .register_action({
@@ -5227,7 +5237,6 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            agent_threads::init(cx);
             image_viewer::init(cx);
 
             repl::init(app_state.fs.clone(), cx);
@@ -5247,6 +5256,56 @@ mod tests {
             });
             app_state
         })
+    }
+
+    #[gpui::test]
+    fn test_initialize_workspace_initializes_agent_threads(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.read(agent_threads::AgentThreadStore::global);
+    }
+
+    #[gpui::test]
+    async fn test_agent_threads_toggle_focus_opens_panel(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            open_new(
+                Default::default(),
+                app_state.clone(),
+                cx,
+                |workspace, window, cx| {
+                    Editor::new_file(workspace, &Default::default(), window, cx)
+                },
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx
+            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
+            .unwrap();
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        cx.dispatch_action(
+            multi_workspace.into(),
+            flint_actions::agent_threads::ToggleFocus,
+        );
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let panel = workspace
+                        .left_dock()
+                        .read(cx)
+                        .panel::<AgentThreadsPanel>()
+                        .expect("agent threads panel should be in the left dock");
+                    assert!(workspace.left_dock().read(cx).is_open());
+                    assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+                });
+            })
+            .unwrap();
     }
 
     #[track_caller]
