@@ -268,6 +268,8 @@ impl HttpClientWithUrl {
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://api.zed.dev",
             "https://staging.zed.dev" => "https://api-staging.zed.dev",
+            // Flint doesn't run its own extension registry, so fetch from upstream Zed's.
+            "https://flint.dev" => "https://api.zed.dev",
             "http://localhost:3000" => "http://localhost:8080",
             other => other,
         };
