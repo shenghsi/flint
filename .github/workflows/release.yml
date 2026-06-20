@@ -1,18 +1,24 @@
 name: release
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: "1"
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 on:
   push:
     tags:
       - v*
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to build
+        required: true
+        type: string
 permissions:
   contents: write
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}
+  group: ${{ github.workflow }}-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 defaults:
   run:
     shell: bash -euo pipefail {0}
@@ -32,6 +38,8 @@ jobs:
           sudo rm -rf /Users/runner/.rustup/toolchains/1.*-x86_64* 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Setup cargo config
         run: |
           mkdir -p ./../.cargo
@@ -69,6 +77,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcActions 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Setup cargo config
         run: |
           mkdir -p ./../.cargo
@@ -97,6 +107,8 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -Value 1
           git config --global core.longpaths true
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Setup cargo config
         shell: pwsh
         run: |
@@ -135,6 +147,8 @@ jobs:
           sudo rm -rf /Users/runner/.rustup/toolchains/1.*-x86_64* 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Setup cargo config
         run: |
           mkdir -p ./../.cargo
@@ -157,6 +171,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcActions 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Setup cargo config
         run: |
           mkdir -p ./../.cargo
@@ -178,6 +194,8 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -Value 1
           git config --global core.longpaths true
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Setup cargo config
         shell: pwsh
         run: |
@@ -198,7 +216,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 25
-          ref: ${{ github.ref }}
+          ref: ${{ env.RELEASE_TAG }}
       - run: script/determine-release-channel
       - run: mkdir -p target/
       - name: Generate release notes
@@ -239,6 +257,8 @@ jobs:
           sudo rm -rf /Users/runner/.rustup/toolchains/1.*-x86_64* 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -283,6 +303,8 @@ jobs:
           sudo rm -rf /Users/runner/.rustup/toolchains/1.*-x86_64* 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -316,6 +338,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcActions 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - run: ./script/linux
       - run: ./script/download-wasi-sdk
       - name: Setup sccache
@@ -350,6 +374,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcActions 2>/dev/null || true
           df -h /
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - run: ./script/linux
       - run: ./script/download-wasi-sdk
       - name: Setup sccache
@@ -391,6 +417,8 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -Value 1
           git config --global core.longpaths true
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Setup sccache
         uses: ./.github/actions/setup-sccache
       - shell: pwsh
@@ -431,6 +459,8 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -Value 1
           git config --global core.longpaths true
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Setup sccache
         uses: ./.github/actions/setup-sccache
       - shell: pwsh
@@ -459,6 +489,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/download-artifact@v4
         with:
           path: ./artifacts/
@@ -480,7 +512,7 @@ jobs:
           mv ./artifacts/flint-remote-server-windows-aarch64.zip/flint-remote-server-windows-aarch64.zip release-artifacts/flint-remote-server-windows-aarch64.zip
           mv ./artifacts/flint-remote-server-windows-x86_64.zip/flint-remote-server-windows-x86_64.zip release-artifacts/flint-remote-server-windows-x86_64.zip
       - name: Upload to GitHub Release
-        run: gh release upload "$GITHUB_REF_NAME" release-artifacts/*
+        run: gh release upload "$RELEASE_TAG" release-artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -490,10 +522,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - name: Validate all expected assets are present
         run: |
           EXPECTED_ASSETS='["Flint-aarch64.dmg", "Flint-x86_64.dmg", "flint-linux-aarch64.tar.gz", "flint-linux-x86_64.tar.gz", "Flint-x86_64.exe", "Flint-aarch64.exe", "flint-remote-server-macos-aarch64.gz", "flint-remote-server-macos-x86_64.gz", "flint-remote-server-linux-aarch64.gz", "flint-remote-server-linux-x86_64.gz", "flint-remote-server-windows-aarch64.zip", "flint-remote-server-windows-x86_64.zip"]'
-          TAG="$GITHUB_REF_NAME"
+          TAG="$RELEASE_TAG"
           ACTUAL_ASSETS=$(gh release view "$TAG" --json assets -q '[.assets[].name]')
           MISSING_ASSETS=$(echo "$EXPECTED_ASSETS" | jq -r --argjson actual "$ACTUAL_ASSETS" '. - $actual | .[]')
           if [ -n "$MISSING_ASSETS" ]; then
@@ -508,15 +542,15 @@ jobs:
   auto_release_preview:
     needs:
       - validate_release_assets
-    if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre')
+    if: endsWith(inputs.release_tag || github.ref_name, '-pre')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ env.RELEASE_TAG }}
       - name: Auto-release preview
         run: |
-          tag="$GITHUB_REF_NAME"
+          tag="$RELEASE_TAG"
           gh release edit "$tag" --draft=false --prerelease
           echo "Preview release $tag published"
         env:
