@@ -2640,6 +2640,15 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         assert!(tree.entry_for_path(rel_path("d/e")).unwrap().is_dir());
         assert!(tree.entry_for_path(rel_path("d")).unwrap().is_dir());
     });
+
+    // Tear down the real-filesystem worktree (and with it the background
+    // scanner and OS file watcher) here, while parking is still allowed. The
+    // test harness forbids parking during teardown, and shutting the watcher
+    // down can briefly park; if that drop slips into the teardown phase it
+    // aborts the process, which is the source of flaky failures on slower CI.
+    drop(tree_real);
+    cx.update(|_| {});
+    cx.executor().run_until_parked();
 }
 
 #[gpui::test]
