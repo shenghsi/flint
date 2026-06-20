@@ -735,6 +735,7 @@ fn main() {
         if ENABLE_RETIRED_PRODUCT_SURFACES {
             onboarding::init(cx);
         }
+        settings_ui::init(cx);
         keymap_editor::init(cx);
         extensions_ui::init(cx);
         inspector_ui::init(app_state.clone(), cx);

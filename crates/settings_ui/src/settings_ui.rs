@@ -2,7 +2,6 @@ mod components;
 mod page_data;
 pub mod pages;
 
-use agent_skills::SkillIndex;
 use anyhow::{Context as _, Result};
 use cloud_api_types::OrganizationConfiguration;
 use editor::{Editor, EditorEvent};
@@ -31,7 +30,6 @@ use std::{
     collections::{HashMap, HashSet},
     num::{NonZero, NonZeroU32},
     ops::Range,
-    path::PathBuf,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
@@ -52,10 +50,8 @@ use flint_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt, OpenSetti
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
-    SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
-    theme_picker,
+    SettingsSectionHeader, font_picker, icon_theme_picker, theme_picker,
 };
-use crate::pages::{render_input_audio_device_dropdown, render_output_audio_device_dropdown};
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
@@ -483,7 +479,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
         .add_basic_renderer::<SharedString>(render_text_field)
-        .add_basic_renderer::<settings::SaturatingBool>(render_toggle_button)
         .add_basic_renderer::<settings::CursorShape>(render_dropdown)
         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
@@ -534,8 +529,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
-        .add_basic_renderer::<settings::EditPredictionPromptFormatContent>(render_dropdown)
-        .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
         .add_basic_renderer::<f32>(render_editable_number_field)
         .add_basic_renderer::<u32>(render_editable_number_field)
         .add_basic_renderer::<u64>(render_editable_number_field)
@@ -557,10 +550,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ModeContent>(render_dropdown)
         .add_basic_renderer::<settings::UseSystemClipboard>(render_dropdown)
         .add_basic_renderer::<settings::VimInsertModeCursorShape>(render_dropdown)
-        .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
-        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
-        .add_basic_renderer::<settings::PlaySoundWhenAgentDone>(render_dropdown)
-        .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
@@ -580,18 +569,14 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::IncludeIgnoredContent>(render_dropdown)
         .add_basic_renderer::<settings::ShowIndentGuides>(render_dropdown)
         .add_basic_renderer::<settings::ShellDiscriminants>(render_dropdown)
-        .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ScanSymlinksSetting>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
-        .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentFoldingRanges>(render_dropdown)
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
-        .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
-        .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
         .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
         // please semicolon stay on next line
         ;
@@ -838,12 +823,8 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     shown_errors: HashSet<String>,
-    pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
-    /// Directory path of the skill whose share link was most recently copied,
-    /// used to show a transient "copied" checkmark on its share button.
-    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
 }
 
 struct SearchDocument {
@@ -1644,28 +1625,6 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.observe_global_in::<SkillIndex>(window, |this, _window, cx| {
-            if let Some(skill_index) = cx.try_global::<SkillIndex>() {
-                this.hidden_deleted_skill_directory_paths
-                    .retain(|directory_path| {
-                        skill_index
-                            .global_skills
-                            .iter()
-                            .chain(
-                                skill_index
-                                    .project_skills
-                                    .iter()
-                                    .flat_map(|group| group.skills.iter()),
-                            )
-                            .any(|skill| skill.directory_path.as_path() == directory_path.as_path())
-                    });
-            } else {
-                this.hidden_deleted_skill_directory_paths.clear();
-            }
-            cx.notify();
-        })
-        .detach();
-
         cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
@@ -1813,11 +1772,9 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
-            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             list_state,
             last_copied_link_path: None,
-            last_copied_skill_directory_path: None,
         };
 
         this.fetch_files(window, cx);
@@ -2425,7 +2382,6 @@ impl SettingsWindow {
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
         // Navigating to another page dismisses the transient "copied share
         // link" checkmark shown on a Skills page row.
-        self.last_copied_skill_directory_path = None;
 
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
@@ -2551,7 +2507,6 @@ impl SettingsWindow {
             telemetry::event!("Setting Project Clicked");
         }
 
-        self.last_copied_skill_directory_path = None;
 
         let sub_page_stack = std::mem::take(&mut self.sub_page_stack);
         self.build_ui(window, cx);
@@ -4852,10 +4807,8 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
-                hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
                 last_copied_link_path: None,
-                last_copied_skill_directory_path: None,
             }
         }
     }
@@ -4980,10 +4933,8 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
-            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             last_copied_link_path: None,
-            last_copied_skill_directory_path: None,
         };
 
         settings_window.build_filter_table();
@@ -5600,181 +5551,6 @@ pub mod test {
                 "Should have no duplicate project files, but found duplicates. All files: {:?}",
                 project_files
             );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_skills_page_scope_switch_updates_displayed_skills(cx: &mut gpui::TestAppContext) {
-        use agent_skills::{
-            ProjectSkillGroup, Skill, SkillScopeId, SkillSource, load_skills_from_directory,
-        };
-        use project::Project;
-        use serde_json::json;
-        use std::path::Path;
-
-        cx.update(|cx| {
-            register_settings(cx);
-        });
-
-        let app_state = cx.update(|cx| {
-            let app_state = AppState::test(cx);
-            AppState::set_global(app_state.clone(), cx);
-            app_state
-        });
-
-        let fake_fs = app_state.fs.as_fake();
-
-        fake_fs
-            .insert_tree(
-                "/global-skills",
-                json!({
-                    "global-skill": {
-                        "SKILL.md": "---\nname: global-skill\ndescription: A user level skill\n---\n\nGlobal instructions."
-                    }
-                }),
-            )
-            .await;
-
-        fake_fs
-            .insert_tree(
-                "/project",
-                json!({
-                    ".agents": {
-                        "skills": {
-                            "project-skill": {
-                                "SKILL.md": "---\nname: project-skill\ndescription: A project level skill\n---\n\nProject instructions."
-                            }
-                        }
-                    },
-                    "main.rs": "fn main() {}"
-                }),
-            )
-            .await;
-
-        let project = cx.update(|cx| {
-            Project::local(
-                app_state.client.clone(),
-                app_state.node_runtime.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                None,
-                project::LocalProjectFlags::default(),
-                cx,
-            )
-        });
-
-        let (worktree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_worktree("/project", true, cx)
-            })
-            .await
-            .expect("Failed to create worktree");
-        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
-
-        // Load both skills from the fake filesystem the same way the agent
-        // does, then publish them as the global skill index.
-        let fs = app_state.fs.clone();
-        let global_skills: Vec<Skill> =
-            load_skills_from_directory(&fs, Path::new("/global-skills"), SkillSource::Global)
-                .await
-                .into_iter()
-                .map(|result| result.expect("global skill should load"))
-                .collect();
-        let project_skills: Vec<Skill> = load_skills_from_directory(
-            &fs,
-            Path::new("/project/.agents/skills"),
-            SkillSource::ProjectLocal {
-                worktree_id: SkillScopeId(worktree_id.to_usize()),
-                worktree_root_name: "project".into(),
-            },
-        )
-        .await
-        .into_iter()
-        .map(|result| result.expect("project skill should load"))
-        .collect();
-        assert_eq!(global_skills.len(), 1);
-        assert_eq!(project_skills.len(), 1);
-
-        cx.update(|cx| {
-            cx.set_global(SkillIndex {
-                global_skills,
-                project_skills: vec![ProjectSkillGroup {
-                    worktree_id: SkillScopeId(worktree_id.to_usize()),
-                    worktree_root_name: "project".into(),
-                    skills: project_skills,
-                }],
-            });
-        });
-
-        let (_multi_workspace, cx) = cx.add_window_view(|window, cx| {
-            let workspace = cx.new(|cx| {
-                Workspace::new(
-                    Default::default(),
-                    project.clone(),
-                    app_state.clone(),
-                    window,
-                    cx,
-                )
-            });
-            MultiWorkspace::new(workspace, window, cx)
-        });
-        let workspace_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
-
-        cx.run_until_parked();
-
-        let (settings_window, cx) = cx
-            .add_window_view(|window, cx| SettingsWindow::new(Some(workspace_handle), window, cx));
-
-        cx.run_until_parked();
-
-        settings_window.update_in(cx, |settings_window, window, cx| {
-            fn displayed_skill_names(settings_window: &SettingsWindow, cx: &App) -> Vec<String> {
-                crate::pages::displayed_skills(settings_window, cx)
-                    .iter()
-                    .map(|skill| skill.name.to_string())
-                    .collect()
-            }
-
-            assert_eq!(settings_window.current_file, SettingsUiFile::User);
-            assert!(
-                settings_window.navigate_to_sub_page("agent.skills", window, cx),
-                "Skills sub-page should exist"
-            );
-            assert_eq!(displayed_skill_names(settings_window, cx), ["global-skill"]);
-
-            let project_file_index = settings_window
-                .files
-                .iter()
-                .position(|(file, _)| file.worktree_id() == Some(worktree_id))
-                .expect("project settings file should be listed");
-            settings_window.change_file_in_sub_page(project_file_index, window, cx);
-
-            assert_eq!(
-                settings_window.current_file.worktree_id(),
-                Some(worktree_id)
-            );
-            assert_eq!(
-                settings_window.sub_page_stack.len(),
-                1,
-                "Skills sub-page should stay open when switching scope"
-            );
-            assert_eq!(settings_window.sub_page_stack[0].link.title, "Skills");
-            assert_eq!(
-                displayed_skill_names(settings_window, cx),
-                ["project-skill"]
-            );
-
-            let user_file_index = settings_window
-                .files
-                .iter()
-                .position(|(file, _)| file == &SettingsUiFile::User)
-                .expect("user settings file should be listed");
-            settings_window.change_file_in_sub_page(user_file_index, window, cx);
-
-            assert_eq!(settings_window.current_file, SettingsUiFile::User);
-            assert_eq!(settings_window.sub_page_stack.len(), 1);
-            assert_eq!(displayed_skill_names(settings_window, cx), ["global-skill"]);
         });
     }
 }

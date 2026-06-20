@@ -4829,6 +4829,61 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_settings_keybinding(cx: &mut gpui::TestAppContext) {
+        let executor = cx.executor();
+        let app_state = init_keymap_test(cx);
+        cx.update(|cx| {
+            release_channel::init_test(semver::Version::new(0, 0, 0), ReleaseChannel::Dev, cx);
+            AppState::set_global(app_state.clone(), cx);
+            settings_ui::init(cx);
+        });
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &"[]".to_string().into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            let (keymap_rx, keymap_watcher) = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/keymap.json"),
+            );
+            watch_settings_files(app_state.fs.clone(), cx);
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        #[cfg(target_os = "macos")]
+        let open_settings_keystroke = "cmd-,";
+        #[cfg(not(target_os = "macos"))]
+        let open_settings_keystroke = "ctrl-,";
+
+        cx.simulate_keystrokes(window.into(), open_settings_keystroke);
+        cx.background_executor.run_until_parked();
+
+        let opened_settings_window = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .any(|window| window.downcast::<settings_ui::SettingsWindow>().is_some())
+        });
+        assert!(
+            opened_settings_window,
+            "pressing {open_settings_keystroke} should open the Settings window"
+        );
+    }
+
+    #[gpui::test]
     async fn test_disabled_keymap_binding(cx: &mut gpui::TestAppContext) {
         let executor = cx.executor();
         let app_state = init_keymap_test(cx);
@@ -5034,6 +5089,7 @@ mod tests {
                 "remote_debug",
                 "repl",
                 "search",
+                "settings_editor",
                 "settings_profile_selector",
                 "snippets",
                 "stash_picker",
