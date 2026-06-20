@@ -15,7 +15,6 @@ mod cherry_pick;
 mod compare_perf;
 mod compliance_check;
 mod danger;
-mod deploy_collab;
 mod deploy_docs;
 mod extension_auto_bump;
 mod extension_bump;
@@ -214,7 +213,7 @@ impl WorkflowType {
 }
 
 pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
-    if !Path::new("crates/zed/").is_dir() {
+    if !Path::new("crates/flint/").is_dir() {
         anyhow::bail!("xtask workflows must be ran from the project root");
     }
 
@@ -230,7 +229,6 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(compare_perf::compare_perf),
         WorkflowFile::zed(compliance_check::compliance_check),
         WorkflowFile::zed(danger::danger),
-        WorkflowFile::zed(deploy_collab::deploy_collab),
         WorkflowFile::zed(deploy_docs::deploy_docs),
         WorkflowFile::zed(deploy_docs::deploy_nightly_docs),
         WorkflowFile::zed(extension_bump::extension_bump),
