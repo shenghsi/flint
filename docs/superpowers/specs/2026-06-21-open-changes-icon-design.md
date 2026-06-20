@@ -78,11 +78,17 @@ caller's `detach_and_notify_err`.
 
 File: `crates/flint/src/flint/quick_action_bar.rs`
 
-A new `IconButton` (`IconName::Diff`, matching `SoloDiffView`'s own tab icon)
-with `Tooltip::text("Open Changes")` — a plain text tooltip, not
-`Tooltip::for_action_*`, consistent with the existing Selection Controls /
-Editor Controls trigger buttons, since there's no backing `Action`. It is
-added as the leftmost child of the toolbar's `h_flex`, before `search_button`.
+A new `IconButton` with `Tooltip::text("Open Changes")` — a plain text
+tooltip, not `Tooltip::for_action_*`, consistent with the existing Selection
+Controls / Editor Controls trigger buttons, since there's no backing
+`Action`. It is added as the leftmost child of the toolbar's `h_flex`, before
+`search_button`.
+
+Icon: `IconName::Diff`. This is the codebase's established "git diff" icon —
+it's already used for every diff-view tab (`SoloDiffView`, `MultiDiffView`,
+`TextDiffView`, and even the generic two-buffer `FileDiffView`). The only
+other candidate, `IconName::FileDiff`, is declared in `crates/icons/src/icons.rs`
+but never actually rendered anywhere in the codebase, so it is not used here.
 
 `on_click`:
 1. Read the active editor's singleton buffer (`editor.buffer().read(cx).as_singleton()`)
