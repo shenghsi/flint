@@ -1,10 +1,36 @@
 # Flint
 
-Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed), the high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed) built for developers who use tools such as Codex and Claude Code from the command line.
 
-Flint inherits Zed's fast, GPU-accelerated rendering and AI capabilities while shipping with terminal-first defaults and its own identity.
+It keeps Zed's fast, GPU-accelerated editor, language support, Git tooling, and extension ecosystem while replacing the built-in AI product with a focused workspace for terminal-based coding agents.
 
 ---
+
+## Why Flint?
+
+### Added
+
+- **First-class terminals:** New terminals open as tabs in the center workspace by default, alongside files and diffs.
+- **Codex and Claude Code threads:** Launch either CLI directly in a terminal-backed thread using its existing authentication, configuration, and subscription.
+- **Agent Threads panel:** Organize Codex and Claude Code sessions, reopen recent threads, and resume work using titles discovered from each agent's local history.
+- **Configurable agent workflows:** Set commands, arguments, environment variables, working directories, visibility, panel location, and default resume options.
+- **Faster change review:** Open project changes directly from the editor toolbar and review agent-generated work with Zed's Git and diff views.
+
+### Removed
+
+Flint does not ship Zed's native agent and chat interface, hosted AI models, model-provider configuration, Copilot or edit predictions, account and billing UI, or real-time collaboration and calls. The result is a smaller, local-first product surface that leaves agent behavior and credentials with the CLI tools you already use.
+
+## Try Flint
+
+Download the latest build for macOS, Linux, or Windows from [GitHub Releases](https://github.com/shenghsi/flint/releases/latest).
+
+### macOS
+
+After moving Flint into `/Applications`, remove the quarantine attribute so macOS will allow the unsigned app to open:
+
+```sh
+xattr -cr /Applications/Flint.app
+```
 
 ### Developing Flint
 
