@@ -5,7 +5,7 @@ slug: acceptable-use-policies
 
 **Last Updated:** March 2, 2026
 
-Some third-party services accessible through Flint have their own acceptable use policies. These apply whether Flint hosts the service on your behalf or you connect your own account. The applicable policies are listed below and apply alongside the [Flint End User Terms](/terms) and [Flint Privacy Policy](/privacy-policy).
+Some third-party services accessible through Flint have their own acceptable use policies. These apply when you connect your own account or API key to use them within Flint. The applicable policies are listed below and apply alongside the [Flint Terms of Service](/terms) and [Flint Privacy Policy](/privacy-policy).
 
 These policies may be updated from time to time by the applicable provider.
 
