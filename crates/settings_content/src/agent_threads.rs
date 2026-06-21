@@ -34,4 +34,12 @@ pub struct AgentThreadCommandContent {
     pub env: Option<HashMap<String, String>>,
     /// Working directory override for this agent kind.
     pub cwd: Option<PathBuf>,
+    /// Hide this agent's section from the Agent Threads panel.
+    ///
+    /// Default: false
+    pub hidden: Option<bool>,
+    /// Which of this agent's resume options (by label) to use by default
+    /// when starting a new thread. None means launch with no extra
+    /// arguments.
+    pub default_launch_option: Option<String>,
 }

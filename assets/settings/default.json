@@ -1484,13 +1484,17 @@
       "command": "codex",
       "args": [],
       "env": {},
+      "hidden": false,
     },
     "claude": {
       "command": "claude",
       "args": [],
       "env": {},
+      "hidden": false,
     },
     "max_visible_threads_per_agent": 5,
+    // Where to dock the Agent Threads panel. Can be `left` or `right`.
+    "dock": "left",
   },
   // Settings specific to the terminal
   "terminal": {

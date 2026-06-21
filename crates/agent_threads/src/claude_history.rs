@@ -76,6 +76,8 @@ impl AgentHistoryProvider for ClaudeHistoryProvider {
             args,
             env: base.env.clone(),
             cwd: Some(thread.project_root.clone()),
+            hidden: base.hidden,
+            default_launch_option: base.default_launch_option.clone(),
         }
     }
 }
@@ -524,6 +526,8 @@ mod tests {
             args: vec!["--ignored-fresh-session-arg".to_string()],
             env: HashMap::default(),
             cwd: None,
+            hidden: false,
+            default_launch_option: None,
         };
         let thread = HistoricalThread {
             session_id: SharedString::from("session-a"),

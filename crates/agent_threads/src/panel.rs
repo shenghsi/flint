@@ -200,6 +200,17 @@ impl AgentThreadsPanel {
         }
     }
 
+    /// Registered agent kinds that the user hasn't hidden via
+    /// `agent_threads.<kind>.hidden`.
+    fn visible_registry(&self, cx: &App) -> Vec<AgentKindDefinition> {
+        let settings = AgentThreadSettings::get_global(cx);
+        self.registry
+            .iter()
+            .filter(|kind| !settings.command_for_kind(kind.id).hidden)
+            .cloned()
+            .collect()
+    }
+
     fn launch_new(
         &mut self,
         kind: &AgentKindDefinition,
@@ -210,7 +221,7 @@ impl AgentThreadsPanel {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            store::launch_new_thread(workspace, kind, window, cx);
+            crate::launch_new_thread_with_default(workspace, kind, window, cx);
         });
     }
 
@@ -268,21 +279,37 @@ impl AgentThreadsPanel {
     ) {
         let workspace = self.workspace.clone();
         let resume_options = kind.resume_options.clone();
+        let effective_label = match store::remembered_launch_option(cx, &thread.session_id) {
+            Some(label) if label.is_empty() => None,
+            Some(label) => Some(label),
+            None => AgentThreadSettings::get_global(cx)
+                .command_for_kind(kind.id)
+                .default_launch_option
+                .clone(),
+        };
         let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
             {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
                 let thread = thread.clone();
-                context_menu = context_menu.entry("Resume", None, move |window, cx| {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return;
-                    };
-                    let kind = kind.clone();
-                    let thread = thread.clone();
-                    workspace.update(cx, |workspace, cx| {
-                        store::resume_thread(workspace, &kind, &thread, &[], window, cx);
-                    });
-                });
+                let is_selected = effective_label.is_none();
+                context_menu = context_menu.toggleable_entry(
+                    "Resume",
+                    is_selected,
+                    IconPosition::Start,
+                    None,
+                    move |window, cx| {
+                        let Some(workspace) = workspace.upgrade() else {
+                            return;
+                        };
+                        let kind = kind.clone();
+                        let thread = thread.clone();
+                        store::remember_launch_option(cx, thread.session_id.clone(), None);
+                        workspace.update(cx, |workspace, cx| {
+                            store::resume_thread(workspace, &kind, &thread, &[], window, cx);
+                        });
+                    },
+                );
             }
             for option in resume_options {
                 let workspace = workspace.clone();
@@ -290,17 +317,30 @@ impl AgentThreadsPanel {
                 let thread = thread.clone();
                 let label = SharedString::from(format!("Resume — {}", option.label));
                 let args = option.args.clone();
-                context_menu = context_menu.entry(label, None, move |window, cx| {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return;
-                    };
-                    let kind = kind.clone();
-                    let thread = thread.clone();
-                    let args = args.clone();
-                    workspace.update(cx, |workspace, cx| {
-                        store::resume_thread(workspace, &kind, &thread, &args, window, cx);
-                    });
-                });
+                let is_selected = effective_label.as_deref() == Some(option.label.as_ref());
+                let option_label = option.label.to_string();
+                context_menu = context_menu.toggleable_entry(
+                    label,
+                    is_selected,
+                    IconPosition::Start,
+                    None,
+                    move |window, cx| {
+                        let Some(workspace) = workspace.upgrade() else {
+                            return;
+                        };
+                        let kind = kind.clone();
+                        let thread = thread.clone();
+                        let args = args.clone();
+                        store::remember_launch_option(
+                            cx,
+                            thread.session_id.clone(),
+                            Some(option_label.clone()),
+                        );
+                        workspace.update(cx, |workspace, cx| {
+                            store::resume_thread(workspace, &kind, &thread, &args, window, cx);
+                        });
+                    },
+                );
             }
             context_menu
         });
@@ -526,7 +566,8 @@ impl AgentThreadsPanel {
             .rounded_sm()
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.resume(&click_kind, &click_thread, &[], window, cx);
+                let args = store::resolve_thread_launch_args(cx, &click_kind, &click_thread.session_id);
+                this.resume(&click_kind, &click_thread, &args, window, cx);
             }))
             .on_mouse_down(
                 MouseButton::Right,
@@ -645,7 +686,7 @@ impl Render for AgentThreadsPanel {
         let project = workspace.read(cx).project().clone();
         let project_roots = project_worktree_roots(project.read(cx), cx);
 
-        let registry = self.registry.clone();
+        let registry = self.visible_registry(cx);
         let mut sections = Vec::new();
         for kind in &registry {
             sections.push(self.render_section(kind, &project_roots, cx));
@@ -735,6 +776,8 @@ mod tests {
             args: Some(vec![label.to_string()]),
             env: Some(collections::HashMap::default()),
             cwd: Some(PathBuf::from(root_path)),
+            hidden: None,
+            default_launch_option: None,
         }
     }
 
@@ -758,10 +801,43 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    store::launch_new_thread(workspace, &codex_kind(), window, cx);
+                    crate::launch_new_thread_with_default(workspace, &codex_kind(), window, cx);
                 });
             })
             .expect("failed to launch codex thread");
+    }
+
+    fn set_default_launch_option(
+        cx: &mut TestAppContext,
+        kind_id: &'static str,
+        option: Option<&str>,
+    ) {
+        let option = option.map(str::to_string);
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                let content = settings.agent_threads.get_or_insert_default();
+                let command = match kind_id {
+                    "codex" => content.codex.get_or_insert_default(),
+                    "claude" => content.claude.get_or_insert_default(),
+                    _ => panic!("unknown kind_id {kind_id}"),
+                };
+                command.default_launch_option = option;
+            });
+        });
+    }
+
+    fn set_agent_hidden(cx: &mut TestAppContext, kind_id: &'static str, hidden: bool) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                let content = settings.agent_threads.get_or_insert_default();
+                let command = match kind_id {
+                    "codex" => content.codex.get_or_insert_default(),
+                    "claude" => content.claude.get_or_insert_default(),
+                    _ => panic!("unknown kind_id {kind_id}"),
+                };
+                command.hidden = Some(hidden);
+            });
+        });
     }
 
     fn live_codex_threads(cx: &mut TestAppContext, project_root: &str) -> Vec<AgentThreadMetadata> {
@@ -901,6 +977,98 @@ mod tests {
 
         assert_eq!(active_item_id(&window_handle, cx), terminal_item_id);
         assert_eq!(terminal_views(&window_handle, cx).len(), 1);
+    }
+
+    #[gpui::test]
+    async fn hiding_an_agent_excludes_it_from_visible_registry(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace
+                    .workspace()
+                    .update(cx, |workspace, cx| AgentThreadsPanel::new(workspace, window, cx))
+            })
+            .expect("failed to create panel");
+        cx.run_until_parked();
+
+        fn visible_ids(panel: &Entity<AgentThreadsPanel>, cx: &mut TestAppContext) -> Vec<&'static str> {
+            panel.read_with(cx, |panel, cx| {
+                panel
+                    .visible_registry(cx)
+                    .iter()
+                    .map(|kind| kind.id)
+                    .collect()
+            })
+        }
+
+        assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude"]);
+
+        set_agent_hidden(cx, "codex", true);
+        assert_eq!(visible_ids(&panel, cx), vec!["claude"]);
+
+        set_agent_hidden(cx, "codex", false);
+        assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude"]);
+    }
+
+    #[gpui::test]
+    async fn launching_a_new_thread_uses_the_persisted_default_launch_option(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_default_launch_option(cx, "codex", Some("Bypass approvals & sandbox"));
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_live_count(cx, root, 1).await;
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let args = terminal_views(&window_handle, cx)[0].read_with(cx, |view, cx| {
+            view.terminal()
+                .read(cx)
+                .task()
+                .expect("spawned terminal should have a task")
+                .spawned_task
+                .args
+                .clone()
+        });
+
+        assert!(
+            args.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()),
+            "expected default launch option's args in {args:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn remembered_per_thread_option_overrides_the_agent_default(cx: &mut TestAppContext) {
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_default_launch_option(cx, "codex", Some("Bypass approvals & sandbox"));
+
+        let kind = codex_kind();
+        let session_id = SharedString::from("session-remember");
+
+        // No per-thread choice recorded yet -> falls back to the agent default.
+        let args = cx.update(|cx| store::resolve_thread_launch_args(cx, &kind, &session_id));
+        assert_eq!(
+            args,
+            vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]
+        );
+
+        // Explicitly choosing "plain resume" for this thread takes priority
+        // over the agent-wide default.
+        cx.update(|cx| store::remember_launch_option(cx, session_id.clone(), None));
+        cx.run_until_parked();
+        let args = cx.update(|cx| store::resolve_thread_launch_args(cx, &kind, &session_id));
+        assert!(args.is_empty(), "expected no extra args, got {args:?}");
     }
 
     #[test]

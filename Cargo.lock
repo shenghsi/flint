@@ -136,6 +136,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "collections",
+ "db",
  "editor",
  "flint_actions",
  "fs",

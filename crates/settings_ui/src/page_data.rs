@@ -5413,6 +5413,80 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
+    fn agent_threads_panel_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Agent Threads Panel"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent Threads Panel Dock",
+                description: "Where to dock the Agent Threads panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_threads.dock"),
+                    pick: |settings_content| settings_content.agent_threads.as_ref()?.dock.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.agent_threads.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hide Codex",
+                description: "Hide the Codex section from the Agent Threads panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_threads.codex.hidden"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .codex
+                            .as_ref()?
+                            .hidden
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .codex
+                            .get_or_insert_default()
+                            .hidden = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hide Claude",
+                description: "Hide the Claude section from the Agent Threads panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_threads.claude.hidden"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .claude
+                            .as_ref()?
+                            .hidden
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .claude
+                            .get_or_insert_default()
+                            .hidden = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn outline_panel_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Outline Panel"),
@@ -5922,6 +5996,7 @@ fn panels_page() -> SettingsPage {
         items: concat_sections![
             project_panel_section(),
             terminal_panel_section(),
+            agent_threads_panel_section(),
             outline_panel_section(),
             git_panel_section(),
         ],

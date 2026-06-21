@@ -38,6 +38,8 @@ pub struct AgentLaunchCommand {
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
     pub cwd: Option<PathBuf>,
+    pub hidden: bool,
+    pub default_launch_option: Option<String>,
 }
 
 /// A resume-time flag a user can opt into, e.g. `--dangerously-skip-permissions`.
@@ -45,6 +47,25 @@ pub struct AgentLaunchCommand {
 pub struct ResumeOption {
     pub label: SharedString,
     pub args: Vec<String>,
+}
+
+/// Resolves the extra arguments to use when starting a *new* thread for
+/// `kind`, based on the user's persisted default launch option (matched by
+/// label against `kind.resume_options`). Returns an empty slice if no
+/// default is set, or if the persisted label no longer matches any
+/// registered option.
+pub(crate) fn resolve_default_launch_args<'a>(
+    command: &'a AgentLaunchCommand,
+    kind: &'a AgentKindDefinition,
+) -> &'a [String] {
+    let Some(label) = command.default_launch_option.as_deref() else {
+        return &[];
+    };
+    kind.resume_options
+        .iter()
+        .find(|option| option.label.as_ref() == label)
+        .map(|option| option.args.as_slice())
+        .unwrap_or(&[])
 }
 
 /// A registered agent kind. New kinds are added here without touching the
@@ -135,6 +156,8 @@ fn launch_command_from_content(
         args: content.args.unwrap_or_default(),
         env: content.env.unwrap_or_default().into_iter().collect(),
         cwd: content.cwd,
+        hidden: content.hidden.unwrap_or(false),
+        default_launch_option: content.default_launch_option,
     }
 }
 
@@ -153,6 +176,19 @@ fn kind_by_id(id: &str) -> Option<AgentKindDefinition> {
     agent_kind_registry().into_iter().find(|kind| kind.id == id)
 }
 
+/// Launches a new thread for `kind`, using whatever launch option the user
+/// has set as the default for it (if any).
+pub(crate) fn launch_new_thread_with_default(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let settings = AgentThreadSettings::get_global(cx);
+    let extra_args = resolve_default_launch_args(settings.command_for_kind(kind.id), kind).to_vec();
+    store::launch_new_thread(workspace, kind, &extra_args, window, cx);
+}
+
 fn new_codex_thread(
     workspace: &mut Workspace,
     _: &NewCodexThread,
@@ -160,7 +196,7 @@ fn new_codex_thread(
     cx: &mut Context<Workspace>,
 ) {
     if let Some(kind) = kind_by_id("codex") {
-        store::launch_new_thread(workspace, &kind, window, cx);
+        launch_new_thread_with_default(workspace, &kind, window, cx);
     }
 }
 
@@ -171,6 +207,46 @@ fn new_claude_thread(
     cx: &mut Context<Workspace>,
 ) {
     if let Some(kind) = kind_by_id("claude") {
-        store::launch_new_thread(workspace, &kind, window, cx);
+        launch_new_thread_with_default(workspace, &kind, window, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command_with_default(default_launch_option: Option<&str>) -> AgentLaunchCommand {
+        AgentLaunchCommand {
+            command: Some("codex".to_string()),
+            args: Vec::new(),
+            env: HashMap::default(),
+            cwd: None,
+            hidden: false,
+            default_launch_option: default_launch_option.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn resolve_default_launch_args_returns_empty_when_unset() {
+        let kind = kind_by_id("codex").unwrap();
+        let command = command_with_default(None);
+        assert!(resolve_default_launch_args(&command, &kind).is_empty());
+    }
+
+    #[test]
+    fn resolve_default_launch_args_returns_matching_option_args() {
+        let kind = kind_by_id("codex").unwrap();
+        let command = command_with_default(Some("Bypass approvals & sandbox"));
+        assert_eq!(
+            resolve_default_launch_args(&command, &kind),
+            ["--dangerously-bypass-approvals-and-sandbox".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_default_launch_args_returns_empty_when_label_unknown() {
+        let kind = kind_by_id("codex").unwrap();
+        let command = command_with_default(Some("nonexistent option"));
+        assert!(resolve_default_launch_args(&command, &kind).is_empty());
     }
 }

@@ -11,12 +11,16 @@ use settings::Settings as _;
 use task::{RevealStrategy, RevealTarget, Shell, SpawnInTerminal};
 use terminal::Event as TerminalEvent;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use util::ResultExt as _;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
 };
 
-use crate::{AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread};
+use crate::{
+    AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread,
+    resolve_default_launch_args,
+};
 
 #[derive(Clone)]
 pub struct AgentThreadMetadata {
@@ -281,12 +285,66 @@ impl AgentThreadStore {
 pub fn launch_new_thread(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
+    extra_args: &[String],
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let settings = AgentThreadSettings::get_global(cx);
-    let command = settings.command_for_kind(kind.id).clone();
+    let mut command = settings.command_for_kind(kind.id).clone();
+    command.args.extend(extra_args.iter().cloned());
     spawn_thread(workspace, kind, kind.label.clone(), command, None, window, cx);
+}
+
+/// Namespace for the per-thread "remembered launch option" key-value store
+/// (`db::kvp`). The value is the chosen `ResumeOption` label, or an empty
+/// string for an explicit "plain resume, no extra args" choice. Absence of
+/// a key means no per-thread choice has been made yet.
+const LAUNCH_OPTION_NAMESPACE: &str = "agent-thread-launch-option";
+
+/// Reads the launch option label the user last picked for this specific
+/// thread (via its "..." menu), if any.
+pub fn remembered_launch_option(cx: &App, session_id: &str) -> Option<String> {
+    db::kvp::KeyValueStore::global(cx)
+        .scoped(LAUNCH_OPTION_NAMESPACE)
+        .read(session_id)
+        .log_err()
+        .flatten()
+}
+
+/// Persists `label` as this thread's remembered launch option choice.
+/// `None` represents an explicit "plain resume" choice (stored as an empty
+/// string, distinct from no choice having been made at all).
+pub fn remember_launch_option(cx: &App, session_id: SharedString, label: Option<String>) {
+    let store = db::kvp::KeyValueStore::global(cx);
+    db::write_and_log(cx, move || async move {
+        store
+            .scoped(LAUNCH_OPTION_NAMESPACE)
+            .write(session_id.to_string(), label.unwrap_or_default())
+            .await
+    });
+}
+
+/// Resolves the extra arguments to use when resuming `thread`: its
+/// remembered per-thread choice takes priority over `kind`'s
+/// agent-wide `default_launch_option` setting.
+pub fn resolve_thread_launch_args(
+    cx: &App,
+    kind: &AgentKindDefinition,
+    session_id: &str,
+) -> Vec<String> {
+    match remembered_launch_option(cx, session_id) {
+        Some(label) if label.is_empty() => Vec::new(),
+        Some(label) => kind
+            .resume_options
+            .iter()
+            .find(|option| option.label.as_ref() == label)
+            .map(|option| option.args.clone())
+            .unwrap_or_default(),
+        None => {
+            let settings = AgentThreadSettings::get_global(cx);
+            resolve_default_launch_args(settings.command_for_kind(kind.id), kind).to_vec()
+        }
+    }
 }
 
 pub fn resume_thread(
