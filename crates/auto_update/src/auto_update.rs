@@ -710,7 +710,11 @@ impl AutoUpdater {
         fetched_version: String,
         status: AutoUpdateStatus,
     ) -> Result<Option<VersionCheckType>> {
-        let parsed_fetched_version = fetched_version.parse::<Version>();
+        // GitHub release tag names are conventionally prefixed with "v" (e.g. "v1.0.0"),
+        // which the semver crate's strict parser rejects.
+        let parsed_fetched_version = fetched_version
+            .trim_start_matches(['v', 'V'])
+            .parse::<Version>();
 
         if let AutoUpdateStatus::Updated { version, .. } = status {
             match version {
@@ -1226,20 +1230,38 @@ mod tests {
             let clock = Arc::new(FakeSystemClock::new());
             let release_available = Arc::clone(&release_available);
             let dmg_rx = Arc::new(parking_lot::Mutex::new(Some(dmg_rx)));
+            let asset_name = match OS {
+                "macos" => format!("Flint-{ARCH}.dmg"),
+                "linux" => format!("flint-linux-{ARCH}.tar.gz"),
+                "windows" => format!("Flint-{ARCH}.exe"),
+                other => panic!("unsupported os in test: {other}"),
+            };
             let fake_client_http = FakeHttpClient::create(move |req| {
                 let release_available = release_available.load(atomic::Ordering::Relaxed);
                 let dmg_rx = dmg_rx.clone();
+                let asset_name = asset_name.clone();
                 async move {
-                if req.uri().path() == "/releases/stable/latest/asset" {
-                    if release_available {
-                        return Ok(Response::builder().status(200).body(
-                            r#"{"version":"0.100.1","url":"https://test.example/new-download"}"#.into()
-                        ).unwrap());
+                if req.uri().path() == "/repos/shenghsi/flint/releases" {
+                    let (tag_name, download_url) = if release_available {
+                        ("v0.100.1", "https://test.example/new-download")
                     } else {
-                        return Ok(Response::builder().status(200).body(
-                            r#"{"version":"0.100.0","url":"https://test.example/old-download"}"#.into()
-                        ).unwrap());
-                    }
+                        ("v0.100.0", "https://test.example/old-download")
+                    };
+                    return Ok(Response::builder().status(200).body(
+                        serde_json::json!([{
+                            "tag_name": tag_name,
+                            "prerelease": false,
+                            "assets": [{
+                                "name": asset_name,
+                                "browser_download_url": download_url,
+                                "digest": null,
+                            }],
+                            "tarball_url": "https://test.example/tarball",
+                            "zipball_url": "https://test.example/zipball",
+                        }])
+                        .to_string()
+                        .into(),
+                    ).unwrap());
                 } else if req.uri().path() == "/new-download" {
                     return Ok(Response::builder().status(200).body({
                         let dmg_rx = dmg_rx.lock().take().unwrap();
