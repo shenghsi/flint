@@ -4,12 +4,13 @@ use std::time::{Duration, UNIX_EPOCH};
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::StreamExt;
 use gpui::SharedString;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::AgentLaunchCommand;
+#[cfg(test)]
+use crate::history::LocalHistoryFs;
 use crate::history::{AgentHistoryHost, AgentHistoryProvider, HistoricalThread};
 
 const MAX_TITLE_CHARS: usize = 60;
@@ -142,18 +143,16 @@ async fn scan_project_history_files(
 }
 
 async fn list_jsonl_files(host: &AgentHistoryHost, dir: &Path) -> Vec<PathBuf> {
-    let Ok(mut entries) = host.fs.read_dir(dir).await else {
+    let Ok(entries) = host.fs.read_dir(dir).await else {
         return Vec::new();
     };
     let mut paths = Vec::new();
-    while let Some(entry) = entries.next().await {
-        if let Ok(path) = entry {
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "jsonl")
-            {
-                paths.push(path);
-            }
+    for path in entries {
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
+            paths.push(path);
         }
     }
     paths
@@ -296,7 +295,7 @@ mod tests {
         fs.insert_file("/claude-home/history.jsonl", content.as_bytes().to_vec())
             .await;
         AgentHistoryHost {
-            fs: fs as Arc<dyn fs::Fs>,
+            fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
         }
     }
@@ -318,7 +317,7 @@ mod tests {
         )
         .await;
         AgentHistoryHost {
-            fs: fs as Arc<dyn fs::Fs>,
+            fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
         }
     }
@@ -476,7 +475,7 @@ mod tests {
         )
         .await;
         let host = AgentHistoryHost {
-            fs: fs as Arc<dyn fs::Fs>,
+            fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
         };
 
@@ -497,7 +496,7 @@ mod tests {
             .await
             .unwrap();
         let host = AgentHistoryHost {
-            fs: fs as Arc<dyn fs::Fs>,
+            fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
         };
 

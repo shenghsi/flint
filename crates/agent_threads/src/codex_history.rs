@@ -5,12 +5,13 @@ use std::time::SystemTime;
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
-use futures::StreamExt;
 use gpui::SharedString;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::AgentLaunchCommand;
+#[cfg(test)]
+use crate::history::LocalHistoryFs;
 use crate::history::{AgentHistoryHost, AgentHistoryProvider, HistoricalThread};
 
 /// Bounds the cost of matching sessions to projects regardless of total
@@ -130,15 +131,9 @@ async fn list_rollout_files(host: &AgentHistoryHost, sessions_dir: &Path) -> Vec
 }
 
 async fn list_dir(host: &AgentHistoryHost, dir: &Path) -> Vec<PathBuf> {
-    let Ok(mut entries) = host.fs.read_dir(dir).await else {
+    let Ok(paths) = host.fs.read_dir(dir).await else {
         return Vec::new();
     };
-    let mut paths = Vec::new();
-    while let Some(entry) = entries.next().await {
-        if let Ok(path) = entry {
-            paths.push(path);
-        }
-    }
     paths
 }
 
@@ -348,7 +343,7 @@ mod tests {
             .await;
         }
         AgentHistoryHost {
-            fs: fs as Arc<dyn fs::Fs>,
+            fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/codex-home"),
         }
     }
@@ -528,7 +523,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         fs.create_dir(Path::new("/codex-home")).await.unwrap();
         let host = AgentHistoryHost {
-            fs: fs as Arc<dyn fs::Fs>,
+            fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/codex-home"),
         };
 

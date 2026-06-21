@@ -1,13 +1,16 @@
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use fs::Fs;
+use futures::{Stream, StreamExt};
 use gpui::{App, AsyncApp, Entity, SharedString};
 use project::Project;
+use rpc::AnyProtoClient;
 
 use crate::AgentLaunchCommand;
 
@@ -19,11 +22,143 @@ pub struct HistoricalThread {
     pub last_activity_at: SystemTime,
 }
 
+/// The filesystem operations agent history scanning needs, abstracted over
+/// local and remote projects. `Project::fs()` always refers to the local
+/// machine's filesystem even when the project is remote, so remote projects
+/// proxy these calls over RPC instead.
+#[async_trait]
+pub trait HistoryFs: Send + Sync {
+    async fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>>;
+    async fn load(&self, path: &Path) -> Result<String>;
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
+    async fn watch(
+        &self,
+        path: &Path,
+        latency: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<fs::PathEvent>>>>,
+        Arc<dyn fs::Watcher>,
+    );
+}
+
+pub(crate) struct LocalHistoryFs(pub(crate) Arc<dyn fs::Fs>);
+
+#[async_trait]
+impl HistoryFs for LocalHistoryFs {
+    async fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+        let mut entries = self.0.read_dir(path).await?;
+        let mut paths = Vec::new();
+        while let Some(entry) = entries.next().await {
+            paths.push(entry?);
+        }
+        Ok(paths)
+    }
+
+    async fn load(&self, path: &Path) -> Result<String> {
+        self.0.load(path).await
+    }
+
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
+        self.0.open_sync(path).await
+    }
+
+    async fn watch(
+        &self,
+        path: &Path,
+        latency: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<fs::PathEvent>>>>,
+        Arc<dyn fs::Watcher>,
+    ) {
+        self.0.watch(path, latency).await
+    }
+}
+
+/// Talks to the project's remote host directly over RPC via a captured
+/// `AnyProtoClient`, rather than through the `Project` entity: entities can
+/// only be accessed from the GPUI foreground thread (`AsyncApp` holds an
+/// `Rc`), which conflicts with the `Send` futures `#[async_trait]` requires
+/// here. `AnyProtoClient` has no such restriction.
+struct RemoteHistoryFs {
+    proto_client: AnyProtoClient,
+    background_executor: gpui::BackgroundExecutor,
+}
+
+#[async_trait]
+impl HistoryFs for RemoteHistoryFs {
+    async fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+        let response = self
+            .proto_client
+            .request(proto::ListRemoteDirectory {
+                dev_server_id: proto::REMOTE_SERVER_PROJECT_ID,
+                path: path.to_string_lossy().into_owned(),
+                config: None,
+            })
+            .await?;
+        Ok(response
+            .entries
+            .into_iter()
+            .map(|entry| path.join(entry))
+            .collect())
+    }
+
+    async fn load(&self, path: &Path) -> Result<String> {
+        Ok(String::from_utf8(self.load_bytes(path).await?)?)
+    }
+
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
+        Ok(Box::new(io::Cursor::new(self.load_bytes(path).await?)))
+    }
+
+    /// There's no remote file-watching mechanism for arbitrary paths, so
+    /// this polls on `latency` instead of pushing real change events.
+    async fn watch(
+        &self,
+        _path: &Path,
+        latency: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<fs::PathEvent>>>>,
+        Arc<dyn fs::Watcher>,
+    ) {
+        let executor = self.background_executor.clone();
+        let stream = futures::stream::unfold(executor, move |executor| async move {
+            executor.timer(latency).await;
+            Some((Vec::new(), executor))
+        });
+        (Box::pin(stream), Arc::new(NoopWatcher))
+    }
+}
+
+impl RemoteHistoryFs {
+    async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
+        let response = self
+            .proto_client
+            .request(proto::ReadRemoteFile {
+                dev_server_id: proto::REMOTE_SERVER_PROJECT_ID,
+                path: path.to_string_lossy().into_owned(),
+            })
+            .await?;
+        Ok(response.content)
+    }
+}
+
+struct NoopWatcher;
+
+impl fs::Watcher for NoopWatcher {
+    fn add(&self, _path: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove(&self, _path: &Path) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// The host-resolved filesystem and base config directory (e.g.
 /// `~/.claude`) to scan. For a remote project both come from the remote
 /// host; for a local project both come from the local machine.
 pub struct AgentHistoryHost {
-    pub fs: Arc<dyn Fs>,
+    pub fs: Arc<dyn HistoryFs>,
     pub base_dir: PathBuf,
 }
 
@@ -62,8 +197,15 @@ pub async fn resolve_history_host(
     cx: &mut AsyncApp,
 ) -> Result<AgentHistoryHost> {
     let (fs, environment, anchor_path) = project.read_with(cx, |project, cx| {
+        let fs: Arc<dyn HistoryFs> = match project.remote_client() {
+            Some(remote_client) => Arc::new(RemoteHistoryFs {
+                proto_client: remote_client.read(cx).proto_client(),
+                background_executor: cx.background_executor().clone(),
+            }),
+            None => Arc::new(LocalHistoryFs(project.fs().clone())),
+        };
         (
-            project.fs().clone(),
+            fs,
             project.environment().clone(),
             first_worktree_root(project, cx),
         )

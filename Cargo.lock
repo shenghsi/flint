@@ -146,6 +146,8 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "project",
+ "proto",
+ "rpc",
  "schemars",
  "serde",
  "serde_json",
