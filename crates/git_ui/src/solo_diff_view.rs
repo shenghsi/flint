@@ -821,6 +821,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
     use settings::SettingsStore;
+    use std::path::Path;
     use util::path;
     use workspace::MultiWorkspace;
 
@@ -880,7 +881,7 @@ mod tests {
             let buffer = project
                 .update(cx, |project, cx| {
                     let project_path = project
-                        .find_project_path(format!("/project/{file_name}"), cx)
+                        .find_project_path(Path::new(path!("/project")).join(file_name), cx)
                         .unwrap_or_else(|| panic!("missing project path for {file_name}"));
                     project.open_buffer(project_path, cx)
                 })
