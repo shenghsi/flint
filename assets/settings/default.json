@@ -1509,8 +1509,9 @@
     //         }
     //     }
     "shell": "system",
-    // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
-    "dock": "bottom",
+    // Where new terminals open. Can be `center` (a tab next to your editor),
+    // `left`, `right`, or `bottom` (a dockable panel).
+    "dock": "center",
     // Whether docked terminals should use flexible (proportional) sizing.
     //
     // Default: true

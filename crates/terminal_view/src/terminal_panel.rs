@@ -1942,6 +1942,132 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_new_center_terminal_opens_in_center_when_dock_is_center(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        let center_items_before = window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .items_len()
+            })
+            .expect("Failed to read center pane items");
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalView::deploy(
+                        workspace,
+                        &workspace::NewCenterTerminal::default(),
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .expect("Failed to dispatch NewCenterTerminal");
+
+        cx.run_until_parked();
+
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        let center_items_after = window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .items_len()
+            })
+            .expect("Failed to read center pane items");
+
+        assert_eq!(
+            panel_items_after, panel_items_before,
+            "Terminal panel should not gain a new terminal when dock is center"
+        );
+        assert_eq!(
+            center_items_after,
+            center_items_before + 1,
+            "New terminal should be added to the center pane when dock is center"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_center_terminal_opens_dock_panel_when_dock_is_not_center(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        set_terminal_dock(cx, TerminalDockPosition::Bottom);
+
+        let center_items_before = window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .items_len()
+            })
+            .expect("Failed to read center pane items");
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalView::deploy(
+                        workspace,
+                        &workspace::NewCenterTerminal::default(),
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .expect("Failed to dispatch NewCenterTerminal");
+
+        cx.run_until_parked();
+
+        let center_items_after = window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .items_len()
+            })
+            .expect("Failed to read center pane items");
+        let panel_focused = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            })
+            .expect("Failed to check terminal panel focus");
+
+        assert_eq!(
+            center_items_after, center_items_before,
+            "No new terminal should be added to the center pane when dock is not center"
+        );
+        assert!(
+            panel_focused,
+            "Terminal panel should be focused when dock is not center"
+        );
+    }
+
+    #[gpui::test]
     async fn test_center_terminal_can_split_beside_another_item(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
@@ -2444,6 +2570,14 @@ mod tests {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.workspace.max_tabs = value.map(|v| NonZero::new(v).unwrap())
+            });
+        });
+    }
+
+    fn set_terminal_dock(cx: &mut TestAppContext, dock: TerminalDockPosition) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().dock = Some(dock);
             });
         });
     }

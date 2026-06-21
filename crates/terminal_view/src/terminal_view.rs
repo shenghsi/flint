@@ -20,7 +20,8 @@ use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
-    SeedQuerySetting, Settings, SettingsStore, TerminalBell, TerminalBlink, WorkingDirectory,
+    SeedQuerySetting, Settings, SettingsStore, TerminalBell, TerminalBlink, TerminalDockPosition,
+    WorkingDirectory,
 };
 use std::{
     any::Any,
@@ -210,13 +211,22 @@ impl Focusable for TerminalView {
 }
 
 impl TerminalView {
-    ///Create a new Terminal in the current working directory or the user's home directory
+    ///Create a new Terminal in the current working directory or the user's home directory,
+    ///or toggle the terminal dock panel if `terminal.dock` is set to a docked position.
     pub fn deploy(
         workspace: &mut Workspace,
         action: &NewCenterTerminal,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        if TerminalSettings::get_global(cx).dock != TerminalDockPosition::Center {
+            if workspace.project().read(cx).supports_terminal(cx)
+                && !workspace.toggle_panel_focus::<TerminalPanel>(window, cx)
+            {
+                workspace.close_panel::<TerminalPanel>(window, cx);
+            }
+            return;
+        }
         let local = action.local;
         let working_directory = default_working_directory(workspace, cx);
         TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {

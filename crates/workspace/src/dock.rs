@@ -316,6 +316,10 @@ impl Into<settings::DockPosition> for DockPosition {
 impl From<TerminalDockPosition> for DockPosition {
     fn from(value: TerminalDockPosition) -> Self {
         match value {
+            // The terminal panel has no "center" slot of its own; fall back to
+            // the conventional bottom position for cases where the panel still
+            // needs a concrete dock (e.g. opened explicitly from the menu).
+            TerminalDockPosition::Center => DockPosition::Bottom,
             TerminalDockPosition::Left => DockPosition::Left,
             TerminalDockPosition::Bottom => DockPosition::Bottom,
             TerminalDockPosition::Right => DockPosition::Right,

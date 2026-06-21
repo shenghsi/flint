@@ -5360,8 +5360,8 @@ fn panels_page() -> SettingsPage {
         [
             SettingsPageItem::SectionHeader("Terminal Panel"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Terminal Dock",
-                description: "Where to dock the terminal panel.",
+                title: "Terminal Location",
+                description: "Where new terminals open. Center opens them as a tab next to your editor; left/right/bottom docks them in a side panel.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("terminal.dock"),

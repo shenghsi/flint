@@ -504,6 +504,7 @@ pub enum PathHyperlinkRegex {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalDockPosition {
+    Center,
     Left,
     Bottom,
     Right,
