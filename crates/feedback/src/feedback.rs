@@ -35,7 +35,11 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
 
 fn email_flint_url(specs: &SystemSpecs) -> String {
     format!(
-        concat!("https://github.com/shenghsi/flint/issues/new", "?", "body={}"),
+        concat!(
+            "https://github.com/shenghsi/flint/issues/new",
+            "?",
+            "body={}"
+        ),
         email_body(specs)
     )
 }

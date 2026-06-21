@@ -1942,9 +1942,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_center_terminal_opens_in_center_when_dock_is_center(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_new_center_terminal_opens_in_center_when_dock_is_center(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
 

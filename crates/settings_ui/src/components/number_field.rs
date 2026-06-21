@@ -11,12 +11,12 @@ use gpui::{
     TextStyleRefinement, WeakEntity,
 };
 
+use flint_actions::editor::{MoveDown, MoveUp};
 use settings::{
     CenteredPaddingSettings, CodeFade, DelayMs, FontSize, FontWeightContent, InactiveOpacity,
     MinimumContrast,
 };
 use ui::prelude::*;
-use flint_actions::editor::{MoveDown, MoveUp};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NumberFieldMode {

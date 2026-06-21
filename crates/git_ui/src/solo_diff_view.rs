@@ -131,9 +131,7 @@ impl SoloDiffView {
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
         else {
-            return Task::ready(Err(anyhow::anyhow!(
-                "file is not part of a git repository"
-            )));
+            return Task::ready(Err(anyhow::anyhow!("file is not part of a git repository")));
         };
         let Some(status_entry) = repository.read(cx).status_for_path(&repo_path) else {
             return Task::ready(Err(anyhow::anyhow!("file has no changes to diff")));

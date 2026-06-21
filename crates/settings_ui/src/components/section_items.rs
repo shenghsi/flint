@@ -8,7 +8,9 @@ pub struct SettingsSectionHeader {
 
 impl SettingsSectionHeader {
     pub fn new(label: impl Into<SharedString>) -> Self {
-        Self { label: label.into() }
+        Self {
+            label: label.into(),
+        }
     }
 }
 

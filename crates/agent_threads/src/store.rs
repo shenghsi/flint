@@ -292,7 +292,15 @@ pub fn launch_new_thread(
     let settings = AgentThreadSettings::get_global(cx);
     let mut command = settings.command_for_kind(kind.id).clone();
     command.args.extend(extra_args.iter().cloned());
-    spawn_thread(workspace, kind, kind.label.clone(), command, None, window, cx);
+    spawn_thread(
+        workspace,
+        kind,
+        kind.label.clone(),
+        command,
+        None,
+        window,
+        cx,
+    );
 }
 
 /// Namespace for the per-thread "remembered launch option" key-value store

@@ -566,7 +566,8 @@ impl AgentThreadsPanel {
             .rounded_sm()
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .on_click(cx.listener(move |this, _, window, cx| {
-                let args = store::resolve_thread_launch_args(cx, &click_kind, &click_thread.session_id);
+                let args =
+                    store::resolve_thread_launch_args(cx, &click_kind, &click_thread.session_id);
                 this.resume(&click_kind, &click_thread, &args, window, cx);
             }))
             .on_mouse_down(
@@ -989,14 +990,17 @@ mod tests {
 
         let panel = window_handle
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace
-                    .workspace()
-                    .update(cx, |workspace, cx| AgentThreadsPanel::new(workspace, window, cx))
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
             })
             .expect("failed to create panel");
         cx.run_until_parked();
 
-        fn visible_ids(panel: &Entity<AgentThreadsPanel>, cx: &mut TestAppContext) -> Vec<&'static str> {
+        fn visible_ids(
+            panel: &Entity<AgentThreadsPanel>,
+            cx: &mut TestAppContext,
+        ) -> Vec<&'static str> {
             panel.read_with(cx, |panel, cx| {
                 panel
                     .visible_registry(cx)

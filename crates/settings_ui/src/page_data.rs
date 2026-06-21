@@ -9054,11 +9054,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    concat_sections!(
-        lsp_section(),
-        lsp_completions_section(),
-        prettier_section(),
-    )
+    concat_sections!(lsp_section(), lsp_completions_section(), prettier_section(),)
 }
 
 fn show_scrollbar_or_editor(

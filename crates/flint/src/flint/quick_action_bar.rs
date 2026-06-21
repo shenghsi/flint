@@ -26,8 +26,8 @@ use ui::{
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::item::ItemBufferKind;
 use workspace::{
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    item::ItemHandle, notifications::NotifyTaskExt,
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
+    notifications::NotifyTaskExt,
 };
 
 const MAX_CODE_ACTION_MENU_LINES: u32 = 16;
@@ -119,7 +119,12 @@ impl Render for QuickActionBar {
         let focus_handle = editor_value.focus_handle(cx);
 
         let open_changes_button = (editor.buffer_kind(cx) == ItemBufferKind::Singleton
-            && editor.read(cx).buffer().read(cx).snapshot(cx).has_diff_hunks())
+            && editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .has_diff_hunks())
         .then(|| {
             let editor = editor.clone();
             let workspace = self.workspace.clone();

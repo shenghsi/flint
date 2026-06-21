@@ -1203,7 +1203,10 @@ async fn test_invalid_local_tasks_shows_toast_with_doc_link(cx: &mut gpui::TestA
             } => {
                 assert!(notification_id.starts_with("local-tasks-"));
                 assert!(message.contains("ZED_FOO"));
-                assert_eq!(*url, "https://github.com/shenghsi/flint/blob/main/docs/src/tasks.md");
+                assert_eq!(
+                    *url,
+                    "https://github.com/shenghsi/flint/blob/main/docs/src/tasks.md"
+                );
                 *saw_toast.borrow_mut() = true;
             }
             _ => {}

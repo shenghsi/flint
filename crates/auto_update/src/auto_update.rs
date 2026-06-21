@@ -12,8 +12,8 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
-use smol::fs::File;
 use smol::fs;
+use smol::fs::File;
 use std::mem;
 use std::{
     env::{
@@ -1241,34 +1241,40 @@ mod tests {
                 let dmg_rx = dmg_rx.clone();
                 let asset_name = asset_name.clone();
                 async move {
-                if req.uri().path() == "/repos/shenghsi/flint/releases" {
-                    let (tag_name, download_url) = if release_available {
-                        ("v0.100.1", "https://test.example/new-download")
-                    } else {
-                        ("v0.100.0", "https://test.example/old-download")
-                    };
-                    return Ok(Response::builder().status(200).body(
-                        serde_json::json!([{
-                            "tag_name": tag_name,
-                            "prerelease": false,
-                            "assets": [{
-                                "name": asset_name,
-                                "browser_download_url": download_url,
-                                "digest": null,
-                            }],
-                            "tarball_url": "https://test.example/tarball",
-                            "zipball_url": "https://test.example/zipball",
-                        }])
-                        .to_string()
-                        .into(),
-                    ).unwrap());
-                } else if req.uri().path() == "/new-download" {
-                    return Ok(Response::builder().status(200).body({
-                        let dmg_rx = dmg_rx.lock().take().unwrap();
-                        dmg_rx.await.unwrap().into()
-                    }).unwrap());
-                }
-                Ok(Response::builder().status(404).body("".into()).unwrap())
+                    if req.uri().path() == "/repos/shenghsi/flint/releases" {
+                        let (tag_name, download_url) = if release_available {
+                            ("v0.100.1", "https://test.example/new-download")
+                        } else {
+                            ("v0.100.0", "https://test.example/old-download")
+                        };
+                        return Ok(Response::builder()
+                            .status(200)
+                            .body(
+                                serde_json::json!([{
+                                    "tag_name": tag_name,
+                                    "prerelease": false,
+                                    "assets": [{
+                                        "name": asset_name,
+                                        "browser_download_url": download_url,
+                                        "digest": null,
+                                    }],
+                                    "tarball_url": "https://test.example/tarball",
+                                    "zipball_url": "https://test.example/zipball",
+                                }])
+                                .to_string()
+                                .into(),
+                            )
+                            .unwrap());
+                    } else if req.uri().path() == "/new-download" {
+                        return Ok(Response::builder()
+                            .status(200)
+                            .body({
+                                let dmg_rx = dmg_rx.lock().take().unwrap();
+                                dmg_rx.await.unwrap().into()
+                            })
+                            .unwrap());
+                    }
+                    Ok(Response::builder().status(404).body("".into()).unwrap())
                 }
             });
             let client = Client::new(clock, fake_client_http, cx);
