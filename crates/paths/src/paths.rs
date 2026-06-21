@@ -66,9 +66,12 @@ static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the relative path to the flint_server directory on the ssh host.
+///
+/// Deliberately diverges from upstream Zed's `.zed_server` so that a host used by both
+/// Zed and Flint doesn't have two unrelated daemons sharing one socket/binary directory.
 pub fn remote_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_server").unwrap());
+        LazyLock::new(|| RelPath::unix(".flint_server").unwrap());
     *CACHED
 }
 
@@ -76,7 +79,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
 /// Returns the relative path to the flint_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_wsl_server").unwrap());
+        LazyLock::new(|| RelPath::unix(".flint_wsl_server").unwrap());
     *CACHED
 }
 
