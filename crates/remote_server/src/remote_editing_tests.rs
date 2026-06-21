@@ -1157,6 +1157,59 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     assert!(path.is_none());
 }
 
+#[gpui::test]
+async fn test_read_remote_file_and_list_remote_directory(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/home/user/.claude"),
+        json!({
+            "history.jsonl": "hello",
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    let proto_client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+
+    let file_response = proto_client
+        .request(proto::ReadRemoteFile {
+            dev_server_id: proto::REMOTE_SERVER_PROJECT_ID,
+            path: path!("/home/user/.claude/history.jsonl").to_string(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(file_response.content, b"hello");
+
+    let directory_response = proto_client
+        .request(proto::ListRemoteDirectory {
+            dev_server_id: proto::REMOTE_SERVER_PROJECT_ID,
+            path: path!("/home/user/.claude").to_string(),
+            config: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        directory_response.entries,
+        vec!["history.jsonl".to_string()]
+    );
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());

@@ -233,6 +233,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &git_store);
 
         session.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
+        session.add_request_handler(cx.weak_entity(), Self::handle_read_remote_file);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
         session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         session.add_request_handler(cx.weak_entity(), Self::handle_ping);
@@ -1114,6 +1115,17 @@ impl HeadlessProject {
             entries,
             entry_info,
         })
+    }
+
+    async fn handle_read_remote_file(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ReadRemoteFile>,
+        cx: AsyncApp,
+    ) -> Result<proto::ReadRemoteFileResponse> {
+        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
+        let content = fs.load_bytes(&expanded).await?;
+        Ok(proto::ReadRemoteFileResponse { content })
     }
 
     async fn handle_get_path_metadata(

@@ -90,6 +90,15 @@ message ListRemoteDirectoryResponse {
   repeated EntryInfo entry_info = 2;
 }
 
+message ReadRemoteFile {
+  uint64 dev_server_id = 1;
+  string path = 2;
+}
+
+message ReadRemoteFileResponse {
+  bytes content = 1;
+}
+
 message CreateProjectEntry {
   uint64 project_id = 1;
   uint64 worktree_id = 2;
