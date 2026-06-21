@@ -133,6 +133,7 @@ Other entities can then register a callback to handle these events by doing `cx.
 
 ## Build guidelines
 
+- Build the local macOS app bundle at `/tmp/Flint-Local.app` with `./script/bundle-tmp-app`.
 - Use `./script/clippy` instead of `cargo clippy`
 
 # Pull request hygiene

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script/bundle-mac -d
+
+target_triple=$(rustc --version --verbose | sed -n 's/^host: //p')
+source_app="target/${target_triple}/debug/bundle/osx/Flint.app"
+target_app="/tmp/Flint-Local.app"
+
+rm -rf "${target_app}"
+cp -R "${source_app}" "${target_app}"
+
+echo "Created ${target_app}"
