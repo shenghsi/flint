@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use collections::HashMap;
 use fs::Fs;
-use futures::StreamExt;
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton, MouseDownEvent, ParentElement,
@@ -22,7 +21,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 
-use crate::history::{self, project_worktree_roots};
+use crate::history::{self, HistoryParseCache, project_worktree_roots};
 use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
     merge_threads,
@@ -31,7 +30,7 @@ use crate::{AgentKindDefinition, AgentThreadSettings, HistoricalThread, agent_ki
 
 enum HistoricalState {
     Loading,
-    Loaded(Vec<HistoricalThread>),
+    Loaded(Arc<[HistoricalThread]>),
     Unavailable,
 }
 
@@ -74,7 +73,9 @@ pub struct AgentThreadsPanel {
     sections: HashMap<&'static str, SectionState>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     _subscriptions: Vec<Subscription>,
-    _history_tasks: Vec<Task<()>>,
+    history_tasks: HashMap<&'static str, Task<()>>,
+    history_caches: HashMap<&'static str, Arc<HistoryParseCache>>,
+    active: bool,
 }
 
 impl AgentThreadsPanel {
@@ -96,9 +97,10 @@ impl AgentThreadsPanel {
         let fs = workspace.app_state().fs.clone();
         cx.new(|cx| {
             let store = AgentThreadStore::global(cx);
-            let store_subscription = cx.subscribe(&store, |_, _, _: &AgentThreadStoreEvent, cx| {
-                cx.notify();
-            });
+            let store_subscription =
+                cx.subscribe(&store, |this: &mut AgentThreadsPanel, _, event, cx| {
+                    this.handle_store_event(event, cx);
+                });
             let registry = agent_kind_registry();
             let mut sections = HashMap::default();
             for kind in &registry {
@@ -113,91 +115,112 @@ impl AgentThreadsPanel {
                 sections,
                 context_menu: None,
                 _subscriptions: vec![store_subscription],
-                _history_tasks: Vec::new(),
+                history_tasks: HashMap::default(),
+                history_caches: HashMap::default(),
+                active: false,
             };
-            // Deferred via `cx.spawn` rather than called inline: at this
-            // point we're still nested inside the caller's `workspace.update`
-            // (see `load`/`new`'s callers), and `refresh_history` reads the
-            // workspace's project -- reading it synchronously here would
-            // panic with "cannot read Workspace while it is already being
-            // updated."
-            cx.spawn(async move |this: WeakEntity<Self>, cx| {
-                this.update(cx, |this, cx| this.refresh_history(cx)).ok();
-            })
-            .detach();
             let _ = window;
             panel
         })
     }
 
+    fn handle_store_event(&mut self, event: &AgentThreadStoreEvent, cx: &mut Context<Self>) {
+        if !self.active {
+            return;
+        }
+        match event {
+            AgentThreadStoreEvent::ThreadOpened { .. } => cx.notify(),
+            AgentThreadStoreEvent::ThreadClosed { kind_id } => {
+                cx.notify();
+                self.refresh_history_kind(kind_id, Some(Duration::from_millis(300)), cx);
+            }
+        }
+    }
+
     fn refresh_history(&mut self, cx: &mut Context<Self>) {
+        for kind in self.visible_registry(cx) {
+            self.refresh_history_kind(kind.id, None, cx);
+        }
+    }
+
+    fn refresh_history_kind(
+        &mut self,
+        kind_id: &'static str,
+        delay: Option<Duration>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.active {
+            return;
+        }
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
         let project = workspace.read(cx).project().clone();
-
-        self._history_tasks.clear();
-        for kind in self.registry.clone() {
-            let Some(provider) = kind.history_provider.clone() else {
-                continue;
-            };
-            if let Some(section) = self.sections.get_mut(kind.id) {
-                section.historical = HistoricalState::Loading;
+        let Some(kind) = self.registry.iter().find(|kind| kind.id == kind_id) else {
+            return;
+        };
+        if AgentThreadSettings::get_global(cx)
+            .command_for_kind(kind.id)
+            .hidden
+        {
+            self.history_tasks.remove(kind_id);
+            return;
+        }
+        let Some(provider) = kind.history_provider.clone() else {
+            return;
+        };
+        if let Some(section) = self.sections.get_mut(kind.id) {
+            section.historical = HistoricalState::Loading;
+        }
+        let env_var = kind.home_env_var;
+        let dir_name = kind.home_dir_name;
+        let cache = self
+            .history_caches
+            .entry(kind_id)
+            .or_insert_with(|| Arc::new(HistoryParseCache::default()))
+            .clone();
+        let task = cx.spawn(async move |this, cx| {
+            if let Some(delay) = delay {
+                cx.background_executor().timer(delay).await;
             }
-            let project = project.clone();
-            let kind_id = kind.id;
-            let env_var = kind.home_env_var;
-            let dir_name = kind.home_dir_name;
-            let task = cx.spawn(async move |this, cx| {
-                loop {
-                    let scan_result = async {
-                        let host =
-                            history::resolve_history_host(&project, env_var, dir_name, cx).await?;
-                        let project_roots = project
-                            .read_with(cx, |project, cx| project_worktree_roots(project, cx));
-                        let threads = provider.scan(&host, &project_roots).await?;
-                        anyhow::Ok((host, threads))
-                    }
-                    .await;
+            let scan_result = async {
+                let host =
+                    history::resolve_history_host(&project, env_var, dir_name, cache, cx).await?;
+                let project_roots =
+                    project.read_with(cx, |project, cx| project_worktree_roots(project, cx));
+                provider.scan(&host, &project_roots).await
+            }
+            .await;
 
-                    let host = match scan_result {
-                        Ok((host, threads)) => {
-                            this.update(cx, |this, cx| {
-                                if let Some(section) = this.sections.get_mut(kind_id) {
-                                    section.historical = HistoricalState::Loaded(threads);
-                                }
-                                cx.notify();
-                            })
-                            .ok();
-                            host
-                        }
-                        Err(error) => {
-                            log::warn!(
-                                "agent_threads: failed to scan {kind_id} history: {error:#}"
-                            );
-                            this.update(cx, |this, cx| {
-                                if let Some(section) = this.sections.get_mut(kind_id) {
-                                    section.historical = HistoricalState::Unavailable;
-                                }
-                                cx.notify();
-                            })
-                            .ok();
+            match scan_result {
+                Ok(threads) => {
+                    this.update(cx, |this, cx| {
+                        if !this.active {
                             return;
                         }
-                    };
-
-                    let (mut events, _watcher) =
-                        host.fs.watch(&host.base_dir, Duration::from_secs(1)).await;
-                    if events.next().await.is_none() {
-                        return;
-                    }
-                    cx.background_executor()
-                        .timer(Duration::from_millis(300))
-                        .await;
+                        if let Some(section) = this.sections.get_mut(kind_id) {
+                            section.historical = HistoricalState::Loaded(threads.into());
+                        }
+                        cx.notify();
+                    })
+                    .ok();
                 }
-            });
-            self._history_tasks.push(task);
-        }
+                Err(error) => {
+                    log::warn!("agent_threads: failed to scan {kind_id} history: {error:#}");
+                    this.update(cx, |this, cx| {
+                        if !this.active {
+                            return;
+                        }
+                        if let Some(section) = this.sections.get_mut(kind_id) {
+                            section.historical = HistoricalState::Unavailable;
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        });
+        self.history_tasks.insert(kind_id, task);
     }
 
     /// Registered agent kinds that the user hasn't hidden via
@@ -386,12 +409,17 @@ impl AgentThreadsPanel {
         let collapsed = section.collapsed;
         let show_all = section.show_all;
         let (historical, scan_status) = match &section.historical {
-            HistoricalState::Loaded(threads) => (threads.clone(), None),
-            HistoricalState::Loading => (Vec::new(), Some("Scanning history…")),
-            HistoricalState::Unavailable => (Vec::new(), Some("Couldn't scan history")),
+            HistoricalState::Loaded(threads) => (Some(threads.clone()), None),
+            HistoricalState::Loading => (None, Some("Scanning history…")),
+            HistoricalState::Unavailable => (None, Some("Couldn't scan history")),
         };
 
-        let rows = merge_threads(live, historical);
+        let rows = merge_threads(
+            live,
+            historical
+                .iter()
+                .flat_map(|threads| threads.iter().cloned()),
+        );
         let cap = AgentThreadSettings::get_global(cx).max_visible_threads_per_agent;
         let total = rows.len();
         let (rows, truncated) = apply_visible_cap(rows, cap, show_all);
@@ -506,8 +534,11 @@ impl AgentThreadsPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match row {
-            AgentThreadRow::Live(metadata) => self.render_live_row(metadata, cx),
-            AgentThreadRow::Historical(thread) => self.render_historical_row(kind, thread, cx),
+            AgentThreadRow::FreshLive(metadata) => self.render_live_row(metadata, cx),
+            AgentThreadRow::Historical {
+                thread,
+                live_terminal_item_id,
+            } => self.render_historical_row(kind, thread, live_terminal_item_id, cx),
         }
     }
 
@@ -528,14 +559,17 @@ impl AgentThreadsPanel {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.focus_live_thread(terminal_item_id, window, cx);
             }))
-            .child(Icon::new(IconName::Circle).size(IconSize::Indicator).color(
-                if metadata.has_attention {
-                    Color::Accent
-                } else {
-                    Color::Success
-                },
-            ))
-            .child(Label::new(metadata.title).size(LabelSize::Small).truncate())
+            .child(
+                Icon::new(IconName::Circle)
+                    .size(IconSize::Indicator)
+                    .color(Color::Success),
+            )
+            .child(
+                Label::new(metadata.title)
+                    .size(LabelSize::Small)
+                    .color(Color::Success)
+                    .truncate(),
+            )
             .into_any_element()
     }
 
@@ -543,6 +577,7 @@ impl AgentThreadsPanel {
         &mut self,
         kind: &AgentKindDefinition,
         thread: HistoricalThread,
+        live_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let row_id =
@@ -555,6 +590,7 @@ impl AgentThreadsPanel {
         let menu_thread = thread.clone();
         let menu_kind_for_button = kind.clone();
         let menu_thread_for_button = thread.clone();
+        let is_live = live_terminal_item_id.is_some();
         h_flex()
             .id(row_id)
             .w_full()
@@ -565,57 +601,85 @@ impl AgentThreadsPanel {
             .py_1()
             .rounded_sm()
             .hover(|style| style.bg(cx.theme().colors().element_hover))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                let args =
-                    store::resolve_thread_launch_args(cx, &click_kind, &click_thread.session_id);
-                this.resume(&click_kind, &click_thread, &args, window, cx);
-            }))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.deploy_resume_options_menu(
-                        menu_kind.clone(),
-                        menu_thread.clone(),
-                        event.position,
-                        window,
+            .when_some(live_terminal_item_id, |row, terminal_item_id| {
+                row.on_click(cx.listener(move |this, _, window, cx| {
+                    this.focus_live_thread(terminal_item_id, window, cx);
+                }))
+            })
+            .when(!is_live, |row| {
+                row.on_click(cx.listener(move |this, _, window, cx| {
+                    let args = store::resolve_thread_launch_args(
                         cx,
+                        &click_kind,
+                        &click_thread.session_id,
                     );
-                }),
-            )
+                    this.resume(&click_kind, &click_thread, &args, window, cx);
+                }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.deploy_resume_options_menu(
+                            menu_kind.clone(),
+                            menu_thread.clone(),
+                            event.position,
+                            window,
+                            cx,
+                        );
+                    }),
+                )
+            })
             .child(
                 h_flex()
                     .min_w_0()
                     .flex_1()
                     .gap_2()
                     .child(
-                        Icon::new(IconName::HistoryRerun)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
+                        Icon::new(if is_live {
+                            IconName::Circle
+                        } else {
+                            IconName::HistoryRerun
+                        })
+                        .size(if is_live {
+                            IconSize::Indicator
+                        } else {
+                            IconSize::Small
+                        })
+                        .color(if is_live {
+                            Color::Success
+                        } else {
+                            Color::Muted
+                        }),
                     )
                     .child(
                         Label::new(thread.title)
                             .size(LabelSize::Small)
-                            .color(Color::Muted)
+                            .color(if is_live {
+                                Color::Success
+                            } else {
+                                Color::Muted
+                            })
                             .truncate(),
                     ),
             )
-            .child(
-                IconButton::new(options_button_id, IconName::Ellipsis)
-                    .shape(IconButtonShape::Square)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Resume with options"))
-                    .on_click(
-                        cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                            this.deploy_resume_options_menu(
-                                menu_kind_for_button.clone(),
-                                menu_thread_for_button.clone(),
-                                event.position(),
-                                window,
-                                cx,
-                            );
-                        }),
-                    ),
-            )
+            .when(!is_live, |row| {
+                row.child(
+                    IconButton::new(options_button_id, IconName::Ellipsis)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Resume with options"))
+                        .on_click(cx.listener(
+                            move |this, event: &gpui::ClickEvent, window, cx| {
+                                this.deploy_resume_options_menu(
+                                    menu_kind_for_button.clone(),
+                                    menu_thread_for_button.clone(),
+                                    event.position(),
+                                    window,
+                                    cx,
+                                );
+                            },
+                        )),
+                )
+            })
             .into_any_element()
     }
 }
@@ -676,6 +740,22 @@ impl Panel for AgentThreadsPanel {
 
     fn activation_priority(&self) -> u32 {
         7
+    }
+
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        if self.active == active {
+            return;
+        }
+        self.active = active;
+        if active {
+            cx.spawn(async move |this: WeakEntity<Self>, cx| {
+                this.update(cx, |this, cx| this.refresh_history(cx)).ok();
+            })
+            .detach();
+            cx.notify();
+        } else {
+            self.history_tasks.clear();
+        }
     }
 }
 
@@ -1078,24 +1158,33 @@ mod tests {
     #[test]
     fn apply_visible_cap_truncates_until_show_all_is_set() {
         let rows = vec![
-            AgentThreadRow::Historical(HistoricalThread {
-                session_id: SharedString::from("a"),
-                title: SharedString::from("a"),
-                project_root: PathBuf::from("/root"),
-                last_activity_at: std::time::SystemTime::UNIX_EPOCH,
-            }),
-            AgentThreadRow::Historical(HistoricalThread {
-                session_id: SharedString::from("b"),
-                title: SharedString::from("b"),
-                project_root: PathBuf::from("/root"),
-                last_activity_at: std::time::SystemTime::UNIX_EPOCH,
-            }),
-            AgentThreadRow::Historical(HistoricalThread {
-                session_id: SharedString::from("c"),
-                title: SharedString::from("c"),
-                project_root: PathBuf::from("/root"),
-                last_activity_at: std::time::SystemTime::UNIX_EPOCH,
-            }),
+            AgentThreadRow::Historical {
+                thread: HistoricalThread {
+                    session_id: SharedString::from("a"),
+                    title: SharedString::from("a"),
+                    project_root: PathBuf::from("/root"),
+                    last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+                },
+                live_terminal_item_id: None,
+            },
+            AgentThreadRow::Historical {
+                thread: HistoricalThread {
+                    session_id: SharedString::from("b"),
+                    title: SharedString::from("b"),
+                    project_root: PathBuf::from("/root"),
+                    last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+                },
+                live_terminal_item_id: None,
+            },
+            AgentThreadRow::Historical {
+                thread: HistoricalThread {
+                    session_id: SharedString::from("c"),
+                    title: SharedString::from("c"),
+                    project_root: PathBuf::from("/root"),
+                    last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+                },
+                live_terminal_item_id: None,
+            },
         ];
 
         let (capped, truncated) = apply_visible_cap(rows.clone(), 2, false);

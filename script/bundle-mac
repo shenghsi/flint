@@ -95,14 +95,21 @@ cargo build ${build_flag} --package remote_server --target $target_triple
 echo "Creating application bundle"
 pushd crates/flint
 cp Cargo.toml Cargo.toml.backup
+restore_bundle_manifest() {
+    if [[ -f Cargo.toml.backup ]]; then
+        mv Cargo.toml.backup Cargo.toml
+    fi
+}
+trap restore_bundle_manifest EXIT
 sed \
     -i.backup \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
 
-app_path=$(cargo bundle ${build_flag} --target $target_triple --select-workspace-root | xargs)
+app_path=$(TERM=xterm-256color cargo bundle ${build_flag} --target $target_triple --select-workspace-root | xargs)
 
-mv Cargo.toml.backup Cargo.toml
+restore_bundle_manifest
+trap - EXIT
 popd
 echo "Bundled ${app_path}"
 

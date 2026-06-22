@@ -1137,12 +1137,13 @@ impl HeadlessProject {
         let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
 
         let metadata = fs.metadata(&expanded).await?;
-        let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
 
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
-            is_dir,
+            is_dir: metadata.is_some_and(|metadata| metadata.is_dir),
             path: expanded.to_string_lossy().into_owned(),
+            mtime: metadata.map(|metadata| metadata.mtime.into()),
+            len: metadata.map(|metadata| metadata.len),
         })
     }
 

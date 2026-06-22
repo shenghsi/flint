@@ -1,4 +1,3 @@
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -49,6 +48,14 @@ struct HistoryEntry {
     ts: u64,
 }
 
+#[derive(Clone)]
+struct SessionFileSummary {
+    id: String,
+    cwd: String,
+    timestamp: SystemTime,
+    title: Option<String>,
+}
+
 #[async_trait]
 impl AgentHistoryProvider for CodexHistoryProvider {
     async fn scan(
@@ -70,25 +77,23 @@ impl AgentHistoryProvider for CodexHistoryProvider {
 
         let mut threads = Vec::new();
         for file_path in rollout_files {
-            let Some((id, cwd, timestamp)) = read_session_meta(host, &file_path).await else {
+            let Some(summary) = read_session_summary(host, &file_path).await else {
                 continue;
             };
-            let project_root = PathBuf::from(&cwd);
+            let project_root = PathBuf::from(&summary.cwd);
             if !project_roots.iter().any(|root| root == &project_root) {
                 continue;
             }
-            let title = if let Some(title) = titles.get(&id).cloned() {
-                title
-            } else {
-                read_session_title(host, &file_path)
-                    .await
-                    .unwrap_or_else(|| "Codex session".to_string())
-            };
+            let title = titles
+                .get(&summary.id)
+                .cloned()
+                .or(summary.title)
+                .unwrap_or_else(|| "Codex session".to_string());
             threads.push(HistoricalThread {
-                session_id: SharedString::from(id),
+                session_id: SharedString::from(summary.id),
                 title: SharedString::from(title),
                 project_root,
-                last_activity_at: timestamp,
+                last_activity_at: summary.timestamp,
             });
         }
         threads.sort_by_key(|thread| std::cmp::Reverse(thread.last_activity_at));
@@ -137,86 +142,93 @@ async fn list_dir(host: &AgentHistoryHost, dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-async fn read_session_meta(
+async fn read_session_summary(
     host: &AgentHistoryHost,
     file_path: &Path,
-) -> Option<(String, String, SystemTime)> {
-    let reader = host.fs.open_sync(file_path).await.ok()?;
-    let mut buf_reader = std::io::BufReader::new(reader);
-    let mut first_line = String::new();
-    buf_reader.read_line(&mut first_line).ok()?;
-
-    let parsed: SessionMetaLine = serde_json::from_str(first_line.trim()).ok()?;
-    if parsed.kind != "session_meta" {
-        return None;
-    }
-    let timestamp = chrono::DateTime::parse_from_rfc3339(&parsed.payload.timestamp)
-        .map(|dt| {
-            SystemTime::UNIX_EPOCH
-                + std::time::Duration::from_millis(dt.timestamp_millis().max(0) as u64)
+) -> Option<SessionFileSummary> {
+    let summary = host
+        .parse_file(file_path, |content| {
+            let mut lines = content.lines();
+            let parsed: SessionMetaLine = serde_json::from_str(lines.next()?.trim()).ok()?;
+            if parsed.kind != "session_meta" {
+                return None;
+            }
+            let timestamp = chrono::DateTime::parse_from_rfc3339(&parsed.payload.timestamp)
+                .map(|date_time| {
+                    SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_millis(
+                            date_time.timestamp_millis().max(0) as u64
+                        )
+                })
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let mut seen_user_messages = HashSet::default();
+            let title = lines.find_map(|line| {
+                let parsed = serde_json::from_str::<Value>(line).ok()?;
+                let payload = parsed.get("payload")?;
+                user_message_title(payload, &mut seen_user_messages)
+            });
+            Some(SessionFileSummary {
+                id: parsed.payload.id,
+                cwd: parsed.payload.cwd,
+                timestamp,
+                title,
+            })
         })
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-    Some((parsed.payload.id, parsed.payload.cwd, timestamp))
+        .await
+        .ok()?;
+    summary.as_ref().clone()
 }
 
 async fn load_session_titles(host: &AgentHistoryHost) -> HashMap<String, String> {
     let index_path = host.base_dir.join("session_index.jsonl");
-    let Ok(content) = host.fs.load(&index_path).await else {
+    let Ok(titles) = host
+        .parse_file(&index_path, |content| {
+            let mut titles = HashMap::default();
+            for line in content.lines() {
+                if let Ok(entry) = serde_json::from_str::<SessionIndexEntry>(line) {
+                    if let Some(thread_name) = entry.thread_name.and_then(normalize_title) {
+                        titles.insert(entry.id, thread_name);
+                    }
+                }
+            }
+            titles
+        })
+        .await
+    else {
         return HashMap::default();
     };
-    let mut titles = HashMap::default();
-    for line in content.lines() {
-        if let Ok(entry) = serde_json::from_str::<SessionIndexEntry>(line) {
-            if let Some(thread_name) = entry.thread_name.and_then(normalize_title) {
-                titles.insert(entry.id, thread_name);
-            }
-        }
-    }
-    titles
+    titles.as_ref().clone()
 }
 
 async fn load_history_titles(host: &AgentHistoryHost) -> HashMap<String, String> {
     let history_path = host.base_dir.join("history.jsonl");
-    let Ok(content) = host.fs.load(&history_path).await else {
+    let Ok(titles) = host
+        .parse_file(&history_path, |content| {
+            let mut latest_titles: HashMap<String, (u64, String)> = HashMap::default();
+            for line in content.lines() {
+                let Ok(entry) = serde_json::from_str::<HistoryEntry>(line) else {
+                    continue;
+                };
+                let Some(title) = normalize_title(entry.text) else {
+                    continue;
+                };
+                let existing_is_newer = latest_titles
+                    .get(&entry.session_id)
+                    .is_some_and(|(timestamp, _)| *timestamp > entry.ts);
+                if !existing_is_newer {
+                    latest_titles.insert(entry.session_id, (entry.ts, title));
+                }
+            }
+            latest_titles
+                .into_iter()
+                .map(|(session_id, (_, title))| (session_id, title))
+                .collect::<HashMap<_, _>>()
+        })
+        .await
+    else {
         return HashMap::default();
     };
-    let mut latest_titles: HashMap<String, (u64, String)> = HashMap::default();
-    for line in content.lines() {
-        let Ok(entry) = serde_json::from_str::<HistoryEntry>(line) else {
-            continue;
-        };
-        let Some(title) = normalize_title(entry.text) else {
-            continue;
-        };
-        let existing_is_newer = latest_titles
-            .get(&entry.session_id)
-            .is_some_and(|(timestamp, _)| *timestamp > entry.ts);
-        if !existing_is_newer {
-            latest_titles.insert(entry.session_id, (entry.ts, title));
-        }
-    }
-    latest_titles
-        .into_iter()
-        .map(|(session_id, (_, title))| (session_id, title))
-        .collect()
-}
-
-async fn read_session_title(host: &AgentHistoryHost, file_path: &Path) -> Option<String> {
-    let reader = host.fs.open_sync(file_path).await.ok()?;
-    let buf_reader = std::io::BufReader::new(reader);
-    let mut seen_user_messages = HashSet::default();
-    for line in buf_reader.lines().map_while(|line| line.ok()) {
-        let Ok(parsed) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        let Some(payload) = parsed.get("payload") else {
-            continue;
-        };
-        if let Some(title) = user_message_title(payload, &mut seen_user_messages) {
-            return Some(title);
-        }
-    }
-    None
+    titles.as_ref().clone()
 }
 
 fn user_message_title(payload: &Value, seen_user_messages: &mut HashSet<String>) -> Option<String> {
@@ -345,6 +357,7 @@ mod tests {
         AgentHistoryHost {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/codex-home"),
+            cache: Arc::new(crate::history::HistoryParseCache::default()),
         }
     }
 
@@ -525,6 +538,7 @@ mod tests {
         let host = AgentHistoryHost {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/codex-home"),
+            cache: Arc::new(crate::history::HistoryParseCache::default()),
         };
 
         let threads = CodexHistoryProvider

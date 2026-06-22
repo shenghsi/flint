@@ -14,10 +14,11 @@ use crate::history::LocalHistoryFs;
 use crate::history::{AgentHistoryHost, AgentHistoryProvider, HistoricalThread};
 
 const MAX_TITLE_CHARS: usize = 60;
+const MAX_PROJECT_HISTORY_FILES_SCANNED: usize = 200;
 
 pub struct ClaudeHistoryProvider;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct HistoryRecord {
     #[serde(rename = "sessionId")]
     session_id: String,
@@ -39,6 +40,13 @@ struct ProjectHistoryLine {
 struct ProjectHistoryMessage {
     role: Option<String>,
     content: Value,
+}
+
+struct ProjectHistorySummary {
+    session_id: String,
+    title: Option<String>,
+    last_activity_at: std::time::SystemTime,
+    working_directories: Vec<PathBuf>,
 }
 
 #[async_trait]
@@ -88,15 +96,20 @@ async fn scan_history_file(
     project_roots: &[PathBuf],
 ) -> HashMap<String, HistoricalThread> {
     let history_path = host.base_dir.join("history.jsonl");
-    let Ok(content) = host.fs.load(&history_path).await else {
+    let Ok(records) = host
+        .parse_file(&history_path, |content| {
+            content
+                .lines()
+                .filter_map(|line| serde_json::from_str::<HistoryRecord>(line).ok())
+                .collect::<Vec<_>>()
+        })
+        .await
+    else {
         return HashMap::default();
     };
 
     let mut latest_by_session = HashMap::default();
-    for line in content.lines() {
-        let Ok(record) = serde_json::from_str::<HistoryRecord>(line) else {
-            continue;
-        };
+    for record in records.iter() {
         let project_root = PathBuf::from(&record.project);
         if !project_roots.iter().any(|root| root == &project_root) {
             continue;
@@ -117,7 +130,7 @@ async fn scan_history_file(
                     thread.last_activity_at >= existing.last_activity_at
                 });
         if is_newer {
-            latest_by_session.insert(record.session_id, thread);
+            latest_by_session.insert(record.session_id.clone(), thread);
         }
     }
     latest_by_session
@@ -155,6 +168,8 @@ async fn list_jsonl_files(host: &AgentHistoryHost, dir: &Path) -> Vec<PathBuf> {
             paths.push(path);
         }
     }
+    paths.sort_unstable_by(|left, right| right.cmp(left));
+    paths.truncate(MAX_PROJECT_HISTORY_FILES_SCANNED);
     paths
 }
 
@@ -163,53 +178,69 @@ async fn read_project_history_file(
     file_path: &Path,
     project_root: &Path,
 ) -> Option<HistoricalThread> {
-    let content = host.fs.load(file_path).await.ok()?;
-    let mut session_id = file_path.file_stem()?.to_string_lossy().to_string();
-    let mut title = None;
-    let mut last_activity_at = UNIX_EPOCH;
-    let mut saw_matching_cwd = false;
+    let default_session_id = file_path.file_stem()?.to_string_lossy().to_string();
+    let summary = host
+        .parse_file(file_path, move |content| {
+            let mut session_id = default_session_id;
+            let mut title = None;
+            let mut last_activity_at = UNIX_EPOCH;
+            let mut working_directories = Vec::new();
 
-    for line in content.lines() {
-        let Ok(record) = serde_json::from_str::<ProjectHistoryLine>(line) else {
-            continue;
-        };
-        if let Some(record_session_id) = record.session_id {
-            session_id = record_session_id;
-        }
-        if record
-            .cwd
-            .as_deref()
-            .is_some_and(|cwd| Path::new(cwd) == project_root)
-        {
-            saw_matching_cwd = true;
-        }
-        if let Some(timestamp) = record.timestamp.and_then(|timestamp| {
-            chrono::DateTime::parse_from_rfc3339(&timestamp)
-                .ok()
-                .map(|timestamp| {
-                    UNIX_EPOCH + Duration::from_millis(timestamp.timestamp_millis().max(0) as u64)
-                })
-        }) {
-            last_activity_at = last_activity_at.max(timestamp);
-        }
-        if title.is_none() {
-            if let Some(message) = record.message {
-                if message.role.as_deref() == Some("user") {
-                    title = message_content_title(&message.content);
+            for line in content.lines() {
+                let Ok(record) = serde_json::from_str::<ProjectHistoryLine>(line) else {
+                    continue;
+                };
+                if let Some(record_session_id) = record.session_id {
+                    session_id = record_session_id;
+                }
+                if let Some(cwd) = record.cwd {
+                    let cwd = PathBuf::from(cwd);
+                    if !working_directories.contains(&cwd) {
+                        working_directories.push(cwd);
+                    }
+                }
+                if let Some(timestamp) = record.timestamp.and_then(|timestamp| {
+                    chrono::DateTime::parse_from_rfc3339(&timestamp)
+                        .ok()
+                        .map(|timestamp| {
+                            UNIX_EPOCH
+                                + Duration::from_millis(timestamp.timestamp_millis().max(0) as u64)
+                        })
+                }) {
+                    last_activity_at = last_activity_at.max(timestamp);
+                }
+                if title.is_none() {
+                    if let Some(message) = record.message {
+                        if message.role.as_deref() == Some("user") {
+                            title = message_content_title(&message.content);
+                        }
+                    }
                 }
             }
-        }
-    }
 
-    if !saw_matching_cwd {
+            ProjectHistorySummary {
+                session_id,
+                title,
+                last_activity_at,
+                working_directories,
+            }
+        })
+        .await
+        .ok()?;
+
+    if !summary
+        .working_directories
+        .iter()
+        .any(|cwd| cwd == project_root)
+    {
         return None;
     }
 
     Some(HistoricalThread {
-        session_id: SharedString::from(session_id),
-        title: SharedString::from(title?),
+        session_id: SharedString::from(summary.session_id.clone()),
+        title: SharedString::from(summary.title.clone()?),
         project_root: project_root.to_path_buf(),
-        last_activity_at,
+        last_activity_at: summary.last_activity_at,
     })
 }
 
@@ -297,6 +328,7 @@ mod tests {
         AgentHistoryHost {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
+            cache: Arc::new(crate::history::HistoryParseCache::default()),
         }
     }
 
@@ -319,6 +351,7 @@ mod tests {
         AgentHistoryHost {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
+            cache: Arc::new(crate::history::HistoryParseCache::default()),
         }
     }
 
@@ -477,6 +510,7 @@ mod tests {
         let host = AgentHistoryHost {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
+            cache: Arc::new(crate::history::HistoryParseCache::default()),
         };
 
         let threads = ClaudeHistoryProvider
@@ -498,6 +532,7 @@ mod tests {
         let host = AgentHistoryHost {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
+            cache: Arc::new(crate::history::HistoryParseCache::default()),
         };
 
         let threads = ClaudeHistoryProvider

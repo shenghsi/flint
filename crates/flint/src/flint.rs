@@ -641,7 +641,6 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
-        let agent_threads_panel = AgentThreadsPanel::load(workspace_handle.clone(), cx.clone());
 
         async fn add_panel_when_ready(
             panel_task: impl Future<Output = anyhow::Result<Entity<impl workspace::Panel>>> + 'static,
@@ -663,7 +662,6 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
             add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(agent_threads_panel, workspace_handle.clone(), cx.clone()),
         );
 
         anyhow::Ok(())
@@ -962,7 +960,26 @@ fn register_actions(
              _: &flint_actions::agent_threads::ToggleFocus,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
-                workspace.toggle_panel_focus::<AgentThreadsPanel>(window, cx);
+                if workspace.panel::<AgentThreadsPanel>(cx).is_some() {
+                    workspace.toggle_panel_focus::<AgentThreadsPanel>(window, cx);
+                    return;
+                }
+
+                cx.spawn_in(window, async move |workspace_handle, cx| {
+                    let panel = AgentThreadsPanel::load(workspace_handle.clone(), cx.clone())
+                        .await
+                        .context("failed to load agent threads panel")?;
+                    workspace_handle.update_in(cx, |workspace, window, cx| {
+                        if workspace.panel::<AgentThreadsPanel>(cx).is_some() {
+                            workspace.focus_panel::<AgentThreadsPanel>(window, cx);
+                            return;
+                        }
+                        workspace.add_panel(panel, window, cx);
+                        workspace.focus_panel::<AgentThreadsPanel>(window, cx);
+                    })?;
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             },
         )
         .register_action({
@@ -5338,10 +5355,18 @@ mod tests {
             .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
             .unwrap();
 
+        workspace.update(cx, |workspace, cx| {
+            assert!(
+                workspace.panel::<AgentThreadsPanel>(cx).is_none(),
+                "agent threads should be loaded lazily"
+            );
+        });
+
         cx.dispatch_action(
             multi_workspace.into(),
             flint_actions::agent_threads::ToggleFocus,
         );
+        cx.run_until_parked();
 
         multi_workspace
             .update(cx, |_, window, cx| {

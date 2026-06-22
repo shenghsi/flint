@@ -2,20 +2,16 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use anyhow::{Result, anyhow};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, Global, SharedString,
     Subscription, TaskExt, WeakEntity, Window,
 };
 use settings::Settings as _;
 use task::{RevealStrategy, RevealTarget, Shell, SpawnInTerminal};
-use terminal::Event as TerminalEvent;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use util::ResultExt as _;
-use workspace::{
-    Workspace,
-    item::{Item, ItemEvent},
-};
+use workspace::Workspace;
 
 use crate::{
     AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread,
@@ -28,41 +24,46 @@ pub struct AgentThreadMetadata {
     pub kind_id: &'static str,
     pub title: SharedString,
     pub project_root: PathBuf,
-    pub has_attention: bool,
-    pub last_activity_at: SystemTime,
     pub launched_at: SystemTime,
     pub resumed_session_id: Option<SharedString>,
 }
 
 #[derive(Clone)]
 pub enum AgentThreadRow {
-    Live(AgentThreadMetadata),
-    Historical(HistoricalThread),
+    Historical {
+        thread: HistoricalThread,
+        live_terminal_item_id: Option<EntityId>,
+    },
+    FreshLive(AgentThreadMetadata),
 }
 
 impl AgentThreadRow {
     pub fn last_activity_at(&self) -> SystemTime {
         match self {
-            AgentThreadRow::Live(metadata) => metadata.last_activity_at,
-            AgentThreadRow::Historical(thread) => thread.last_activity_at,
+            AgentThreadRow::Historical { thread, .. } => thread.last_activity_at,
+            AgentThreadRow::FreshLive(metadata) => metadata.launched_at,
         }
     }
 }
 
 /// Merges a kind's live and historical threads for one project into a
-/// single, deduplicated, recency-sorted list. Two suppression rules keep a
-/// thread from appearing twice:
-/// - a resumed thread is dropped from `historical` by exact session id
-/// - a brand-new (not-yet-resumed) live thread suppresses historical
+/// single, deduplicated, recency-sorted list. Resumed terminals attach live
+/// state to their persisted row. A brand-new (not-yet-resumed) live thread
+/// suppresses historical
 ///   entries for the same kind/project activity at or after its launch,
 ///   since the CLI hasn't necessarily written its session id anywhere yet
 pub fn merge_threads(
     live: Vec<AgentThreadMetadata>,
-    historical: Vec<HistoricalThread>,
+    historical: impl IntoIterator<Item = HistoricalThread>,
 ) -> Vec<AgentThreadRow> {
-    let resumed_ids: HashSet<SharedString> = live
+    let mut resumed_terminals: HashMap<SharedString, EntityId> = live
         .iter()
-        .filter_map(|metadata| metadata.resumed_session_id.clone())
+        .filter_map(|metadata| {
+            metadata
+                .resumed_session_id
+                .clone()
+                .map(|session_id| (session_id, metadata.terminal_item_id))
+        })
         .collect();
     let earliest_fresh_launch = live
         .iter()
@@ -72,25 +73,33 @@ pub fn merge_threads(
 
     let mut rows = Vec::new();
     for thread in historical {
-        if resumed_ids.contains(&thread.session_id) {
-            continue;
-        }
+        let live_terminal_item_id = resumed_terminals.remove(&thread.session_id);
         if let Some(launch_time) = earliest_fresh_launch {
-            if thread.last_activity_at >= launch_time {
+            if live_terminal_item_id.is_none() && thread.last_activity_at >= launch_time {
                 continue;
             }
         }
-        rows.push(AgentThreadRow::Historical(thread));
+        rows.push(AgentThreadRow::Historical {
+            thread,
+            live_terminal_item_id,
+        });
     }
     for metadata in live {
-        rows.push(AgentThreadRow::Live(metadata));
+        let matched_historical = metadata
+            .resumed_session_id
+            .as_ref()
+            .is_some_and(|session_id| !resumed_terminals.contains_key(session_id));
+        if !matched_historical {
+            rows.push(AgentThreadRow::FreshLive(metadata));
+        }
     }
     rows.sort_by_key(|row| std::cmp::Reverse(row.last_activity_at()));
     rows
 }
 
 pub enum AgentThreadStoreEvent {
-    Updated,
+    ThreadOpened { kind_id: &'static str },
+    ThreadClosed { kind_id: &'static str },
 }
 
 pub struct AgentThreadStore {
@@ -175,13 +184,13 @@ impl AgentThreadStore {
             })
         })?;
 
-        self.update_attention(terminal_item_id, false, cx);
         Ok(())
     }
 
     fn register(
         &mut self,
         kind_id: &'static str,
+        title: SharedString,
         project_root: PathBuf,
         resumed_session_id: Option<SharedString>,
         launched_at: SystemTime,
@@ -190,14 +199,11 @@ impl AgentThreadStore {
         cx: &mut Context<Self>,
     ) {
         let terminal_item_id = terminal_view.entity_id();
-        let title = terminal_view.read(cx).tab_content_text(0, cx);
         let metadata = AgentThreadMetadata {
             terminal_item_id,
             kind_id,
             title,
             project_root,
-            has_attention: terminal_view.read(cx).has_bell(),
-            last_activity_at: SystemTime::now(),
             launched_at,
             resumed_session_id,
         };
@@ -210,75 +216,23 @@ impl AgentThreadStore {
             },
         );
 
-        let item_subscription = cx.subscribe(&terminal_view, {
-            move |store, terminal_view, event: &ItemEvent, cx| {
-                if matches!(event, ItemEvent::UpdateTab) {
-                    store.refresh_thread(terminal_view.entity_id(), terminal_view, cx);
-                }
-            }
-        });
-        let terminal_subscription = cx.subscribe(&terminal_view, {
-            move |store, terminal_view, event: &TerminalEvent, cx| match event {
-                TerminalEvent::Bell | TerminalEvent::TitleChanged | TerminalEvent::Wakeup => {
-                    store.refresh_thread(terminal_view.entity_id(), terminal_view, cx);
-                }
-                _ => {}
-            }
-        });
-        // Without this, a closed terminal's entry would stay in `self.threads`
-        // forever (nothing else removes it), showing as a permanently "live"
-        // row in the always-docked panel.
         let release_subscription =
             cx.observe_release(&terminal_view, move |store, _terminal_view, cx| {
                 store.remove_thread(terminal_item_id, cx);
             });
-        self.subscriptions.insert(
-            terminal_item_id,
-            vec![
-                item_subscription,
-                terminal_subscription,
-                release_subscription,
-            ],
-        );
-        cx.emit(AgentThreadStoreEvent::Updated);
-        cx.notify();
-    }
-
-    fn refresh_thread(
-        &mut self,
-        terminal_item_id: EntityId,
-        terminal_view: Entity<TerminalView>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(entry) = self.threads.get_mut(&terminal_item_id) else {
-            return;
-        };
-        entry.metadata.title = terminal_view.read(cx).tab_content_text(0, cx);
-        entry.metadata.has_attention = terminal_view.read(cx).has_bell();
-        entry.metadata.last_activity_at = SystemTime::now();
-        cx.emit(AgentThreadStoreEvent::Updated);
-        cx.notify();
-    }
-
-    fn update_attention(
-        &mut self,
-        terminal_item_id: EntityId,
-        has_attention: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(entry) = self.threads.get_mut(&terminal_item_id) else {
-            return;
-        };
-        entry.metadata.has_attention = has_attention;
-        cx.emit(AgentThreadStoreEvent::Updated);
-        cx.notify();
+        self.subscriptions
+            .insert(terminal_item_id, vec![release_subscription]);
+        cx.emit(AgentThreadStoreEvent::ThreadOpened { kind_id });
     }
 
     fn remove_thread(&mut self, terminal_item_id: EntityId, cx: &mut Context<Self>) {
-        self.threads.remove(&terminal_item_id);
+        let Some(entry) = self.threads.remove(&terminal_item_id) else {
+            return;
+        };
         self.subscriptions.remove(&terminal_item_id);
-        cx.emit(AgentThreadStoreEvent::Updated);
-        cx.notify();
+        cx.emit(AgentThreadStoreEvent::ThreadClosed {
+            kind_id: entry.metadata.kind_id,
+        });
     }
 }
 
@@ -398,6 +352,7 @@ fn spawn_thread(
     };
     let kind_id = kind.id;
     let kind_icon = kind.icon;
+    let title = summary.clone();
     let label = summary.to_string();
     let command_label = command_label(&command, &label);
     let task = SpawnInTerminal {
@@ -437,6 +392,7 @@ fn spawn_thread(
         store.update(cx, |store, cx| {
             store.register(
                 kind_id,
+                title,
                 cwd,
                 resumed_session_id,
                 launched_at,
@@ -480,8 +436,6 @@ mod tests {
             kind_id: "codex",
             title: SharedString::from("live"),
             project_root: PathBuf::from("/root"),
-            has_attention: false,
-            last_activity_at: at(launched_at),
             launched_at: at(launched_at),
             resumed_session_id: resumed_session_id.map(SharedString::from),
         }
@@ -503,10 +457,20 @@ mod tests {
     fn row_session_ids(rows: &[AgentThreadRow]) -> Vec<String> {
         rows.iter()
             .map(|row| match row {
-                AgentThreadRow::Live(metadata) => {
+                AgentThreadRow::FreshLive(metadata) => {
                     format!("live:{}", metadata.terminal_item_id.as_u64())
                 }
-                AgentThreadRow::Historical(thread) => format!("historical:{}", thread.session_id),
+                AgentThreadRow::Historical {
+                    thread,
+                    live_terminal_item_id,
+                } => match live_terminal_item_id {
+                    Some(terminal_item_id) => format!(
+                        "historical-live:{}:{}",
+                        thread.session_id,
+                        terminal_item_id.as_u64()
+                    ),
+                    None => format!("historical:{}", thread.session_id),
+                },
             })
             .collect()
     }
@@ -525,11 +489,24 @@ mod tests {
     }
 
     #[test]
-    fn exact_session_id_match_suppresses_the_historical_duplicate() {
+    fn exact_session_id_match_marks_the_historical_row_live() {
         let rows = merge_threads(
             vec![live(1, 100, Some("session-a"))],
             vec![historical("session-a", 50)],
         );
+
+        assert_eq!(
+            row_session_ids(&rows),
+            vec![format!(
+                "historical-live:session-a:{}",
+                EntityId::from(1).as_u64()
+            )]
+        );
+    }
+
+    #[test]
+    fn resumed_thread_without_loaded_history_remains_visible_as_live() {
+        let rows = merge_threads(vec![live(1, 100, Some("session-a"))], Vec::new());
 
         assert_eq!(row_session_ids(&rows), vec![live_label(1)]);
     }
@@ -564,14 +541,18 @@ mod tests {
             ],
         );
 
-        // "resumed" is dropped by exact id; "after-fresh-launch" (>= 120) is
-        // dropped by the heuristic; "before-fresh-launch" (< 120) survives.
+        // "resumed" keeps its historical identity and gains live state;
+        // "after-fresh-launch" (>= 120) is dropped by the heuristic;
+        // "before-fresh-launch" (< 120) survives.
         assert_eq!(
             row_session_ids(&rows),
             vec![
                 live_label(2),
                 "historical:session-before-fresh-launch".to_string(),
-                live_label(1)
+                format!(
+                    "historical-live:session-resumed:{}",
+                    EntityId::from(1).as_u64()
+                )
             ]
         );
     }
