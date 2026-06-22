@@ -34,13 +34,34 @@ jobs:
       run: ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: Install Linux packaging tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cpio desktop-file-utils rpm
+        ./script/install-nfpm
+    - name: ./script/test-package-linux
+      run: ./script/test-package-linux
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
+    - name: ./script/package-linux
+      run: ./script/package-linux
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: flint-linux-aarch64.tar.gz
         path: target/release/flint-linux-aarch64.tar.gz
+        if-no-files-found: error
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: flint-linux-aarch64.deb
+        path: target/release/flint-linux-aarch64.deb
+        if-no-files-found: error
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: flint-linux-aarch64.rpm
+        path: target/release/flint-linux-aarch64.rpm
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -73,13 +94,34 @@ jobs:
       run: ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: Install Linux packaging tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cpio desktop-file-utils rpm
+        ./script/install-nfpm
+    - name: ./script/test-package-linux
+      run: ./script/test-package-linux
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
+    - name: ./script/package-linux
+      run: ./script/package-linux
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: flint-linux-x86_64.tar.gz
         path: target/release/flint-linux-x86_64.tar.gz
+        if-no-files-found: error
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: flint-linux-x86_64.deb
+        path: target/release/flint-linux-x86_64.deb
+        if-no-files-found: error
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: flint-linux-x86_64.rpm
+        path: target/release/flint-linux-x86_64.rpm
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

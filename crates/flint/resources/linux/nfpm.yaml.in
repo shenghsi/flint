@@ -1,0 +1,25 @@
+name: "$PACKAGE_NAME"
+arch: "$PACKAGE_ARCHITECTURE"
+platform: "linux"
+version: "$PACKAGE_VERSION"
+section: "devel"
+priority: "optional"
+maintainer: "Flint Team <hi@flint.dev>"
+description: "The fast, collaborative code editor."
+vendor: "Flint"
+homepage: "https://github.com/shenghsi/flint"
+license: "GPL-3.0-or-later"
+conflicts: [$PACKAGE_CONFLICTS]
+contents:
+  - src: "$STAGED_APPLICATION_DIRECTORY/"
+    dst: "/usr/lib/flint/$APPLICATION_DIRECTORY"
+    type: tree
+  - src: "/usr/lib/flint/$APPLICATION_DIRECTORY/bin/flint"
+    dst: "/usr/bin/flint"
+    type: symlink
+  - src: "$STAGED_DESKTOP_FILE"
+    dst: "/usr/share/applications/$APPLICATION_ID.desktop"
+  - src: "$STAGED_ICON_512"
+    dst: "/usr/share/icons/hicolor/512x512/apps/flint.png"
+  - src: "$STAGED_ICON_1024"
+    dst: "/usr/share/icons/hicolor/1024x1024/apps/flint.png"

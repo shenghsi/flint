@@ -74,16 +74,44 @@ Build, packaging and instructions for each version are available in the README o
 
 ### Downloading manually
 
-If you'd prefer, you can install Flint by downloading our pre-built .tar.gz. This is the same artifact that our install script uses, but you can customize the location of your installation by modifying the instructions below:
+Native packages are the easiest manual installation option. They install the
+Flint launcher, desktop entry, MIME registration, and application icons so
+desktop environments can associate Flint's windows with the correct dock icon.
 
-Download the `.tar.gz` file:
+For Debian and Ubuntu, download the package for your architecture:
 
-- [flint-linux-x86_64.tar.gz](https://cloud.flint.dev/releases/stable/latest/download?asset=flint&arch=x86_64&os=linux&source=docs)
-  ([preview](https://cloud.flint.dev/releases/preview/latest/download?asset=flint&arch=x86_64&os=linux&source=docs))
-- [flint-linux-aarch64.tar.gz](https://cloud.flint.dev/releases/stable/latest/download?asset=flint&arch=aarch64&os=linux&source=docs)
-  ([preview](https://cloud.flint.dev/releases/preview/latest/download?asset=flint&arch=aarch64&os=linux&source=docs))
+- [flint-linux-x86_64.deb](https://github.com/shenghsi/flint/releases/latest/download/flint-linux-x86_64.deb)
+- [flint-linux-aarch64.deb](https://github.com/shenghsi/flint/releases/latest/download/flint-linux-aarch64.deb)
 
-Then ensure that the `flint` binary in the tarball is on your path. The easiest way is to unpack the tarball and create a symlink:
+Install it with:
+
+```sh
+sudo apt install ./flint-linux-x86_64.deb
+```
+
+For Fedora and other RPM-based distributions, download:
+
+- [flint-linux-x86_64.rpm](https://github.com/shenghsi/flint/releases/latest/download/flint-linux-x86_64.rpm)
+- [flint-linux-aarch64.rpm](https://github.com/shenghsi/flint/releases/latest/download/flint-linux-aarch64.rpm)
+
+Install it with:
+
+```sh
+sudo dnf install ./flint-linux-x86_64.rpm
+```
+
+The native packages have the same glibc and GPU requirements described above.
+
+#### Portable tarball
+
+The portable `.tar.gz` is the same artifact used by the installation script.
+Use it when you need a custom installation location:
+
+- [flint-linux-x86_64.tar.gz](https://github.com/shenghsi/flint/releases/latest/download/flint-linux-x86_64.tar.gz)
+- [flint-linux-aarch64.tar.gz](https://github.com/shenghsi/flint/releases/latest/download/flint-linux-aarch64.tar.gz)
+
+Ensure that the `flint` binary in the tarball is on your path. The easiest way
+is to unpack the tarball and create a symlink:
 
 ```sh
 mkdir -p ~/.local

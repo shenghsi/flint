@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+architecture="$(uname -m)"
+channel="$(<crates/flint/RELEASE_CHANNEL)"
+output_directory="target/release"
+archive=""
+
+usage() {
+    echo "Usage: $0 [--archive PATH] [--output-dir PATH] [--architecture ARCH] [--channel CHANNEL]"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --archive)
+            archive="${2:?Missing value for --archive}"
+            shift 2
+            ;;
+        --output-dir)
+            output_directory="${2:?Missing value for --output-dir}"
+            shift 2
+            ;;
+        --architecture)
+            architecture="${2:?Missing value for --architecture}"
+            shift 2
+            ;;
+        --channel)
+            channel="${2:?Missing value for --channel}"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+    echo "Linux package generation is supported only on Linux." >&2
+    exit 1
+fi
+
+case "$architecture" in
+    x86_64)
+        artifact_architecture="x86_64"
+        deb_architecture="amd64"
+        rpm_architecture="x86_64"
+        ;;
+    aarch64|arm64)
+        artifact_architecture="aarch64"
+        deb_architecture="arm64"
+        rpm_architecture="aarch64"
+        ;;
+    *)
+        echo "Unsupported Linux architecture: $architecture" >&2
+        exit 1
+        ;;
+esac
+
+case "$channel" in
+    stable)
+        package_name="flint"
+        application_directory="flint.app"
+        application_id="dev.flint.Flint"
+        conflicting_packages=(flint-preview flint-nightly flint-dev)
+        ;;
+    preview)
+        package_name="flint-preview"
+        application_directory="flint-preview.app"
+        application_id="dev.flint.Flint-Preview"
+        conflicting_packages=(flint flint-nightly flint-dev)
+        ;;
+    nightly)
+        package_name="flint-nightly"
+        application_directory="flint-nightly.app"
+        application_id="dev.flint.Flint-Nightly"
+        conflicting_packages=(flint flint-preview flint-dev)
+        ;;
+    dev)
+        package_name="flint-dev"
+        application_directory="flint-dev.app"
+        application_id="dev.flint.Flint-Dev"
+        conflicting_packages=(flint flint-preview flint-nightly)
+        ;;
+    *)
+        echo "Unknown release channel: $channel" >&2
+        exit 1
+        ;;
+esac
+
+package_conflicts=""
+for conflicting_package in "${conflicting_packages[@]}"; do
+    if [[ -n "$package_conflicts" ]]; then
+        package_conflicts+=", "
+    fi
+    package_conflicts+="\"$conflicting_package\""
+done
+
+if [[ -z "$archive" ]]; then
+    archive="target/release/flint-linux-${artifact_architecture}.tar.gz"
+fi
+
+if [[ ! -f "$archive" ]]; then
+    echo "Linux bundle archive not found: $archive" >&2
+    exit 1
+fi
+
+nfpm="${NFPM:-target/tools/nfpm/bin/nfpm}"
+if [[ ! -x "$nfpm" ]]; then
+    echo "nFPM not found at $nfpm. Run script/install-nfpm first." >&2
+    exit 1
+fi
+
+for command in cpio dpkg-deb envsubst file rpm rpm2cpio tar; do
+    if ! command -v "$command" >/dev/null; then
+        echo "Missing required packaging command: $command" >&2
+        exit 1
+    fi
+done
+
+temporary_directory="$(mktemp -d)"
+trap 'rm -rf "$temporary_directory"' EXIT
+
+tar -xzf "$archive" -C "$temporary_directory"
+staged_application_directory="$temporary_directory/$application_directory"
+source_desktop_file="$staged_application_directory/share/applications/$application_id.desktop"
+source_icon_512="$staged_application_directory/share/icons/hicolor/512x512/apps/flint.png"
+source_icon_1024="$staged_application_directory/share/icons/hicolor/1024x1024/apps/flint.png"
+
+required_files=(
+    "$staged_application_directory/bin/flint"
+    "$staged_application_directory/libexec/flint-editor"
+    "$staged_application_directory/licenses.md"
+    "$source_desktop_file"
+    "$source_icon_512"
+    "$source_icon_1024"
+)
+
+for required_file in "${required_files[@]}"; do
+    if [[ ! -f "$required_file" ]]; then
+        echo "Required package file is missing: $required_file" >&2
+        exit 1
+    fi
+done
+
+if [[ ! -d "$staged_application_directory/lib" ]]; then
+    echo "Required package directory is missing: $staged_application_directory/lib" >&2
+    exit 1
+fi
+
+for source_icon in "$source_icon_512" "$source_icon_1024"; do
+    if [[ "$(file "$source_icon")" != *"PNG image data"* ]]; then
+        echo "Application icon is not a valid PNG file: $source_icon" >&2
+        exit 1
+    fi
+done
+
+staged_desktop_file="$temporary_directory/$application_id.desktop"
+sed \
+    -e 's|^TryExec=.*$|TryExec=/usr/bin/flint|' \
+    -e 's|^Exec=[^ ]*|Exec=/usr/bin/flint|' \
+    "$source_desktop_file" \
+    >"$staged_desktop_file"
+chmod 644 "$staged_desktop_file"
+
+if command -v desktop-file-validate >/dev/null; then
+    desktop-file-validate "$staged_desktop_file"
+else
+    echo "desktop-file-validate not found; skipping desktop entry validation."
+fi
+
+package_version="$(script/get-crate-version flint)"
+mkdir -p "$output_directory"
+output_directory="$(cd "$output_directory" && pwd)"
+
+render_config() {
+    local package_architecture="$1"
+    local config_path="$2"
+
+    PACKAGE_NAME="$package_name" \
+    PACKAGE_ARCHITECTURE="$package_architecture" \
+    PACKAGE_VERSION="$package_version" \
+    PACKAGE_CONFLICTS="$package_conflicts" \
+    APPLICATION_DIRECTORY="$application_directory" \
+    APPLICATION_ID="$application_id" \
+    STAGED_APPLICATION_DIRECTORY="$staged_application_directory" \
+    STAGED_DESKTOP_FILE="$staged_desktop_file" \
+    STAGED_ICON_512="$source_icon_512" \
+    STAGED_ICON_1024="$source_icon_1024" \
+        envsubst <crates/flint/resources/linux/nfpm.yaml.in >"$config_path"
+
+    if grep -q '\$[A-Z_][A-Z_]*' "$config_path"; then
+        echo "Unresolved variable in rendered nFPM configuration: $config_path" >&2
+        exit 1
+    fi
+}
+
+deb_config="$temporary_directory/nfpm-deb.yaml"
+rpm_config="$temporary_directory/nfpm-rpm.yaml"
+render_config "$deb_architecture" "$deb_config"
+render_config "$rpm_architecture" "$rpm_config"
+
+deb_package="$output_directory/flint-linux-${artifact_architecture}.deb"
+rpm_package="$output_directory/flint-linux-${artifact_architecture}.rpm"
+rm -f "$deb_package" "$rpm_package"
+"$nfpm" package --config "$deb_config" --packager deb --target "$deb_package"
+"$nfpm" package --config "$rpm_config" --packager rpm --target "$rpm_package"
+
+validate_metadata() {
+    [[ "$(dpkg-deb -f "$deb_package" Package)" == "$package_name" ]]
+    [[ "$(dpkg-deb -f "$deb_package" Version)" == "$package_version" ]]
+    [[ "$(dpkg-deb -f "$deb_package" Architecture)" == "$deb_architecture" ]]
+    [[ "$(rpm -qp --queryformat '%{NAME}' "$rpm_package")" == "$package_name" ]]
+    [[ "$(rpm -qp --queryformat '%{VERSION}' "$rpm_package")" == "$package_version" ]]
+    [[ "$(rpm -qp --queryformat '%{ARCH}' "$rpm_package")" == "$rpm_architecture" ]]
+
+    local deb_conflicts
+    local rpm_conflicts
+    deb_conflicts="$(dpkg-deb -f "$deb_package" Conflicts)"
+    rpm_conflicts="$(rpm -qp --conflicts "$rpm_package")"
+    for conflicting_package in "${conflicting_packages[@]}"; do
+        [[ "$deb_conflicts" == *"$conflicting_package"* ]]
+        [[ "$rpm_conflicts" == *"$conflicting_package"* ]]
+    done
+}
+
+validate_contents() {
+    local deb_contents="$temporary_directory/deb-contents.txt"
+    local rpm_contents="$temporary_directory/rpm-contents.txt"
+    dpkg-deb --contents "$deb_package" >"$deb_contents"
+    rpm -qlp "$rpm_package" >"$rpm_contents"
+
+    local expected_paths=(
+        "/usr/bin/flint"
+        "/usr/lib/flint/$application_directory/bin/flint"
+        "/usr/lib/flint/$application_directory/libexec/flint-editor"
+        "/usr/lib/flint/$application_directory/licenses.md"
+        "/usr/share/applications/$application_id.desktop"
+        "/usr/share/icons/hicolor/512x512/apps/flint.png"
+        "/usr/share/icons/hicolor/1024x1024/apps/flint.png"
+    )
+
+    for expected_path in "${expected_paths[@]}"; do
+        grep -Fq ".$expected_path" "$deb_contents"
+        grep -Fq "$expected_path" "$rpm_contents"
+    done
+}
+
+validate_extracted_package() {
+    local package_root="$1"
+    local desktop_file="$package_root/usr/share/applications/$application_id.desktop"
+    local expected_link="/usr/lib/flint/$application_directory/bin/flint"
+
+    [[ "$(readlink "$package_root/usr/bin/flint")" == "$expected_link" ]]
+    grep -Fq "TryExec=/usr/bin/flint" "$desktop_file"
+    grep -Fq "Exec=/usr/bin/flint %U" "$desktop_file"
+    grep -Fq "Exec=/usr/bin/flint --new %U" "$desktop_file"
+    grep -Fq "Icon=flint" "$desktop_file"
+    local installed_icon
+    for installed_icon in \
+        "$package_root/usr/share/icons/hicolor/512x512/apps/flint.png" \
+        "$package_root/usr/share/icons/hicolor/1024x1024/apps/flint.png"
+    do
+        [[ "$(file "$installed_icon")" == *"PNG image data"* ]]
+    done
+}
+
+validate_metadata
+validate_contents
+
+deb_root="$temporary_directory/deb-root"
+rpm_root="$temporary_directory/rpm-root"
+mkdir -p "$deb_root" "$rpm_root"
+dpkg-deb -x "$deb_package" "$deb_root"
+(
+    cd "$rpm_root"
+    rpm2cpio "$rpm_package" | cpio -idm --quiet
+)
+validate_extracted_package "$deb_root"
+validate_extracted_package "$rpm_root"
+
+echo "Created $deb_package"
+echo "Created $rpm_package"

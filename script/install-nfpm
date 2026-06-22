@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+nfpm_version="2.46.3"
+install_directory="${1:-target/tools/nfpm/bin}"
+nfpm_path="$install_directory/nfpm"
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+    echo "nFPM installation is supported only on Linux." >&2
+    exit 1
+fi
+
+for command in curl sha256sum tar; do
+    if ! command -v "$command" >/dev/null; then
+        echo "Missing required installer command: $command" >&2
+        exit 1
+    fi
+done
+
+if [[ -x "$nfpm_path" ]] && "$nfpm_path" --version | grep -Fq "$nfpm_version"; then
+    printf '%s\n' "$nfpm_path"
+    exit 0
+fi
+
+case "$(uname -m)" in
+    x86_64)
+        archive_architecture="x86_64"
+        archive_checksum="9170d25ea056d7329def38134b2bcad98d02d221f8331610dcd619e84d28c565"
+        ;;
+    aarch64|arm64)
+        archive_architecture="arm64"
+        archive_checksum="7871d72bb1035924eab56031f962ae3f004b1f7695151789ef018bdbc507a2fa"
+        ;;
+    *)
+        echo "Unsupported Linux architecture: $(uname -m)" >&2
+        exit 1
+        ;;
+esac
+
+archive_name="nfpm_${nfpm_version}_Linux_${archive_architecture}.tar.gz"
+archive_url="https://github.com/goreleaser/nfpm/releases/download/v${nfpm_version}/${archive_name}"
+temporary_directory="$(mktemp -d)"
+trap 'rm -rf "$temporary_directory"' EXIT
+
+curl -fsSL "$archive_url" -o "$temporary_directory/$archive_name"
+printf '%s  %s\n' "$archive_checksum" "$temporary_directory/$archive_name" | sha256sum -c -
+
+mkdir -p "$install_directory"
+tar -xzf "$temporary_directory/$archive_name" -C "$install_directory" nfpm
+chmod +x "$nfpm_path"
+
+if ! "$nfpm_path" --version | grep -Fq "$nfpm_version"; then
+    echo "Installed nFPM version does not match $nfpm_version." >&2
+    exit 1
+fi
+
+printf '%s\n' "$nfpm_path"

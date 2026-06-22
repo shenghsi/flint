@@ -342,13 +342,30 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
       - run: ./script/linux
       - run: ./script/download-wasi-sdk
+      - name: Install Linux packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cpio desktop-file-utils rpm
+          ./script/install-nfpm
+      - run: ./script/test-package-linux
       - name: Setup sccache
         uses: ./.github/actions/setup-sccache
       - run: ./script/bundle-linux
+      - run: ./script/package-linux
       - uses: actions/upload-artifact@v4
         with:
           name: flint-linux-aarch64.tar.gz
           path: target/release/flint-linux-aarch64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flint-linux-aarch64.deb
+          path: target/release/flint-linux-aarch64.deb
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flint-linux-aarch64.rpm
+          path: target/release/flint-linux-aarch64.rpm
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -378,13 +395,30 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
       - run: ./script/linux
       - run: ./script/download-wasi-sdk
+      - name: Install Linux packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cpio desktop-file-utils rpm
+          ./script/install-nfpm
+      - run: ./script/test-package-linux
       - name: Setup sccache
         uses: ./.github/actions/setup-sccache
       - run: ./script/bundle-linux
+      - run: ./script/package-linux
       - uses: actions/upload-artifact@v4
         with:
           name: flint-linux-x86_64.tar.gz
           path: target/release/flint-linux-x86_64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flint-linux-x86_64.deb
+          path: target/release/flint-linux-x86_64.deb
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flint-linux-x86_64.rpm
+          path: target/release/flint-linux-x86_64.rpm
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -502,7 +536,11 @@ jobs:
           mv ./artifacts/Flint-aarch64.dmg/Flint-aarch64.dmg release-artifacts/Flint-aarch64.dmg
           mv ./artifacts/Flint-x86_64.dmg/Flint-x86_64.dmg release-artifacts/Flint-x86_64.dmg
           mv ./artifacts/flint-linux-aarch64.tar.gz/flint-linux-aarch64.tar.gz release-artifacts/flint-linux-aarch64.tar.gz
+          mv ./artifacts/flint-linux-aarch64.deb/flint-linux-aarch64.deb release-artifacts/flint-linux-aarch64.deb
+          mv ./artifacts/flint-linux-aarch64.rpm/flint-linux-aarch64.rpm release-artifacts/flint-linux-aarch64.rpm
           mv ./artifacts/flint-linux-x86_64.tar.gz/flint-linux-x86_64.tar.gz release-artifacts/flint-linux-x86_64.tar.gz
+          mv ./artifacts/flint-linux-x86_64.deb/flint-linux-x86_64.deb release-artifacts/flint-linux-x86_64.deb
+          mv ./artifacts/flint-linux-x86_64.rpm/flint-linux-x86_64.rpm release-artifacts/flint-linux-x86_64.rpm
           mv ./artifacts/Flint-x86_64.exe/Flint-x86_64.exe release-artifacts/Flint-x86_64.exe
           mv ./artifacts/Flint-aarch64.exe/Flint-aarch64.exe release-artifacts/Flint-aarch64.exe
           mv ./artifacts/flint-remote-server-macos-aarch64.gz/flint-remote-server-macos-aarch64.gz release-artifacts/flint-remote-server-macos-aarch64.gz
@@ -526,7 +564,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
       - name: Validate all expected assets are present
         run: |
-          EXPECTED_ASSETS='["Flint-aarch64.dmg", "Flint-x86_64.dmg", "flint-linux-aarch64.tar.gz", "flint-linux-x86_64.tar.gz", "Flint-x86_64.exe", "Flint-aarch64.exe", "flint-remote-server-macos-aarch64.gz", "flint-remote-server-macos-x86_64.gz", "flint-remote-server-linux-aarch64.gz", "flint-remote-server-linux-x86_64.gz", "flint-remote-server-windows-aarch64.zip", "flint-remote-server-windows-x86_64.zip"]'
+          EXPECTED_ASSETS='["Flint-aarch64.dmg", "Flint-x86_64.dmg", "flint-linux-aarch64.tar.gz", "flint-linux-aarch64.deb", "flint-linux-aarch64.rpm", "flint-linux-x86_64.tar.gz", "flint-linux-x86_64.deb", "flint-linux-x86_64.rpm", "Flint-x86_64.exe", "Flint-aarch64.exe", "flint-remote-server-macos-aarch64.gz", "flint-remote-server-macos-x86_64.gz", "flint-remote-server-linux-aarch64.gz", "flint-remote-server-linux-x86_64.gz", "flint-remote-server-windows-aarch64.zip", "flint-remote-server-windows-x86_64.zip"]'
           TAG="$RELEASE_TAG"
           ACTUAL_ASSETS=$(gh release view "$TAG" --json assets -q '[.assets[].name]')
           MISSING_ASSETS=$(echo "$EXPECTED_ASSETS" | jq -r --argjson actual "$ACTUAL_ASSETS" '. - $actual | .[]')

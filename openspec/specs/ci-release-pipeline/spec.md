@@ -23,15 +23,15 @@ The system SHALL build macOS binaries for both `aarch64-apple-darwin` and `x86_6
 - **THEN** a job on a macOS runner builds `Flint-x86_64.dmg` using `script/bundle-mac x86_64-apple-darwin`
 
 ### Requirement: Release workflow builds Linux targets
-The system SHALL build Linux binaries for both `aarch64-unknown-linux-gnu` and `x86_64-unknown-linux-gnu` targets. The build SHALL produce a `.tar.gz` archive for each architecture.
+The system SHALL build Linux binaries for both `aarch64-unknown-linux-gnu` and `x86_64-unknown-linux-gnu` targets. The build SHALL produce portable `.tar.gz`, DEB, and RPM packages for each architecture.
 
 #### Scenario: Build Linux ARM64 release
 - **WHEN** the release workflow runs
-- **THEN** a job on a Linux runner builds `flint-linux-aarch64.tar.gz` using `script/bundle-linux`
+- **THEN** a job on a Linux runner builds `flint-linux-aarch64.tar.gz`, `flint-linux-aarch64.deb`, and `flint-linux-aarch64.rpm`
 
 #### Scenario: Build Linux x86_64 release
 - **WHEN** the release workflow runs
-- **THEN** a job on a Linux runner builds `flint-linux-x86_64.tar.gz` using `script/bundle-linux`
+- **THEN** a job on a Linux runner builds `flint-linux-x86_64.tar.gz`, `flint-linux-x86_64.deb`, and `flint-linux-x86_64.rpm`
 
 ### Requirement: Release workflow builds Windows targets
 The system SHALL build Windows binaries for both `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc` targets. The build SHALL produce an `.exe` installer for each architecture.
@@ -52,7 +52,7 @@ The system SHALL produce compressed remote server binaries for all platforms alo
 - **THEN** all remote server artifacts are uploaded to the GitHub Release alongside the main application bundles
 
 ### Requirement: Release workflow publishes to GitHub Releases
-The system SHALL upload all built artifacts to a GitHub Release associated with the triggering tag. The release SHALL include all 12 expected artifacts.
+The system SHALL upload all built artifacts to a GitHub Release associated with the triggering tag. The release SHALL include all 16 expected artifacts.
 
 #### Scenario: All artifacts uploaded to release
 - **WHEN** all bundle jobs complete successfully
@@ -60,7 +60,7 @@ The system SHALL upload all built artifacts to a GitHub Release associated with 
 
 #### Scenario: Artifact count validation
 - **WHEN** artifacts are uploaded to the release
-- **THEN** the workflow validates that all 12 expected artifacts are present before publishing
+- **THEN** the workflow validates that all 16 expected artifacts are present before publishing
 
 ### Requirement: Nightly workflow produces rolling builds
 The system SHALL provide a GitHub Actions workflow (`release_nightly.yml`) that runs on a schedule and/or manual trigger, builds all 6 platform targets, and updates a rolling `nightly` GitHub Release with the latest artifacts.

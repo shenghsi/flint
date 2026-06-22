@@ -109,6 +109,10 @@ pub(crate) fn bundle_linux(
         Arch::X86_64 => assets::REMOTE_SERVER_LINUX_X86_64,
         Arch::AARCH64 => assets::REMOTE_SERVER_LINUX_AARCH64,
     };
+    let (deb_artifact_name, rpm_artifact_name) = match arch {
+        Arch::X86_64 => ("flint-linux-x86_64.deb", "flint-linux-x86_64.rpm"),
+        Arch::AARCH64 => ("flint-linux-aarch64.deb", "flint-linux-aarch64.rpm"),
+    };
     NamedJob {
         name: format!("bundle_linux_{arch}"),
         job: bundle_job(deps)
@@ -122,8 +126,24 @@ pub(crate) fn bundle_linux(
             })
             .add_step(steps::setup_sentry())
             .map(steps::install_linux_dependencies)
+            .add_step(
+                named::bash(indoc! {r#"
+                sudo apt-get update
+                sudo apt-get install -y cpio desktop-file-utils rpm
+                ./script/install-nfpm
+            "#})
+                .name("Install Linux packaging tools"),
+            )
+            .add_step(steps::script("./script/test-package-linux"))
             .add_step(steps::script("./script/bundle-linux"))
+            .add_step(steps::script("./script/package-linux"))
             .add_step(upload_artifact(&format!("target/release/{artifact_name}")))
+            .add_step(upload_artifact(&format!(
+                "target/release/{deb_artifact_name}"
+            )))
+            .add_step(upload_artifact(&format!(
+                "target/release/{rpm_artifact_name}"
+            )))
             .add_step(upload_artifact(&format!(
                 "target/{remote_server_artifact_name}"
             ))),

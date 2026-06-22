@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+package_script="${PACKAGE_LINUX_SCRIPT:-script/package-linux}"
+if [[ ! -x "$package_script" ]]; then
+    echo "Missing executable package script: $package_script" >&2
+    exit 1
+fi
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+    echo "Skipping Linux package integration tests on $(uname -s)."
+    exit 0
+fi
+
+for command in cpio dpkg-deb file rpm rpm2cpio tar; do
+    if ! command -v "$command" >/dev/null; then
+        echo "Missing required test command: $command" >&2
+        exit 1
+    fi
+done
+
+temporary_directory="$(mktemp -d)"
+trap 'rm -rf "$temporary_directory"' EXIT
+
+create_fixture() {
+    local channel="$1"
+    local fixture_directory="$2"
+    local application_suffix=""
+    local application_id="dev.flint.Flint"
+
+    case "$channel" in
+        stable)
+            ;;
+        preview)
+            application_suffix="-preview"
+            application_id="dev.flint.Flint-Preview"
+            ;;
+        nightly)
+            application_suffix="-nightly"
+            application_id="dev.flint.Flint-Nightly"
+            ;;
+        dev)
+            application_suffix="-dev"
+            application_id="dev.flint.Flint-Dev"
+            ;;
+        *)
+            echo "Unsupported fixture channel: $channel" >&2
+            return 1
+            ;;
+    esac
+
+    local application_directory="$fixture_directory/flint${application_suffix}.app"
+    mkdir -p \
+        "$application_directory/bin" \
+        "$application_directory/lib" \
+        "$application_directory/libexec" \
+        "$application_directory/share/applications" \
+        "$application_directory/share/icons/hicolor/512x512/apps" \
+        "$application_directory/share/icons/hicolor/1024x1024/apps"
+
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$application_directory/bin/flint"
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$application_directory/libexec/flint-editor"
+    chmod +x "$application_directory/bin/flint" "$application_directory/libexec/flint-editor"
+    printf 'fixture library\n' >"$application_directory/lib/libfixture.so"
+    printf 'fixture license\n' >"$application_directory/licenses.md"
+    cp crates/flint/resources/app-icon.png \
+        "$application_directory/share/icons/hicolor/512x512/apps/flint.png"
+    cp crates/flint/resources/app-icon@2x.png \
+        "$application_directory/share/icons/hicolor/1024x1024/apps/flint.png"
+
+    sed \
+        -e 's|$APP_NAME|Flint Fixture|g' \
+        -e 's|$APP_CLI|flint|g' \
+        -e 's|$APP_ARGS|%U|g' \
+        -e 's|$APP_ICON|flint|g' \
+        -e 's|$DO_STARTUP_NOTIFY|true|g' \
+        crates/flint/resources/flint.desktop.in \
+        >"$application_directory/share/applications/$application_id.desktop"
+
+    tar -czf "$fixture_directory/flint-linux-x86_64.tar.gz" \
+        -C "$fixture_directory" \
+        "flint${application_suffix}.app"
+}
+
+assert_file_contains() {
+    local file="$1"
+    local expected="$2"
+    if ! grep -Fq "$expected" "$file"; then
+        echo "Expected $file to contain: $expected" >&2
+        exit 1
+    fi
+}
+
+assert_command_fails() {
+    if "$@" >/dev/null 2>&1; then
+        echo "Expected command to fail: $*" >&2
+        exit 1
+    fi
+}
+
+test_channel() {
+    local channel="$1"
+    local package_name="$2"
+    local application_directory="$3"
+    local application_id="$4"
+    local case_directory="$temporary_directory/$channel"
+    local output_directory="$case_directory/output"
+
+    mkdir -p "$case_directory" "$output_directory"
+    create_fixture "$channel" "$case_directory"
+
+    "$package_script" \
+        --archive "$case_directory/flint-linux-x86_64.tar.gz" \
+        --output-dir "$output_directory" \
+        --architecture x86_64 \
+        --channel "$channel"
+
+    local deb_package="$output_directory/flint-linux-x86_64.deb"
+    local rpm_package="$output_directory/flint-linux-x86_64.rpm"
+    [[ -f "$deb_package" ]]
+    [[ -f "$rpm_package" ]]
+
+    [[ "$(dpkg-deb -f "$deb_package" Package)" == "$package_name" ]]
+    [[ "$(dpkg-deb -f "$deb_package" Architecture)" == "amd64" ]]
+    [[ "$(rpm -qp --queryformat '%{NAME}' "$rpm_package")" == "$package_name" ]]
+    [[ "$(rpm -qp --queryformat '%{ARCH}' "$rpm_package")" == "x86_64" ]]
+    if [[ "$channel" == "stable" ]]; then
+        [[ "$(dpkg-deb -f "$deb_package" Conflicts)" == *"flint-preview"* ]]
+        [[ "$(rpm -qp --conflicts "$rpm_package")" == *"flint-preview"* ]]
+    else
+        [[ "$(dpkg-deb -f "$deb_package" Conflicts)" == *"flint"* ]]
+        [[ "$(rpm -qp --conflicts "$rpm_package")" == *"flint"* ]]
+    fi
+
+    local deb_contents="$case_directory/deb-contents.txt"
+    local rpm_contents="$case_directory/rpm-contents.txt"
+    dpkg-deb --contents "$deb_package" >"$deb_contents"
+    rpm -qlp "$rpm_package" >"$rpm_contents"
+
+    for expected_path in \
+        "/usr/bin/flint" \
+        "/usr/lib/flint/$application_directory/bin/flint" \
+        "/usr/lib/flint/$application_directory/lib/libfixture.so" \
+        "/usr/lib/flint/$application_directory/libexec/flint-editor" \
+        "/usr/lib/flint/$application_directory/licenses.md" \
+        "/usr/share/applications/$application_id.desktop" \
+        "/usr/share/icons/hicolor/512x512/apps/flint.png" \
+        "/usr/share/icons/hicolor/1024x1024/apps/flint.png"
+    do
+        assert_file_contains "$deb_contents" ".$expected_path"
+        assert_file_contains "$rpm_contents" "$expected_path"
+    done
+
+    local deb_root="$case_directory/deb-root"
+    local rpm_root="$case_directory/rpm-root"
+    mkdir -p "$deb_root" "$rpm_root"
+    dpkg-deb -x "$deb_package" "$deb_root"
+    (
+        cd "$rpm_root"
+        rpm2cpio "$rpm_package" | cpio -idm --quiet
+    )
+
+    [[ "$(readlink "$deb_root/usr/bin/flint")" == "/usr/lib/flint/$application_directory/bin/flint" ]]
+    [[ "$(readlink "$rpm_root/usr/bin/flint")" == "/usr/lib/flint/$application_directory/bin/flint" ]]
+
+    local desktop_file="$deb_root/usr/share/applications/$application_id.desktop"
+    assert_file_contains "$desktop_file" "TryExec=/usr/bin/flint"
+    assert_file_contains "$desktop_file" "Exec=/usr/bin/flint %U"
+    assert_file_contains "$desktop_file" "Exec=/usr/bin/flint --new %U"
+    assert_file_contains "$desktop_file" "Icon=flint"
+}
+
+test_channel stable flint flint.app dev.flint.Flint
+test_channel preview flint-preview flint-preview.app dev.flint.Flint-Preview
+test_channel nightly flint-nightly flint-nightly.app dev.flint.Flint-Nightly
+test_channel dev flint-dev flint-dev.app dev.flint.Flint-Dev
+
+negative_directory="$temporary_directory/negative"
+mkdir -p "$negative_directory"
+create_fixture stable "$negative_directory"
+
+assert_command_fails "$package_script" \
+    --archive "$negative_directory/flint-linux-x86_64.tar.gz" \
+    --output-dir "$negative_directory/output" \
+    --architecture mips64 \
+    --channel stable
+
+assert_command_fails "$package_script" \
+    --archive "$negative_directory/flint-linux-x86_64.tar.gz" \
+    --output-dir "$negative_directory/output" \
+    --architecture x86_64 \
+    --channel unknown
+
+missing_editor_directory="$temporary_directory/missing-editor"
+mkdir -p "$missing_editor_directory"
+create_fixture stable "$missing_editor_directory"
+tar -xzf "$missing_editor_directory/flint-linux-x86_64.tar.gz" -C "$missing_editor_directory"
+rm "$missing_editor_directory/flint.app/libexec/flint-editor"
+tar -czf "$missing_editor_directory/broken.tar.gz" -C "$missing_editor_directory" flint.app
+assert_command_fails "$package_script" \
+    --archive "$missing_editor_directory/broken.tar.gz" \
+    --output-dir "$missing_editor_directory/output" \
+    --architecture x86_64 \
+    --channel stable
+
+missing_desktop_directory="$temporary_directory/missing-desktop"
+mkdir -p "$missing_desktop_directory"
+create_fixture stable "$missing_desktop_directory"
+tar -xzf "$missing_desktop_directory/flint-linux-x86_64.tar.gz" -C "$missing_desktop_directory"
+rm "$missing_desktop_directory/flint.app/share/applications/dev.flint.Flint.desktop"
+tar -czf "$missing_desktop_directory/broken.tar.gz" -C "$missing_desktop_directory" flint.app
+assert_command_fails "$package_script" \
+    --archive "$missing_desktop_directory/broken.tar.gz" \
+    --output-dir "$missing_desktop_directory/output" \
+    --architecture x86_64 \
+    --channel stable
+
+missing_icon_directory="$temporary_directory/missing-icon"
+mkdir -p "$missing_icon_directory"
+create_fixture stable "$missing_icon_directory"
+tar -xzf "$missing_icon_directory/flint-linux-x86_64.tar.gz" -C "$missing_icon_directory"
+rm "$missing_icon_directory/flint.app/share/icons/hicolor/512x512/apps/flint.png"
+tar -czf "$missing_icon_directory/broken.tar.gz" -C "$missing_icon_directory" flint.app
+assert_command_fails "$package_script" \
+    --archive "$missing_icon_directory/broken.tar.gz" \
+    --output-dir "$missing_icon_directory/output" \
+    --architecture x86_64 \
+    --channel stable
+
+echo "Linux package integration tests passed."
