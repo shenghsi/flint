@@ -309,6 +309,54 @@ pub fn resolve_thread_launch_args(
     }
 }
 
+/// Namespace for the "remembered new-thread launch option" key-value store,
+/// keyed by agent kind id rather than session id since a brand-new thread
+/// has no session yet. Same empty-string-means-"no extra args" convention as
+/// [`LAUNCH_OPTION_NAMESPACE`].
+const NEW_THREAD_LAUNCH_OPTION_NAMESPACE: &str = "agent-thread-new-launch-option";
+
+/// Reads the launch option label the user last picked from the new-thread
+/// dropdown for this agent kind, if any.
+pub fn remembered_new_thread_launch_option(cx: &App, kind_id: &str) -> Option<String> {
+    db::kvp::KeyValueStore::global(cx)
+        .scoped(NEW_THREAD_LAUNCH_OPTION_NAMESPACE)
+        .read(kind_id)
+        .log_err()
+        .flatten()
+}
+
+/// Persists `label` as this agent kind's remembered new-thread launch option
+/// choice. `None` represents an explicit "plain new thread" choice (stored
+/// as an empty string, distinct from no choice having been made at all).
+pub fn remember_new_thread_launch_option(cx: &App, kind_id: &'static str, label: Option<String>) {
+    let store = db::kvp::KeyValueStore::global(cx);
+    db::write_and_log(cx, move || async move {
+        store
+            .scoped(NEW_THREAD_LAUNCH_OPTION_NAMESPACE)
+            .write(kind_id.to_string(), label.unwrap_or_default())
+            .await
+    });
+}
+
+/// Resolves the extra arguments to use when starting a *new* thread for
+/// `kind`: the remembered choice from the new-thread dropdown takes priority
+/// over `kind`'s agent-wide `default_launch_option` setting.
+pub fn resolve_new_thread_launch_args(cx: &App, kind: &AgentKindDefinition) -> Vec<String> {
+    match remembered_new_thread_launch_option(cx, kind.id) {
+        Some(label) if label.is_empty() => Vec::new(),
+        Some(label) => kind
+            .resume_options
+            .iter()
+            .find(|option| option.label.as_ref() == label)
+            .map(|option| option.args.clone())
+            .unwrap_or_default(),
+        None => {
+            let settings = AgentThreadSettings::get_global(cx);
+            resolve_default_launch_args(settings.command_for_kind(kind.id), kind).to_vec()
+        }
+    }
+}
+
 pub fn resume_thread(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,

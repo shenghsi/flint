@@ -248,6 +248,79 @@ impl AgentThreadsPanel {
         });
     }
 
+    fn deploy_new_thread_options_menu(
+        &mut self,
+        kind: AgentKindDefinition,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let resume_options = kind.resume_options.clone();
+        let effective_label = match store::remembered_new_thread_launch_option(cx, kind.id) {
+            Some(label) if label.is_empty() => None,
+            Some(label) => Some(label),
+            None => AgentThreadSettings::get_global(cx)
+                .command_for_kind(kind.id)
+                .default_launch_option
+                .clone(),
+        };
+        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
+            {
+                let workspace = workspace.clone();
+                let kind = kind.clone();
+                let is_selected = effective_label.is_none();
+                context_menu = context_menu.toggleable_entry(
+                    "New thread",
+                    is_selected,
+                    IconPosition::Start,
+                    None,
+                    move |window, cx| {
+                        let Some(workspace) = workspace.upgrade() else {
+                            return;
+                        };
+                        let kind = kind.clone();
+                        store::remember_new_thread_launch_option(cx, kind.id, None);
+                        workspace.update(cx, |workspace, cx| {
+                            store::launch_new_thread(workspace, &kind, &[], window, cx);
+                        });
+                    },
+                );
+            }
+            for option in resume_options {
+                let workspace = workspace.clone();
+                let kind = kind.clone();
+                let label = SharedString::from(format!("New — {}", option.label));
+                let args = option.args.clone();
+                let is_selected = effective_label.as_deref() == Some(option.label.as_ref());
+                let option_label = option.label.to_string();
+                context_menu = context_menu.toggleable_entry(
+                    label,
+                    is_selected,
+                    IconPosition::Start,
+                    None,
+                    move |window, cx| {
+                        let Some(workspace) = workspace.upgrade() else {
+                            return;
+                        };
+                        let kind = kind.clone();
+                        let args = args.clone();
+                        store::remember_new_thread_launch_option(
+                            cx,
+                            kind.id,
+                            Some(option_label.clone()),
+                        );
+                        workspace.update(cx, |workspace, cx| {
+                            store::launch_new_thread(workspace, &kind, &args, window, cx);
+                        });
+                    },
+                );
+            }
+            context_menu
+        });
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
     fn resume(
         &mut self,
         kind: &AgentKindDefinition,
@@ -465,19 +538,44 @@ impl AgentThreadsPanel {
                     ),
             )
             .child(
-                IconButton::new(
-                    SharedString::from(format!("agent-thread-new-{kind_id}")),
-                    IconName::Plus,
-                )
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                .tooltip(Tooltip::text(format!("New {} thread", kind.label)))
-                .on_click(cx.listener({
-                    let kind = kind.clone();
-                    move |this, _, window, cx| {
-                        this.launch_new(&kind, window, cx);
-                    }
-                })),
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("agent-thread-new-{kind_id}")),
+                            IconName::Plus,
+                        )
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text(format!("New {} thread", kind.label)))
+                        .on_click(cx.listener({
+                            let kind = kind.clone();
+                            move |this, _, window, cx| {
+                                this.launch_new(&kind, window, cx);
+                            }
+                        })),
+                    )
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("agent-thread-new-options-{kind_id}")),
+                            IconName::ChevronDown,
+                        )
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text(format!("New {} thread options", kind.label)))
+                        .on_click(cx.listener({
+                            let kind = kind.clone();
+                            move |this, event: &gpui::ClickEvent, window, cx| {
+                                this.deploy_new_thread_options_menu(
+                                    kind.clone(),
+                                    event.position(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })),
+                    ),
             );
 
         let mut body_children: Vec<AnyElement> = Vec::new();
@@ -1152,6 +1250,31 @@ mod tests {
         cx.update(|cx| store::remember_launch_option(cx, session_id.clone(), None));
         cx.run_until_parked();
         let args = cx.update(|cx| store::resolve_thread_launch_args(cx, &kind, &session_id));
+        assert!(args.is_empty(), "expected no extra args, got {args:?}");
+    }
+
+    #[gpui::test]
+    async fn remembered_new_thread_option_overrides_the_agent_default(cx: &mut TestAppContext) {
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_default_launch_option(cx, "codex", Some("Bypass approvals & sandbox"));
+
+        let kind = codex_kind();
+
+        // No new-thread dropdown choice recorded yet -> falls back to the
+        // agent default.
+        let args = cx.update(|cx| store::resolve_new_thread_launch_args(cx, &kind));
+        assert_eq!(
+            args,
+            vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]
+        );
+
+        // Picking "New thread" (plain) from the dropdown takes priority over
+        // the agent-wide default.
+        cx.update(|cx| store::remember_new_thread_launch_option(cx, kind.id, None));
+        cx.run_until_parked();
+        let args = cx.update(|cx| store::resolve_new_thread_launch_args(cx, &kind));
         assert!(args.is_empty(), "expected no extra args, got {args:?}");
     }
 

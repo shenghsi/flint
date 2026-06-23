@@ -184,8 +184,7 @@ pub(crate) fn launch_new_thread_with_default(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let settings = AgentThreadSettings::get_global(cx);
-    let extra_args = resolve_default_launch_args(settings.command_for_kind(kind.id), kind).to_vec();
+    let extra_args = store::resolve_new_thread_launch_args(cx, kind);
     store::launch_new_thread(workspace, kind, &extra_args, window, cx);
 }
 
