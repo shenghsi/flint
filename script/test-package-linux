@@ -105,13 +105,25 @@ extract_rpm_package() {
     local rpm_package="$1"
     local destination_directory="$2"
     local archive_path
+    local rpm2cpio_error_path
     local cpio_error_path
     local cpio_exit_status
 
     archive_path="$(mktemp "$temporary_directory/rpm-archive.XXXXXX")"
+    rpm2cpio_error_path="$(mktemp "$temporary_directory/rpm-rpm2cpio-error.XXXXXX")"
     cpio_error_path="$(mktemp "$temporary_directory/rpm-cpio-error.XXXXXX")"
 
-    rpm2cpio "$rpm_package" >"$archive_path"
+    if ! rpm2cpio "$rpm_package" >"$archive_path" 2>"$rpm2cpio_error_path"; then
+        # Debian/Ubuntu's libarchive-based rpm2cpio can exit non-zero with no
+        # diagnostic output even after writing a complete cpio archive. Only
+        # tolerate that exact signature; anything else is a real failure.
+        if [[ -s "$rpm2cpio_error_path" ]] || [[ ! -s "$archive_path" ]]; then
+            cat "$rpm2cpio_error_path" >&2
+            rm -f "$archive_path" "$rpm2cpio_error_path" "$cpio_error_path"
+            return 1
+        fi
+    fi
+    rm -f "$rpm2cpio_error_path"
 
     if (
         cd "$destination_directory"
