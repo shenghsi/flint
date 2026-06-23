@@ -1793,7 +1793,7 @@ mod tests {
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
-            &AutoUpdateSetting { auto_update: false }
+            &AutoUpdateSetting { auto_update: true }
         );
         assert_eq!(
             store.get::<ItemSettings>(None).close_position,
@@ -1803,7 +1803,7 @@ mod tests {
         store
             .set_user_settings(
                 r#"{
-                    "auto_update": true,
+                    "auto_update": false,
                     "tabs": {
                       "close_position": "left"
                     }
@@ -1814,7 +1814,7 @@ mod tests {
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
-            &AutoUpdateSetting { auto_update: true }
+            &AutoUpdateSetting { auto_update: false }
         );
         assert_eq!(
             store.get::<ItemSettings>(None).close_position,
@@ -1885,7 +1885,7 @@ mod tests {
                 worktree_id: WorktreeId::from_usize(1),
                 path: rel_path("root2/something")
             })),
-            &AutoUpdateSetting { auto_update: true }
+            &AutoUpdateSetting { auto_update: false }
         );
     }
 
