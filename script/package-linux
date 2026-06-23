@@ -282,7 +282,7 @@ mkdir -p "$deb_root" "$rpm_root"
 dpkg-deb -x "$deb_package" "$deb_root"
 (
     cd "$rpm_root"
-    rpm2cpio "$rpm_package" | cpio -idm --quiet
+    rpm2cpio "$rpm_package" | cpio -idm --quiet --no-absolute-filenames
 )
 validate_extracted_package "$deb_root"
 validate_extracted_package "$rpm_root"

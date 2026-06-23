@@ -160,7 +160,7 @@ test_channel() {
     dpkg-deb -x "$deb_package" "$deb_root"
     (
         cd "$rpm_root"
-        rpm2cpio "$rpm_package" | cpio -idm --quiet
+        rpm2cpio "$rpm_package" | cpio -idm --quiet --no-absolute-filenames
     )
 
     [[ "$(readlink "$deb_root/usr/bin/flint")" == "/usr/lib/flint/$application_directory/bin/flint" ]]
