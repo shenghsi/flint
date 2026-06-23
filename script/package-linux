@@ -273,6 +273,37 @@ validate_extracted_package() {
     done
 }
 
+extract_rpm_package() {
+    local rpm_package="$1"
+    local destination_directory="$2"
+    local archive_path
+    local cpio_error_path
+    local cpio_exit_status
+
+    archive_path="$(mktemp "$temporary_directory/rpm-archive.XXXXXX")"
+    cpio_error_path="$(mktemp "$temporary_directory/rpm-cpio-error.XXXXXX")"
+
+    rpm2cpio "$rpm_package" >"$archive_path"
+
+    if (
+        cd "$destination_directory"
+        cpio -idm --quiet --no-absolute-filenames <"$archive_path"
+    ) 2>"$cpio_error_path"; then
+        rm -f "$archive_path" "$cpio_error_path"
+        return 0
+    fi
+
+    cpio_exit_status=$?
+    if [[ "$cpio_exit_status" -eq 1 ]] && grep -Fxq "cpio: Removing leading \`/' from member names" "$cpio_error_path"; then
+        rm -f "$archive_path" "$cpio_error_path"
+        return 0
+    fi
+
+    cat "$cpio_error_path" >&2
+    rm -f "$archive_path" "$cpio_error_path"
+    return "$cpio_exit_status"
+}
+
 validate_metadata
 validate_contents
 
@@ -280,10 +311,7 @@ deb_root="$temporary_directory/deb-root"
 rpm_root="$temporary_directory/rpm-root"
 mkdir -p "$deb_root" "$rpm_root"
 dpkg-deb -x "$deb_package" "$deb_root"
-(
-    cd "$rpm_root"
-    rpm2cpio "$rpm_package" | cpio -idm --quiet --no-absolute-filenames
-)
+extract_rpm_package "$rpm_package" "$rpm_root"
 validate_extracted_package "$deb_root"
 validate_extracted_package "$rpm_root"
 
