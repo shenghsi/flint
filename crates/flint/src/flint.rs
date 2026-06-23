@@ -641,6 +641,7 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
+        let agent_threads_panel = AgentThreadsPanel::load(workspace_handle.clone(), cx.clone());
 
         async fn add_panel_when_ready(
             panel_task: impl Future<Output = anyhow::Result<Entity<impl workspace::Panel>>> + 'static,
@@ -662,6 +663,7 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
             add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(agent_threads_panel, workspace_handle.clone(), cx.clone()),
         );
 
         anyhow::Ok(())
@@ -5356,10 +5358,9 @@ mod tests {
             .unwrap();
 
         workspace.update(cx, |workspace, cx| {
-            assert!(
-                workspace.panel::<AgentThreadsPanel>(cx).is_none(),
-                "agent threads should be loaded lazily"
-            );
+            workspace
+                .panel::<AgentThreadsPanel>(cx)
+                .expect("agent threads panel should be loaded on startup");
         });
 
         cx.dispatch_action(
