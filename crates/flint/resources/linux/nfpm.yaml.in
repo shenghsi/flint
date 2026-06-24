@@ -14,9 +14,10 @@ contents:
   - src: "$STAGED_APPLICATION_DIRECTORY/"
     dst: "/usr/lib/flint/$APPLICATION_DIRECTORY"
     type: tree
-  - src: "/usr/lib/flint/$APPLICATION_DIRECTORY/bin/flint"
+  - src: "$STAGED_LAUNCHER"
     dst: "/usr/bin/flint"
-    type: symlink
+    file_info:
+      mode: 0755
   - src: "$STAGED_DESKTOP_FILE"
     dst: "/usr/share/applications/$APPLICATION_ID.desktop"
   - src: "$STAGED_ICON_512"
