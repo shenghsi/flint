@@ -278,8 +278,7 @@ fn project_history_dir_name(project_root: &Path) -> String {
 /// is driven by a local/slash command (e.g. `<local-command-caveat>…` or
 /// `<command-name>/clear</command-name>…`). These are not real prompts and must
 /// not be used as a thread title.
-const LOCAL_COMMAND_ARTIFACT_PREFIXES: &[&str] =
-    &["<local-command-", "<command-", "<bash-"];
+const LOCAL_COMMAND_ARTIFACT_PREFIXES: &[&str] = &["<local-command-", "<command-", "<bash-"];
 
 fn is_local_command_artifact(title: &str) -> bool {
     LOCAL_COMMAND_ARTIFACT_PREFIXES
