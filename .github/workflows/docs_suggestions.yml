@@ -47,20 +47,42 @@ env:
   SUGGESTIONS_BRANCH: docs/suggestions-pending
 
 jobs:
+  # Gate: the suggestion jobs shell out to the Droid CLI, which fails its auth
+  # check when FACTORY_API_KEY isn't configured. Detect the secret up front so
+  # downstream jobs skip cleanly instead of failing the workflow.
+  check-secret:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      has_key: ${{ steps.check.outputs.has_key }}
+    steps:
+      - id: check
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+        run: |
+          if [ -n "$FACTORY_API_KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::FACTORY_API_KEY not configured; skipping documentation suggestions."
+          fi
+
   # Job for PRs merged to main - batch suggestions to branch
   # Only runs for PRs from the same repo (not forks) since secrets aren't available for fork PRs
   batch-suggestions:
+    needs: check-secret
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: read
     if: |
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.merged == true &&
-       github.event.pull_request.base.ref == 'main' &&
-       github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'workflow_dispatch' && inputs.mode == 'batch')
+      needs.check-secret.outputs.has_key == 'true' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'batch'))
 
     steps:
       - name: Checkout repository
@@ -279,6 +301,7 @@ jobs:
 
   # Job for cherry-picks to release branches - immediate output as PR comment
   cherry-pick-suggestions:
+    needs: check-secret
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -288,11 +311,12 @@ jobs:
       group: docs-suggestions-${{ github.event.pull_request.number || inputs.pr_number || 'manual' }}
       cancel-in-progress: true
     if: |
-      (github.event_name == 'pull_request_target' &&
-       startsWith(github.event.pull_request.base.ref, 'v0.') &&
-       contains(fromJSON('["MEMBER","OWNER"]'),
-                github.event.pull_request.author_association)) ||
-      (github.event_name == 'workflow_dispatch' && inputs.mode == 'immediate')
+      needs.check-secret.outputs.has_key == 'true' &&
+      ((github.event_name == 'pull_request_target' &&
+        startsWith(github.event.pull_request.base.ref, 'v0.') &&
+        contains(fromJSON('["MEMBER","OWNER"]'),
+                 github.event.pull_request.author_association)) ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'immediate'))
 
     steps:
       - name: Checkout repository
