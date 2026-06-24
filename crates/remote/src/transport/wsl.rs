@@ -1,6 +1,8 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
-    remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
+    remote_client::{
+        CommandTemplate, ConnectionSharing, Interactive, RemoteConnection, RemoteConnectionOptions,
+    },
     transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -440,6 +442,7 @@ impl RemoteConnection for WslRemoteConnection {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
         _interactive: Interactive,
+        _connection_sharing: ConnectionSharing,
     ) -> Result<CommandTemplate> {
         if port_forward.is_some() {
             bail!("WSL shares the network interface with the host system");

@@ -6599,7 +6599,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 5] {
+    fn behavior_settings_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6672,6 +6672,29 @@ fn terminal_page() -> SettingsPage {
                     pick: |settings_content| settings_content.terminal.as_ref()?.bell.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.terminal.get_or_insert_default().bell = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Dedicated SSH Connection",
+                description: "Give terminals opened on an SSH remote their own connection instead of sharing the multiplexed connection used by file sync, language servers, and agents. Avoids typing lag from that traffic, at the cost of an extra connection (and a re-authentication if the host does not use key/agent auth). No effect on local, WSL, or Docker terminals.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("terminal.dedicated_ssh_connection"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .dedicated_ssh_connection
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .dedicated_ssh_connection = value;
                     },
                 }),
                 metadata: None,

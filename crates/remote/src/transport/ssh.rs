@@ -1,6 +1,8 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
-    remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
+    remote_client::{
+        CommandTemplate, ConnectionSharing, Interactive, RemoteConnection, RemoteConnectionOptions,
+    },
     transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -308,6 +310,7 @@ impl RemoteConnection for SshRemoteConnection {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
+        connection_sharing: ConnectionSharing,
     ) -> Result<CommandTemplate> {
         let Self {
             ssh_path_style,
@@ -329,7 +332,7 @@ impl RemoteConnection for SshRemoteConnection {
                 *ssh_path_style,
                 ssh_shell,
                 *ssh_shell_kind,
-                socket.ssh_command_options(),
+                socket.ssh_command_options(connection_sharing),
                 &socket.connection_options.ssh_destination(),
                 interactive,
             )
@@ -344,7 +347,7 @@ impl RemoteConnection for SshRemoteConnection {
                 *ssh_path_style,
                 ssh_shell,
                 *ssh_shell_kind,
-                socket.ssh_command_options(),
+                socket.ssh_command_options(connection_sharing),
                 &socket.connection_options.ssh_destination(),
                 interactive,
             )
@@ -356,7 +359,7 @@ impl RemoteConnection for SshRemoteConnection {
         forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         let Self { socket, .. } = self;
-        let mut args = socket.ssh_command_options();
+        let mut args = socket.ssh_command_options(ConnectionSharing::Shared);
         args.push("-N".into());
         for (local_port, host, remote_port) in forwards {
             args.push("-L".into());
@@ -1372,19 +1375,31 @@ impl SshSocket {
     // On Linux, this includes the ControlPath option to reuse the existing connection.
     // Note: The destination must be added separately after all options to ensure proper
     // SSH command structure: ssh [options] destination [command]
-    fn ssh_command_options(&self) -> Vec<String> {
+    //
+    // When `connection_sharing` is `Dedicated`, we point ControlPath at `none`
+    // instead of the shared socket. `ControlPath=none` disables multiplexing for
+    // this invocation (even if the user's ssh_config defines a ControlPath), so the
+    // command gets its own TCP connection and its traffic is not head-of-line-blocked
+    // behind the bulk project traffic carried by the shared ControlMaster.
+    fn ssh_command_options(&self, connection_sharing: ConnectionSharing) -> Vec<String> {
         let arguments = self.connection_options.additional_args();
         #[cfg(not(windows))]
         let arguments = {
             let mut args = arguments;
+            let control_path = match connection_sharing {
+                ConnectionSharing::Shared => format!("ControlPath={}", self.socket_path.display()),
+                ConnectionSharing::Dedicated => "ControlPath=none".to_string(),
+            };
             args.extend(vec![
                 "-o".to_string(),
                 "ControlMaster=no".to_string(),
                 "-o".to_string(),
-                format!("ControlPath={}", self.socket_path.display()),
+                control_path,
             ]);
             args
         };
+        #[cfg(windows)]
+        let _ = connection_sharing;
         arguments
     }
 
@@ -2084,6 +2099,40 @@ mod tests {
         assert_eq!(command.env, env);
 
         Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_ssh_command_options_connection_sharing() {
+        let socket = SshSocket {
+            connection_options: SshConnectionOptions::default(),
+            socket_path: std::path::PathBuf::from("/tmp/flint-ssh-socket"),
+            envs: HashMap::default(),
+        };
+
+        // Shared reuses the multiplexed ControlMaster socket.
+        let shared = socket.ssh_command_options(ConnectionSharing::Shared);
+        assert_eq!(
+            shared,
+            vec![
+                "-o".to_string(),
+                "ControlMaster=no".to_string(),
+                "-o".to_string(),
+                "ControlPath=/tmp/flint-ssh-socket".to_string(),
+            ]
+        );
+
+        // Dedicated disables multiplexing so the command gets its own connection.
+        let dedicated = socket.ssh_command_options(ConnectionSharing::Dedicated);
+        assert_eq!(
+            dedicated,
+            vec![
+                "-o".to_string(),
+                "ControlMaster=no".to_string(),
+                "-o".to_string(),
+                "ControlPath=none".to_string(),
+            ]
+        );
     }
 
     #[test]

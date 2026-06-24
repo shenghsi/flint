@@ -122,6 +122,23 @@ pub enum Interactive {
     No,
 }
 
+/// Whether an SSH-based command should ride on the shared multiplexed
+/// ControlMaster connection or open its own dedicated connection.
+///
+/// Reusing the shared connection (the default) avoids re-authentication, but
+/// multiplexes every channel over a single TCP stream. Bulk project traffic
+/// (file sync, LSP, agent I/O) can then head-of-line-block interactive
+/// keystrokes and their echoes. Opting into a dedicated connection trades an
+/// extra connection/auth for input latency that no longer depends on what the
+/// rest of the project is doing over the wire. No-op for non-SSH connections.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionSharing {
+    /// Reuse the shared ControlMaster connection.
+    Shared,
+    /// Open a dedicated connection, bypassing connection multiplexing.
+    Dedicated,
+}
+
 pub trait RemoteClientDelegate: Send + Sync {
     fn ask_password(
         &self,
@@ -938,6 +955,7 @@ impl RemoteClient {
             working_dir,
             port_forward,
             Interactive::Yes,
+            ConnectionSharing::Shared,
         )
     }
 
@@ -949,11 +967,20 @@ impl RemoteClient {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
+        connection_sharing: ConnectionSharing,
     ) -> Result<CommandTemplate> {
         let Some(connection) = self.remote_connection() else {
             return Err(anyhow!("no remote connection"));
         };
-        connection.build_command(program, args, env, working_dir, port_forward, interactive)
+        connection.build_command(
+            program,
+            args,
+            env,
+            working_dir,
+            port_forward,
+            interactive,
+            connection_sharing,
+        )
     }
 
     pub fn build_forward_ports_command(
@@ -1536,6 +1563,7 @@ pub trait RemoteConnection: Send + Sync {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
+        connection_sharing: ConnectionSharing,
     ) -> Result<CommandTemplate>;
     fn build_forward_ports_command(
         &self,

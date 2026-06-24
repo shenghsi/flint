@@ -1736,6 +1736,15 @@
     "show_count_badge": false,
     // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
     "bell": "off",
+    // Whether terminals opened on an SSH remote should use their own dedicated SSH
+    // connection instead of sharing the multiplexed ControlMaster connection used
+    // by the rest of the project (file sync, LSP, agents). The shared connection
+    // multiplexes every channel over a single TCP stream, so bulk project traffic
+    // can head-of-line-block interactive keystrokes and make typing feel laggy. A
+    // dedicated connection avoids that contention at the cost of an extra connection
+    // (and a re-authentication, which may prompt if the host does not use key/agent
+    // auth). No effect on local, WSL, or Docker terminals.
+    "dedicated_ssh_connection": false,
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

@@ -12,8 +12,8 @@ use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
 use project::trusted_worktrees;
 use remote::{
-    DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
-    SshConnectionOptions,
+    ConnectionSharing, DockerConnectionOptions, Interactive, RemoteConnection,
+    RemoteConnectionOptions, SshConnectionOptions,
 };
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
@@ -500,6 +500,7 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
         None,
         None,
         Interactive::No,
+        ConnectionSharing::Shared,
     ) else {
         return false;
     };

@@ -855,6 +855,7 @@ impl VsCodeSettings {
             toolbar: None,
             show_count_badge: None,
             flexible: None,
+            dedicated_ssh_connection: None,
         })
     }
 
