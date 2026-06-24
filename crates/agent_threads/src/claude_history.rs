@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::SharedString;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::AgentLaunchCommand;
@@ -44,6 +44,7 @@ struct ProjectHistoryMessage {
     content: Value,
 }
 
+#[derive(Serialize, Deserialize)]
 struct ProjectHistorySummary {
     session_id: String,
     title: Option<String>,
@@ -182,7 +183,7 @@ async fn read_project_history_file(
 ) -> Option<HistoricalThread> {
     let default_session_id = file_path.file_stem()?.to_string_lossy().to_string();
     let summary = host
-        .parse_file(file_path, move |content| {
+        .parse_file_persistent(file_path, move |content| {
             let mut session_id = default_session_id;
             let mut title = None;
             let mut last_activity_at = UNIX_EPOCH;

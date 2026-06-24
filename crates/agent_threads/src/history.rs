@@ -11,6 +11,8 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Entity, SharedString};
 use project::Project;
 use rpc::AnyProtoClient;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::AgentLaunchCommand;
 
@@ -31,6 +33,11 @@ pub struct HistoryFileIdentity {
 #[derive(Default)]
 pub struct HistoryParseCache {
     files: Mutex<HashMap<PathBuf, CachedParsedFile>>,
+    /// When present, per-file parse results are also persisted to a local
+    /// JSON file so that a cold start (fresh app launch) can reuse them
+    /// instead of re-loading and re-parsing every history file. `None` keeps
+    /// the cache purely in-memory (used by tests).
+    disk: Option<DiskCache>,
 }
 
 struct CachedParsedFile {
@@ -39,6 +46,44 @@ struct CachedParsedFile {
 }
 
 const MAX_CACHED_HISTORY_FILES: usize = 512;
+const PERSISTED_CACHE_VERSION: u32 = 1;
+
+/// Local-filesystem backing for a [`HistoryParseCache`]. The cache file is
+/// always on the local machine even when the history being scanned lives on a
+/// remote host, since its only purpose is to avoid re-doing local CPU work and
+/// (for remote projects) re-downloading unchanged files.
+struct DiskCache {
+    fs: Arc<dyn fs::Fs>,
+    path: PathBuf,
+    /// The last-persisted snapshot, lazily read once and then reused to
+    /// satisfy cold-start lookups. `None` until the first read attempt.
+    loaded: Mutex<Option<HashMap<PathBuf, PersistedEntry>>>,
+    /// Entries touched (reused or freshly parsed) since the last flush. A
+    /// flush writes exactly these and rotates them into `loaded`, which prunes
+    /// entries for history files that are no longer being scanned.
+    pending: Mutex<HashMap<PathBuf, PersistedEntry>>,
+}
+
+#[derive(Clone)]
+struct PersistedEntry {
+    identity: HistoryFileIdentity,
+    value: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedCacheFile {
+    version: u32,
+    entries: Vec<PersistedCacheEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedCacheEntry {
+    path: PathBuf,
+    modified_at_secs: u64,
+    modified_at_nanos: u32,
+    length: u64,
+    value: serde_json::Value,
+}
 
 /// The filesystem operations agent history scanning needs, abstracted over
 /// local and remote projects. `Project::fs()` always refers to the local
@@ -154,6 +199,227 @@ pub struct AgentHistoryHost {
     pub(crate) cache: Arc<HistoryParseCache>,
 }
 
+impl HistoryParseCache {
+    /// Builds a cache that also persists per-file parse results to `path` on
+    /// the given local filesystem.
+    pub fn with_disk(fs: Arc<dyn fs::Fs>, path: PathBuf) -> Self {
+        Self {
+            files: Mutex::default(),
+            disk: Some(DiskCache {
+                fs,
+                path,
+                loaded: Mutex::new(None),
+                pending: Mutex::new(HashMap::default()),
+            }),
+        }
+    }
+
+    fn memory_get<T: Any + Send + Sync>(
+        &self,
+        path: &Path,
+        identity: HistoryFileIdentity,
+    ) -> Result<Option<Arc<T>>> {
+        let cached = self
+            .files
+            .lock()
+            .map_err(|_| anyhow!("agent history parse cache lock poisoned"))?
+            .get(path)
+            .filter(|entry| entry.identity == identity)
+            .and_then(|entry| entry.values.get(&TypeId::of::<T>()))
+            .cloned();
+        match cached {
+            Some(cached) => {
+                Ok(Some(Arc::downcast(cached).map_err(|_| {
+                    anyhow!("agent history cache value type mismatch")
+                })?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn memory_put<T: Any + Send + Sync>(
+        &self,
+        path: &Path,
+        identity: HistoryFileIdentity,
+        parsed: Arc<T>,
+    ) -> Result<()> {
+        let mut files = self
+            .files
+            .lock()
+            .map_err(|_| anyhow!("agent history parse cache lock poisoned"))?;
+        if files.len() >= MAX_CACHED_HISTORY_FILES && !files.contains_key(path) {
+            if let Some(path_to_evict) = files.keys().next().cloned() {
+                files.remove(&path_to_evict);
+            }
+        }
+        let entry = files
+            .entry(path.to_path_buf())
+            .or_insert_with(|| CachedParsedFile {
+                identity,
+                values: HashMap::default(),
+            });
+        if entry.identity != identity {
+            entry.identity = identity;
+            entry.values.clear();
+        }
+        entry.values.insert(TypeId::of::<T>(), parsed);
+        Ok(())
+    }
+
+    /// Returns the persisted value for `path` if one exists with a matching
+    /// identity, recording the hit so the entry survives the next [`flush`].
+    async fn disk_get(
+        &self,
+        path: &Path,
+        identity: HistoryFileIdentity,
+    ) -> Option<serde_json::Value> {
+        let disk = self.disk.as_ref()?;
+        disk.ensure_loaded().await;
+        let entry = disk
+            .loaded
+            .lock()
+            .ok()?
+            .as_ref()?
+            .get(path)
+            .filter(|entry| entry.identity == identity)
+            .cloned()?;
+        if let Ok(mut pending) = disk.pending.lock() {
+            pending.insert(path.to_path_buf(), entry.clone());
+        }
+        Some(entry.value)
+    }
+
+    fn disk_put(&self, path: &Path, identity: HistoryFileIdentity, value: serde_json::Value) {
+        let Some(disk) = self.disk.as_ref() else {
+            return;
+        };
+        if let Ok(mut pending) = disk.pending.lock() {
+            pending.insert(path.to_path_buf(), PersistedEntry { identity, value });
+        }
+    }
+
+    /// Writes the entries touched since the last flush to disk and rotates
+    /// them into the loaded snapshot, pruning entries for files that were not
+    /// touched (e.g. history files that have since been deleted). No-op for an
+    /// in-memory-only cache.
+    pub async fn flush(&self) -> Result<()> {
+        let Some(disk) = self.disk.as_ref() else {
+            return Ok(());
+        };
+        let pending = disk
+            .pending
+            .lock()
+            .map_err(|_| anyhow!("agent history disk cache lock poisoned"))?
+            .clone();
+        // Avoid rewriting the file when this scan reproduced the persisted set
+        // unchanged -- the watcher fires on any activity under the config dir
+        // (e.g. an unrelated project's session), and a matching identity for
+        // every path means the parsed values are identical too.
+        let unchanged = disk
+            .loaded
+            .lock()
+            .ok()
+            .and_then(|loaded| {
+                loaded.as_ref().map(|loaded| {
+                    loaded.len() == pending.len()
+                        && pending.iter().all(|(path, entry)| {
+                            loaded
+                                .get(path)
+                                .is_some_and(|existing| existing.identity == entry.identity)
+                        })
+                })
+            })
+            .unwrap_or(false);
+        if unchanged {
+            if let Ok(mut pending) = disk.pending.lock() {
+                pending.clear();
+            }
+            return Ok(());
+        }
+        let entries = pending
+            .iter()
+            .filter_map(|(path, entry)| {
+                let (modified_at_secs, modified_at_nanos) = entry
+                    .identity
+                    .modified_at
+                    .to_seconds_and_nanos_for_persistence()?;
+                Some(PersistedCacheEntry {
+                    path: path.clone(),
+                    modified_at_secs,
+                    modified_at_nanos,
+                    length: entry.identity.length,
+                    value: entry.value.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let text = serde_json::to_string(&PersistedCacheFile {
+            version: PERSISTED_CACHE_VERSION,
+            entries,
+        })?;
+        if let Some(parent) = disk.path.parent() {
+            disk.fs.create_dir(parent).await?;
+        }
+        disk.fs.atomic_write(disk.path.clone(), text).await?;
+        if let Ok(mut loaded) = disk.loaded.lock() {
+            *loaded = Some(pending);
+        }
+        if let Ok(mut pending) = disk.pending.lock() {
+            pending.clear();
+        }
+        Ok(())
+    }
+}
+
+impl DiskCache {
+    async fn ensure_loaded(&self) {
+        if self
+            .loaded
+            .lock()
+            .map(|loaded| loaded.is_some())
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let map = match self.fs.load(&self.path).await {
+            Ok(text) => parse_persisted_cache(&text),
+            // A missing or unreadable cache file just means a cold start.
+            Err(_) => HashMap::default(),
+        };
+        if let Ok(mut loaded) = self.loaded.lock() {
+            if loaded.is_none() {
+                *loaded = Some(map);
+            }
+        }
+    }
+}
+
+fn parse_persisted_cache(text: &str) -> HashMap<PathBuf, PersistedEntry> {
+    let Ok(file) = serde_json::from_str::<PersistedCacheFile>(text) else {
+        return HashMap::default();
+    };
+    if file.version != PERSISTED_CACHE_VERSION {
+        return HashMap::default();
+    }
+    file.entries
+        .into_iter()
+        .map(|entry| {
+            (
+                entry.path,
+                PersistedEntry {
+                    identity: HistoryFileIdentity {
+                        modified_at: fs::MTime::from_seconds_and_nanos(
+                            entry.modified_at_secs,
+                            entry.modified_at_nanos,
+                        ),
+                        length: entry.length,
+                    },
+                    value: entry.value,
+                },
+            )
+        })
+        .collect()
+}
+
 impl AgentHistoryHost {
     pub async fn parse_file<T>(&self, path: &Path, parse: impl FnOnce(&str) -> T) -> Result<Arc<T>>
     where
@@ -161,18 +427,8 @@ impl AgentHistoryHost {
     {
         let identity = self.fs.metadata(path).await?;
         if let Some(identity) = identity {
-            let cached = self
-                .cache
-                .files
-                .lock()
-                .map_err(|_| anyhow!("agent history parse cache lock poisoned"))?
-                .get(path)
-                .filter(|entry| entry.identity == identity)
-                .and_then(|entry| entry.values.get(&TypeId::of::<T>()))
-                .cloned();
-            if let Some(cached) = cached {
-                return Arc::downcast(cached)
-                    .map_err(|_| anyhow!("agent history cache value type mismatch"));
+            if let Some(cached) = self.cache.memory_get::<T>(path, identity)? {
+                return Ok(cached);
             }
         }
 
@@ -180,30 +436,61 @@ impl AgentHistoryHost {
         let parsed = Arc::new(parse(&content));
 
         if let Some(identity) = identity {
-            let mut files = self
-                .cache
-                .files
-                .lock()
-                .map_err(|_| anyhow!("agent history parse cache lock poisoned"))?;
-            if files.len() >= MAX_CACHED_HISTORY_FILES && !files.contains_key(path) {
-                if let Some(path_to_evict) = files.keys().next().cloned() {
-                    files.remove(&path_to_evict);
-                }
-            }
-            let entry = files
-                .entry(path.to_path_buf())
-                .or_insert_with(|| CachedParsedFile {
-                    identity,
-                    values: HashMap::default(),
-                });
-            if entry.identity != identity {
-                entry.identity = identity;
-                entry.values.clear();
-            }
-            entry.values.insert(TypeId::of::<T>(), parsed.clone());
+            self.cache.memory_put(path, identity, parsed.clone())?;
         }
 
         Ok(parsed)
+    }
+
+    /// Like [`parse_file`], but additionally persists the parse result to the
+    /// cache's local backing file so a later cold start can reuse it without
+    /// re-reading (or, for remote projects, re-downloading) the source file.
+    /// Use this for per-session history files, which dominate scan cost.
+    pub async fn parse_file_persistent<T>(
+        &self,
+        path: &Path,
+        parse: impl FnOnce(&str) -> T,
+    ) -> Result<Arc<T>>
+    where
+        T: Any + Send + Sync + Serialize + DeserializeOwned,
+    {
+        let identity = self.fs.metadata(path).await?;
+        if let Some(identity) = identity {
+            if let Some(cached) = self.cache.memory_get::<T>(path, identity)? {
+                // Re-record so this entry survives the next flush even though
+                // the parse was served from memory; otherwise a second scan in
+                // the same run would drop it from the persisted file.
+                if let Ok(value) = serde_json::to_value(&*cached) {
+                    self.cache.disk_put(path, identity, value);
+                }
+                return Ok(cached);
+            }
+            if let Some(value) = self.cache.disk_get(path, identity).await {
+                if let Ok(parsed) = serde_json::from_value::<T>(value) {
+                    let parsed = Arc::new(parsed);
+                    self.cache.memory_put(path, identity, parsed.clone())?;
+                    return Ok(parsed);
+                }
+            }
+        }
+
+        let content = self.fs.load(path).await?;
+        let parsed = Arc::new(parse(&content));
+
+        if let Some(identity) = identity {
+            self.cache.memory_put(path, identity, parsed.clone())?;
+            if let Ok(value) = serde_json::to_value(&*parsed) {
+                self.cache.disk_put(path, identity, value);
+            }
+        }
+
+        Ok(parsed)
+    }
+
+    /// Persists the parse results accumulated during a scan to the cache's
+    /// local backing file. Call once after a scan completes.
+    pub async fn flush_cache(&self) -> Result<()> {
+        self.cache.flush().await
     }
 }
 
@@ -242,15 +529,36 @@ pub async fn resolve_history_host(
     cache: Arc<HistoryParseCache>,
     cx: &mut AsyncApp,
 ) -> Result<AgentHistoryHost> {
-    let (fs, environment, anchor_path) = project.read_with(cx, |project, cx| {
+    let fs = project.read_with(cx, |project, cx| {
         let fs: Arc<dyn HistoryFs> = match project.remote_client() {
             Some(remote_client) => Arc::new(RemoteHistoryFs {
                 proto_client: remote_client.read(cx).proto_client(),
             }),
             None => Arc::new(LocalHistoryFs(project.fs().clone())),
         };
+        fs
+    });
+
+    let base_dir = resolve_history_base_dir(project, env_var_name, default_dir_name, cx).await?;
+
+    Ok(AgentHistoryHost {
+        fs,
+        base_dir,
+        cache,
+    })
+}
+
+/// Resolves just the base config directory (e.g. `~/.claude`) for an agent,
+/// without building a full [`AgentHistoryHost`]. Used to set up filesystem
+/// watching on local projects, where only the directory to watch is needed.
+pub async fn resolve_history_base_dir(
+    project: &Entity<Project>,
+    env_var_name: &str,
+    default_dir_name: &str,
+    cx: &mut AsyncApp,
+) -> Result<PathBuf> {
+    let (environment, anchor_path) = project.read_with(cx, |project, cx| {
         (
-            fs,
             project.environment().clone(),
             first_worktree_root(project, cx),
         )
@@ -264,13 +572,7 @@ pub async fn resolve_history_host(
         .await
         .ok_or_else(|| anyhow!("couldn't resolve the project's environment"))?;
 
-    let base_dir = base_dir_from_env(&env_map, env_var_name, default_dir_name)?;
-
-    Ok(AgentHistoryHost {
-        fs,
-        base_dir,
-        cache,
-    })
+    base_dir_from_env(&env_map, env_var_name, default_dir_name)
 }
 
 /// Picks `$<env_var_name>` when set, otherwise `$HOME/<default_dir_name>`.
@@ -309,6 +611,7 @@ pub fn project_worktree_roots(project: &Project, cx: &App) -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use fs::Fs as _;
     use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
     use project::FakeFs;
@@ -472,6 +775,174 @@ mod tests {
             .unwrap();
 
         assert_eq!(fs.load_count.load(Ordering::SeqCst), 2);
+    }
+
+    fn fixed_identity(seconds: u64, length: u64) -> Option<HistoryFileIdentity> {
+        Some(HistoryFileIdentity {
+            modified_at: fs::MTime::from_seconds_and_nanos(seconds, 0),
+            length,
+        })
+    }
+
+    async fn local_cache_fs(cx: &TestAppContext) -> Arc<FakeFs> {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/cache")).await.unwrap();
+        fs
+    }
+
+    fn disk_host(
+        source: Arc<dyn HistoryFs>,
+        local: Arc<dyn fs::Fs>,
+        cache_path: &Path,
+    ) -> AgentHistoryHost {
+        AgentHistoryHost {
+            fs: source,
+            base_dir: PathBuf::from("/history"),
+            cache: Arc::new(HistoryParseCache::with_disk(
+                local,
+                cache_path.to_path_buf(),
+            )),
+        }
+    }
+
+    #[gpui::test]
+    async fn parse_file_persistent_reuses_disk_cache_across_cold_starts(cx: &mut TestAppContext) {
+        let source = Arc::new(CountingHistoryFs {
+            content: "alpha".to_string(),
+            identity: fixed_identity(1, 5),
+            load_count: AtomicUsize::new(0),
+        });
+        let local = local_cache_fs(cx).await;
+        let cache_path = PathBuf::from("/cache/claude.json");
+        let source_path = Path::new("/history/session.jsonl");
+
+        let host = disk_host(source.clone(), local.clone(), &cache_path);
+        let first = host
+            .parse_file_persistent(source_path, |content| content.len())
+            .await
+            .unwrap();
+        host.flush_cache().await.unwrap();
+        assert_eq!(*first, 5);
+        assert_eq!(source.load_count.load(Ordering::SeqCst), 1);
+
+        // A fresh in-memory cache backed by the same file (a "restart") serves
+        // the value from disk without re-loading the source file.
+        let host = disk_host(source.clone(), local.clone(), &cache_path);
+        let second = host
+            .parse_file_persistent(source_path, |content| content.len())
+            .await
+            .unwrap();
+        assert_eq!(*second, 5);
+        assert_eq!(source.load_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn parse_file_persistent_reparses_when_identity_changes_on_disk(cx: &mut TestAppContext) {
+        let local = local_cache_fs(cx).await;
+        let cache_path = PathBuf::from("/cache/claude.json");
+        let source_path = Path::new("/history/session.jsonl");
+
+        let source = Arc::new(CountingHistoryFs {
+            content: "alpha".to_string(),
+            identity: fixed_identity(1, 5),
+            load_count: AtomicUsize::new(0),
+        });
+        let host = disk_host(source.clone(), local.clone(), &cache_path);
+        host.parse_file_persistent(source_path, |content| content.len())
+            .await
+            .unwrap();
+        host.flush_cache().await.unwrap();
+
+        // Same path, different identity (the file changed): the persisted entry
+        // is stale, so the source is loaded again.
+        let source = Arc::new(CountingHistoryFs {
+            content: "alphabet".to_string(),
+            identity: fixed_identity(2, 8),
+            load_count: AtomicUsize::new(0),
+        });
+        let host = disk_host(source.clone(), local.clone(), &cache_path);
+        let parsed = host
+            .parse_file_persistent(source_path, |content| content.len())
+            .await
+            .unwrap();
+        assert_eq!(*parsed, 8);
+        assert_eq!(source.load_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn flush_prunes_entries_not_touched_by_the_latest_scan(cx: &mut TestAppContext) {
+        let source = Arc::new(CountingHistoryFs {
+            content: "alpha".to_string(),
+            identity: fixed_identity(1, 5),
+            load_count: AtomicUsize::new(0),
+        });
+        let local = local_cache_fs(cx).await;
+        let cache_path = PathBuf::from("/cache/claude.json");
+        let path_a = Path::new("/history/a.jsonl");
+        let path_b = Path::new("/history/b.jsonl");
+
+        let host = disk_host(source.clone(), local.clone(), &cache_path);
+        host.parse_file_persistent(path_a, |content| content.len())
+            .await
+            .unwrap();
+        host.parse_file_persistent(path_b, |content| content.len())
+            .await
+            .unwrap();
+        host.flush_cache().await.unwrap();
+        assert_eq!(
+            persisted_paths(&local, &cache_path).await,
+            vec![path_a.to_path_buf(), path_b.to_path_buf()]
+        );
+
+        // A later scan that only touches `a` drops `b` from the persisted file.
+        host.parse_file_persistent(path_a, |content| content.len())
+            .await
+            .unwrap();
+        host.flush_cache().await.unwrap();
+        assert_eq!(
+            persisted_paths(&local, &cache_path).await,
+            vec![path_a.to_path_buf()]
+        );
+    }
+
+    #[gpui::test]
+    async fn flush_skips_rewriting_when_the_scan_reproduces_the_same_set(cx: &mut TestAppContext) {
+        let source = Arc::new(CountingHistoryFs {
+            content: "alpha".to_string(),
+            identity: fixed_identity(1, 5),
+            load_count: AtomicUsize::new(0),
+        });
+        let local = local_cache_fs(cx).await;
+        let cache_path = PathBuf::from("/cache/claude.json");
+        let source_path = Path::new("/history/session.jsonl");
+
+        let host = disk_host(source.clone(), local.clone(), &cache_path);
+        host.parse_file_persistent(source_path, |content| content.len())
+            .await
+            .unwrap();
+        host.flush_cache().await.unwrap();
+
+        // Stand-in content that a real flush would clobber, letting us detect
+        // whether the unchanged re-scan rewrote the file.
+        local.write(&cache_path, b"sentinel").await.unwrap();
+        host.parse_file_persistent(source_path, |content| content.len())
+            .await
+            .unwrap();
+        host.flush_cache().await.unwrap();
+
+        assert_eq!(local.load(&cache_path).await.unwrap(), "sentinel");
+    }
+
+    async fn persisted_paths(local: &Arc<FakeFs>, cache_path: &Path) -> Vec<PathBuf> {
+        let text = local.load(cache_path).await.unwrap();
+        let file = serde_json::from_str::<PersistedCacheFile>(&text).unwrap();
+        let mut paths = file
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
     }
 
     // `ProjectEnvironment::get_cli_environment` always returns an empty map

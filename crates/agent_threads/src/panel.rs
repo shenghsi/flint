@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use collections::HashMap;
 use fs::Fs;
+use futures::StreamExt as _;
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton, MouseDownEvent, ParentElement,
@@ -75,7 +76,22 @@ pub struct AgentThreadsPanel {
     _subscriptions: Vec<Subscription>,
     history_tasks: HashMap<&'static str, Task<()>>,
     history_caches: HashMap<&'static str, Arc<HistoryParseCache>>,
+    /// Filesystem watchers (local projects only) that trigger an incremental
+    /// rescan when a kind's history directory changes, instead of re-sweeping
+    /// every history file on each panel activation. Cleared on deactivate; the
+    /// stored task owns the underlying `fs::Watcher` and stops it when dropped.
+    history_watchers: HashMap<&'static str, Task<()>>,
     active: bool,
+}
+
+/// Debounce window for history filesystem watch events. Coalesces the burst of
+/// writes an agent makes while a session is active into a single rescan.
+const HISTORY_WATCH_LATENCY: Duration = Duration::from_millis(250);
+
+fn history_cache_path(kind_id: &str) -> PathBuf {
+    paths::data_dir()
+        .join("agent_history_cache")
+        .join(format!("{kind_id}.json"))
 }
 
 impl AgentThreadsPanel {
@@ -117,6 +133,7 @@ impl AgentThreadsPanel {
                 _subscriptions: vec![store_subscription],
                 history_tasks: HashMap::default(),
                 history_caches: HashMap::default(),
+                history_watchers: HashMap::default(),
                 active: false,
             };
             let _ = window;
@@ -132,7 +149,12 @@ impl AgentThreadsPanel {
             AgentThreadStoreEvent::ThreadOpened { .. } => cx.notify(),
             AgentThreadStoreEvent::ThreadClosed { kind_id } => {
                 cx.notify();
-                self.refresh_history_kind(kind_id, Some(Duration::from_millis(300)), cx);
+                // When a watcher is active for this kind it will catch the
+                // closing session's final writes; only fall back to an explicit
+                // rescan for kinds without one (e.g. remote projects).
+                if !self.history_watchers.contains_key(kind_id) {
+                    self.refresh_history_kind(kind_id, Some(Duration::from_millis(300)), cx);
+                }
             }
         }
     }
@@ -169,15 +191,25 @@ impl AgentThreadsPanel {
         let Some(provider) = kind.history_provider.clone() else {
             return;
         };
+        // Keep any already-loaded list visible while rescanning so watch-driven
+        // refreshes don't flash a spinner; only show "Loading" on a cold load.
         if let Some(section) = self.sections.get_mut(kind.id) {
-            section.historical = HistoricalState::Loading;
+            if !matches!(section.historical, HistoricalState::Loaded(_)) {
+                section.historical = HistoricalState::Loading;
+            }
         }
         let env_var = kind.home_env_var;
         let dir_name = kind.home_dir_name;
+        let fs = self.fs.clone();
         let cache = self
             .history_caches
             .entry(kind_id)
-            .or_insert_with(|| Arc::new(HistoryParseCache::default()))
+            .or_insert_with(|| {
+                Arc::new(HistoryParseCache::with_disk(
+                    fs,
+                    history_cache_path(kind_id),
+                ))
+            })
             .clone();
         let task = cx.spawn(async move |this, cx| {
             if let Some(delay) = delay {
@@ -188,7 +220,9 @@ impl AgentThreadsPanel {
                     history::resolve_history_host(&project, env_var, dir_name, cache, cx).await?;
                 let project_roots =
                     project.read_with(cx, |project, cx| project_worktree_roots(project, cx));
-                provider.scan(&host, &project_roots).await
+                let threads = provider.scan(&host, &project_roots).await?;
+                host.flush_cache().await.log_err();
+                anyhow::Ok(threads)
             }
             .await;
 
@@ -221,6 +255,56 @@ impl AgentThreadsPanel {
             }
         });
         self.history_tasks.insert(kind_id, task);
+    }
+
+    /// Starts a filesystem watcher for each visible kind on a local project so
+    /// that new or updated history shows up without re-sweeping every file on
+    /// each activation. No-op for kinds already watched or for remote projects.
+    fn ensure_history_watches(&mut self, cx: &mut Context<Self>) {
+        for kind in self.visible_registry(cx) {
+            self.ensure_history_watch(kind.id, cx);
+        }
+    }
+
+    fn ensure_history_watch(&mut self, kind_id: &'static str, cx: &mut Context<Self>) {
+        if !self.active || self.history_watchers.contains_key(kind_id) {
+            return;
+        }
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let project = workspace.read(cx).project().clone();
+        // Watching is local-only: the remote home dir lives outside the
+        // worktree and there is no RPC to watch an arbitrary remote path.
+        if project.read(cx).remote_client().is_some() {
+            return;
+        }
+        let Some(kind) = self.registry.iter().find(|kind| kind.id == kind_id) else {
+            return;
+        };
+        if kind.history_provider.is_none() {
+            return;
+        }
+        let env_var = kind.home_env_var;
+        let dir_name = kind.home_dir_name;
+        let fs = self.fs.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let Ok(base_dir) =
+                history::resolve_history_base_dir(&project, env_var, dir_name, cx).await
+            else {
+                return;
+            };
+            let (mut events, _watcher) = fs.watch(&base_dir, HISTORY_WATCH_LATENCY).await;
+            while events.next().await.is_some() {
+                if this
+                    .update(cx, |this, cx| this.refresh_history_kind(kind_id, None, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        self.history_watchers.insert(kind_id, task);
     }
 
     /// Registered agent kinds that the user hasn't hidden via
@@ -847,12 +931,17 @@ impl Panel for AgentThreadsPanel {
         self.active = active;
         if active {
             cx.spawn(async move |this: WeakEntity<Self>, cx| {
-                this.update(cx, |this, cx| this.refresh_history(cx)).ok();
+                this.update(cx, |this, cx| {
+                    this.refresh_history(cx);
+                    this.ensure_history_watches(cx);
+                })
+                .ok();
             })
             .detach();
             cx.notify();
         } else {
             self.history_tasks.clear();
+            self.history_watchers.clear();
         }
     }
 }

@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use gpui::SharedString;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::AgentLaunchCommand;
@@ -48,7 +48,7 @@ struct HistoryEntry {
     ts: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct SessionFileSummary {
     id: String,
     cwd: String,
@@ -147,7 +147,7 @@ async fn read_session_summary(
     file_path: &Path,
 ) -> Option<SessionFileSummary> {
     let summary = host
-        .parse_file(file_path, |content| {
+        .parse_file_persistent(file_path, |content| {
             let mut lines = content.lines();
             let parsed: SessionMetaLine = serde_json::from_str(lines.next()?.trim()).ok()?;
             if parsed.kind != "session_meta" {
