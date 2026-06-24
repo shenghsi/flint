@@ -40,6 +40,7 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }

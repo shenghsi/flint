@@ -1010,6 +1010,11 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            // Give each test its own in-memory database. Without this, the
+            // launch-option `db::kvp` reads/writes fall back to a single
+            // process-wide test database whose shared write queue lets writes
+            // from concurrently-running tests race each other.
+            cx.set_global(db::AppDatabase::test_new());
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             terminal_view::init(cx);
