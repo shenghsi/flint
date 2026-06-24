@@ -171,6 +171,17 @@ sed \
     >"$staged_desktop_file"
 chmod 644 "$staged_desktop_file"
 
+# Package installs live under root-owned /usr/lib/flint, which in-app auto-update
+# cannot write to. Ship /usr/bin/flint as a wrapper that sets ZED_UPDATE_EXPLANATION
+# so auto_update skips polling and tells users to update via their package manager.
+staged_launcher="$temporary_directory/flint-launcher"
+cat >"$staged_launcher" <<EOF
+#!/bin/sh
+export ZED_UPDATE_EXPLANATION="Flint was installed with your system package manager. Update it the same way (for example: 'sudo apt upgrade $package_name' or 'sudo dnf upgrade $package_name')."
+exec "/usr/lib/flint/$application_directory/bin/flint" "\$@"
+EOF
+chmod 755 "$staged_launcher"
+
 if command -v desktop-file-validate >/dev/null; then
     desktop-file-validate "$staged_desktop_file"
 else
@@ -193,6 +204,7 @@ render_config() {
     APPLICATION_ID="$application_id" \
     STAGED_APPLICATION_DIRECTORY="$staged_application_directory" \
     STAGED_DESKTOP_FILE="$staged_desktop_file" \
+    STAGED_LAUNCHER="$staged_launcher" \
     STAGED_ICON_512="$source_icon_512" \
     STAGED_ICON_1024="$source_icon_1024" \
         envsubst <crates/flint/resources/linux/nfpm.yaml.in >"$config_path"
@@ -257,9 +269,12 @@ validate_contents() {
 validate_extracted_package() {
     local package_root="$1"
     local desktop_file="$package_root/usr/share/applications/$application_id.desktop"
-    local expected_link="/usr/lib/flint/$application_directory/bin/flint"
+    local launcher="$package_root/usr/bin/flint"
+    local launched_binary="/usr/lib/flint/$application_directory/bin/flint"
 
-    [[ "$(readlink "$package_root/usr/bin/flint")" == "$expected_link" ]]
+    [[ -f "$launcher" && -x "$launcher" ]]
+    grep -Fq "ZED_UPDATE_EXPLANATION" "$launcher"
+    grep -Fq "exec \"$launched_binary\"" "$launcher"
     grep -Fq "TryExec=/usr/bin/flint" "$desktop_file"
     grep -Fq "Exec=/usr/bin/flint %U" "$desktop_file"
     grep -Fq "Exec=/usr/bin/flint --new %U" "$desktop_file"

@@ -203,8 +203,13 @@ test_channel() {
     dpkg-deb -x "$deb_package" "$deb_root"
     extract_rpm_package "$rpm_package" "$rpm_root"
 
-    [[ "$(readlink "$deb_root/usr/bin/flint")" == "/usr/lib/flint/$application_directory/bin/flint" ]]
-    [[ "$(readlink "$rpm_root/usr/bin/flint")" == "/usr/lib/flint/$application_directory/bin/flint" ]]
+    local launched_binary="/usr/lib/flint/$application_directory/bin/flint"
+    local package_root
+    for package_root in "$deb_root" "$rpm_root"; do
+        [[ -f "$package_root/usr/bin/flint" && -x "$package_root/usr/bin/flint" ]]
+        assert_file_contains "$package_root/usr/bin/flint" "ZED_UPDATE_EXPLANATION"
+        assert_file_contains "$package_root/usr/bin/flint" "exec \"$launched_binary\""
+    done
 
     local desktop_file="$deb_root/usr/share/applications/$application_id.desktop"
     assert_file_contains "$desktop_file" "TryExec=/usr/bin/flint"

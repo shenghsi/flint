@@ -32,6 +32,18 @@ After moving Flint into `/Applications`, remove the quarantine attribute so macO
 xattr -cr /Applications/Flint.app
 ```
 
+### Linux
+
+Install Flint into `~/.local` (no root required, and in-app auto-update works):
+
+```sh
+curl -f https://raw.githubusercontent.com/shenghsi/flint/main/script/install.sh | sh
+```
+
+If `~/.local/bin` isn't already on your `PATH`, add it so you can launch Flint with `flint`.
+
+The `.deb` and `.rpm` packages install Flint system-wide under `/usr/lib/flint`. Those builds are managed by your package manager, so in-app auto-update is disabled — update them with `apt`, `dnf`, etc.
+
 ### Developing Flint
 
 - [Building Flint for macOS](./docs/src/development/macos.md)

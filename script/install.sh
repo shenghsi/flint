@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-# Downloads a tarball from https://flint.dev/releases and unpacks it
-# into ~/.local/. If you'd prefer to do this manually, instructions are at
-# https://flint.dev/docs/linux.
+# Downloads a release tarball from GitHub Releases
+# (https://github.com/shenghsi/flint/releases) and unpacks it into ~/.local/.
+# Set ZED_VERSION to a tag (e.g. v0.3.7) to pin a version; it defaults to the
+# latest release.
 
 main() {
     platform="$(uname -s)"
@@ -78,12 +79,28 @@ main() {
     fi
 }
 
+# Builds the GitHub Releases download URL for a given asset filename. Uses the
+# "latest" redirect unless ZED_VERSION pins a specific tag (with or without the
+# leading "v").
+github_release_url() {
+    asset="$1"
+    if [ "$ZED_VERSION" = "latest" ]; then
+        echo "https://github.com/shenghsi/flint/releases/latest/download/$asset"
+    else
+        case "$ZED_VERSION" in
+            v*) tag="$ZED_VERSION" ;;
+            *) tag="v$ZED_VERSION" ;;
+        esac
+        echo "https://github.com/shenghsi/flint/releases/download/$tag/$asset"
+    fi
+}
+
 linux() {
     if [ -n "${ZED_BUNDLE_PATH:-}" ]; then
         cp "$ZED_BUNDLE_PATH" "$temp/flint-linux-$arch.tar.gz"
     else
         echo "Downloading Flint version: $ZED_VERSION"
-        curl "https://cloud.flint.dev/releases/$channel/$ZED_VERSION/download?asset=flint&arch=$arch&os=linux&source=install.sh" > "$temp/flint-linux-$arch.tar.gz"
+        curl "$(github_release_url "flint-linux-$arch.tar.gz")" > "$temp/flint-linux-$arch.tar.gz"
     fi
 
     suffix=""
@@ -142,7 +159,7 @@ linux() {
 
 macos() {
     echo "Downloading Flint version: $ZED_VERSION"
-    curl "https://cloud.flint.dev/releases/$channel/$ZED_VERSION/download?asset=flint&os=macos&arch=$arch&source=install.sh" > "$temp/Flint-$arch.dmg"
+    curl "$(github_release_url "Flint-$arch.dmg")" > "$temp/Flint-$arch.dmg"
     hdiutil attach -quiet "$temp/Flint-$arch.dmg" -mountpoint "$temp/mount"
     app="$(cd "$temp/mount/"; echo *.app)"
     echo "Installing $app"
