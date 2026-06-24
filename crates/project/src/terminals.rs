@@ -6,7 +6,7 @@ use async_channel::bounded;
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
-use remote::RemoteClient;
+use remote::{ConnectionSharing, Interactive, RemoteClient};
 use settings::{Settings, SettingsLocation};
 use std::{
     borrow::Cow,
@@ -194,6 +194,7 @@ impl Project {
                                         env,
                                         path,
                                         remote_client,
+                                        connection_sharing_for(settings.dedicated_ssh_connection),
                                         cx,
                                     )?
                                 }
@@ -205,6 +206,7 @@ impl Project {
                                     env,
                                     path,
                                     remote_client,
+                                    connection_sharing_for(settings.dedicated_ssh_connection),
                                     cx,
                                 )?,
                             },
@@ -406,9 +408,14 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let (shell, env) = {
                         match remote_client {
-                            Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
-                            }
+                            Some(remote_client) => create_remote_shell(
+                                None,
+                                env,
+                                path,
+                                remote_client,
+                                connection_sharing_for(settings.dedicated_ssh_connection),
+                                cx,
+                            )?,
                             None => (settings.shell, env),
                         }
                     };
@@ -611,11 +618,20 @@ impl Project {
     }
 }
 
+fn connection_sharing_for(dedicated_ssh_connection: bool) -> ConnectionSharing {
+    if dedicated_ssh_connection {
+        ConnectionSharing::Dedicated
+    } else {
+        ConnectionSharing::Shared
+    }
+}
+
 fn create_remote_shell(
     spawn_command: Option<(&String, &Vec<String>)>,
     mut env: HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
+    connection_sharing: ConnectionSharing,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
     insert_flint_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
@@ -625,12 +641,14 @@ fn create_remote_shell(
         None => (None, &Vec::new()),
     };
 
-    let command = remote_client.read(cx).build_command(
+    let command = remote_client.read(cx).build_command_with_options(
         program,
         args.as_slice(),
         &env,
         working_directory.map(|path| path.display().to_string()),
         None,
+        Interactive::Yes,
+        connection_sharing,
     )?;
 
     log::debug!("Connecting to a remote server: {:?}", command.program);

@@ -183,6 +183,20 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: "system"
     pub bell: Option<TerminalBell>,
+    /// Whether terminals opened on an SSH remote should use their own dedicated
+    /// SSH connection instead of sharing the multiplexed ControlMaster connection
+    /// used by the rest of the project (file sync, LSP, agents).
+    ///
+    /// The shared connection multiplexes every channel over a single TCP stream,
+    /// so bulk project traffic can head-of-line-block interactive keystrokes and
+    /// make typing feel laggy. A dedicated connection avoids that contention at
+    /// the cost of an extra connection (and a re-authentication, which may prompt
+    /// if the host does not use key/agent-based auth).
+    ///
+    /// No effect on local, WSL, or Docker terminals.
+    ///
+    /// Default: false
+    pub dedicated_ssh_connection: Option<bool>,
 }
 
 /// Shell configuration to open the terminal with.

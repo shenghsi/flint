@@ -26,7 +26,7 @@ use rpc::proto::Envelope;
 
 use crate::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs, RemotePlatform,
-    remote_client::{CommandTemplate, Interactive},
+    remote_client::{CommandTemplate, ConnectionSharing, Interactive},
     transport::parse_platform,
 };
 
@@ -750,6 +750,7 @@ impl RemoteConnection for DockerExecConnection {
         working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
+        _connection_sharing: ConnectionSharing,
     ) -> Result<CommandTemplate> {
         let mut parsed_working_dir = None;
 

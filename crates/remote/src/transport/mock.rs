@@ -30,8 +30,8 @@
 //! ```
 
 use crate::remote_client::{
-    ChannelClient, CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection,
-    RemoteConnectionOptions,
+    ChannelClient, CommandTemplate, ConnectionSharing, Interactive, RemoteClientDelegate,
+    RemoteConnection, RemoteConnectionOptions,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -201,6 +201,7 @@ impl RemoteConnection for MockRemoteConnection {
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
         _interactive: Interactive,
+        _connection_sharing: ConnectionSharing,
     ) -> Result<CommandTemplate> {
         let shell_program = program.unwrap_or_else(|| "sh".to_string());
         let mut shell_args = Vec::new();

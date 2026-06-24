@@ -4,7 +4,7 @@ use super::{
     locators,
     session::{self, Session, SessionStateEvent},
 };
-use remote::Interactive;
+use remote::{ConnectionSharing, Interactive};
 
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
@@ -350,6 +350,7 @@ impl DapStore {
                             binary.cwd.map(|path| path.display().to_string()),
                             port_forwarding,
                             Interactive::No,
+                            ConnectionSharing::Shared,
                         )
                     })?;
 
