@@ -12,6 +12,18 @@ pub use icons::*;
 use crate::traits::transformable::Transformable;
 use crate::{Indicator, prelude::*};
 
+/// Brand color for vendor/agent icons so they read as their product identity
+/// instead of a flat muted gray. Returns `None` for brands whose mark is
+/// monochrome (e.g. OpenAI/Codex), letting the caller fall back to the theme
+/// foreground, which is the faithful treatment for a black/white logo.
+pub fn brand_icon_color(icon: IconName) -> Option<Color> {
+    let rgb = match icon {
+        IconName::AiClaude | IconName::AiAnthropic => 0xd97757,
+        _ => return None,
+    };
+    Some(Color::Custom(gpui::rgb(rgb).into()))
+}
+
 #[derive(IntoElement)]
 pub enum AnyIcon {
     Icon(Icon),

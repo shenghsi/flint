@@ -1437,7 +1437,11 @@ impl Item for TerminalView {
             .unwrap_or_else(|| terminal.title(true));
 
         let (icon, icon_color, rerun_button) = match self.tab_icon_override {
-            Some(icon) => (icon, Color::Default, None),
+            Some(icon) => (
+                icon,
+                ui::brand_icon_color(icon).unwrap_or(Color::Default),
+                None,
+            ),
             None => match terminal.task() {
                 Some(terminal_task) => match &terminal_task.status {
                     TaskStatus::Running => (

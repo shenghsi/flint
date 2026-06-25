@@ -799,9 +799,12 @@ pub(crate) fn render_buffer_header(
                                                 let path = std::path::Path::new(filename.as_str());
                                                 let icon = FileIcons::get_icon(path, cx)
                                                     .unwrap_or_default();
+                                                let color = Color::Custom(
+                                                    file_icons::file_icon_color(&icon, cx),
+                                                );
 
                                                 this.child(
-                                                    Icon::from_path(icon).color(Color::Muted),
+                                                    Icon::from_path(icon).color(color),
                                                 )
                                             })
                                             .child(

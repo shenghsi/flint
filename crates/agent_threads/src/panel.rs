@@ -612,7 +612,7 @@ impl AgentThreadsPanel {
                     .child(
                         Icon::new(kind.icon)
                             .size(IconSize::Small)
-                            .color(Color::Muted),
+                            .color(ui::brand_icon_color(kind.icon).unwrap_or(Color::Muted)),
                     )
                     .child(Label::new(kind.label.clone()).size(LabelSize::Small))
                     .child(

@@ -730,7 +730,10 @@ impl Item for Editor {
                     .and_then(|path| FileIcons::get_icon(Path::new(&*path), cx))
             })
             .flatten()
-            .map(Icon::from_path)
+            .map(|icon| {
+                let color = file_icons::file_icon_color(&icon, cx);
+                Icon::from_path(icon).color(Color::Custom(color))
+            })
     }
 
     fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> AnyElement {

@@ -1,9 +1,22 @@
 use std::sync::Arc;
 use std::{path::Path, str};
 
-use gpui::{App, SharedString};
-use theme::{GlobalTheme, IconTheme, ThemeRegistry};
+use gpui::{App, Hsla, SharedString};
+use theme::{ActiveTheme, GlobalTheme, IconTheme, ThemeRegistry};
 use util::paths::PathExt;
+
+// File-type icons ship as monochrome SVGs, so painting them all with one muted
+// color makes every type look identical. Derive a stable color per icon from the
+// theme's player palette (curated to be mutually distinguishable and theme-aware)
+// so file types are easy to tell apart at a glance. Keyed on the icon path rather
+// than the extension, so files that share an icon share a color.
+pub fn file_icon_color(icon_path: &str, cx: &App) -> Hsla {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    icon_path.hash(&mut hasher);
+    let index = hasher.finish() as u32;
+    cx.theme().players().color_for_participant(index).cursor
+}
 
 #[derive(Debug)]
 pub struct FileIcons {
