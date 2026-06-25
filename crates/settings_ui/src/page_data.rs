@@ -5413,9 +5413,32 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 4] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Max Visible Threads Per Agent",
+                description: "How many threads each agent section shows before a \"Show more\" control is offered.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_threads.max_visible_threads_per_agent"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .max_visible_threads_per_agent
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .max_visible_threads_per_agent = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Agent Threads Panel Dock",
                 description: "Where to dock the Agent Threads panel.",
