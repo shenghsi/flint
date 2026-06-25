@@ -803,9 +803,7 @@ pub(crate) fn render_buffer_header(
                                                     file_icons::file_icon_color(&icon, cx),
                                                 );
 
-                                                this.child(
-                                                    Icon::from_path(icon).color(color),
-                                                )
+                                                this.child(Icon::from_path(icon).color(color))
                                             })
                                             .child(
                                                 Label::new(filename)
