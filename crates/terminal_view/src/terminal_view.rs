@@ -1747,6 +1747,11 @@ impl Item for TerminalView {
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
+        // Agent sessions run as long-lived tasks; the thread list already shows
+        // their live status, so don't flag the tab as dirty for them.
+        if self.tab_icon_override.is_some() {
+            return false;
+        }
         match self.terminal.read(cx).task() {
             Some(task) => task.status == TaskStatus::Running,
             None => self.has_bell(),
