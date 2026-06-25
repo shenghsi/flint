@@ -291,7 +291,10 @@ impl RenderOnce for ThreadItem {
                 .justify_center()
                 .when(!icon_visible, |this| this.invisible())
         };
-        let icon_color = self.icon_color.unwrap_or(Color::Muted);
+        let icon_color = self
+            .icon_color
+            .or_else(|| crate::brand_icon_color(self.icon))
+            .unwrap_or(Color::Muted);
         let agent_icon = if let Some(icon_char) = self.icon_char {
             Label::new(icon_char)
                 .size(LabelSize::Small)

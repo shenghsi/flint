@@ -5856,6 +5856,7 @@ impl ProjectPanel {
                         },
                     )
                     .child(if let Some(icon) = &icon {
+                        let icon_color = Color::Custom(file_icons::file_icon_color(icon, cx));
                         if let Some((_, decoration_color)) =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
                         {
@@ -5864,7 +5865,7 @@ impl ProjectPanel {
                                 .unwrap_or(false);
                             div().child(
                                 DecoratedIcon::new(
-                                    Icon::from_path(icon.clone()).color(Color::Muted),
+                                    Icon::from_path(icon.clone()).color(icon_color),
                                     Some(
                                         IconDecoration::new(
                                             if kind.is_file() {
@@ -5891,7 +5892,7 @@ impl ProjectPanel {
                                 .into_any_element(),
                             )
                         } else {
-                            h_flex().child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                            h_flex().child(Icon::from_path(icon.to_string()).color(icon_color))
                         }
                     } else if let Some((icon_name, color)) =
                         entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)

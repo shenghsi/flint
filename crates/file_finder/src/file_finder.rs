@@ -1756,7 +1756,8 @@ impl PickerDelegate for FileFinderDelegate {
             let abs_path = path_match.abs_path(&self.project, cx)?;
             let file_name = abs_path.file_name()?;
             let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
-            Some(Icon::from_path(icon).color(Color::Muted))
+            let color = Color::Custom(file_icons::file_icon_color(&icon, cx));
+            Some(Icon::from_path(icon).color(color))
         });
 
         Some(
