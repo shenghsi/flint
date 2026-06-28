@@ -5413,7 +5413,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 5] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5434,6 +5434,29 @@ fn panels_page() -> SettingsPage {
                             .agent_threads
                             .get_or_insert_default()
                             .max_visible_threads_per_agent = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Plan Usage",
+                description: "Show five-hour and weekly plan usage beside Codex and Claude headings.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_threads.show_plan_usage"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .show_plan_usage
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .show_plan_usage = value;
                     },
                 }),
                 metadata: None,

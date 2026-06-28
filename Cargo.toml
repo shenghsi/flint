@@ -481,6 +481,7 @@ heck = "0.5"
 hdrhistogram = "7"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
+hmac = "0.12"
 human_bytes = "0.4.1"
 html5ever = "0.27.0"
 http = "1.1"

@@ -17,6 +17,10 @@ pub struct AgentThreadSettingsContent {
     ///
     /// Default: 5
     pub max_visible_threads_per_agent: Option<usize>,
+    /// Whether to show five-hour and weekly plan usage in section headings.
+    ///
+    /// Default: true
+    pub show_plan_usage: Option<bool>,
     /// Where to dock the agent threads panel.
     ///
     /// Default: left

@@ -1493,6 +1493,8 @@
       "hidden": false,
     },
     "max_visible_threads_per_agent": 5,
+    // Show five-hour and weekly plan usage beside agent headings.
+    "show_plan_usage": true,
     // Where to dock the Agent Threads panel. Can be `left` or `right`.
     "dock": "left",
   },

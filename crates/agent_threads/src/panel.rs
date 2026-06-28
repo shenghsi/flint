@@ -11,7 +11,7 @@ use gpui::{
     Pixels, Point, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, anchored,
     deferred, div,
 };
-use settings::{DockSide, Settings};
+use settings::{DockSide, Settings, SettingsStore};
 use ui::{
     Color, ContextMenu, Disclosure, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
     LabelSize, Tooltip, prelude::*,
@@ -23,6 +23,7 @@ use workspace::{
 };
 
 use crate::history::{self, HistoryParseCache, project_worktree_roots};
+use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
 use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
     merge_threads,
@@ -81,6 +82,9 @@ pub struct AgentThreadsPanel {
     /// every history file on each panel activation. Cleared on deactivate; the
     /// stored task owns the underlying `fs::Watcher` and stops it when dropped.
     history_watchers: HashMap<&'static str, Task<()>>,
+    plan_usage: HashMap<&'static str, PlanUsage>,
+    plan_usage_task: Option<Task<()>>,
+    http_client: Arc<dyn http_client::HttpClient>,
     active: bool,
 }
 
@@ -92,6 +96,17 @@ fn history_cache_path(kind_id: &str) -> PathBuf {
     paths::data_dir()
         .join("agent_history_cache")
         .join(format!("{kind_id}.json"))
+}
+
+fn usage_color(percent: u8, cx: &App) -> Color {
+    let status = cx.theme().status();
+    Color::Custom(match UsageColorBand::for_percent(percent) {
+        UsageColorBand::Green => status.success,
+        UsageColorBand::LightGreen => status.success.blend(status.warning.opacity(0.35)),
+        UsageColorBand::Yellow => status.warning,
+        UsageColorBand::Orange => status.warning.blend(status.error.opacity(0.5)),
+        UsageColorBand::Red => status.error,
+    })
 }
 
 impl AgentThreadsPanel {
@@ -111,12 +126,32 @@ impl AgentThreadsPanel {
     ) -> Entity<Self> {
         let workspace_handle = cx.entity().downgrade();
         let fs = workspace.app_state().fs.clone();
+        let http_client = workspace.app_state().client.http_client();
         cx.new(|cx| {
             let store = AgentThreadStore::global(cx);
             let store_subscription =
                 cx.subscribe(&store, |this: &mut AgentThreadsPanel, _, event, cx| {
                     this.handle_store_event(event, cx);
                 });
+            let settings = AgentThreadSettings::get_global(cx);
+            let mut plan_usage_settings = (
+                settings.show_plan_usage,
+                settings.codex.clone(),
+                settings.claude.clone(),
+            );
+            let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+                let settings = AgentThreadSettings::get_global(cx);
+                let new_settings = (
+                    settings.show_plan_usage,
+                    settings.codex.clone(),
+                    settings.claude.clone(),
+                );
+                if plan_usage_settings != new_settings {
+                    plan_usage_settings = new_settings;
+                    this.sync_plan_usage_polling(cx);
+                    cx.notify();
+                }
+            });
             let registry = agent_kind_registry();
             let mut sections = HashMap::default();
             for kind in &registry {
@@ -130,15 +165,71 @@ impl AgentThreadsPanel {
                 registry,
                 sections,
                 context_menu: None,
-                _subscriptions: vec![store_subscription],
+                _subscriptions: vec![store_subscription, settings_subscription],
                 history_tasks: HashMap::default(),
                 history_caches: HashMap::default(),
                 history_watchers: HashMap::default(),
+                plan_usage: HashMap::default(),
+                plan_usage_task: None,
+                http_client,
                 active: false,
             };
             let _ = window;
             panel
         })
+    }
+
+    fn sync_plan_usage_polling(&mut self, cx: &mut Context<Self>) {
+        self.plan_usage_task.take();
+        self.plan_usage.clear();
+        if !self.active || !AgentThreadSettings::get_global(cx).show_plan_usage {
+            return;
+        }
+        let settings = AgentThreadSettings::get_global(cx);
+        let queries = self
+            .visible_registry(cx)
+            .into_iter()
+            .map(|kind| (kind.id, settings.command_for_kind(kind.id).clone()))
+            .collect::<Vec<_>>();
+        let http_client = self.http_client.clone();
+        self.plan_usage_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let tasks = queries.iter().map(|(kind_id, command)| {
+                    let command = command.clone();
+                    let http_client = http_client.clone();
+                    let kind_id = *kind_id;
+                    cx.background_spawn(async move {
+                        (
+                            kind_id,
+                            query_plan_usage(kind_id, &command, http_client).await,
+                        )
+                    })
+                });
+                for (kind_id, result) in futures::future::join_all(tasks).await {
+                    match result {
+                        Ok(usage) => {
+                            if this
+                                .update(cx, |this, cx| {
+                                    this.plan_usage.insert(kind_id, usage);
+                                    cx.notify();
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "agent_threads: failed to query {kind_id} plan usage: {error}"
+                            );
+                        }
+                    }
+                }
+                cx.background_executor()
+                    .timer(Duration::from_secs(5 * 60))
+                    .await;
+            }
+        }));
     }
 
     fn handle_store_event(&mut self, event: &AgentThreadStoreEvent, cx: &mut Context<Self>) {
@@ -558,6 +649,7 @@ impl AgentThreadsPanel {
         project_roots: &[PathBuf],
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let usage = self.plan_usage.get(kind.id).copied();
         let live = self
             .store
             .read(cx)
@@ -619,6 +711,26 @@ impl AgentThreadsPanel {
                         Label::new(total.to_string())
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
+                    )
+                    .when_some(
+                        usage.and_then(|usage| usage.five_hour_percent),
+                        |header, percent| {
+                            header.child(
+                                Label::new(format!("5H:{}%", percent.value()))
+                                    .size(LabelSize::XSmall)
+                                    .color(usage_color(percent.value(), cx)),
+                            )
+                        },
+                    )
+                    .when_some(
+                        usage.and_then(|usage| usage.weekly_percent),
+                        |header, percent| {
+                            header.child(
+                                Label::new(format!("W:{}%", percent.value()))
+                                    .size(LabelSize::XSmall)
+                                    .color(usage_color(percent.value(), cx)),
+                            )
+                        },
                     ),
             )
             .child(
@@ -930,6 +1042,7 @@ impl Panel for AgentThreadsPanel {
         }
         self.active = active;
         if active {
+            self.sync_plan_usage_polling(cx);
             cx.spawn(async move |this: WeakEntity<Self>, cx| {
                 this.update(cx, |this, cx| {
                     this.refresh_history(cx);
@@ -940,6 +1053,7 @@ impl Panel for AgentThreadsPanel {
             .detach();
             cx.notify();
         } else {
+            self.sync_plan_usage_polling(cx);
             self.history_tasks.clear();
             self.history_watchers.clear();
         }
@@ -1033,8 +1147,20 @@ mod tests {
                     codex: Some(echo_command("codex", root_path)),
                     claude: Some(echo_command("claude", root_path)),
                     max_visible_threads_per_agent: Some(max_visible_threads_per_agent),
+                    show_plan_usage: None,
                     dock: None,
                 });
+            });
+        });
+    }
+
+    fn set_show_plan_usage(cx: &mut TestAppContext, enabled: bool) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .agent_threads
+                    .get_or_insert_default()
+                    .show_plan_usage = Some(enabled);
             });
         });
     }
@@ -1446,6 +1572,51 @@ mod tests {
         });
         assert!(collapsed_after);
         assert!(show_all_after);
+    }
+
+    #[gpui::test]
+    async fn plan_usage_polling_only_exists_while_panel_is_active(cx: &mut TestAppContext) {
+        init_test(cx);
+        configure_echo_threads(cx, "/root", 5);
+        let window_handle = init_workspace(cx, "/root").await;
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
+            })
+            .expect("failed to create panel");
+
+        panel.update(cx, |panel, cx| {
+            assert!(panel.plan_usage_task.is_none());
+            panel.active = true;
+            panel.sync_plan_usage_polling(cx);
+            assert!(panel.plan_usage_task.is_some());
+            panel.active = false;
+            panel.sync_plan_usage_polling(cx);
+            assert!(panel.plan_usage_task.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn disabled_plan_usage_does_not_start_polling(cx: &mut TestAppContext) {
+        init_test(cx);
+        configure_echo_threads(cx, "/root", 5);
+        set_show_plan_usage(cx, false);
+        let window_handle = init_workspace(cx, "/root").await;
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
+            })
+            .expect("failed to create panel");
+
+        panel.update(cx, |panel, cx| {
+            panel.active = true;
+            panel.sync_plan_usage_polling(cx);
+            assert!(panel.plan_usage_task.is_none());
+        });
     }
 
     #[gpui::test]

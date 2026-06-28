@@ -2,6 +2,7 @@ mod claude_history;
 mod codex_history;
 mod history;
 mod panel;
+mod plan_usage;
 mod store;
 
 use std::path::PathBuf;
@@ -121,6 +122,7 @@ pub struct AgentThreadSettings {
     pub codex: AgentLaunchCommand,
     pub claude: AgentLaunchCommand,
     pub max_visible_threads_per_agent: usize,
+    pub show_plan_usage: bool,
     pub dock: settings::DockSide,
 }
 
@@ -141,6 +143,7 @@ impl Settings for AgentThreadSettings {
             codex: launch_command_from_content(content.codex, "codex"),
             claude: launch_command_from_content(content.claude, "claude"),
             max_visible_threads_per_agent: content.max_visible_threads_per_agent.unwrap_or(5),
+            show_plan_usage: content.show_plan_usage.unwrap_or(true),
             dock: content.dock.unwrap_or(settings::DockSide::Left),
         }
     }
@@ -247,5 +250,11 @@ mod tests {
         let kind = kind_by_id("codex").unwrap();
         let command = command_with_default(Some("nonexistent option"));
         assert!(resolve_default_launch_args(&command, &kind).is_empty());
+    }
+
+    #[test]
+    fn plan_usage_is_enabled_by_default() {
+        let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
+        assert!(settings.show_plan_usage);
     }
 }
