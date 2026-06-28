@@ -164,9 +164,12 @@ return `PlanUsage` and do not expose provider response types to the panel.
 ## Panel lifecycle and data flow
 
 `AgentThreadsPanel` holds one optional polling task and one optional
-`PlanUsage` per visible kind. When the panel becomes active and the setting is
-enabled, the task performs both independent queries concurrently on the
-background executor, updates panel state on the foreground executor, then
+`PlanUsage` per visible kind. "Active" means the dock has called
+`Panel::set_active(true)` because the Agent Threads panel is the deployed,
+visible panel. Merely constructing the panel, keeping its dock closed, or
+showing a different panel in that dock does not count. When active and the
+setting is enabled, the task performs both independent queries concurrently on
+the background executor, updates panel state on the foreground executor, then
 waits five minutes using the GPUI background-executor timer.
 
 Each successful provider response replaces that kind's value. A later
@@ -176,9 +179,10 @@ setting off or changing effective agent configuration drops the task and
 clears the associated values so data from an old account or provider is never
 shown.
 
-Only the panel's task owns the polling future. Deactivating the panel drops it;
+Only the panel's task owns the polling future. `Panel::set_active(false)` drops
+the task immediately, cancelling either its timer or its in-flight request;
 reactivating the panel performs a fresh query. There is no process-global
-service or polling while the panel is inactive.
+service, background timer, or usage request while the panel is inactive.
 
 ## Rendering
 
