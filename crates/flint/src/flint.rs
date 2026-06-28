@@ -5323,6 +5323,17 @@ mod tests {
                 },
                 wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
             });
+            // Plan-usage polling reads real credentials (macOS keychain) and
+            // makes live network requests, which trips the deterministic test
+            // scheduler. It has no bearing on the panel behavior under test.
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .agent_threads
+                        .get_or_insert_default()
+                        .show_plan_usage = Some(false);
+                });
+            });
             app_state
         })
     }
