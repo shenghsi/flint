@@ -168,9 +168,11 @@ return `PlanUsage` and do not expose provider response types to the panel.
 `Panel::set_active(true)` because the Agent Threads panel is the deployed,
 visible panel. Merely constructing the panel, keeping its dock closed, or
 showing a different panel in that dock does not count. When active and the
-setting is enabled, the task performs both independent queries concurrently on
-the background executor, updates panel state on the foreground executor, then
-waits five minutes using the GPUI background-executor timer.
+setting is enabled, the task immediately performs one query for each agent
+kind concurrently on the background executor and updates panel state on the
+foreground executor. After that first query completes, it waits five minutes
+using the GPUI background-executor timer, queries again, and repeats while the
+panel remains active.
 
 Each successful provider response replaces that kind's value. A later
 transport, authentication, or parse failure retains the last successful value
