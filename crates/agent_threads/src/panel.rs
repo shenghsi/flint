@@ -729,9 +729,7 @@ impl AgentThreadsPanel {
                             .color(Color::Muted),
                     )
                     .when_some(
-                        usage.and_then(|u| {
-                            u.five_hour_percent.map(|p| (p, u.five_hour_reset_at))
-                        }),
+                        usage.and_then(|u| u.five_hour_percent.map(|p| (p, u.five_hour_reset_at))),
                         |header, (percent, reset_at)| {
                             let label = match reset_at.and_then(format_reset_countdown) {
                                 Some(t) => format!("5H:{}% {}", percent.value(), t),
@@ -745,9 +743,7 @@ impl AgentThreadsPanel {
                         },
                     )
                     .when_some(
-                        usage.and_then(|u| {
-                            u.weekly_percent.map(|p| (p, u.weekly_reset_at))
-                        }),
+                        usage.and_then(|u| u.weekly_percent.map(|p| (p, u.weekly_reset_at))),
                         |header, (percent, reset_at)| {
                             let label = match reset_at.and_then(format_reset_countdown) {
                                 Some(t) => format!("W:{}% {}", percent.value(), t),
