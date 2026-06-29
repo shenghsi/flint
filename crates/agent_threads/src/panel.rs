@@ -98,6 +98,22 @@ fn history_cache_path(kind_id: &str) -> PathBuf {
         .join(format!("{kind_id}.json"))
 }
 
+fn format_reset_countdown(reset_at: i64) -> Option<String> {
+    let diff = reset_at - chrono::Utc::now().timestamp();
+    if diff <= 0 {
+        return None;
+    }
+    let hours = diff / 3600;
+    let minutes = (diff % 3600) / 60;
+    Some(if hours >= 24 {
+        format!("{}d{}h", hours / 24, hours % 24)
+    } else if hours > 0 {
+        format!("{}h{}m", hours, minutes)
+    } else {
+        format!("{}m", minutes)
+    })
+}
+
 fn usage_color(percent: u8, cx: &App) -> Color {
     let status = cx.theme().status();
     Color::Custom(match UsageColorBand::for_percent(percent) {
@@ -713,20 +729,32 @@ impl AgentThreadsPanel {
                             .color(Color::Muted),
                     )
                     .when_some(
-                        usage.and_then(|usage| usage.five_hour_percent),
-                        |header, percent| {
+                        usage.and_then(|u| {
+                            u.five_hour_percent.map(|p| (p, u.five_hour_reset_at))
+                        }),
+                        |header, (percent, reset_at)| {
+                            let label = match reset_at.and_then(format_reset_countdown) {
+                                Some(t) => format!("5H:{}% {}", percent.value(), t),
+                                None => format!("5H:{}%", percent.value()),
+                            };
                             header.child(
-                                Label::new(format!("5H:{}%", percent.value()))
+                                Label::new(label)
                                     .size(LabelSize::XSmall)
                                     .color(usage_color(percent.value(), cx)),
                             )
                         },
                     )
                     .when_some(
-                        usage.and_then(|usage| usage.weekly_percent),
-                        |header, percent| {
+                        usage.and_then(|u| {
+                            u.weekly_percent.map(|p| (p, u.weekly_reset_at))
+                        }),
+                        |header, (percent, reset_at)| {
+                            let label = match reset_at.and_then(format_reset_countdown) {
+                                Some(t) => format!("W:{}% {}", percent.value(), t),
+                                None => format!("W:{}%", percent.value()),
+                            };
                             header.child(
-                                Label::new(format!("W:{}%", percent.value()))
+                                Label::new(label)
                                     .size(LabelSize::XSmall)
                                     .color(usage_color(percent.value(), cx)),
                             )

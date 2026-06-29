@@ -80,12 +80,15 @@ impl UsageColorBand {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PlanUsage {
     pub(crate) five_hour_percent: Option<UsagePercent>,
+    pub(crate) five_hour_reset_at: Option<i64>,
     pub(crate) weekly_percent: Option<UsagePercent>,
+    pub(crate) weekly_reset_at: Option<i64>,
 }
 
 #[derive(Deserialize)]
 struct UsageWindow {
     utilization: Option<f64>,
+    resets_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -96,15 +99,22 @@ struct ClaudeUsageResponse {
 
 fn parse_claude_usage(body: &[u8]) -> anyhow::Result<PlanUsage> {
     let response: ClaudeUsageResponse = serde_json::from_slice(body)?;
+    let window_parts = |w: Option<UsageWindow>| -> (Option<UsagePercent>, Option<i64>) {
+        let Some(w) = w else { return (None, None) };
+        let percent = w.utilization.map(UsagePercent::new);
+        let reset_at = w
+            .resets_at
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|dt| dt.timestamp());
+        (percent, reset_at)
+    };
+    let (five_hour_percent, five_hour_reset_at) = window_parts(response.five_hour);
+    let (weekly_percent, weekly_reset_at) = window_parts(response.seven_day);
     Ok(PlanUsage {
-        five_hour_percent: response
-            .five_hour
-            .and_then(|window| window.utilization)
-            .map(UsagePercent::new),
-        weekly_percent: response
-            .seven_day
-            .and_then(|window| window.utilization)
-            .map(UsagePercent::new),
+        five_hour_percent,
+        five_hour_reset_at,
+        weekly_percent,
+        weekly_reset_at,
     })
 }
 
@@ -112,6 +122,7 @@ fn parse_claude_usage(body: &[u8]) -> anyhow::Result<PlanUsage> {
 struct CodexUsageWindow {
     used_percent: Option<f64>,
     limit_window_seconds: Option<u64>,
+    reset_at: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -139,8 +150,14 @@ fn parse_codex_usage(body: &[u8]) -> anyhow::Result<PlanUsage> {
             continue;
         };
         match window.limit_window_seconds {
-            Some(18_000) => usage.five_hour_percent = Some(percent),
-            Some(604_800) => usage.weekly_percent = Some(percent),
+            Some(18_000) => {
+                usage.five_hour_percent = Some(percent);
+                usage.five_hour_reset_at = window.reset_at;
+            }
+            Some(604_800) => {
+                usage.weekly_percent = Some(percent);
+                usage.weekly_reset_at = window.reset_at;
+            }
             _ => {}
         }
     }
@@ -183,6 +200,7 @@ fn parse_kimi_usage(body: &[u8]) -> anyhow::Result<PlanUsage> {
         weekly_percent: response
             .usage
             .map(|usage| used_percent(usage.limit, usage.remaining)),
+        ..PlanUsage::default()
     })
 }
 
@@ -263,6 +281,7 @@ fn parse_minimax_usage(body: &[u8]) -> anyhow::Result<PlanUsage> {
     Ok(PlanUsage {
         five_hour_percent,
         weekly_percent,
+        ..PlanUsage::default()
     })
 }
 
@@ -277,6 +296,7 @@ fn parse_zenmux_usage(body: &[u8]) -> anyhow::Result<PlanUsage> {
     Ok(PlanUsage {
         five_hour_percent: percent("/data/quota_5_hour/usage_percentage"),
         weekly_percent: percent("/data/quota_7_day/usage_percentage"),
+        ..PlanUsage::default()
     })
 }
 
@@ -291,6 +311,7 @@ fn parse_volcengine_agent_usage(body: &[u8]) -> anyhow::Result<PlanUsage> {
     Ok(PlanUsage {
         five_hour_percent: percent("AFPFiveHour"),
         weekly_percent: percent("AFPWeekly"),
+        ..PlanUsage::default()
     })
 }
 
@@ -833,23 +854,40 @@ mod tests {
     #[test]
     fn parses_claude_usage_windows() {
         let usage = parse_claude_usage(
+            br#"{"five_hour":{"utilization":12.4,"resets_at":"2026-06-29T10:49:59+00:00"},"seven_day":{"utilization":67.6,"resets_at":"2026-07-03T08:59:59+00:00"}}"#,
+        )
+        .expect("fixture should parse");
+
+        assert_eq!(usage.five_hour_percent.map(UsagePercent::value), Some(12));
+        assert_eq!(usage.five_hour_reset_at, Some(1782730199));
+        assert_eq!(usage.weekly_percent.map(UsagePercent::value), Some(68));
+        assert_eq!(usage.weekly_reset_at, Some(1783069199));
+    }
+
+    #[test]
+    fn parses_claude_usage_without_reset_times() {
+        let usage = parse_claude_usage(
             br#"{"five_hour":{"utilization":12.4},"seven_day":{"utilization":67.6}}"#,
         )
         .expect("fixture should parse");
 
         assert_eq!(usage.five_hour_percent.map(UsagePercent::value), Some(12));
+        assert_eq!(usage.five_hour_reset_at, None);
         assert_eq!(usage.weekly_percent.map(UsagePercent::value), Some(68));
+        assert_eq!(usage.weekly_reset_at, None);
     }
 
     #[test]
     fn parses_codex_usage_windows_by_duration() {
         let usage = parse_codex_usage(
-            br#"{"rate_limit":{"primary_window":{"used_percent":21,"limit_window_seconds":18000},"secondary_window":{"used_percent":73,"limit_window_seconds":604800}}}"#,
+            br#"{"rate_limit":{"primary_window":{"used_percent":21,"limit_window_seconds":18000,"reset_at":1782731632},"secondary_window":{"used_percent":73,"limit_window_seconds":604800,"reset_at":1783300364}}}"#,
         )
         .expect("fixture should parse");
 
         assert_eq!(usage.five_hour_percent.map(UsagePercent::value), Some(21));
+        assert_eq!(usage.five_hour_reset_at, Some(1782731632));
         assert_eq!(usage.weekly_percent.map(UsagePercent::value), Some(73));
+        assert_eq!(usage.weekly_reset_at, Some(1783300364));
     }
 
     #[test]
