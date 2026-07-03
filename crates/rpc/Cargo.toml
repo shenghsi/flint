@@ -1,5 +1,5 @@
 [package]
-description = "Shared logic for communication between the Flint app and the flint.dev server"
+description = "Shared RPC logic for Flint"
 edition.workspace = true
 name = "rpc"
 version = "0.1.0"

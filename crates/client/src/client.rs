@@ -1771,9 +1771,9 @@ pub const ZED_URL_SCHEME: &str = "flint";
 /// A parsed Flint link that can be handled internally by the application.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlintLink {
-    /// Join a channel: `flint.dev/channel/channel-name-123` or `flint://channel/channel-name-123`
+    /// Join a channel: `flint://channel/channel-name-123`
     Channel { channel_id: u64 },
-    /// Open channel notes: `flint.dev/channel/channel-name-123/notes` or with heading `notes#heading`
+    /// Open channel notes: `flint://channel/channel-name-123/notes` or with heading `notes#heading`
     ChannelNotes {
         channel_id: u64,
         heading: Option<String>,

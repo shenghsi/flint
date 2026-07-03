@@ -7380,7 +7380,7 @@ fn network_page() -> SettingsPage {
                     },
                 }),
                 metadata: Some(Box::new(SettingsFieldMetadata {
-                    placeholder: Some("https://flint.dev"),
+                    placeholder: Some("https://example.com"),
                     ..Default::default()
                 })),
                 files: USER,
