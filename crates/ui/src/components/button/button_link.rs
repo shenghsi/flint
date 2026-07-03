@@ -91,7 +91,7 @@ impl Component for ButtonLink {
             .child(
                 example_group(vec![single_example(
                     "Simple",
-                    ButtonLink::new("flint.dev", "https://flint.dev").into_any_element(),
+                    ButtonLink::new("example.com", "https://example.com").into_any_element(),
                 )])
                 .vertical(),
             )

@@ -1,4 +1,4 @@
-//! The Flint Rust Extension API allows you write extensions for [Flint](https://flint.dev/) in Rust.
+//! The Flint Rust Extension API allows you write extensions for [Flint](https://github.com/shenghsi/flint) in Rust.
 
 pub mod http_client;
 pub mod process;

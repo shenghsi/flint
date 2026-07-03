@@ -1275,7 +1275,7 @@ mod tests {
         "default_width": 640,
         "default_height": 320,
         "default_model": {
-            "provider": "flint.dev",
+            "provider": "anthropic",
             "model": "claude-sonnet-4"
         }
     }
@@ -1297,7 +1297,7 @@ mod tests {
         "default_width": 640,
         "default_height": 320,
         "default_model": {
-            "provider": "flint.dev",
+            "provider": "anthropic",
             "model": "claude-sonnet-4"
         }
     }

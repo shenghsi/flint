@@ -5,7 +5,7 @@ name = "flint"
 version = "0.3.16"
 publish.workspace = true
 license = "GPL-3.0-or-later"
-authors = ["Flint Team <hi@flint.dev>"]
+authors = ["Flint Team"]
 default-run = "flint"
 
 [lints]

@@ -2,7 +2,7 @@
 name = "gpui"
 version = "0.2.2"
 edition.workspace = true
-authors = ["Nathan Sobo <nathan@flint.dev>"]
+authors = ["Nathan Sobo"]
 description = "Flint's GPU-accelerated UI framework"
 repository = "https://github.com/zed-industries/flint"
 publish = true

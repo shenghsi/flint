@@ -126,7 +126,7 @@ impl Component for CollabNotification {
                             "a_very_long_username_that_might_overflow is sharing a project in Flint:",
                         ))
                         .child(
-                            Label::new("flint-cloud, flint, edit-prediction-bench, flint.dev")
+                            Label::new("flint-cloud, flint, edit-prediction-bench")
                                 .color(Color::Muted),
                         ),
                     )

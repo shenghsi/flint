@@ -1,5 +1,5 @@
 [package]
-description = "Shared protocol for communication between the Flint app and the flint.dev server"
+description = "Shared protocol for Flint"
 edition.workspace = true
 name = "proto"
 version = "0.1.0"
