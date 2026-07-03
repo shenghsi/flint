@@ -46,6 +46,11 @@ pub struct AgentLaunchCommand {
 /// A resume-time flag a user can opt into, e.g. `--dangerously-skip-permissions`.
 #[derive(Clone, Debug)]
 pub struct ResumeOption {
+    /// Stable key used to persist a user's remembered choice (see
+    /// `store::LAUNCH_OPTION_NAMESPACE`). Must not change once shipped, since
+    /// existing persisted choices are matched against it; `label` is display
+    /// copy and can be edited freely without losing those choices.
+    pub id: &'static str,
     pub label: SharedString,
     pub args: Vec<String>,
 }
@@ -67,6 +72,21 @@ pub(crate) fn resolve_default_launch_args<'a>(
         .find(|option| option.label.as_ref() == label)
         .map(|option| option.args.as_slice())
         .unwrap_or(&[])
+}
+
+/// Resolves the `ResumeOption::id` of `kind`'s settings-configured default
+/// launch option, if any. Used to compare the settings-facing (label-based)
+/// default against the store's persisted (id-based) remembered choice when
+/// deciding which menu entry to show as selected.
+pub(crate) fn resolve_default_launch_option_id<'a>(
+    command: &AgentLaunchCommand,
+    kind: &'a AgentKindDefinition,
+) -> Option<&'a str> {
+    let label = command.default_launch_option.as_deref()?;
+    kind.resume_options
+        .iter()
+        .find(|option| option.label.as_ref() == label)
+        .map(|option| option.id)
 }
 
 /// A registered agent kind. New kinds are added here without touching the
@@ -97,6 +117,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             home_dir_name: ".codex",
             history_provider: Some(Arc::new(CodexHistoryProvider)),
             resume_options: vec![ResumeOption {
+                id: "bypass-approvals-and-sandbox",
                 label: SharedString::new_static("Bypass approvals & sandbox"),
                 args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
             }],
@@ -110,6 +131,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             home_dir_name: ".claude",
             history_provider: Some(Arc::new(ClaudeHistoryProvider)),
             resume_options: vec![ResumeOption {
+                id: "skip-permission-prompts",
                 label: SharedString::new_static("Skip permission prompts"),
                 args: vec!["--dangerously-skip-permissions".to_string()],
             }],

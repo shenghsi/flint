@@ -258,12 +258,17 @@ pub fn launch_new_thread(
 }
 
 /// Namespace for the per-thread "remembered launch option" key-value store
-/// (`db::kvp`). The value is the chosen `ResumeOption` label, or an empty
+/// (`db::kvp`). The value is the chosen `ResumeOption::id`, or an empty
 /// string for an explicit "plain resume, no extra args" choice. Absence of
 /// a key means no per-thread choice has been made yet.
+///
+/// Keyed by `id` rather than `label`: `label` is UI copy that can be edited
+/// freely, and matching against it would silently orphan every persisted
+/// choice (falling back to the default) the next time the label's wording
+/// changes.
 const LAUNCH_OPTION_NAMESPACE: &str = "agent-thread-launch-option";
 
-/// Reads the launch option label the user last picked for this specific
+/// Reads the launch option id the user last picked for this specific
 /// thread (via its "..." menu), if any.
 pub fn remembered_launch_option(cx: &App, session_id: &str) -> Option<String> {
     db::kvp::KeyValueStore::global(cx)
@@ -273,15 +278,15 @@ pub fn remembered_launch_option(cx: &App, session_id: &str) -> Option<String> {
         .flatten()
 }
 
-/// Persists `label` as this thread's remembered launch option choice.
+/// Persists `id` as this thread's remembered launch option choice.
 /// `None` represents an explicit "plain resume" choice (stored as an empty
 /// string, distinct from no choice having been made at all).
-pub fn remember_launch_option(cx: &App, session_id: SharedString, label: Option<String>) {
+pub fn remember_launch_option(cx: &App, session_id: SharedString, id: Option<String>) {
     let store = db::kvp::KeyValueStore::global(cx);
     db::write_and_log(cx, move || async move {
         store
             .scoped(LAUNCH_OPTION_NAMESPACE)
-            .write(session_id.to_string(), label.unwrap_or_default())
+            .write(session_id.to_string(), id.unwrap_or_default())
             .await
     });
 }
@@ -295,11 +300,11 @@ pub fn resolve_thread_launch_args(
     session_id: &str,
 ) -> Vec<String> {
     match remembered_launch_option(cx, session_id) {
-        Some(label) if label.is_empty() => Vec::new(),
-        Some(label) => kind
+        Some(id) if id.is_empty() => Vec::new(),
+        Some(id) => kind
             .resume_options
             .iter()
-            .find(|option| option.label.as_ref() == label)
+            .find(|option| option.id == id)
             .map(|option| option.args.clone())
             .unwrap_or_default(),
         None => {
@@ -312,10 +317,10 @@ pub fn resolve_thread_launch_args(
 /// Namespace for the "remembered new-thread launch option" key-value store,
 /// keyed by agent kind id rather than session id since a brand-new thread
 /// has no session yet. Same empty-string-means-"no extra args" convention as
-/// [`LAUNCH_OPTION_NAMESPACE`].
+/// [`LAUNCH_OPTION_NAMESPACE`], and the same id-not-label keying rationale.
 const NEW_THREAD_LAUNCH_OPTION_NAMESPACE: &str = "agent-thread-new-launch-option";
 
-/// Reads the launch option label the user last picked from the new-thread
+/// Reads the launch option id the user last picked from the new-thread
 /// dropdown for this agent kind, if any.
 pub fn remembered_new_thread_launch_option(cx: &App, kind_id: &str) -> Option<String> {
     db::kvp::KeyValueStore::global(cx)
@@ -325,15 +330,15 @@ pub fn remembered_new_thread_launch_option(cx: &App, kind_id: &str) -> Option<St
         .flatten()
 }
 
-/// Persists `label` as this agent kind's remembered new-thread launch option
+/// Persists `id` as this agent kind's remembered new-thread launch option
 /// choice. `None` represents an explicit "plain new thread" choice (stored
 /// as an empty string, distinct from no choice having been made at all).
-pub fn remember_new_thread_launch_option(cx: &App, kind_id: &'static str, label: Option<String>) {
+pub fn remember_new_thread_launch_option(cx: &App, kind_id: &'static str, id: Option<String>) {
     let store = db::kvp::KeyValueStore::global(cx);
     db::write_and_log(cx, move || async move {
         store
             .scoped(NEW_THREAD_LAUNCH_OPTION_NAMESPACE)
-            .write(kind_id.to_string(), label.unwrap_or_default())
+            .write(kind_id.to_string(), id.unwrap_or_default())
             .await
     });
 }
@@ -343,11 +348,11 @@ pub fn remember_new_thread_launch_option(cx: &App, kind_id: &'static str, label:
 /// over `kind`'s agent-wide `default_launch_option` setting.
 pub fn resolve_new_thread_launch_args(cx: &App, kind: &AgentKindDefinition) -> Vec<String> {
     match remembered_new_thread_launch_option(cx, kind.id) {
-        Some(label) if label.is_empty() => Vec::new(),
-        Some(label) => kind
+        Some(id) if id.is_empty() => Vec::new(),
+        Some(id) => kind
             .resume_options
             .iter()
-            .find(|option| option.label.as_ref() == label)
+            .find(|option| option.id == id)
             .map(|option| option.args.clone())
             .unwrap_or_default(),
         None => {

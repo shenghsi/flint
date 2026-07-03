@@ -448,19 +448,20 @@ impl AgentThreadsPanel {
     ) {
         let workspace = self.workspace.clone();
         let resume_options = kind.resume_options.clone();
-        let effective_label = match store::remembered_new_thread_launch_option(cx, kind.id) {
-            Some(label) if label.is_empty() => None,
-            Some(label) => Some(label),
-            None => AgentThreadSettings::get_global(cx)
-                .command_for_kind(kind.id)
-                .default_launch_option
-                .clone(),
+        let effective_id = match store::remembered_new_thread_launch_option(cx, kind.id) {
+            Some(id) if id.is_empty() => None,
+            Some(id) => Some(id),
+            None => crate::resolve_default_launch_option_id(
+                AgentThreadSettings::get_global(cx).command_for_kind(kind.id),
+                &kind,
+            )
+            .map(str::to_string),
         };
         let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
             {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
-                let is_selected = effective_label.is_none();
+                let is_selected = effective_id.is_none();
                 context_menu = context_menu.toggleable_entry(
                     "New thread",
                     is_selected,
@@ -483,8 +484,8 @@ impl AgentThreadsPanel {
                 let kind = kind.clone();
                 let label = SharedString::from(format!("New — {}", option.label));
                 let args = option.args.clone();
-                let is_selected = effective_label.as_deref() == Some(option.label.as_ref());
-                let option_label = option.label.to_string();
+                let is_selected = effective_id.as_deref() == Some(option.id);
+                let option_id = option.id;
                 context_menu = context_menu.toggleable_entry(
                     label,
                     is_selected,
@@ -499,7 +500,7 @@ impl AgentThreadsPanel {
                         store::remember_new_thread_launch_option(
                             cx,
                             kind.id,
-                            Some(option_label.clone()),
+                            Some(option_id.to_string()),
                         );
                         workspace.update(cx, |workspace, cx| {
                             store::launch_new_thread(workspace, &kind, &args, window, cx);
@@ -566,20 +567,21 @@ impl AgentThreadsPanel {
     ) {
         let workspace = self.workspace.clone();
         let resume_options = kind.resume_options.clone();
-        let effective_label = match store::remembered_launch_option(cx, &thread.session_id) {
-            Some(label) if label.is_empty() => None,
-            Some(label) => Some(label),
-            None => AgentThreadSettings::get_global(cx)
-                .command_for_kind(kind.id)
-                .default_launch_option
-                .clone(),
+        let effective_id = match store::remembered_launch_option(cx, &thread.session_id) {
+            Some(id) if id.is_empty() => None,
+            Some(id) => Some(id),
+            None => crate::resolve_default_launch_option_id(
+                AgentThreadSettings::get_global(cx).command_for_kind(kind.id),
+                &kind,
+            )
+            .map(str::to_string),
         };
         let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
             {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
                 let thread = thread.clone();
-                let is_selected = effective_label.is_none();
+                let is_selected = effective_id.is_none();
                 context_menu = context_menu.toggleable_entry(
                     "Resume",
                     is_selected,
@@ -604,8 +606,8 @@ impl AgentThreadsPanel {
                 let thread = thread.clone();
                 let label = SharedString::from(format!("Resume — {}", option.label));
                 let args = option.args.clone();
-                let is_selected = effective_label.as_deref() == Some(option.label.as_ref());
-                let option_label = option.label.to_string();
+                let is_selected = effective_id.as_deref() == Some(option.id);
+                let option_id = option.id;
                 context_menu = context_menu.toggleable_entry(
                     label,
                     is_selected,
@@ -621,7 +623,7 @@ impl AgentThreadsPanel {
                         store::remember_launch_option(
                             cx,
                             thread.session_id.clone(),
-                            Some(option_label.clone()),
+                            Some(option_id.to_string()),
                         );
                         workspace.update(cx, |workspace, cx| {
                             store::resume_thread(workspace, &kind, &thread, &args, window, cx);
@@ -1520,6 +1522,44 @@ mod tests {
         cx.run_until_parked();
         let args = cx.update(|cx| store::resolve_new_thread_launch_args(cx, &kind));
         assert!(args.is_empty(), "expected no extra args, got {args:?}");
+    }
+
+    // Regression test: a remembered choice is persisted by `ResumeOption::id`,
+    // not by its display `label`, so it must keep resolving correctly even if
+    // a later release edits the label's wording (which orphaned it before
+    // this test was added -- see the panel losing its remembered
+    // resume/new-thread choice across an app upgrade).
+    #[gpui::test]
+    async fn remembered_launch_options_survive_a_label_rename(cx: &mut TestAppContext) {
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+
+        let kind = codex_kind();
+        let option = kind.resume_options[0].clone();
+        let session_id = SharedString::from("session-relabel");
+
+        cx.update(|cx| {
+            store::remember_launch_option(cx, session_id.clone(), Some(option.id.to_string()));
+            store::remember_new_thread_launch_option(cx, kind.id, Some(option.id.to_string()));
+        });
+        cx.run_until_parked();
+
+        let mut renamed_kind = kind;
+        renamed_kind.resume_options[0].label = SharedString::new_static("Totally new wording");
+
+        let args =
+            cx.update(|cx| store::resolve_thread_launch_args(cx, &renamed_kind, &session_id));
+        assert_eq!(
+            args, option.args,
+            "per-thread choice should survive a label rename"
+        );
+
+        let args = cx.update(|cx| store::resolve_new_thread_launch_args(cx, &renamed_kind));
+        assert_eq!(
+            args, option.args,
+            "new-thread choice should survive a label rename"
+        );
     }
 
     #[test]
