@@ -13,6 +13,9 @@ The installation script on the [download](https://flint.dev/download) page is th
 curl -f https://flint.dev/install.sh | sh
 ```
 
+The installation script is the supported Linux install path for official builds
+because it keeps Flint on the auto-update path.
+
 We also offer a preview build of Flint which receives updates about a week ahead of stable. You can install it with:
 
 ```sh
@@ -74,6 +77,14 @@ Build, packaging and instructions for each version are available in the README o
 
 ### Downloading manually
 
+For official builds, use the curl installer above whenever possible so Flint can
+receive auto updates. The portable tarball below is available for custom
+installation paths and is the artifact used by the installer.
+
+<!--
+Native `.deb` and `.rpm` packages are intentionally hidden because they do not
+support Flint's auto-update path. Use the curl installer above instead.
+
 Native packages are the easiest manual installation option. They install the
 Flint launcher, desktop entry, MIME registration, and application icons so
 desktop environments can associate Flint's windows with the correct dock icon.
@@ -101,6 +112,7 @@ sudo dnf install ./flint-linux-x86_64.rpm
 ```
 
 The native packages have the same glibc and GPU requirements described above.
+-->
 
 #### Portable tarball
 
