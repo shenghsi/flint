@@ -73,6 +73,7 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// The current extension [`SchemaVersion`] supported by Flint.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+const UPSTREAM_ZED_EXTENSION_SERVER_URL: &str = "https://zed.dev";
 
 /// Extensions that should no longer be loaded or downloaded.
 ///
@@ -101,6 +102,12 @@ static SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Flint.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
     SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
+}
+
+fn upstream_zed_extension_http_client(
+    http_client: Arc<HttpClientWithUrl>,
+) -> Arc<HttpClientWithUrl> {
+    Arc::new(http_client.with_base_url(UPSTREAM_ZED_EXTENSION_SERVER_URL))
 }
 
 /// Returns whether the given extension version is compatible with this version of Flint.
@@ -268,6 +275,7 @@ impl ExtensionStore {
         let installed_dir = extensions_dir.join("installed");
         let staging_dir = extensions_dir.join("staging");
         let index_path = extensions_dir.join("index.json");
+        let extension_http_client = upstream_zed_extension_http_client(http_client);
 
         let (reload_tx, mut reload_rx) = unbounded();
         let (connection_registered_tx, mut connection_registered_rx) = unbounded();
@@ -283,7 +291,7 @@ impl ExtensionStore {
             reload_complete_senders: Vec::new(),
             wasm_host: WasmHost::new(
                 fs.clone(),
-                http_client.clone(),
+                extension_http_client.clone(),
                 node_runtime,
                 extension_host_proxy,
                 work_dir,
@@ -291,7 +299,7 @@ impl ExtensionStore {
             ),
             wasm_extensions: Vec::new(),
             fs,
-            http_client,
+            http_client: extension_http_client,
             telemetry,
             reload_tx,
             tasks: Vec::new(),
@@ -1948,4 +1956,49 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::future::BoxFuture;
+    use http_client::{Request, Response, http::HeaderValue};
+
+    struct TestHttpClient;
+
+    impl HttpClient for TestHttpClient {
+        fn send(
+            &self,
+            _request: Request<AsyncBody>,
+        ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+            Box::pin(async { Err(anyhow!("test client does not send requests")) })
+        }
+
+        fn user_agent(&self) -> Option<&HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+    }
+
+    #[test]
+    fn extension_http_client_uses_upstream_zed_registry() -> Result<()> {
+        let configured_client = Arc::new(HttpClientWithUrl::new(
+            Arc::new(TestHttpClient),
+            "https://example.com",
+            None,
+        ));
+
+        let extension_client = upstream_zed_extension_http_client(configured_client);
+        let url = extension_client.build_flint_api_url("/extensions", &[("filter", "rust")])?;
+
+        assert_eq!(
+            extension_client.base_url(),
+            UPSTREAM_ZED_EXTENSION_SERVER_URL
+        );
+        assert_eq!(url.as_str(), "https://api.zed.dev/extensions?filter=rust");
+        Ok(())
+    }
 }

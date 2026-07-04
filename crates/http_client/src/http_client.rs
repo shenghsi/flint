@@ -245,6 +245,14 @@ impl HttpClientWithUrl {
         }
     }
 
+    pub fn with_base_url(&self, base_url: impl Into<String>) -> Self {
+        Self::new_url(
+            self.client.client.clone(),
+            base_url,
+            self.client.proxy.clone(),
+        )
+    }
+
     /// Returns the base URL.
     pub fn base_url(&self) -> String {
         self.base_url.lock().clone()
@@ -479,5 +487,68 @@ impl HttpClient for FakeHttpClient {
 
     fn as_fake(&self) -> &FakeHttpClient {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestHttpClient;
+
+    impl HttpClient for TestHttpClient {
+        fn send(
+            &self,
+            _request: Request<AsyncBody>,
+        ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+            Box::pin(async { Err(anyhow!("test client does not send requests")) })
+        }
+
+        fn user_agent(&self) -> Option<&HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+    }
+
+    #[test]
+    fn zed_base_url_uses_upstream_zed_api() -> Result<()> {
+        let client = HttpClientWithUrl::new(Arc::new(TestHttpClient), "https://zed.dev", None);
+
+        let url = client.build_flint_api_url("/extensions", &[("filter", "rust")])?;
+
+        assert_eq!(url.as_str(), "https://api.zed.dev/extensions?filter=rust");
+        Ok(())
+    }
+
+    #[test]
+    fn custom_base_url_is_preserved_for_api_urls() -> Result<()> {
+        let client = HttpClientWithUrl::new(Arc::new(TestHttpClient), "https://example.com", None);
+
+        let url = client.build_flint_api_url("/extensions", &[("filter", "rust")])?;
+
+        assert_eq!(url.as_str(), "https://example.com/extensions?filter=rust");
+        Ok(())
+    }
+
+    #[test]
+    fn with_base_url_preserves_proxy() -> Result<()> {
+        let client = HttpClientWithUrl::new(
+            Arc::new(TestHttpClient),
+            "https://example.com",
+            Some("http://localhost:3128".into()),
+        );
+
+        let client = client.with_base_url("https://zed.dev");
+        let url = client.build_flint_api_url("/extensions", &[("filter", "rust")])?;
+
+        assert_eq!(url.as_str(), "https://api.zed.dev/extensions?filter=rust");
+        assert_eq!(
+            client.proxy().map(Url::as_str),
+            Some("http://localhost:3128/")
+        );
+        Ok(())
     }
 }
