@@ -7,7 +7,7 @@ description: "Real-time collaboration in Zed: share projects, edit code together
 
 Zed supports real-time multiplayer editing. Multiple people can work in the same project simultaneously, seeing each other's cursors and edits as they happen.
 
-Open the Collaboration Panel with {#kb collab_panel::ToggleFocus}. You'll need to [sign in](../authentication.md#signing-in) to access collaboration features.
+Open the Collaboration Panel with {#kb collab_panel::ToggleFocus}.
 
 ## Collaboration Panel {#collaboration-panel}
 

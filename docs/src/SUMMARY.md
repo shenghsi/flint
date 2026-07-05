@@ -71,7 +71,6 @@
 
 # Account & Billing
 
-- [Authenticate](./authentication.md)
 - [Plans & Pricing](./account/plans-and-pricing.md)
 - [Flint-Hosted Models](./account/flint-hosted-models.md)
 - [Billing](./account/billing.md)
