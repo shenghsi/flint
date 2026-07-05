@@ -834,12 +834,6 @@ fn main() {
 
         cx.activate(true);
 
-        cx.spawn({
-            let client = app_state.client.clone();
-            async move |cx| authenticate(client, cx).await
-        })
-        .detach_and_log_err(cx);
-
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
@@ -1191,20 +1185,6 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         })
         .detach();
     }
-}
-
-async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
-    if stdout_is_a_pty() {
-        if client::IMPERSONATE_LOGIN.is_some() {
-            client.sign_in_with_optional_connect(false, cx).await?;
-        } else if client.has_credentials(cx).await {
-            client.sign_in_with_optional_connect(true, cx).await?;
-        }
-    } else if client.has_credentials(cx).await {
-        client.sign_in_with_optional_connect(true, cx).await?;
-    }
-
-    Ok(())
 }
 
 async fn system_id() -> Result<IdType> {

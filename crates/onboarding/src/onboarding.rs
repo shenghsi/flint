@@ -1,5 +1,5 @@
 use crate::multibuffer_hint::MultibufferHint;
-use client::{Client, UserStore};
+use client::UserStore;
 use db::kvp::KeyValueStore;
 use fs::Fs;
 use gpui::{
@@ -24,7 +24,6 @@ use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
     item::{Item, ItemEvent},
-    notifications::NotifyResultExt as _,
     open_new, register_serializable_item, with_active_or_new_workspace,
 };
 
@@ -58,8 +57,6 @@ actions!(
     [
         /// Finish the onboarding process.
         Finish,
-        /// Sign in while in the onboarding flow.
-        SignIn,
         /// Resets the welcome screen hints to their initial state.
         ResetHints
     ]
@@ -240,20 +237,6 @@ impl Onboarding {
         go_to_welcome_page(cx);
     }
 
-    fn handle_sign_in(&mut self, _: &SignIn, window: &mut Window, cx: &mut Context<Self>) {
-        let client = Client::global(cx);
-        let workspace = self.workspace.clone();
-
-        window
-            .spawn(cx, async move |mut cx| {
-                client
-                    .sign_in_with_optional_connect(true, &cx)
-                    .await
-                    .notify_workspace_async_err(workspace, &mut cx);
-            })
-            .detach();
-    }
-
     fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         crate::basics_page::render_basics_page(&self.user_store, cx).into_any_element()
     }
@@ -273,7 +256,6 @@ impl Render for Onboarding {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .on_action(Self::on_finish)
-            .on_action(cx.listener(Self::handle_sign_in))
             .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
                 window.focus_next(cx);
                 cx.notify();

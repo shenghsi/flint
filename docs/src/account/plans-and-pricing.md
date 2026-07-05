@@ -7,7 +7,7 @@ description: Compare Zed's Free, Pro, and Business plans, and understand token-b
 
 For costs and more information on pricing, visit [Zed's pricing page](https://zed.dev/pricing).
 
-Zed works without AI features or a subscription. No [authentication](../authentication.md) is required for the editor itself.
+Flint works without AI features or a subscription, and does not support signing in to a Flint account.
 
 ## Plans {#plans}
 
