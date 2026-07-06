@@ -136,6 +136,58 @@ Other entities can then register a callback to handle these events by doing `cx.
 - Build the local macOS app bundle at `/tmp/Flint-Local.app` with `./script/bundle-tmp-app`.
 - Use `./script/clippy` instead of `cargo clippy`
 
+# Zed vs Flint boundary
+
+Flint is a single-user fork of Zed with no collab backend, no user accounts,
+and no cloud service of its own (see "Flint goals" — not collab-first).
+"Zed" still appears throughout the codebase, but not all of it is a leftover
+bug. Before renaming a "Zed" reference to "Flint" or vice versa, check which
+bucket it's in:
+
+**Keep referencing Zed (do not rename) — these are real upstream
+dependencies, not branding:**
+- The `zed_extension_api` crate name, and the `zed:api-version` /
+  `zed:extension/*` WIT namespace in `extension_host`'s wasm host. Existing
+  Zed extensions declare these exact identifiers; renaming breaks every
+  extension Flint can currently load.
+- `api.zed.dev` / `cloud.zed.dev` / `llm-staging.zed.dev` endpoints reached
+  via `build_flint_api_url` / `build_flint_cloud_url` / `build_flint_llm_url`
+  (`crates/http_client/src/http_client.rs`) and
+  `UPSTREAM_ZED_EXTENSION_SERVER_URL` (`crates/extension_host`). Flint runs no
+  extension registry or LLM proxy of its own, so these deliberately proxy to
+  Zed's public services. The function names are already Flint-branded
+  wrappers — that's the intended pattern for this kind of proxying.
+- `zed-industries` git dependencies in `Cargo.toml` (tree-sitter grammars,
+  the `alacritty`/`wgpu`/`reqwest`/`notify`/`lsp-types` forks, etc.). These
+  are genuinely maintained upstream and Flint tracks them.
+- `ZED_*` environment variables (`ZED_SERVER_URL`, `ZED_IMPERSONATE`,
+  `ZED_WORKTREE_ROOT`, task variables like `ZED_FILE`/`ZED_COLUMN`, and many
+  more). These are load-bearing external interfaces — scripts, task configs,
+  and CI already depend on the exact names. Don't rename these opportunistically.
+- GPUI's original-author attribution and any comment crediting Zed for code
+  Flint still vendors as-is.
+
+**Should be Flint, not Zed — rename on sight when you touch the surrounding
+code:**
+- Any user-visible string (UI labels, dialogs, tooltips, error messages,
+  onboarding copy, doc prose) describing Flint's *own* product or behavior.
+  Compare against `crates/release_channel`'s `display_name()`/
+  `app_identifier()` (returns "Flint"/"Flint Dev"/"Flint-Editor-Stable" etc.)
+  and `crates/onboarding`/`crates/title_bar` (already fully de-branded) as
+  the reference pattern.
+- Strings that correctly name Zed by way of comparison (migration guides,
+  "compatible with Zed's keymap", crediting upstream) are fine as-is — the
+  test is whether the sentence is about Flint or about Zed.
+- Known stale spots as of this writing, fix if you're already in the area:
+  `repository = "https://github.com/zed-industries/flint"` in
+  `crates/gpui`, `crates/extension_api`, `crates/html_to_markdown`
+  Cargo.toml (mismatched org/repo, not a real URL); "Zed Preview"/"Zed
+  Nightly"/"Zed Dev" comments in `assets/settings/default.json` (the actual
+  channel names are "Flint Preview" etc.); `docs/src/account/*` and
+  `docs/src/collaboration/overview.md` (describe the removed cloud-account
+  and collab features); install instructions in `docs/src/migrate/*.md`
+  that tell the reader to install "Zed" when the doc means Flint itself.
+
 # Pull request hygiene
 
 When an agent opens or updates a pull request, it must:
