@@ -208,6 +208,13 @@ Release Notes:
 - N/A
 ```
 
+# Releases
+
+* To cut a release: bump the version in `crates/flint/Cargo.toml` (and `Cargo.lock`), commit, push to main, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+* Do not run `gh release create` by hand after pushing the tag. `.github/workflows/release.yml` triggers on any `v*` tag push, runs tests/clippy, builds the macOS/Linux/Windows binaries, and creates the GitHub release itself (`script/create-draft-release`) once assets are ready. Manually creating the release first makes CI's own creation step no-op, leaving a published, asset-less release live on GitHub for the ~2-3h the builds take.
+* Track progress with `gh run list --workflow=release.yml`.
+* Only tags ending in `-pre` auto-publish (`auto_release_preview` job). Stable (non-`-pre`) releases finish as a draft with all assets attached — publish with `gh release edit vX.Y.Z --draft=false` once `validate_release_assets` has passed.
+
 # Crash Investigation
 
 ## Sentry Integration
