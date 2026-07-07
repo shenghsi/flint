@@ -255,16 +255,16 @@ function sign_app_binaries() {
         dmg_file_path="${dmg_target_directory}/Flint-${arch_suffix}.dmg"
         xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
 
-        rm -rf ${dmg_source_directory}
-        mkdir -p ${dmg_source_directory}
+        rm -rf "${dmg_source_directory}"
+        mkdir -p "${dmg_source_directory}"
         mv "${app_path}" "${dmg_source_directory}"
         notarization_key_file=$(mktemp)
 
         echo "Adding symlink to /Applications to ${dmg_source_directory}"
-        ln -s /Applications ${dmg_source_directory}
+        ln -s /Applications "${dmg_source_directory}"
 
         echo "Creating final DMG at ${dmg_file_path} using ${dmg_source_directory}"
-        hdiutil create -volname Flint -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+        create_dmg "${dmg_source_directory}" "${dmg_file_path}"
 
         # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
         # This symlink causes CPU issues with Flint if the Flint codebase is the project being worked on, so we simply remove it for now.
@@ -288,6 +288,28 @@ function sign_app_binaries() {
             open $dmg_target_directory
         fi
     fi
+}
+
+function create_dmg() {
+    local source_directory=$1
+    local output_path=$2
+    local attempt
+
+    for attempt in 1 2 3; do
+        rm -f "${output_path}"
+        sync
+
+        if hdiutil create -volname Flint -srcfolder "${source_directory}" -ov -format UDZO "${output_path}"; then
+            return 0
+        fi
+
+        if [[ "${attempt}" -eq 3 ]]; then
+            return 1
+        fi
+
+        echo "hdiutil create failed; retrying in 10 seconds (${attempt}/3)"
+        sleep 10
+    done
 }
 
 function sign_binary() {
