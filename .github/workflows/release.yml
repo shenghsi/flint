@@ -275,7 +275,7 @@ jobs:
           name: flint-remote-server-macos-aarch64.gz
           path: target/flint-remote-server-macos-aarch64.gz
           if-no-files-found: error
-    timeout-minutes: 90
+    timeout-minutes: 150
 
   bundle_mac_x86_64:
     needs:
@@ -321,7 +321,7 @@ jobs:
           name: flint-remote-server-macos-x86_64.gz
           path: target/flint-remote-server-macos-x86_64.gz
           if-no-files-found: error
-    timeout-minutes: 90
+    timeout-minutes: 150
 
   bundle_linux_aarch64:
     needs:
