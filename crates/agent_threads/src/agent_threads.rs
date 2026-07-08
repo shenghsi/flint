@@ -16,7 +16,7 @@ use workspace::Workspace;
 
 pub use history::HistoricalThread;
 pub use panel::AgentThreadsPanel;
-pub use store::AgentThreadStore;
+pub use store::{AgentThreadStore, restore_threads_for_workspace, snapshot_live_agent_threads};
 
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
@@ -145,6 +145,7 @@ pub struct AgentThreadSettings {
     pub claude: AgentLaunchCommand,
     pub max_visible_threads_per_agent: usize,
     pub show_plan_usage: bool,
+    pub reopen_sessions_on_startup: settings::AgentThreadReopenSessionsOnStartup,
     pub dock: settings::DockSide,
 }
 
@@ -166,6 +167,7 @@ impl Settings for AgentThreadSettings {
             claude: launch_command_from_content(content.claude, "claude"),
             max_visible_threads_per_agent: content.max_visible_threads_per_agent.unwrap_or(5),
             show_plan_usage: content.show_plan_usage.unwrap_or(true),
+            reopen_sessions_on_startup: content.reopen_sessions_on_startup.unwrap_or_default(),
             dock: content.dock.unwrap_or(settings::DockSide::Left),
         }
     }
@@ -278,5 +280,33 @@ mod tests {
     fn plan_usage_is_enabled_by_default() {
         let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
         assert!(settings.show_plan_usage);
+    }
+
+    #[test]
+    fn reopen_sessions_on_startup_is_never_by_default() {
+        let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
+
+        assert_eq!(
+            settings.reopen_sessions_on_startup,
+            settings::AgentThreadReopenSessionsOnStartup::Never
+        );
+    }
+
+    #[test]
+    fn reopen_sessions_on_startup_reads_matching_workspace_value() {
+        let settings = AgentThreadSettings::from_settings(&settings::SettingsContent {
+            agent_threads: Some(settings::AgentThreadSettingsContent {
+                reopen_sessions_on_startup: Some(
+                    settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace,
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings.reopen_sessions_on_startup,
+            settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace
+        );
     }
 }

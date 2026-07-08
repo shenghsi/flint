@@ -28,7 +28,8 @@ use futures::{StreamExt, channel::oneshot};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
-    App, AppContext, Application, AsyncApp, QuitMode, Task, TaskExt, UpdateGlobal as _, block_on,
+    App, AppContext, Application, AsyncApp, QuitMode, Task, TaskExt, UpdateGlobal as _,
+    WindowHandle, block_on,
 };
 use gpui_platform;
 
@@ -1090,11 +1091,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         &paths_with_position,
                         &[],
                         false,
-                        app_state,
+                        app_state.clone(),
                         base_open_options,
                         cx,
                     )
                     .await?;
+                    restore_agent_threads_for_multiworkspace(
+                        workspace,
+                        app_state.clone(),
+                        false,
+                        cx,
+                    )
+                    .await;
 
                     workspace
                         .update(cx, |multi_workspace, window, cx| {
@@ -1138,7 +1146,16 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         let base_open_options = flint::open_options_for_request(open_behavior, &location, cx);
         cx.spawn(async move |cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
-            open_remote_project(connection_options, paths, app_state, base_open_options, cx).await
+            let window = open_remote_project(
+                connection_options,
+                paths,
+                app_state.clone(),
+                base_open_options,
+                cx,
+            )
+            .await?;
+            restore_agent_threads_for_multiworkspace(window, app_state, false, cx).await;
+            anyhow::Ok(window)
         })
         .detach_and_log_err(cx);
         return;
@@ -1156,11 +1173,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         task = Some(cx.spawn(async move |cx| {
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
-            let (_window, results) = open_paths_with_positions(
+            let (window, results) = open_paths_with_positions(
                 &paths_with_position,
                 &request.diff_paths,
                 request.diff_all,
-                app_state,
+                app_state.clone(),
                 workspace::OpenOptions {
                     open_in_dev_container: dev_container,
                     ..base_open_options
@@ -1168,6 +1185,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 cx,
             )
             .await?;
+            restore_agent_threads_for_multiworkspace(window, app_state, false, cx).await;
             for result in results.into_iter().flatten() {
                 if let Err(err) = result {
                     log::error!("Error opening path: {err:#}");
@@ -1234,9 +1252,11 @@ pub(crate) async fn restore_or_create_workspace(
         for multi_workspace in multi_workspaces {
             let result = match &multi_workspace.active_workspace.location {
                 SerializedWorkspaceLocation::Local => {
-                    restore_multiworkspace(multi_workspace, app_state.clone(), cx)
-                        .await
-                        .map(|_| ())
+                    let window =
+                        restore_multiworkspace(multi_workspace, app_state.clone(), cx).await?;
+                    restore_agent_threads_for_multiworkspace(window, app_state.clone(), true, cx)
+                        .await;
+                    Ok(())
                 }
                 SerializedWorkspaceLocation::Remote(connection_options) => {
                     let mut connection_options = connection_options.clone();
@@ -1268,6 +1288,13 @@ pub(crate) async fn restore_or_create_workspace(
                             window,
                             &state,
                             app_state.fs.clone(),
+                            cx,
+                        )
+                        .await;
+                        restore_agent_threads_for_multiworkspace(
+                            window,
+                            app_state.clone(),
+                            true,
                             cx,
                         )
                         .await;
@@ -1381,6 +1408,77 @@ pub(crate) async fn restore_or_create_workspace(
     }
 
     Ok(())
+}
+
+async fn restore_agent_threads_for_multiworkspace(
+    window: WindowHandle<MultiWorkspace>,
+    app_state: Arc<AppState>,
+    startup_restore: bool,
+    cx: &mut AsyncApp,
+) {
+    let (last_session_id, restore_mode) = cx.update(|cx| {
+        (
+            app_state
+                .session
+                .read(cx)
+                .last_session_id()
+                .map(str::to_string),
+            agent_threads::AgentThreadSettings::get_global(cx).reopen_sessions_on_startup,
+        )
+    });
+
+    let Some(last_session_id) = last_session_id else {
+        return;
+    };
+    match restore_mode {
+        settings::AgentThreadReopenSessionsOnStartup::Never => return,
+        settings::AgentThreadReopenSessionsOnStartup::StartupRestore if !startup_restore => return,
+        settings::AgentThreadReopenSessionsOnStartup::StartupRestore
+        | settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace => {}
+    }
+
+    let Some(tasks) = window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace
+                .workspaces()
+                .map(|workspace| {
+                    workspace.update(cx, |workspace, cx| {
+                        agent_threads::restore_threads_for_workspace(
+                            workspace,
+                            &last_session_id,
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .log_err()
+    else {
+        return;
+    };
+
+    let failure_count = futures::future::join_all(tasks)
+        .await
+        .into_iter()
+        .sum::<usize>();
+    if failure_count == 0 {
+        return;
+    }
+
+    let message = if failure_count == 1 {
+        "Failed to reopen 1 agent session. Check logs for details.".to_string()
+    } else {
+        format!("Failed to reopen {failure_count} agent sessions. Check logs for details.")
+    };
+
+    window
+        .update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.show_toast(Toast::new(NotificationId::unique::<()>(), message), cx);
+            });
+        })
+        .log_err();
 }
 
 async fn restorable_workspaces(

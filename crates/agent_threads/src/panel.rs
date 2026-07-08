@@ -1174,7 +1174,7 @@ mod tests {
                     claude: Some(echo_command("claude", root_path)),
                     max_visible_threads_per_agent: Some(max_visible_threads_per_agent),
                     show_plan_usage: None,
-                    dock: None,
+                    ..Default::default()
                 });
             });
         });
