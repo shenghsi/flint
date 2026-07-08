@@ -252,7 +252,7 @@ fn general_page(cx: &App) -> SettingsPage {
                 description: "When opening Flint, avoid Restricted Mode by auto-trusting all projects, enabling use of all features without having to give permission to each new project.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("session.trust_all_projects"),
+                    json_path: Some("session.trust_all_worktrees"),
                     pick: |settings_content| {
                         settings_content
                             .session
@@ -9178,6 +9178,34 @@ fn write_helix_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn setting_item_by_title<'a>(
+        pages: &'a [SettingsPage],
+        title: &str,
+    ) -> &'a crate::SettingItem {
+        pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .find_map(|item| match item {
+                SettingsPageItem::SettingItem(setting_item) if setting_item.title == title => {
+                    Some(setting_item)
+                }
+                _ => None,
+            })
+            .expect("setting item should exist")
+    }
+
+    #[gpui::test]
+    fn test_security_section_uses_trust_all_worktrees_key(cx: &mut gpui::TestAppContext) {
+        let page = cx.update(|cx| general_page(cx));
+        let pages = [page];
+        let setting_item = setting_item_by_title(&pages, "Trust All Projects By Default");
+
+        assert_eq!(
+            setting_item.field.json_path(),
+            Some("session.trust_all_worktrees")
+        );
+    }
 
     #[test]
     fn test_write_vim_helix_mode() {
