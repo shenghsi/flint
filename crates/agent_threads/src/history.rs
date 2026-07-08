@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
@@ -13,6 +13,7 @@ use project::Project;
 use rpc::AnyProtoClient;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use util::paths::PathStyle;
 
 use crate::AgentLaunchCommand;
 
@@ -132,6 +133,7 @@ impl HistoryFs for LocalHistoryFs {
 /// here. `AnyProtoClient` has no such restriction.
 struct RemoteHistoryFs {
     proto_client: AnyProtoClient,
+    path_style: PathStyle,
 }
 
 #[async_trait]
@@ -141,15 +143,15 @@ impl HistoryFs for RemoteHistoryFs {
             .proto_client
             .request(proto::ListRemoteDirectory {
                 dev_server_id: proto::REMOTE_SERVER_PROJECT_ID,
-                path: path.to_string_lossy().into_owned(),
+                path: path_for_style(path, self.path_style)?,
                 config: None,
             })
             .await?;
         Ok(response
             .entries
             .into_iter()
-            .map(|entry| path.join(entry))
-            .collect())
+            .map(|entry| self.path_style.join_path(path, entry))
+            .collect::<Result<Vec<_>>>()?)
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
@@ -161,7 +163,7 @@ impl HistoryFs for RemoteHistoryFs {
             .proto_client
             .request(proto::GetPathMetadata {
                 project_id: proto::REMOTE_SERVER_PROJECT_ID,
-                path: path.to_string_lossy().into_owned(),
+                path: path_for_style(path, self.path_style)?,
             })
             .await?;
         let Some(modified_at) = response.mtime else {
@@ -183,11 +185,36 @@ impl RemoteHistoryFs {
             .proto_client
             .request(proto::ReadRemoteFile {
                 dev_server_id: proto::REMOTE_SERVER_PROJECT_ID,
-                path: path.to_string_lossy().into_owned(),
+                path: path_for_style(path, self.path_style)?,
             })
             .await?;
         Ok(response.content)
     }
+}
+
+fn path_for_style(path: &Path, path_style: PathStyle) -> Result<String> {
+    let path = path
+        .to_str()
+        .with_context(|| format!("path contains invalid UTF-8: {path:?}"))?;
+    Ok(normalize_path_for_style(path, path_style))
+}
+
+fn normalize_path_for_style(path: &str, path_style: PathStyle) -> String {
+    let path = match path_style {
+        PathStyle::Posix => path.replace('\\', "/"),
+        PathStyle::Windows => path.to_string(),
+    };
+    path_style.normalize(&path)
+}
+
+pub(crate) fn paths_equal_for_style(left: &Path, right: &Path, path_style: PathStyle) -> bool {
+    let Some(left) = left.to_str() else {
+        return left == right;
+    };
+    let Some(right) = right.to_str() else {
+        return left == right;
+    };
+    normalize_path_for_style(left, path_style) == normalize_path_for_style(right, path_style)
 }
 
 /// The host-resolved filesystem and base config directory (e.g.
@@ -197,6 +224,14 @@ pub struct AgentHistoryHost {
     pub fs: Arc<dyn HistoryFs>,
     pub base_dir: PathBuf,
     pub(crate) cache: Arc<HistoryParseCache>,
+    pub(crate) path_style: PathStyle,
+}
+
+impl AgentHistoryHost {
+    pub fn join(&self, path: impl AsRef<Path>, child: impl AsRef<Path>) -> Result<PathBuf> {
+        let path = path_for_style(path.as_ref(), self.path_style)?;
+        self.path_style.join_path(path, child)
+    }
 }
 
 impl HistoryParseCache {
@@ -529,14 +564,16 @@ pub async fn resolve_history_host(
     cache: Arc<HistoryParseCache>,
     cx: &mut AsyncApp,
 ) -> Result<AgentHistoryHost> {
-    let fs = project.read_with(cx, |project, cx| {
+    let (fs, path_style) = project.read_with(cx, |project, cx| {
+        let path_style = project.path_style(cx);
         let fs: Arc<dyn HistoryFs> = match project.remote_client() {
             Some(remote_client) => Arc::new(RemoteHistoryFs {
                 proto_client: remote_client.read(cx).proto_client(),
+                path_style,
             }),
             None => Arc::new(LocalHistoryFs(project.fs().clone())),
         };
-        fs
+        (fs, path_style)
     });
 
     let base_dir = resolve_history_base_dir(project, env_var_name, default_dir_name, cx).await?;
@@ -545,6 +582,7 @@ pub async fn resolve_history_host(
         fs,
         base_dir,
         cache,
+        path_style,
     })
 }
 
@@ -557,10 +595,11 @@ pub async fn resolve_history_base_dir(
     default_dir_name: &str,
     cx: &mut AsyncApp,
 ) -> Result<PathBuf> {
-    let (environment, anchor_path) = project.read_with(cx, |project, cx| {
+    let (environment, anchor_path, path_style) = project.read_with(cx, |project, cx| {
         (
             project.environment().clone(),
             first_worktree_root(project, cx),
+            project.path_style(cx),
         )
     });
     let anchor_path = anchor_path.ok_or_else(|| anyhow!("project has no worktrees"))?;
@@ -572,7 +611,7 @@ pub async fn resolve_history_base_dir(
         .await
         .ok_or_else(|| anyhow!("couldn't resolve the project's environment"))?;
 
-    base_dir_from_env(&env_map, env_var_name, default_dir_name)
+    base_dir_from_env(&env_map, env_var_name, default_dir_name, path_style)
 }
 
 /// Picks `$<env_var_name>` when set, otherwise `$HOME/<default_dir_name>`.
@@ -582,14 +621,18 @@ fn base_dir_from_env(
     env_map: &HashMap<String, String>,
     env_var_name: &str,
     default_dir_name: &str,
+    path_style: PathStyle,
 ) -> Result<PathBuf> {
     if let Some(override_dir) = env_map.get(env_var_name) {
-        Ok(PathBuf::from(override_dir))
+        Ok(PathBuf::from(normalize_path_for_style(
+            override_dir,
+            path_style,
+        )))
     } else {
         let home = env_map
             .get("HOME")
             .ok_or_else(|| anyhow!("no HOME in the project's resolved environment"))?;
-        Ok(PathBuf::from(home).join(default_dir_name))
+        path_style.join_path(home, default_dir_name)
     }
 }
 
@@ -673,7 +716,7 @@ mod tests {
         env.insert("CODEX_HOME".to_string(), "/custom/codex-home".to_string());
         env.insert("HOME".to_string(), "/home/alice".to_string());
 
-        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex").unwrap();
+        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix).unwrap();
 
         assert_eq!(base_dir, PathBuf::from("/custom/codex-home"));
     }
@@ -683,7 +726,7 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("HOME".to_string(), "/home/alice".to_string());
 
-        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex").unwrap();
+        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix).unwrap();
 
         assert_eq!(base_dir, PathBuf::from("/home/alice/.codex"));
     }
@@ -692,9 +735,29 @@ mod tests {
     fn base_dir_errors_when_home_and_override_both_unset() {
         let env = HashMap::default();
 
-        let result = base_dir_from_env(&env, "CODEX_HOME", ".codex");
+        let result = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn base_dir_uses_project_path_style_when_falling_back_to_home() {
+        let mut env = HashMap::default();
+        env.insert("HOME".to_string(), "/home/alice".to_string());
+
+        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix).unwrap();
+
+        assert_eq!(base_dir.to_string_lossy(), "/home/alice/.codex");
+    }
+
+    #[test]
+    fn base_dir_does_not_use_the_client_platform_separator() {
+        let mut env = HashMap::default();
+        env.insert("HOME".to_string(), "C:\\Users\\alice".to_string());
+
+        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Windows).unwrap();
+
+        assert_eq!(base_dir.to_string_lossy(), "C:\\Users\\alice\\.codex");
     }
 
     #[gpui::test]
@@ -711,6 +774,7 @@ mod tests {
             fs: fs.clone(),
             base_dir: PathBuf::from("/history"),
             cache: Arc::new(HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         };
 
         let first = host
@@ -742,6 +806,7 @@ mod tests {
             fs: fs.clone(),
             base_dir: PathBuf::from("/history"),
             cache: Arc::new(HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         };
 
         host.parse_file(Path::new("/history/file"), str::len)
@@ -764,6 +829,7 @@ mod tests {
             fs: fs.clone(),
             base_dir: PathBuf::from("/history"),
             cache: Arc::new(HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         };
 
         host.parse_file(Path::new("/history/file"), str::len)
@@ -802,6 +868,7 @@ mod tests {
                 local,
                 cache_path.to_path_buf(),
             )),
+            path_style: PathStyle::Posix,
         }
     }
 
