@@ -9179,10 +9179,7 @@ fn write_helix_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
 mod tests {
     use super::*;
 
-    fn setting_item_by_title<'a>(
-        pages: &'a [SettingsPage],
-        title: &str,
-    ) -> &'a crate::SettingItem {
+    fn setting_item_by_title<'a>(pages: &'a [SettingsPage], title: &str) -> &'a crate::SettingItem {
         pages
             .iter()
             .flat_map(|page| page.items.iter())
