@@ -11,7 +11,11 @@ use serde_json::Value;
 use crate::AgentLaunchCommand;
 #[cfg(test)]
 use crate::history::LocalHistoryFs;
-use crate::history::{AgentHistoryHost, AgentHistoryProvider, HistoricalThread};
+use crate::history::{
+    AgentHistoryHost, AgentHistoryProvider, HistoricalThread, paths_equal_for_style,
+};
+#[cfg(test)]
+use util::paths::PathStyle;
 
 const MAX_TITLE_CHARS: usize = 60;
 const MAX_PROJECT_HISTORY_FILES_SCANNED: usize = 200;
@@ -98,7 +102,9 @@ async fn scan_history_file(
     host: &AgentHistoryHost,
     project_roots: &[PathBuf],
 ) -> HashMap<String, HistoricalThread> {
-    let history_path = host.base_dir.join("history.jsonl");
+    let Ok(history_path) = host.join(&host.base_dir, "history.jsonl") else {
+        return HashMap::default();
+    };
     let Ok(records) = host
         .parse_file(&history_path, |content| {
             content
@@ -114,7 +120,10 @@ async fn scan_history_file(
     let mut latest_by_session = HashMap::default();
     for record in records.iter() {
         let project_root = PathBuf::from(&record.project);
-        if !project_roots.iter().any(|root| root == &project_root) {
+        if !project_roots
+            .iter()
+            .any(|root| paths_equal_for_style(root, &project_root, host.path_style))
+        {
             continue;
         }
         let Some(title) = normalize_title(&record.display) else {
@@ -145,10 +154,13 @@ async fn scan_project_history_files(
 ) -> Vec<HistoricalThread> {
     let mut threads = Vec::new();
     for project_root in project_roots {
-        let project_dir = host
-            .base_dir
-            .join("projects")
-            .join(project_history_dir_name(project_root));
+        let Ok(projects_dir) = host.join(&host.base_dir, "projects") else {
+            continue;
+        };
+        let Ok(project_dir) = host.join(projects_dir, project_history_dir_name(project_root))
+        else {
+            continue;
+        };
         for file_path in list_jsonl_files(host, &project_dir).await {
             if let Some(thread) = read_project_history_file(host, &file_path, project_root).await {
                 threads.push(thread);
@@ -234,7 +246,7 @@ async fn read_project_history_file(
     if !summary
         .working_directories
         .iter()
-        .any(|cwd| cwd == project_root)
+        .any(|cwd| paths_equal_for_style(cwd, project_root, host.path_style))
     {
         return None;
     }
@@ -265,8 +277,8 @@ fn message_content_title(content: &Value) -> Option<String> {
 }
 
 fn project_history_dir_name(project_root: &Path) -> String {
+    let project_root = project_root.to_string_lossy().replace('\\', "/");
     project_root
-        .to_string_lossy()
         .chars()
         .map(|character| match character {
             '/' | '\\' => '-',
@@ -363,6 +375,7 @@ mod tests {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
             cache: Arc::new(crate::history::HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         }
     }
 
@@ -386,6 +399,7 @@ mod tests {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
             cache: Arc::new(crate::history::HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         }
     }
 
@@ -427,6 +441,23 @@ mod tests {
 
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].session_id.as_ref(), "session-a");
+    }
+
+    #[gpui::test]
+    async fn scan_matches_posix_remote_project_when_client_root_uses_windows_separators(
+        cx: &mut TestAppContext,
+    ) {
+        let content = history_line("session-a", "/home/dev/project", "in remote project", 100);
+        let host = host_with_history(cx, &content).await;
+
+        let threads = ClaudeHistoryProvider
+            .scan(&host, &[PathBuf::from("\\home\\dev\\project")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].session_id.as_ref(), "session-a");
+        assert_eq!(threads[0].project_root, PathBuf::from("/home/dev/project"));
     }
 
     #[gpui::test]
@@ -584,6 +615,7 @@ mod tests {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
             cache: Arc::new(crate::history::HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         };
 
         let threads = ClaudeHistoryProvider
@@ -606,6 +638,7 @@ mod tests {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/claude-home"),
             cache: Arc::new(crate::history::HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         };
 
         let threads = ClaudeHistoryProvider

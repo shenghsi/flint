@@ -11,7 +11,11 @@ use serde_json::Value;
 use crate::AgentLaunchCommand;
 #[cfg(test)]
 use crate::history::LocalHistoryFs;
-use crate::history::{AgentHistoryHost, AgentHistoryProvider, HistoricalThread};
+use crate::history::{
+    AgentHistoryHost, AgentHistoryProvider, HistoricalThread, paths_equal_for_style,
+};
+#[cfg(test)]
+use util::paths::PathStyle;
 
 /// Bounds the cost of matching sessions to projects regardless of total
 /// history depth: only the most recent rollout files are opened to read
@@ -63,7 +67,7 @@ impl AgentHistoryProvider for CodexHistoryProvider {
         host: &AgentHistoryHost,
         project_roots: &[PathBuf],
     ) -> Result<Vec<HistoricalThread>> {
-        let sessions_dir = host.base_dir.join("sessions");
+        let sessions_dir = host.join(&host.base_dir, "sessions")?;
         let mut rollout_files = list_rollout_files(host, &sessions_dir).await;
         // Filenames embed an ISO timestamp (rollout-YYYY-MM-DDTHH-MM-SS-<id>.jsonl),
         // so descending lexical order is descending chronological order.
@@ -81,7 +85,10 @@ impl AgentHistoryProvider for CodexHistoryProvider {
                 continue;
             };
             let project_root = PathBuf::from(&summary.cwd);
-            if !project_roots.iter().any(|root| root == &project_root) {
+            if !project_roots
+                .iter()
+                .any(|root| paths_equal_for_style(root, &project_root, host.path_style))
+            {
                 continue;
             }
             let title = titles
@@ -180,7 +187,9 @@ async fn read_session_summary(
 }
 
 async fn load_session_titles(host: &AgentHistoryHost) -> HashMap<String, String> {
-    let index_path = host.base_dir.join("session_index.jsonl");
+    let Ok(index_path) = host.join(&host.base_dir, "session_index.jsonl") else {
+        return HashMap::default();
+    };
     let Ok(titles) = host
         .parse_file(&index_path, |content| {
             let mut titles = HashMap::default();
@@ -201,7 +210,9 @@ async fn load_session_titles(host: &AgentHistoryHost) -> HashMap<String, String>
 }
 
 async fn load_history_titles(host: &AgentHistoryHost) -> HashMap<String, String> {
-    let history_path = host.base_dir.join("history.jsonl");
+    let Ok(history_path) = host.join(&host.base_dir, "history.jsonl") else {
+        return HashMap::default();
+    };
     let Ok(titles) = host
         .parse_file(&history_path, |content| {
             let mut latest_titles: HashMap<String, (u64, String)> = HashMap::default();
@@ -358,6 +369,7 @@ mod tests {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/codex-home"),
             cache: Arc::new(crate::history::HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         }
     }
 
@@ -480,6 +492,33 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn scan_matches_posix_remote_cwd_when_client_root_uses_windows_separators(
+        cx: &mut TestAppContext,
+    ) {
+        let rollout =
+            session_meta_line("session-a", "/home/dev/project", "2026-06-18T20:23:14.000Z");
+        let host = host_with_fixture(
+            cx,
+            &[(
+                "2026/06/18/rollout-2026-06-18T20-23-14-session-a.jsonl",
+                rollout,
+            )],
+            None,
+            None,
+        )
+        .await;
+
+        let threads = CodexHistoryProvider
+            .scan(&host, &[PathBuf::from("\\home\\dev\\project")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].session_id.as_ref(), "session-a");
+        assert_eq!(threads[0].project_root, PathBuf::from("/home/dev/project"));
+    }
+
+    #[gpui::test]
     async fn scan_orders_most_recent_rollout_first(cx: &mut TestAppContext) {
         let older = session_meta_line("session-older", "/root", "2026-06-18T20:23:14.000Z");
         let newer = session_meta_line("session-newer", "/root", "2026-06-18T21:00:00.000Z");
@@ -539,6 +578,7 @@ mod tests {
             fs: Arc::new(LocalHistoryFs(fs)),
             base_dir: PathBuf::from("/codex-home"),
             cache: Arc::new(crate::history::HistoryParseCache::default()),
+            path_style: PathStyle::Posix,
         };
 
         let threads = CodexHistoryProvider
