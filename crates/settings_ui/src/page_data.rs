@@ -5394,7 +5394,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 6] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5438,6 +5438,29 @@ fn panels_page() -> SettingsPage {
                             .agent_threads
                             .get_or_insert_default()
                             .show_plan_usage = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Reopen Sessions",
+                description: "When to reopen live resumed agent sessions from the previous app session.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_threads.reopen_sessions_on_startup"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .reopen_sessions_on_startup
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .reopen_sessions_on_startup = value;
                     },
                 }),
                 metadata: None,

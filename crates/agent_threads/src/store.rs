@@ -5,17 +5,18 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, Global, SharedString,
-    Subscription, TaskExt, WeakEntity, Window,
+    Subscription, Task, TaskExt, WeakEntity, Window,
 };
+use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use task::{RevealStrategy, RevealTarget, Shell, SpawnInTerminal};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{Workspace, WorkspaceId};
 
 use crate::{
     AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread,
-    resolve_default_launch_args,
+    agent_kind_registry, resolve_default_launch_args,
 };
 
 #[derive(Clone)]
@@ -102,6 +103,18 @@ pub enum AgentThreadStoreEvent {
     ThreadClosed { kind_id: &'static str },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentThreadSessionRestoreRecord {
+    pub workspace_id: WorkspaceId,
+    pub kind_id: String,
+    pub session_id: String,
+    pub title: String,
+    pub project_root: PathBuf,
+    pub last_activity_at: u64,
+}
+
+const SESSION_RESTORE_NAMESPACE: &str = "agent-thread-session-restore";
+
 pub struct AgentThreadStore {
     threads: HashMap<EntityId, ThreadEntry>,
     subscriptions: HashMap<EntityId, Vec<Subscription>>,
@@ -150,6 +163,40 @@ impl AgentThreadStore {
             })
             .cloned()
             .collect()
+    }
+
+    fn live_threads_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        cx: &App,
+    ) -> Vec<AgentThreadMetadata> {
+        self.threads
+            .values()
+            .filter(|entry| {
+                entry
+                    .workspace
+                    .upgrade()
+                    .is_some_and(|workspace| workspace.read(cx).database_id() == Some(workspace_id))
+            })
+            .map(|entry| entry.metadata.clone())
+            .collect()
+    }
+
+    fn session_restore_records(&self, cx: &App) -> Vec<AgentThreadSessionRestoreRecord> {
+        let mut records = Vec::new();
+        for entry in self.threads.values() {
+            let Some(workspace) = entry.workspace.upgrade() else {
+                continue;
+            };
+            let Some(workspace_id) = workspace.read(cx).database_id() else {
+                continue;
+            };
+            records.extend(snapshot_records_for_workspace(
+                workspace_id,
+                [entry.metadata.clone()],
+            ));
+        }
+        records
     }
 
     pub fn focus_thread(
@@ -370,13 +417,25 @@ pub fn resume_thread(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let Some(provider) = kind.history_provider.as_ref() else {
+    let Some(task) = resume_thread_task(workspace, kind, thread, extra_args, window, cx) else {
         return;
     };
+    task.detach_and_log_err(cx);
+}
+
+fn resume_thread_task(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    thread: &HistoricalThread,
+    extra_args: &[String],
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Option<Task<Result<()>>> {
+    let provider = kind.history_provider.as_ref()?;
     let settings = AgentThreadSettings::get_global(cx);
     let base = settings.command_for_kind(kind.id).clone();
     let command = provider.resume_command(&base, thread, extra_args);
-    spawn_thread(
+    Some(spawn_thread_task(
         workspace,
         kind,
         thread.title.clone(),
@@ -384,7 +443,7 @@ pub fn resume_thread(
         Some(thread.session_id.clone()),
         window,
         cx,
-    );
+    ))
 }
 
 fn spawn_thread(
@@ -396,12 +455,35 @@ fn spawn_thread(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    spawn_thread_task(
+        workspace,
+        kind,
+        summary,
+        command,
+        resumed_session_id,
+        window,
+        cx,
+    )
+    .detach_and_log_err(cx);
+}
+
+fn spawn_thread_task(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    summary: SharedString,
+    command: AgentLaunchCommand,
+    resumed_session_id: Option<SharedString>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<Result<()>> {
     let Some(cwd) = command
         .cwd
         .clone()
         .or_else(|| terminal_view::default_working_directory(workspace, cx))
     else {
-        return;
+        return Task::ready(Err(anyhow!(
+            "agent thread working directory is unavailable"
+        )));
     };
     let kind_id = kind.id;
     let kind_icon = kind.icon;
@@ -456,7 +538,148 @@ fn spawn_thread(
         });
         anyhow::Ok(())
     })
-    .detach_and_log_err(cx);
+}
+
+pub fn snapshot_live_agent_threads(session_id: String, cx: &mut App) -> Task<Result<()>> {
+    let store = AgentThreadStore::global(cx);
+    let records = store.read(cx).session_restore_records(cx);
+    let key_value_store = db::kvp::KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        let records_json = serde_json::to_string(&records)?;
+        key_value_store
+            .scoped(SESSION_RESTORE_NAMESPACE)
+            .write(session_id, records_json)
+            .await
+    })
+}
+
+pub fn restore_threads_for_workspace(
+    workspace: &mut Workspace,
+    last_session_id: &str,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<usize> {
+    let Some(workspace_id) = workspace.database_id() else {
+        return Task::ready(0);
+    };
+
+    let records = match restore_records_for_session(last_session_id, cx) {
+        Ok(records) => records,
+        Err(error) => {
+            log::error!("Failed to read agent thread restore snapshot: {error:#}");
+            return Task::ready(1);
+        }
+    };
+
+    let store = AgentThreadStore::global(cx);
+    let live_threads = store.read(cx).live_threads_for_workspace(workspace_id, cx);
+    let records = records_to_restore_for_workspace(workspace_id, &records, &live_threads);
+    let settings = AgentThreadSettings::get_global(cx).clone();
+    let mut tasks = Vec::new();
+
+    for record in records {
+        let Some(kind) = agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == record.kind_id)
+        else {
+            log::warn!(
+                "Skipping agent thread restore for unknown kind {:?}",
+                record.kind_id
+            );
+            continue;
+        };
+        if settings.command_for_kind(kind.id).hidden {
+            continue;
+        }
+
+        let thread = HistoricalThread {
+            session_id: SharedString::from(record.session_id),
+            title: SharedString::from(record.title),
+            project_root: record.project_root,
+            last_activity_at: system_time_from_millis(record.last_activity_at),
+        };
+        let extra_args = resolve_thread_launch_args(cx, &kind, &thread.session_id);
+        if let Some(task) = resume_thread_task(workspace, &kind, &thread, &extra_args, window, cx) {
+            tasks.push((kind.id, thread.session_id.to_string(), task));
+        }
+    }
+
+    cx.spawn_in(window, async move |_workspace, _cx| {
+        let mut failure_count = 0;
+        for (kind_id, session_id, task) in tasks {
+            if let Err(error) = task.await {
+                log::error!("Failed to reopen {kind_id} agent session {session_id}: {error:#}");
+                failure_count += 1;
+            }
+        }
+        failure_count
+    })
+}
+
+fn restore_records_for_session(
+    session_id: &str,
+    cx: &App,
+) -> Result<Vec<AgentThreadSessionRestoreRecord>> {
+    let Some(records_json) = db::kvp::KeyValueStore::global(cx)
+        .scoped(SESSION_RESTORE_NAMESPACE)
+        .read(session_id)?
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(serde_json::from_str(&records_json)?)
+}
+
+fn snapshot_records_for_workspace(
+    workspace_id: WorkspaceId,
+    live_threads: impl IntoIterator<Item = AgentThreadMetadata>,
+) -> Vec<AgentThreadSessionRestoreRecord> {
+    live_threads
+        .into_iter()
+        .filter_map(|thread| {
+            let session_id = thread.resumed_session_id?;
+            Some(AgentThreadSessionRestoreRecord {
+                workspace_id,
+                kind_id: thread.kind_id.to_string(),
+                session_id: session_id.to_string(),
+                title: thread.title.to_string(),
+                project_root: thread.project_root,
+                last_activity_at: system_time_to_millis(thread.launched_at),
+            })
+        })
+        .collect()
+}
+
+fn records_to_restore_for_workspace(
+    workspace_id: WorkspaceId,
+    records: &[AgentThreadSessionRestoreRecord],
+    live_threads: &[AgentThreadMetadata],
+) -> Vec<AgentThreadSessionRestoreRecord> {
+    records
+        .iter()
+        .filter(|record| record.workspace_id == workspace_id)
+        .filter(|record| {
+            !live_threads.iter().any(|thread| {
+                thread.kind_id == record.kind_id
+                    && thread
+                        .resumed_session_id
+                        .as_ref()
+                        .is_some_and(|session_id| session_id.as_ref() == record.session_id)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+fn system_time_to_millis(time: SystemTime) -> u64 {
+    let millis = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    u64::try_from(millis).unwrap_or(u64::MAX)
+}
+
+fn system_time_from_millis(millis: u64) -> SystemTime {
+    SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(millis)
 }
 
 fn command_label(command: &AgentLaunchCommand, fallback: &str) -> String {
@@ -491,6 +714,17 @@ mod tests {
             project_root: PathBuf::from("/root"),
             launched_at: at(launched_at),
             resumed_session_id: resumed_session_id.map(SharedString::from),
+        }
+    }
+
+    fn live_with_kind(
+        id: u64,
+        kind_id: &'static str,
+        resumed_session_id: Option<&str>,
+    ) -> AgentThreadMetadata {
+        AgentThreadMetadata {
+            kind_id,
+            ..live(id, 100, resumed_session_id)
         }
     }
 
@@ -631,5 +865,46 @@ mod tests {
                 "historical:session-oldest".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn snapshot_records_include_resumed_threads_and_exclude_fresh_threads() {
+        let records = snapshot_records_for_workspace(
+            workspace::WorkspaceId::from_i64(7),
+            vec![
+                live_with_kind(1, "codex", Some("session-a")),
+                live_with_kind(2, "claude", None),
+            ],
+        );
+
+        assert_eq!(
+            records,
+            vec![AgentThreadSessionRestoreRecord {
+                workspace_id: workspace::WorkspaceId::from_i64(7),
+                kind_id: "codex".to_string(),
+                session_id: "session-a".to_string(),
+                title: "live".to_string(),
+                project_root: PathBuf::from("/root"),
+                last_activity_at: 100_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn restore_records_skip_live_resumed_sessions() {
+        let records = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(7),
+            &[AgentThreadSessionRestoreRecord {
+                workspace_id: workspace::WorkspaceId::from_i64(7),
+                kind_id: "codex".to_string(),
+                session_id: "session-a".to_string(),
+                title: "Restored".to_string(),
+                project_root: PathBuf::from("/root"),
+                last_activity_at: 100_000,
+            }],
+            &[live_with_kind(1, "codex", Some("session-a"))],
+        );
+
+        assert!(records.is_empty());
     }
 }

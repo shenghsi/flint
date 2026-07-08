@@ -1524,6 +1524,16 @@ fn quit(_: &Quit, cx: &mut App) {
         }
         futures::future::join_all(flush_tasks).await;
 
+        cx.update(|cx| {
+            let Some(app_state) = AppState::try_global(cx) else {
+                return Task::ready(anyhow::Ok(()));
+            };
+            let session_id = app_state.session.read(cx).id().to_string();
+            agent_threads::snapshot_live_agent_threads(session_id, cx)
+        })
+        .await
+        .log_err();
+
         cx.update(|cx| cx.quit());
         anyhow::Ok(())
     })

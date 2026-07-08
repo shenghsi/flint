@@ -21,10 +21,39 @@ pub struct AgentThreadSettingsContent {
     ///
     /// Default: true
     pub show_plan_usage: Option<bool>,
+    /// When to reopen live resumed agent sessions from the previous app session.
+    ///
+    /// Default: never
+    pub reopen_sessions_on_startup: Option<AgentThreadReopenSessionsOnStartup>,
     /// Where to dock the agent threads panel.
     ///
     /// Default: left
     pub dock: Option<crate::DockSide>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentThreadReopenSessionsOnStartup {
+    /// Do not reopen agent sessions.
+    #[default]
+    Never,
+    /// Reopen sessions only when restoring workspaces from the previous app session.
+    StartupRestore,
+    /// Reopen sessions when any matching workspace from the previous app session opens.
+    MatchingWorkspace,
 }
 
 #[with_fallible_options]
