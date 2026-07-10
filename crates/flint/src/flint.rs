@@ -355,6 +355,33 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
 pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     agent_threads::init(cx);
 
+    // Persist the agent-thread restore snapshot whenever a thread opens or
+    // closes, not only in the `Quit` action handler: restarts
+    // (`workspace::reload`), dock quits, and crashes never run that handler,
+    // leaving `reopen_sessions_on_startup` with nothing to restore. The
+    // quitting flag keeps app teardown -- which releases every thread --
+    // from erasing the snapshot the quit handler just wrote.
+    let quitting_for_snapshot = Arc::new(AtomicBool::new(false));
+    cx.on_app_quit({
+        let quitting_for_snapshot = quitting_for_snapshot.clone();
+        move |_| {
+            quitting_for_snapshot.store(true, atomic::Ordering::Release);
+            std::future::ready(())
+        }
+    })
+    .detach();
+    cx.subscribe(&agent_threads::AgentThreadStore::global(cx), {
+        let app_state = app_state.clone();
+        move |_store, _event: &agent_threads::AgentThreadStoreEvent, cx| {
+            if quitting_for_snapshot.load(atomic::Ordering::Acquire) {
+                return;
+            }
+            let session_id = app_state.session.read(cx).id().to_string();
+            agent_threads::snapshot_live_agent_threads(session_id, cx).detach_and_log_err(cx);
+        }
+    })
+    .detach();
+
     let mut _on_close_subscription = bind_on_window_closed(cx);
     cx.observe_global::<SettingsStore>(move |cx| {
         // A 1.92 regression causes unused-assignment to trigger on this variable.

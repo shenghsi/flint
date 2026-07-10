@@ -154,6 +154,11 @@ unsafe fn build_classes() {
                 on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
             );
 
+            decl.add_method(
+                sel!(userNotificationCenter:shouldPresentNotification:),
+                should_present_notification as extern "C" fn(&mut Object, Sel, id, id) -> bool,
+            );
+
             decl.register()
         }
     }
@@ -1235,6 +1240,16 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: process_info
         ];
 
+        // NSUserNotificationCenter drops notifications posted by the
+        // frontmost app unless a delegate opts in via
+        // `shouldPresentNotification:` -- without this, agent-thread bell
+        // notifications never show up while Flint itself is focused.
+        let user_notification_center: id = msg_send![
+            class!(NSUserNotificationCenter),
+            defaultUserNotificationCenter
+        ];
+        let _: () = msg_send![user_notification_center, setDelegate: this as id];
+
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
@@ -1253,6 +1268,10 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
             platform.0.lock().reopen.get_or_insert(callback);
         }
     }
+}
+
+extern "C" fn should_present_notification(_this: &mut Object, _: Sel, _: id, _: id) -> bool {
+    true
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
