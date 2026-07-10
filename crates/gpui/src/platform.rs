@@ -167,6 +167,11 @@ pub trait Platform: 'static {
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;
 
+    /// Shows a notification via the OS's native notification center, separate
+    /// from any Flint window (e.g. it is visible even while Flint isn't the
+    /// foreground application). No-ops on backends where this isn't wired up.
+    fn show_desktop_notification(&self, _title: &str, _body: Option<&str>) {}
+
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,

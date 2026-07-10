@@ -154,6 +154,11 @@ unsafe fn build_classes() {
                 on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
             );
 
+            decl.add_method(
+                sel!(userNotificationCenter:shouldPresentNotification:),
+                should_present_notification as extern "C" fn(&mut Object, Sel, id, id) -> bool,
+            );
+
             decl.register()
         }
     }
@@ -717,6 +722,35 @@ impl Platform for MacPlatform {
             .spawn(async { done_rx.await.map_err(|e| anyhow!(e))? })
     }
 
+    fn show_desktop_notification(&self, title: &str, body: Option<&str>) {
+        unsafe {
+            // NSUserNotificationCenter is deprecated in favor of
+            // UNUserNotificationCenter, but the replacement needs an async
+            // authorization request plus a delegate just to remain visible
+            // while Flint is frontmost -- unwarranted ceremony for a
+            // fire-and-forget notification, and NSUserNotificationCenter
+            // still works on all currently supported macOS versions.
+            let bundle: id = msg_send![class!(NSBundle), mainBundle];
+            let bundle_id: id = msg_send![bundle, bundleIdentifier];
+            if bundle_id == nil {
+                log::warn!("Skipping desktop notification {title:?}: not running as a bundled app");
+                return;
+            }
+
+            let notification: id = msg_send![class!(NSUserNotification), alloc];
+            let notification: id = msg_send![notification, init];
+            let _: () = msg_send![notification, setTitle: ns_string(title)];
+            if let Some(body) = body {
+                let _: () = msg_send![notification, setInformativeText: ns_string(body)];
+            }
+            let center: id = msg_send![
+                class!(NSUserNotificationCenter),
+                defaultUserNotificationCenter
+            ];
+            let _: () = msg_send![center, deliverNotification: notification];
+        }
+    }
+
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.0.lock().open_urls = Some(callback);
     }
@@ -1206,6 +1240,16 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: process_info
         ];
 
+        // NSUserNotificationCenter drops notifications posted by the
+        // frontmost app unless a delegate opts in via
+        // `shouldPresentNotification:` -- without this, agent-thread bell
+        // notifications never show up while Flint itself is focused.
+        let user_notification_center: id = msg_send![
+            class!(NSUserNotificationCenter),
+            defaultUserNotificationCenter
+        ];
+        let _: () = msg_send![user_notification_center, setDelegate: this as id];
+
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
@@ -1224,6 +1268,10 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
             platform.0.lock().reopen.get_or_insert(callback);
         }
     }
+}
+
+extern "C" fn should_present_notification(_this: &mut Object, _: Sel, _: id, _: id) -> bool {
+    true
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {

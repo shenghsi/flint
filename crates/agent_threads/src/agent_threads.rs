@@ -16,7 +16,10 @@ use workspace::Workspace;
 
 pub use history::HistoricalThread;
 pub use panel::AgentThreadsPanel;
-pub use store::{AgentThreadStore, restore_threads_for_workspace, snapshot_live_agent_threads};
+pub use store::{
+    AgentThreadStore, AgentThreadStoreEvent, restore_threads_for_workspace,
+    snapshot_live_agent_threads,
+};
 
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
@@ -104,6 +107,11 @@ pub struct AgentKindDefinition {
     pub home_dir_name: &'static str,
     pub history_provider: Option<Arc<dyn AgentHistoryProvider>>,
     pub resume_options: Vec<ResumeOption>,
+    /// CLI flag for assigning a session id to a fresh session (e.g.
+    /// `--session-id` for Claude Code). Without it the CLI generates an id
+    /// internally that Flint never learns, so fresh threads can't be
+    /// resumed or restored across app restarts.
+    pub session_id_flag: Option<&'static str>,
 }
 
 pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
@@ -121,6 +129,9 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 label: SharedString::new_static("Bypass approvals & sandbox"),
                 args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
             }],
+            // Codex CLI has no flag for assigning a session id to a fresh
+            // session, so fresh Codex threads stay non-restorable.
+            session_id_flag: None,
         },
         AgentKindDefinition {
             id: "claude",
@@ -135,6 +146,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 label: SharedString::new_static("Skip permission prompts"),
                 args: vec!["--dangerously-skip-permissions".to_string()],
             }],
+            session_id_flag: Some("--session-id"),
         },
     ]
 }
@@ -145,6 +157,7 @@ pub struct AgentThreadSettings {
     pub claude: AgentLaunchCommand,
     pub max_visible_threads_per_agent: usize,
     pub show_plan_usage: bool,
+    pub notify_when_finished: bool,
     pub reopen_sessions_on_startup: settings::AgentThreadReopenSessionsOnStartup,
     pub dock: settings::DockSide,
 }
@@ -167,6 +180,7 @@ impl Settings for AgentThreadSettings {
             claude: launch_command_from_content(content.claude, "claude"),
             max_visible_threads_per_agent: content.max_visible_threads_per_agent.unwrap_or(5),
             show_plan_usage: content.show_plan_usage.unwrap_or(true),
+            notify_when_finished: content.notify_when_finished.unwrap_or(true),
             reopen_sessions_on_startup: content.reopen_sessions_on_startup.unwrap_or_default(),
             dock: content.dock.unwrap_or(settings::DockSide::Left),
         }
@@ -280,6 +294,12 @@ mod tests {
     fn plan_usage_is_enabled_by_default() {
         let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
         assert!(settings.show_plan_usage);
+    }
+
+    #[test]
+    fn notify_when_finished_is_enabled_by_default() {
+        let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
+        assert!(settings.notify_when_finished);
     }
 
     #[test]

@@ -5394,7 +5394,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 7] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5438,6 +5438,29 @@ fn panels_page() -> SettingsPage {
                             .agent_threads
                             .get_or_insert_default()
                             .show_plan_usage = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Notify When Finished",
+                description: "Show a desktop notification when an agent thread finishes a turn or needs input.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_threads.notify_when_finished"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .notify_when_finished
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .notify_when_finished = value;
                     },
                 }),
                 metadata: None,

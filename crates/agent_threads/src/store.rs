@@ -26,6 +26,10 @@ pub struct AgentThreadMetadata {
     pub title: SharedString,
     pub project_root: PathBuf,
     pub launched_at: SystemTime,
+    /// The thread's CLI session id, when Flint knows it: either the id the
+    /// thread was resumed from, or the id assigned at launch via the kind's
+    /// `session_id_flag`. `None` means the CLI generated its own id that
+    /// Flint can't see (e.g. fresh Codex threads).
     pub resumed_session_id: Option<SharedString>,
 }
 
@@ -249,7 +253,7 @@ impl AgentThreadStore {
         let metadata = AgentThreadMetadata {
             terminal_item_id,
             kind_id,
-            title,
+            title: title.clone(),
             project_root,
             launched_at,
             resumed_session_id,
@@ -267,8 +271,30 @@ impl AgentThreadStore {
             cx.observe_release(&terminal_view, move |store, _terminal_view, cx| {
                 store.remove_thread(terminal_item_id, cx);
             });
-        self.subscriptions
-            .insert(terminal_item_id, vec![release_subscription]);
+        // Claude Code and Codex CLI both ring the terminal bell when a turn
+        // finishes or a permission prompt needs an answer, so it's the
+        // signal we have for "this agent thread needs attention" -- the
+        // underlying `Terminal` (not `TerminalView`, which only re-emits
+        // `Wakeup`/`UpdateTab` for a bell) is what actually re-emits it.
+        let terminal = terminal_view.read(cx).terminal().clone();
+        let bell_subscription = cx.subscribe(&terminal, move |_store, _terminal, event, cx| {
+            if !matches!(event, terminal::Event::Bell) {
+                return;
+            }
+            if !AgentThreadSettings::get_global(cx).notify_when_finished {
+                return;
+            }
+            let kind_label = agent_kind_registry()
+                .into_iter()
+                .find(|kind| kind.id == kind_id)
+                .map(|kind| kind.label.to_string())
+                .unwrap_or_else(|| kind_id.to_string());
+            cx.show_desktop_notification(&title, Some(&format!("{kind_label} is waiting for you")));
+        });
+        self.subscriptions.insert(
+            terminal_item_id,
+            vec![release_subscription, bell_subscription],
+        );
         cx.emit(AgentThreadStoreEvent::ThreadOpened { kind_id });
     }
 
@@ -293,12 +319,21 @@ pub fn launch_new_thread(
     let settings = AgentThreadSettings::get_global(cx);
     let mut command = settings.command_for_kind(kind.id).clone();
     command.args.extend(extra_args.iter().cloned());
+    // Assign the session id ourselves when the CLI supports it, so the
+    // thread is resumable and restorable from birth; otherwise the CLI
+    // generates an id internally that Flint never learns.
+    let session_id = kind.session_id_flag.map(|flag| {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        command.args.push(flag.to_string());
+        command.args.push(session_id.clone());
+        SharedString::from(session_id)
+    });
     spawn_thread(
         workspace,
         kind,
         kind.label.clone(),
         command,
-        None,
+        session_id,
         window,
         cx,
     );

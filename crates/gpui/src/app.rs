@@ -1338,6 +1338,12 @@ impl App {
         self.platform.register_url_scheme(scheme)
     }
 
+    /// Shows a notification via the OS's native notification center, separate
+    /// from any Flint window.
+    pub fn show_desktop_notification(&self, title: &str, body: Option<&str>) {
+        self.platform.show_desktop_notification(title, body);
+    }
+
     /// Returns the full pathname of the current app bundle.
     ///
     /// Returns an error if the app is not being run from a bundle.

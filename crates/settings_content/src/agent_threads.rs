@@ -21,7 +21,13 @@ pub struct AgentThreadSettingsContent {
     ///
     /// Default: true
     pub show_plan_usage: Option<bool>,
-    /// When to reopen live resumed agent sessions from the previous app session.
+    /// Whether to show a desktop notification when an agent thread finishes
+    /// a turn or needs input, detected via the terminal bell that Claude
+    /// Code and Codex CLI ring in those cases.
+    ///
+    /// Default: true
+    pub notify_when_finished: Option<bool>,
+    /// When to reopen live agent sessions from the previous app session.
     ///
     /// Default: never
     pub reopen_sessions_on_startup: Option<AgentThreadReopenSessionsOnStartup>,
