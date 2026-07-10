@@ -16,7 +16,6 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
-    Data::Xml::Dom::XmlDocument,
     UI::{
         Notifications::{ToastNotification, ToastNotificationManager, ToastTemplateType},
         ViewManagement::UISettings,
