@@ -27,7 +27,7 @@ pub struct AgentThreadSettingsContent {
     ///
     /// Default: true
     pub notify_when_finished: Option<bool>,
-    /// When to reopen live resumed agent sessions from the previous app session.
+    /// When to reopen live agent sessions from the previous app session.
     ///
     /// Default: never
     pub reopen_sessions_on_startup: Option<AgentThreadReopenSessionsOnStartup>,

@@ -26,6 +26,10 @@ pub struct AgentThreadMetadata {
     pub title: SharedString,
     pub project_root: PathBuf,
     pub launched_at: SystemTime,
+    /// The thread's CLI session id, when Flint knows it: either the id the
+    /// thread was resumed from, or the id assigned at launch via the kind's
+    /// `session_id_flag`. `None` means the CLI generated its own id that
+    /// Flint can't see (e.g. fresh Codex threads).
     pub resumed_session_id: Option<SharedString>,
 }
 
@@ -315,12 +319,21 @@ pub fn launch_new_thread(
     let settings = AgentThreadSettings::get_global(cx);
     let mut command = settings.command_for_kind(kind.id).clone();
     command.args.extend(extra_args.iter().cloned());
+    // Assign the session id ourselves when the CLI supports it, so the
+    // thread is resumable and restorable from birth; otherwise the CLI
+    // generates an id internally that Flint never learns.
+    let session_id = kind.session_id_flag.map(|flag| {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        command.args.push(flag.to_string());
+        command.args.push(session_id.clone());
+        SharedString::from(session_id)
+    });
     spawn_thread(
         workspace,
         kind,
         kind.label.clone(),
         command,
-        None,
+        session_id,
         window,
         cx,
     );

@@ -107,6 +107,11 @@ pub struct AgentKindDefinition {
     pub home_dir_name: &'static str,
     pub history_provider: Option<Arc<dyn AgentHistoryProvider>>,
     pub resume_options: Vec<ResumeOption>,
+    /// CLI flag for assigning a session id to a fresh session (e.g.
+    /// `--session-id` for Claude Code). Without it the CLI generates an id
+    /// internally that Flint never learns, so fresh threads can't be
+    /// resumed or restored across app restarts.
+    pub session_id_flag: Option<&'static str>,
 }
 
 pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
@@ -124,6 +129,9 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 label: SharedString::new_static("Bypass approvals & sandbox"),
                 args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
             }],
+            // Codex CLI has no flag for assigning a session id to a fresh
+            // session, so fresh Codex threads stay non-restorable.
+            session_id_flag: None,
         },
         AgentKindDefinition {
             id: "claude",
@@ -138,6 +146,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 label: SharedString::new_static("Skip permission prompts"),
                 args: vec!["--dangerously-skip-permissions".to_string()],
             }],
+            session_id_flag: Some("--session-id"),
         },
     ]
 }
