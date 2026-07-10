@@ -125,23 +125,11 @@ fn usage_color(percent: u8, cx: &App) -> Color {
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct LaunchOptionVisual {
-    color: Color,
-    show_swatch: bool,
-}
-
-fn launch_option_visual(effective_id: Option<&str>) -> LaunchOptionVisual {
+fn launch_option_visual(effective_id: Option<&str>) -> Color {
     if effective_id.is_some() {
-        LaunchOptionVisual {
-            color: Color::Warning,
-            show_swatch: true,
-        }
+        Color::Warning
     } else {
-        LaunchOptionVisual {
-            color: Color::Muted,
-            show_swatch: false,
-        }
+        Color::Muted
     }
 }
 
@@ -193,7 +181,7 @@ fn new_thread_launch_option_label(cx: &App, kind: &AgentKindDefinition) -> Share
     launch_option_label(kind, effective_id.as_deref(), "New thread")
 }
 
-fn new_thread_launch_option_visual(cx: &App, kind: &AgentKindDefinition) -> LaunchOptionVisual {
+fn new_thread_launch_option_visual(cx: &App, kind: &AgentKindDefinition) -> Color {
     let effective_id = effective_new_thread_launch_option_id(cx, kind);
     launch_option_visual(effective_id.as_deref())
 }
@@ -211,39 +199,22 @@ fn thread_resume_option_visual(
     cx: &App,
     kind: &AgentKindDefinition,
     session_id: &SharedString,
-) -> LaunchOptionVisual {
+) -> Color {
     let effective_id = effective_thread_launch_option_id(cx, kind, session_id);
     launch_option_visual(effective_id.as_deref())
 }
 
-fn render_launch_option_swatch(visual: LaunchOptionVisual, cx: &App) -> AnyElement {
-    div()
-        .size_1p5()
-        .flex_none()
-        .rounded_full()
-        .bg(visual.color.color(cx))
-        .when(!visual.show_swatch, |swatch| swatch.invisible())
-        .into_any_element()
-}
-
 fn render_launch_option_menu_entry(
     label: SharedString,
-    visual: LaunchOptionVisual,
+    color: Color,
     is_selected: bool,
-    cx: &App,
 ) -> AnyElement {
     h_flex()
         .w_full()
         .items_center()
         .justify_between()
         .gap_3()
-        .child(
-            h_flex()
-                .items_center()
-                .gap_2()
-                .child(render_launch_option_swatch(visual, cx))
-                .child(Label::new(label).size(LabelSize::Small)),
-        )
+        .child(Label::new(label).size(LabelSize::Small).color(color))
         .child(
             div()
                 .flex_none()
@@ -588,12 +559,11 @@ impl AgentThreadsPanel {
                 let is_selected = effective_id.is_none();
                 let visual = launch_option_visual(None);
                 context_menu = context_menu.custom_entry(
-                    move |_, cx| {
+                    move |_, _| {
                         render_launch_option_menu_entry(
                             SharedString::new_static("New thread"),
                             visual,
                             is_selected,
-                            cx,
                         )
                     },
                     move |window, cx| {
@@ -617,9 +587,7 @@ impl AgentThreadsPanel {
                 let option_id = option.id;
                 let visual = launch_option_visual(Some(option_id));
                 context_menu = context_menu.custom_entry(
-                    move |_, cx| {
-                        render_launch_option_menu_entry(label.clone(), visual, is_selected, cx)
-                    },
+                    move |_, _| render_launch_option_menu_entry(label.clone(), visual, is_selected),
                     move |window, cx| {
                         let Some(workspace) = workspace.upgrade() else {
                             return;
@@ -705,12 +673,11 @@ impl AgentThreadsPanel {
                 let is_selected = effective_id.is_none();
                 let visual = launch_option_visual(None);
                 context_menu = context_menu.custom_entry(
-                    move |_, cx| {
+                    move |_, _| {
                         render_launch_option_menu_entry(
                             SharedString::new_static("Resume"),
                             visual,
                             is_selected,
-                            cx,
                         )
                     },
                     move |window, cx| {
@@ -736,9 +703,7 @@ impl AgentThreadsPanel {
                 let option_id = option.id;
                 let visual = launch_option_visual(Some(option_id));
                 context_menu = context_menu.custom_entry(
-                    move |_, cx| {
-                        render_launch_option_menu_entry(label.clone(), visual, is_selected, cx)
-                    },
+                    move |_, _| render_launch_option_menu_entry(label.clone(), visual, is_selected),
                     move |window, cx| {
                         let Some(workspace) = workspace.upgrade() else {
                             return;
@@ -890,10 +855,6 @@ impl AgentThreadsPanel {
                 h_flex()
                     .gap_1()
                     .items_center()
-                    .child(render_launch_option_swatch(
-                        new_thread_launch_option_visual,
-                        cx,
-                    ))
                     .child(
                         IconButton::new(
                             SharedString::from(format!("agent-thread-new-{kind_id}")),
@@ -901,7 +862,7 @@ impl AgentThreadsPanel {
                         )
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
-                        .icon_color(new_thread_launch_option_visual.color)
+                        .icon_color(new_thread_launch_option_visual)
                         .tooltip(Tooltip::text(format!(
                             "New {} thread: {}",
                             kind.label, new_thread_launch_option_label
@@ -920,7 +881,7 @@ impl AgentThreadsPanel {
                         )
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
-                        .icon_color(new_thread_launch_option_visual.color)
+                        .icon_color(new_thread_launch_option_visual)
                         .tooltip(Tooltip::text(format!(
                             "New {} thread options: {}",
                             kind.label, new_thread_launch_option_label
@@ -1124,31 +1085,27 @@ impl AgentThreadsPanel {
             )
             .when(!is_live, |row| {
                 row.child(
-                    h_flex()
-                        .gap_1()
-                        .items_center()
-                        .child(render_launch_option_swatch(resume_option_visual, cx))
-                        .child(
-                            IconButton::new(options_button_id, IconName::ChevronDown)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::Small)
-                                .icon_color(resume_option_visual.color)
-                                .tooltip(Tooltip::text(format!(
-                                    "Resume with options: {}",
-                                    resume_option_label
-                                )))
-                                .on_click(cx.listener(
-                                    move |this, event: &gpui::ClickEvent, window, cx| {
-                                        this.deploy_resume_options_menu(
-                                            menu_kind_for_button.clone(),
-                                            menu_thread_for_button.clone(),
-                                            event.position(),
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                )),
-                        ),
+                    h_flex().gap_1().items_center().child(
+                        IconButton::new(options_button_id, IconName::ChevronDown)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(resume_option_visual)
+                            .tooltip(Tooltip::text(format!(
+                                "Resume with options: {}",
+                                resume_option_label
+                            )))
+                            .on_click(cx.listener(
+                                move |this, event: &gpui::ClickEvent, window, cx| {
+                                    this.deploy_resume_options_menu(
+                                        menu_kind_for_button.clone(),
+                                        menu_thread_for_button.clone(),
+                                        event.position(),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )),
+                    ),
                 )
             })
             .into_any_element()
@@ -1731,20 +1688,8 @@ mod tests {
                 thread_resume_option_visual(cx, &kind, &session_id),
             )
         });
-        assert_eq!(
-            new_visual,
-            LaunchOptionVisual {
-                color: Color::Warning,
-                show_swatch: true
-            }
-        );
-        assert_eq!(
-            resume_visual,
-            LaunchOptionVisual {
-                color: Color::Warning,
-                show_swatch: true
-            }
-        );
+        assert_eq!(new_visual, Color::Warning);
+        assert_eq!(resume_visual, Color::Warning);
 
         cx.update(|cx| {
             store::remember_new_thread_launch_option(cx, kind.id, None);
@@ -1758,20 +1703,8 @@ mod tests {
                 thread_resume_option_visual(cx, &kind, &session_id),
             )
         });
-        assert_eq!(
-            new_visual,
-            LaunchOptionVisual {
-                color: Color::Muted,
-                show_swatch: false
-            }
-        );
-        assert_eq!(
-            resume_visual,
-            LaunchOptionVisual {
-                color: Color::Muted,
-                show_swatch: false
-            }
-        );
+        assert_eq!(new_visual, Color::Muted);
+        assert_eq!(resume_visual, Color::Muted);
     }
 
     #[test]
