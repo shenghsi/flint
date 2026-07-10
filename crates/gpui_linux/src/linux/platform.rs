@@ -474,6 +474,29 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .detach();
     }
 
+    fn show_desktop_notification(&self, title: &str, body: Option<&str>) {
+        let title = title.to_string();
+        let body = body.map(str::to_string);
+        self.background_executor()
+            .spawn(async move {
+                let proxy = ashpd::desktop::notification::NotificationProxy::new()
+                    .await
+                    .log_err()?;
+                let notification =
+                    ashpd::desktop::notification::Notification::new(&title).body(body.as_deref());
+                // `add_notification`'s id lets a caller update/withdraw a
+                // specific notification later; we don't need that, so a
+                // fresh id per call just keeps concurrent notifications from
+                // clobbering each other.
+                proxy
+                    .add_notification(&uuid::Uuid::new_v4().to_string(), notification)
+                    .await
+                    .log_err()?;
+                Some(())
+            })
+            .detach();
+    }
+
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.inner.with_common(|common| {
             common.callbacks.quit = Some(callback);

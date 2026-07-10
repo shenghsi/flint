@@ -33,6 +33,7 @@ pub(crate) struct TestPlatform {
     pub(crate) prompts: RefCell<TestPrompts>,
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
+    pub shown_notifications: RefCell<Vec<(String, Option<String>)>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
@@ -134,6 +135,7 @@ impl TestPlatform {
             current_find_pasteboard_item: Mutex::new(None),
             weak: weak.clone(),
             opened_url: Default::default(),
+            shown_notifications: Default::default(),
             text_system,
             headless_renderer_factory,
         })
@@ -372,6 +374,12 @@ impl Platform for TestPlatform {
 
     fn open_url(&self, url: &str) {
         *self.opened_url.borrow_mut() = Some(url.to_string())
+    }
+
+    fn show_desktop_notification(&self, title: &str, body: Option<&str>) {
+        self.shown_notifications
+            .borrow_mut()
+            .push((title.to_string(), body.map(str::to_string)));
     }
 
     fn on_open_urls(&self, _callback: Box<dyn FnMut(Vec<String>)>) {

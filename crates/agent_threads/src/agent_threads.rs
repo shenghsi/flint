@@ -145,6 +145,7 @@ pub struct AgentThreadSettings {
     pub claude: AgentLaunchCommand,
     pub max_visible_threads_per_agent: usize,
     pub show_plan_usage: bool,
+    pub notify_when_finished: bool,
     pub reopen_sessions_on_startup: settings::AgentThreadReopenSessionsOnStartup,
     pub dock: settings::DockSide,
 }
@@ -167,6 +168,7 @@ impl Settings for AgentThreadSettings {
             claude: launch_command_from_content(content.claude, "claude"),
             max_visible_threads_per_agent: content.max_visible_threads_per_agent.unwrap_or(5),
             show_plan_usage: content.show_plan_usage.unwrap_or(true),
+            notify_when_finished: content.notify_when_finished.unwrap_or(true),
             reopen_sessions_on_startup: content.reopen_sessions_on_startup.unwrap_or_default(),
             dock: content.dock.unwrap_or(settings::DockSide::Left),
         }
@@ -280,6 +282,12 @@ mod tests {
     fn plan_usage_is_enabled_by_default() {
         let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
         assert!(settings.show_plan_usage);
+    }
+
+    #[test]
+    fn notify_when_finished_is_enabled_by_default() {
+        let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
+        assert!(settings.notify_when_finished);
     }
 
     #[test]

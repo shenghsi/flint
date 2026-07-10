@@ -249,7 +249,7 @@ impl AgentThreadStore {
         let metadata = AgentThreadMetadata {
             terminal_item_id,
             kind_id,
-            title,
+            title: title.clone(),
             project_root,
             launched_at,
             resumed_session_id,
@@ -267,8 +267,30 @@ impl AgentThreadStore {
             cx.observe_release(&terminal_view, move |store, _terminal_view, cx| {
                 store.remove_thread(terminal_item_id, cx);
             });
-        self.subscriptions
-            .insert(terminal_item_id, vec![release_subscription]);
+        // Claude Code and Codex CLI both ring the terminal bell when a turn
+        // finishes or a permission prompt needs an answer, so it's the
+        // signal we have for "this agent thread needs attention" -- the
+        // underlying `Terminal` (not `TerminalView`, which only re-emits
+        // `Wakeup`/`UpdateTab` for a bell) is what actually re-emits it.
+        let terminal = terminal_view.read(cx).terminal().clone();
+        let bell_subscription = cx.subscribe(&terminal, move |_store, _terminal, event, cx| {
+            if !matches!(event, terminal::Event::Bell) {
+                return;
+            }
+            if !AgentThreadSettings::get_global(cx).notify_when_finished {
+                return;
+            }
+            let kind_label = agent_kind_registry()
+                .into_iter()
+                .find(|kind| kind.id == kind_id)
+                .map(|kind| kind.label.to_string())
+                .unwrap_or_else(|| kind_id.to_string());
+            cx.show_desktop_notification(&title, Some(&format!("{kind_label} is waiting for you")));
+        });
+        self.subscriptions.insert(
+            terminal_item_id,
+            vec![release_subscription, bell_subscription],
+        );
         cx.emit(AgentThreadStoreEvent::ThreadOpened { kind_id });
     }
 

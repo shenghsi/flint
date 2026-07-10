@@ -717,6 +717,35 @@ impl Platform for MacPlatform {
             .spawn(async { done_rx.await.map_err(|e| anyhow!(e))? })
     }
 
+    fn show_desktop_notification(&self, title: &str, body: Option<&str>) {
+        unsafe {
+            // NSUserNotificationCenter is deprecated in favor of
+            // UNUserNotificationCenter, but the replacement needs an async
+            // authorization request plus a delegate just to remain visible
+            // while Flint is frontmost -- unwarranted ceremony for a
+            // fire-and-forget notification, and NSUserNotificationCenter
+            // still works on all currently supported macOS versions.
+            let bundle: id = msg_send![class!(NSBundle), mainBundle];
+            let bundle_id: id = msg_send![bundle, bundleIdentifier];
+            if bundle_id == nil {
+                log::warn!("Skipping desktop notification {title:?}: not running as a bundled app");
+                return;
+            }
+
+            let notification: id = msg_send![class!(NSUserNotification), alloc];
+            let notification: id = msg_send![notification, init];
+            let _: () = msg_send![notification, setTitle: ns_string(title)];
+            if let Some(body) = body {
+                let _: () = msg_send![notification, setInformativeText: ns_string(body)];
+            }
+            let center: id = msg_send![
+                class!(NSUserNotificationCenter),
+                defaultUserNotificationCenter
+            ];
+            let _: () = msg_send![center, deliverNotification: notification];
+        }
+    }
+
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.0.lock().open_urls = Some(callback);
     }

@@ -1299,6 +1299,17 @@ mod tests {
         });
     }
 
+    fn set_notify_when_finished(cx: &mut TestAppContext, enabled: bool) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .agent_threads
+                    .get_or_insert_default()
+                    .notify_when_finished = Some(enabled);
+            });
+        });
+    }
+
     // `cwd` is pinned explicitly here rather than left to fall back to
     // `default_working_directory` -- that falls back to the real home
     // directory when a freshly created test project has no "active entry"
@@ -1917,5 +1928,51 @@ mod tests {
                 "--dangerously-bypass-approvals-and-sandbox"
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn bell_shows_a_desktop_notification(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_views = terminal_views(&window_handle, cx);
+        assert_eq!(terminal_views.len(), 1);
+        let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        let notifications = cx.shown_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(
+            notifications[0].1.as_deref(),
+            Some("Codex is waiting for you")
+        );
+    }
+
+    #[gpui::test]
+    async fn bell_is_silent_when_notify_when_finished_is_disabled(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_notify_when_finished(cx, false);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_views = terminal_views(&window_handle, cx);
+        assert_eq!(terminal_views.len(), 1);
+        let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        assert!(cx.shown_notifications().is_empty());
     }
 }

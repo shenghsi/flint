@@ -371,6 +371,11 @@ impl TestAppContext {
         self.test_platform.opened_url.borrow().clone()
     }
 
+    /// All the (title, body) pairs shown with cx.show_desktop_notification() during this test.
+    pub fn shown_notifications(&self) -> Vec<(String, Option<String>)> {
+        self.test_platform.shown_notifications.borrow().clone()
+    }
+
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);

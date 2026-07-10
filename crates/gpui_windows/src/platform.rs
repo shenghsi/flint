@@ -16,7 +16,11 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
-    UI::ViewManagement::UISettings,
+    Data::Xml::Dom::XmlDocument,
+    UI::{
+        Notifications::{ToastNotification, ToastNotificationManager, ToastTemplateType},
+        ViewManagement::UISettings,
+    },
     Win32::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
@@ -621,6 +625,18 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
+    fn show_desktop_notification(&self, title: &str, body: Option<&str>) {
+        // WinRT calls need the Windows Runtime initialized on the calling
+        // thread, which `OleInitialize` (see `WindowsPlatform::new`) only
+        // does for the thread that constructed the platform -- so this runs
+        // synchronously on the caller's thread rather than being spawned on
+        // `background_executor`, matching how GPUI's App/Context is itself
+        // confined to the foreground thread.
+        if let Err(error) = show_toast_notification(title, body) {
+            log::error!("Failed to show desktop notification: {error:?}");
+        }
+    }
+
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.inner.state.callbacks.quit.set(Some(callback));
     }
@@ -1064,6 +1080,30 @@ struct PlatformWindowCreateContext {
     main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
+}
+
+// Toast notifications are keyed by an "Application User Model ID"; unpackaged
+// desktop apps have no identity of their own to derive one from, so we just
+// pick a fixed id (shared across release channels, unlike the bundle
+// identifiers used elsewhere) good enough to group Flint's own toasts.
+const TOAST_APP_ID: &str = "Flint.Editor";
+
+fn show_toast_notification(title: &str, body: Option<&str>) -> windows_core::Result<()> {
+    unsafe {
+        SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(TOAST_APP_ID))?;
+    }
+
+    let template = ToastNotificationManager::GetTemplateContent(ToastTemplateType::ToastText02)?;
+    let text_nodes = template.GetElementsByTagName(&HSTRING::from("text"))?;
+    text_nodes.Item(0)?.SetInnerText(&HSTRING::from(title))?;
+    if let Some(body) = body {
+        text_nodes.Item(1)?.SetInnerText(&HSTRING::from(body))?;
+    }
+
+    let toast = ToastNotification::CreateToastNotification(&template)?;
+    let notifier =
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(TOAST_APP_ID))?;
+    notifier.Show(&toast)
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {

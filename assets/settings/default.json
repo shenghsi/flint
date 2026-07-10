@@ -1493,6 +1493,8 @@
     "max_visible_threads_per_agent": 5,
     // Show five-hour and weekly plan usage beside agent headings.
     "show_plan_usage": true,
+    // Show a desktop notification when an agent thread finishes a turn or needs input.
+    "notify_when_finished": true,
     // When to reopen live resumed agent sessions from the previous app session.
     // Can be `never`, `startup_restore`, or `matching_workspace`.
     "reopen_sessions_on_startup": "never",
