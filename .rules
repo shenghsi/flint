@@ -134,6 +134,7 @@ Other entities can then register a callback to handle these events by doing `cx.
 ## Build guidelines
 
 - Build the local macOS app bundle at `/tmp/Flint-Local.app` with `./script/bundle-tmp-app`.
+- This script can exit non-zero even after successfully building the app: `script/bundle-mac -d` hardcodes `release/remote_server` in its final `sign_binary`/`gzip` step regardless of the `-d` (debug) flag, so that step fails whenever only a debug build exists. Because `bundle-tmp-app` runs under `set -e`, this failure happens before its own `cp -R` to `/tmp/Flint-Local.app`, so the target app is silently left stale — check the exit code, don't assume success from the tail of the output. If it fails this way, copy the fresh bundle manually: `cp -R target/<target-triple>/debug/bundle/osx/Flint.app /tmp/Flint-Local.app`.
 - Use `./script/clippy` instead of `cargo clippy`
 
 # Zed vs Flint boundary
@@ -187,6 +188,11 @@ code:**
   `docs/src/collaboration/overview.md` (describe the removed cloud-account
   and collab features); install instructions in `docs/src/migrate/*.md`
   that tell the reader to install "Zed" when the doc means Flint itself.
+
+# Push hygiene
+
+Before pushing Rust code changes, run `cargo fmt --all -- --check` and fix any
+formatting drift.
 
 # Pull request hygiene
 
