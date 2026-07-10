@@ -32,10 +32,10 @@ use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
 use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
 use gpui::{
     Action, App, AppContext as _, ClipboardItem, Context, DismissEvent, Element, Entity,
-    FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement, PathPromptOptions,
-    PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions, UpdateGlobal,
-    WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, actions,
-    image_cache, img, point, px, retain_all,
+    FocusHandle, Focusable, Global, Image, ImageFormat, KeyBinding, ParentElement,
+    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
+    UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowId, WindowKind,
+    WindowOptions, actions, image_cache, img, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -84,9 +84,9 @@ use flint_actions::{
     OpenStatusPage, Quit,
 };
 use workspace::{
-    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
-    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new,
+    AppState, MultiWorkspace, MultiWorkspaceEvent, NewFile, NewWindow, OpenLog, Toast, Workspace,
+    WorkspaceSettings, create_and_open_local_file,
+    notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
     CloseIntent, CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace,
@@ -352,8 +352,80 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
     }
 }
 
+/// Windows created by startup workspace restore, so the `WorkspaceAdded`
+/// hook below can tell lazily-loaded members of a restored window (eligible
+/// under `reopen_sessions_on_startup: "startup_restore"`) apart from
+/// workspaces opened fresh later (eligible only under "matching_workspace").
+#[derive(Default)]
+struct StartupRestoredWindows(collections::HashSet<WindowId>);
+
+impl Global for StartupRestoredWindows {}
+
+pub fn mark_window_startup_restored(window: impl Into<gpui::AnyWindowHandle>, cx: &mut App) {
+    cx.default_global::<StartupRestoredWindows>()
+        .0
+        .insert(window.into().window_id());
+}
+
+fn restore_agent_threads_for_added_workspace(
+    workspace: &Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    match agent_threads::AgentThreadSettings::get_global(cx).reopen_sessions_on_startup {
+        settings::AgentThreadReopenSessionsOnStartup::Never => return,
+        settings::AgentThreadReopenSessionsOnStartup::StartupRestore => {
+            let window_id = window.window_handle().window_id();
+            if !cx
+                .default_global::<StartupRestoredWindows>()
+                .0
+                .contains(&window_id)
+            {
+                return;
+            }
+        }
+        settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace => {}
+    }
+    let Some(app_state) = AppState::try_global(cx) else {
+        return;
+    };
+    let Some(last_session_id) = app_state
+        .session
+        .read(cx)
+        .last_session_id()
+        .map(str::to_string)
+    else {
+        return;
+    };
+    workspace
+        .update(cx, |workspace, cx| {
+            agent_threads::restore_threads_for_workspace(workspace, &last_session_id, window, cx)
+        })
+        .detach();
+}
+
 pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     agent_threads::init(cx);
+
+    // Startup restore only materializes a window's *active* workspace; the
+    // rest stay sidebar entries until first activated. Restore each such
+    // workspace's agent threads the moment it actually loads.
+    cx.observe_new(|_: &mut MultiWorkspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+        cx.subscribe_in(
+            &cx.entity(),
+            window,
+            |_multi_workspace, _, event, window, cx| {
+                if let MultiWorkspaceEvent::WorkspaceAdded(workspace) = event {
+                    restore_agent_threads_for_added_workspace(workspace, window, cx);
+                }
+            },
+        )
+        .detach();
+    })
+    .detach();
 
     // Persist the agent-thread restore snapshot whenever a thread opens or
     // closes, not only in the `Quit` action handler: restarts

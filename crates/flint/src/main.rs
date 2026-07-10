@@ -1254,6 +1254,7 @@ pub(crate) async fn restore_or_create_workspace(
                 SerializedWorkspaceLocation::Local => {
                     let window =
                         restore_multiworkspace(multi_workspace, app_state.clone(), cx).await?;
+                    cx.update(|cx| flint::mark_window_startup_restored(window, cx));
                     restore_agent_threads_for_multiworkspace(window, app_state.clone(), true, cx)
                         .await;
                     Ok(())
@@ -1291,6 +1292,7 @@ pub(crate) async fn restore_or_create_workspace(
                             cx,
                         )
                         .await;
+                        cx.update(|cx| flint::mark_window_startup_restored(window, cx));
                         restore_agent_threads_for_multiworkspace(
                             window,
                             app_state.clone(),
