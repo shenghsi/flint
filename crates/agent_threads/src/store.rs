@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use anyhow::{Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, Global, SharedString,
     Subscription, Task, TaskExt, WeakEntity, Window,
@@ -122,6 +122,12 @@ const SESSION_RESTORE_NAMESPACE: &str = "agent-thread-session-restore";
 pub struct AgentThreadStore {
     threads: HashMap<EntityId, ThreadEntry>,
     subscriptions: HashMap<EntityId, Vec<Subscription>>,
+    /// Workspaces `restore_threads_for_workspace` has already run for this
+    /// app session. Restore can be triggered from several places (startup,
+    /// open requests, lazy workspace activation); the first attempt wins so
+    /// concurrent triggers can't resume the same session twice, and closing
+    /// a restored thread doesn't bring it back on the next trigger.
+    restore_attempted: HashSet<WorkspaceId>,
 }
 
 struct ThreadEntry {
@@ -143,6 +149,7 @@ impl AgentThreadStore {
         let store = cx.new(|_| Self {
             threads: HashMap::default(),
             subscriptions: HashMap::default(),
+            restore_attempted: HashSet::default(),
         });
         cx.set_global(GlobalAgentThreadStore(store));
     }
@@ -598,6 +605,12 @@ pub fn restore_threads_for_workspace(
         return Task::ready(0);
     };
 
+    let store = AgentThreadStore::global(cx);
+    let first_attempt = store.update(cx, |store, _| store.restore_attempted.insert(workspace_id));
+    if !first_attempt {
+        return Task::ready(0);
+    }
+
     let records = match restore_records_for_session(last_session_id, cx) {
         Ok(records) => records,
         Err(error) => {
@@ -606,7 +619,6 @@ pub fn restore_threads_for_workspace(
         }
     };
 
-    let store = AgentThreadStore::global(cx);
     let live_threads = store.read(cx).live_threads_for_workspace(workspace_id, cx);
     let records = records_to_restore_for_workspace(workspace_id, &records, &live_threads);
     let settings = AgentThreadSettings::get_global(cx).clone();
