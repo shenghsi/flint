@@ -58,6 +58,8 @@ crates/docs_preprocessor/actions.json
 
 # NixOS integration test state
 .nixos-test-history
-.codex/
-.claude/
-.agents/
+/openspec/
+/.codex/
+/.claude/
+/.learnings/
+/.agents/
