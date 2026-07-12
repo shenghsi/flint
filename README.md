@@ -4,9 +4,21 @@ Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed) b
 
 It keeps Zed's fast, GPU-accelerated editor, language support, Git tooling, and extension ecosystem while replacing the built-in AI product with a focused workspace for terminal-based coding agents.
 
----
+![Flint workspace with an agent thread panel and a Claude Code terminal session](assets/screenshots/flint-workspace.png)
 
 ## Why Flint?
+
+Flint brings an IDE's editing and project tools together with the directness of a terminal-native workflow. Files, terminals, diffs, Git state, and long-running coding-agent sessions share one workspace, so you can delegate from the command line and review the result without moving between separate applications.
+
+| | Flint | Conventional IDEs | Terminal emulators |
+| --- | --- | --- | --- |
+| Code intelligence and extensions | Built in | Built in | Added through command-line tools |
+| Terminals as primary workspaces | Yes | Usually secondary panels | Yes |
+| Persistent CLI agent sessions | Organized as threads alongside files and diffs | Often replaced by proprietary chat surfaces | Available, but managed as terminal tabs or windows |
+| Git changes and visual diff review | Integrated | Integrated | Primarily command-line driven |
+| Agent credentials and configuration | Uses your existing CLI setup | Often configured separately by the IDE | Uses your existing CLI setup |
+
+Flint is for developers who want the project awareness and visual review tools of an IDE without giving up command-line agents, terminal workflows, or control of their local configuration.
 
 ### Added
 
