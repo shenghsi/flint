@@ -216,10 +216,33 @@ Release Notes:
 
 # Releases
 
-* To cut a release: bump the version in `crates/flint/Cargo.toml` (and `Cargo.lock`), commit, push to main, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
-* Do not run `gh release create` by hand after pushing the tag. `.github/workflows/release.yml` triggers on any `v*` tag push, runs tests/clippy, builds the macOS/Linux/Windows binaries, and creates the GitHub release itself (`script/create-draft-release`) once assets are ready. Manually creating the release first makes CI's own creation step no-op, leaving a published, asset-less release live on GitHub for the ~2-3h the builds take.
-* Track progress with `gh run list --workflow=release.yml`.
-* Only tags ending in `-pre` auto-publish (`auto_release_preview` job). Stable (non-`-pre`) releases finish as a draft with all assets attached — publish with `gh release edit vX.Y.Z --draft=false` once `validate_release_assets` has passed.
+To cut a release, walk through these steps in order:
+
+1. Check the version already on `main`: `grep '^version' crates/flint/Cargo.toml`
+   and `git tag -l "vX.Y.*"`. A bump sometimes rides along inside an unrelated
+   merged PR (e.g. a `Cargo.toml` edit bundled with an icon change), so `main`
+   may already carry the version you're about to release — don't assume a
+   dedicated bump commit is still needed if the working tree is already at
+   the target version and untagged.
+2. If the version still needs bumping: edit `version` in
+   `crates/flint/Cargo.toml`, run `cargo check -p flint` (or `cargo build`) so
+   `Cargo.lock` picks up the change, commit, and push to main.
+3. Before tagging, confirm local `main` matches `origin/main`
+   (`git fetch && git status`) — the tag must point at the commit that's
+   actually merged upstream, not a stale local one.
+4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+5. Do not run `gh release create` by hand after pushing the tag.
+   `.github/workflows/release.yml` triggers on any `v*` tag push, runs
+   tests/clippy, builds the macOS/Linux/Windows binaries, and creates the
+   GitHub release itself (`script/create-draft-release`) once assets are
+   ready. Manually creating the release first makes CI's own creation step
+   no-op, leaving a published, asset-less release live on GitHub for the
+   ~2-3h the builds take.
+6. Track progress with `gh run list --workflow=release.yml`.
+7. Only tags ending in `-pre` auto-publish (`auto_release_preview` job).
+   Stable (non-`-pre`) releases finish as a draft with all assets attached —
+   publish with `gh release edit vX.Y.Z --draft=false` once
+   `validate_release_assets` has passed.
 
 # Crash Investigation
 
