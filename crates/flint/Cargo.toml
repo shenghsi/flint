@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "flint"
-version = "0.4.1"
+version = "0.4.2"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Flint Team"]
