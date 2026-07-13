@@ -63,3 +63,5 @@ crates/docs_preprocessor/actions.json
 /.claude/
 /.learnings/
 /.agents/
+.factory
+.superpowers/

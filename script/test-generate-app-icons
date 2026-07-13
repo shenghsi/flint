@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+temporary_directory="$(mktemp -d)"
+trap 'rm -rf "${temporary_directory}"' EXIT
+
+iconutil -c iconset crates/flint/resources/Document.icns -o "${temporary_directory}/Document.iconset"
+
+python3 - <<'PY' "${temporary_directory}/Document.iconset/icon_512x512@2x.png" crates/flint/resources/app-icon@2x.png
+from pathlib import Path
+import sys
+
+from PIL import Image, ImageChops
+
+document_icon = Image.open(Path(sys.argv[1])).convert("RGBA")
+app_icon = Image.open(Path(sys.argv[2])).convert("RGBA")
+
+if document_icon.size != app_icon.size or ImageChops.difference(document_icon, app_icon).getbbox():
+    raise SystemExit("Document.icns does not match the stable app icon")
+PY

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+# Regenerates every app-icon PNG/ICO/ICNS under crates/flint/resources from the
+# single vector source (app-icon.svg), instead of hand-editing the exported
+# bitmaps per release channel. Each channel only differs by the background
+# fill color of the rounded-square backplate.
+#
+# Requires `resvg` (`brew install resvg`) and Pillow (`pip install pillow`).
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if ! command -v resvg >/dev/null 2>&1; then
+    echo "error: resvg is required (brew install resvg)" >&2
+    exit 1
+fi
+
+if ! command -v iconutil >/dev/null 2>&1 || ! command -v sips >/dev/null 2>&1; then
+    echo "error: iconutil and sips are required to generate Document.icns on macOS" >&2
+    exit 1
+fi
+
+resources_dir="crates/flint/resources"
+svg_source="${resources_dir}/app-icon.svg"
+work_dir="$(mktemp -d)"
+trap 'rm -rf "${work_dir}"' EXIT
+
+# channel name -> (png suffix, backplate color)
+channels=(
+    "stable:#1b242d"
+    "dev:#17233d"
+    "nightly:#182b1c"
+    "preview:#2d1931"
+)
+
+for entry in "${channels[@]}"; do
+    channel="${entry%%:*}"
+    color="${entry#*:}"
+    suffix=""
+    if [[ "${channel}" != "stable" ]]; then
+        suffix="-${channel}"
+    fi
+
+    channel_svg="${work_dir}/${channel}.svg"
+    sed "s/#1b242d/${color}/" "${svg_source}" > "${channel_svg}"
+
+    resvg --width 512 --height 512 "${channel_svg}" "${resources_dir}/app-icon${suffix}.png"
+    resvg --width 1024 --height 1024 "${channel_svg}" "${resources_dir}/app-icon${suffix}@2x.png"
+
+    ico_png="${work_dir}/${channel}-256.png"
+    resvg --width 256 --height 256 "${channel_svg}" "${ico_png}"
+    python3 -c "
+from PIL import Image
+Image.open('${ico_png}').save('${resources_dir}/windows/app-icon${suffix}.ico', sizes=[(256, 256)])
+"
+
+    echo "Generated ${channel} app icon"
+done
+
+document_iconset="${work_dir}/Document.iconset"
+mkdir "${document_iconset}"
+for size in 16 32 128 256 512; do
+    sips -z "${size}" "${size}" "${resources_dir}/app-icon@2x.png" \
+        --out "${document_iconset}/icon_${size}x${size}.png" >/dev/null
+done
+for size in 16 32 128 256 512; do
+    double_size=$((size * 2))
+    sips -z "${double_size}" "${double_size}" "${resources_dir}/app-icon@2x.png" \
+        --out "${document_iconset}/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "${document_iconset}" -o "${resources_dir}/Document.icns"
+
+echo "Generated macOS document icon"
