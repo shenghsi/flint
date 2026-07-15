@@ -5141,8 +5141,6 @@ mod tests {
                 "branches",
                 "buffer_search",
                 "cli",
-                "client",
-                "collab",
                 "command_palette",
                 "csv",
                 "debug_panel",
@@ -5153,6 +5151,8 @@ mod tests {
                 "encoding_selector",
                 "feedback",
                 "file_finder",
+                "flint",
+                "flint_actions",
                 "git",
                 "git_graph",
                 "git_onboarding",
@@ -5205,8 +5205,6 @@ mod tests {
                 "window",
                 "workspace",
                 "worktree_picker",
-                "flint",
-                "flint_actions",
             ];
             assert_eq!(
                 all_namespaces,

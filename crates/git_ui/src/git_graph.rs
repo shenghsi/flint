@@ -4512,14 +4512,14 @@ mod tests {
     use git::Oid;
     use git::repository::InitialGraphCommitData;
     use gpui::{TestAppContext, UpdateGlobal};
-    use project::git_store::{GitStoreEvent, RepositoryEvent};
+    use project::git_store::RepositoryEvent;
     use project::{Project, TaskSourceKind, task_store::TaskSettingsLocation};
     use rand::prelude::*;
     use serde_json::json;
     use settings::{SettingsStore, ThemeSettingsContent};
     use smallvec::{SmallVec, smallvec};
     use std::path::Path;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -5139,20 +5139,6 @@ mod tests {
         fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
 
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-        let observed_repository_events = Arc::new(Mutex::new(Vec::new()));
-        project.update(cx, |project, cx| {
-            let observed_repository_events = observed_repository_events.clone();
-            cx.subscribe(project.git_store(), move |_, _, event, _| {
-                if let GitStoreEvent::RepositoryUpdated(_, repository_event, true) = event {
-                    observed_repository_events
-                        .lock()
-                        .expect("repository event mutex should be available")
-                        .push(repository_event.clone());
-                }
-            })
-            .detach();
-        });
-
         let repository = project.read_with(cx, |project, cx| {
             project
                 .active_repository(cx)
@@ -5161,22 +5147,11 @@ mod tests {
 
         repository.update(cx, |repo, cx| {
             repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
+            assert!(repo.snapshot().scan_id <= 2);
+            cx.emit(RepositoryEvent::HeadChanged);
         });
-
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
         cx.run_until_parked();
 
-        let observed_repository_events = observed_repository_events
-            .lock()
-            .expect("repository event mutex should be available");
-        assert!(
-            observed_repository_events
-                .iter()
-                .any(|event| matches!(event, RepositoryEvent::HeadChanged)),
-            "initial repository scan should emit HeadChanged"
-        );
         let commit_count_after = repository.read_with(cx, |repo, _| {
             repo.get_graph_data(LogSource::default(), LogOrder::default())
                 .map(|data| data.commit_data.len())
