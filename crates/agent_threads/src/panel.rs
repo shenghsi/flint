@@ -245,7 +245,7 @@ impl AgentThreadsPanel {
     ) -> Entity<Self> {
         let workspace_handle = cx.entity().downgrade();
         let fs = workspace.app_state().fs.clone();
-        let http_client = workspace.app_state().client.http_client();
+        let http_client = workspace.app_state().http_client.clone();
         cx.new(|cx| {
             let store = AgentThreadStore::global(cx);
             let store_subscription =

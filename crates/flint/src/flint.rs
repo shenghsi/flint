@@ -8,7 +8,6 @@ mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
 pub mod remote_debug;
-pub mod telemetry_log;
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
 pub mod visual_tests;
 #[cfg(target_os = "windows")]
@@ -33,7 +32,7 @@ use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
 use gpui::{
     Action, App, AppContext as _, ClipboardItem, Context, DismissEvent, Element, Entity,
     FocusHandle, Focusable, Global, Image, ImageFormat, KeyBinding, ParentElement,
-    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
+    PathPromptOptions, PromptLevel, SharedString, Size, Task, TaskExt, TitlebarOptions,
     UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowId, WindowKind,
     WindowOptions, actions, image_cache, img, point, px, retain_all,
 };
@@ -80,8 +79,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 
 use flint_actions::{
-    About, OpenBrowser, OpenDocs, OpenFlintUrl, OpenServerSettings, OpenSettingsFile,
-    OpenStatusPage, Quit,
+    About, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile, OpenStatusPage, Quit,
 };
 use workspace::{
     AppState, MultiWorkspace, MultiWorkspaceEvent, NewFile, NewWindow, OpenLog, Toast, Workspace,
@@ -496,22 +494,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             .detach();
         }
 
-        cx.spawn_in(window, async move |_this, cx| {
-            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
-            loop {
-                cx.background_executor().timer(TELEMETRY_INTERVAL).await;
-                if cx
-                    .update(|window, cx| {
-                        input_latency_ui::report_input_latency_telemetry(window, cx);
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
-
         let multi_workspace_handle = cx.entity();
         let multi_workspace_weak = multi_workspace_handle.downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -803,12 +785,6 @@ fn register_actions(
         .register_action(|_, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
         })
-        .register_action(|_, action: &OpenFlintUrl, _, cx| {
-            OpenListener::global(cx).open(RawOpenRequest {
-                urls: vec![action.url.clone()],
-                ..Default::default()
-            })
-        })
         .register_action(|workspace, _: &OpenUrlPrompt, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
                 open_url_modal::OpenUrlModal::new(window, cx)
@@ -833,7 +809,6 @@ fn register_actions(
             }
         })
         .register_action(|workspace, action: &workspace::Open, window, cx| {
-            telemetry::event!("Project Opened");
             workspace::prompt_for_open_path_and_open(
                 workspace,
                 workspace.app_state().clone(),
@@ -873,7 +848,6 @@ fn register_actions(
             if workspace.project().read(cx).is_local() {
                 return;
             }
-            telemetry::event!("Project Opened");
             let paths = workspace.prompt_for_open_path(
                 PathPromptOptions {
                     files: true,
@@ -1253,9 +1227,6 @@ fn initialize_pane(
             toolbar.add_item(project_search_bar, window, cx);
             let lsp_log_item = cx.new(|_| LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
-            let telemetry_log_item =
-                cx.new(|cx| telemetry_log::TelemetryLogToolbarItemView::new(window, cx));
-            toolbar.add_item(telemetry_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
             let migration_banner =
@@ -4838,7 +4809,6 @@ mod tests {
             let app_state = AppState::test(cx);
 
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            client::init(&app_state.client, cx);
             workspace::init(app_state.clone(), cx);
             onboarding::init(cx);
             app_state
@@ -5405,7 +5375,6 @@ mod tests {
             gpui_tokio::init(cx);
             AppState::set_global(app_state.clone(), cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             release_channel::init(Version::new(0, 0, 0), cx);
             command_palette::init(cx);

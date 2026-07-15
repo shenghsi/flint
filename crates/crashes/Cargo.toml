@@ -27,3 +27,7 @@ workspace = true
 
 [lib]
 path = "src/crashes.rs"
+
+[dev-dependencies]
+anyhow.workspace = true
+tempfile.workspace = true

@@ -1,5 +1,5 @@
 {
-  description = "Flint is a minimal code editor crafted for speed and collaboration with humans and AI.";
+  description = "Flint is a minimal, local-first code editor crafted for speed.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

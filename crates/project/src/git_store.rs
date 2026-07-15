@@ -5,7 +5,7 @@ pub mod job_debug_queue;
 pub mod pending_op;
 
 use crate::{
-    ProjectEnvironment, ProjectItem, ProjectPath,
+    ProjectEnvironment, ProjectId, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::ProjectSettings,
     trusted_worktrees::{
@@ -16,7 +16,6 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
 use buffer_diff::{BufferDiff, BufferDiffEvent};
-use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use fs::{Fs, RemoveOptions};
@@ -848,10 +847,6 @@ impl GitStore {
             }
         }
         self.shared_diffs.clear();
-    }
-
-    pub(crate) fn forget_shared_diffs_for(&mut self, peer_id: &proto::PeerId) {
-        self.shared_diffs.remove(peer_id);
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {

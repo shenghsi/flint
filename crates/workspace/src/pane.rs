@@ -1123,10 +1123,6 @@ impl Pane {
                 pane.set_preview_item_id(Some(new_item_id), cx);
             }
 
-            if let Some(text) = new_item.telemetry_event_text(cx) {
-                telemetry::event!(text);
-            }
-
             pane.add_item_inner(
                 new_item,
                 true,
@@ -1351,10 +1347,6 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(text) = item.telemetry_event_text(cx) {
-            telemetry::event!(text);
-        }
-
         self.add_item_inner(
             item,
             activate_pane,
@@ -4056,7 +4048,7 @@ impl Pane {
         let is_remote = self
             .workspace
             .update(cx, |workspace, cx| {
-                if workspace.project().read(cx).is_via_collab() {
+                if workspace.project().read(cx).is_via_remote_server() {
                     workspace.show_error(
                         &anyhow::anyhow!("Cannot drop files on a remote project"),
                         cx,

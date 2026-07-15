@@ -29,12 +29,6 @@
 - [Git](./git.md)
 - [Modelines](./modelines.md)
 
-# Collaboration
-
-- [Overview](./collaboration/overview.md)
-  - [Channels](./collaboration/channels.md)
-  - [Contacts and Private Calls](./collaboration/contacts-and-private-calls.md)
-
 # Remote Development
 
 - [Overview](./remote-development.md)
@@ -69,25 +63,10 @@
 - [AI Privacy](./ai/privacy-and-security.md)
   - [Feedback and Training Data](./ai/ai-improvement.md)
 
-# Account & Billing
-
-- [Plans & Pricing](./account/plans-and-pricing.md)
-- [Flint-Hosted Models](./account/flint-hosted-models.md)
-- [Billing](./account/billing.md)
-
-# Flint Business
-
-- [Overview](./business/overview.md)
-- [Organizations](./business/organizations.md)
-- [Roles & Permissions](./roles.md)
-- [Admin Controls](./business/admin-controls.md)
-- [Business Support](./business/business-support.md)
-
 # Privacy & Security
 
 - [Worktree Trust](./worktree-trust.md)
-- [Privacy for Business](./business/privacy.md)
-- [Telemetry](./telemetry.md)
+- [Local Diagnostics](./telemetry.md)
 - [SOC2](./soc2.md)
 
 # Platform Support

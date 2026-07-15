@@ -15,6 +15,94 @@ actions!(
     ]
 );
 
+pub fn os_name() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "macOS".to_owned()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        format!("Linux {}", gpui::guess_compositor())
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        format!("FreeBSD {}", gpui::guess_compositor())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "Windows".to_owned()
+    }
+}
+
+/// This may perform blocking I/O and should be called from a background thread.
+pub fn os_version() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::NSProcessInfo;
+
+        let process_info = NSProcessInfo::processInfo();
+        let mut version = process_info
+            .operatingSystemVersionString()
+            .to_string()
+            .replace("Version ", "");
+        if version.ends_with(")")
+            && version
+                .strip_suffix(')')
+                .and_then(|value| value.chars().next_back())
+                .is_some_and(|character| character.is_ascii_digit())
+            && let Some(build_start) = version.rfind(" (Build ")
+        {
+            version.truncate(build_start);
+        }
+        version
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        const OS_RELEASE_PATHS: &[&str] = &[
+            "/etc/os-release",
+            "/usr/lib/os-release",
+            "/var/run/os-release",
+        ];
+
+        let content = OS_RELEASE_PATHS
+            .iter()
+            .find_map(|path| std::fs::read_to_string(path).ok());
+        let Some(content) = content else {
+            log::error!(
+                "Failed to load /etc/os-release, /usr/lib/os-release, or /var/run/os-release"
+            );
+            return "unknown unknown".to_owned();
+        };
+
+        let mut name = "unknown";
+        let mut version = "unknown";
+        for line in content.lines() {
+            match line.split_once('=') {
+                Some(("ID", value)) => name = value.trim_matches('"'),
+                Some(("VERSION_ID", value)) => version = value.trim_matches('"'),
+                _ => {}
+            }
+        }
+
+        format!("{name} {version}")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut info = unsafe { std::mem::zeroed() };
+        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut info) };
+        if status.is_ok() {
+            semver::Version::new(
+                info.dwMajorVersion as _,
+                info.dwMinorVersion as _,
+                info.dwBuildNumber as _,
+            )
+            .to_string()
+        } else {
+            "unknown".to_owned()
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemSpecs {
     app_version: String,
@@ -264,6 +352,15 @@ pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
     }
 
     Ok(gpus)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn operating_system_information_is_available_without_telemetry() {
+        assert!(!super::os_name().is_empty());
+        assert!(!super::os_version().is_empty());
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]

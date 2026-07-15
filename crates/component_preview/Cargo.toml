@@ -17,7 +17,6 @@ test-support = ["db/test-support"]
 
 [dependencies]
 anyhow.workspace = true
-client.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true

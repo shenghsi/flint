@@ -16,7 +16,6 @@ doctest = false
 default = []
 
 test-support = [
-    "client/test-support",
 
     "gpui/test-support",
 
@@ -33,7 +32,6 @@ auto_update.workspace = true
 fs.workspace = true
 platform_title_bar.workspace = true
 chrono.workspace = true
-client.workspace = true
 cloud_api_types.workspace = true
 db.workspace = true
 
@@ -49,7 +47,6 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -61,7 +58,6 @@ arrayvec = "0.7.6"
 windows.workspace = true
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 notifications = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }

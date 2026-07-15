@@ -171,8 +171,6 @@ impl OpenRequest {
                 this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
-            } else if client::parse_flint_link(&url, cx).is_some() {
-                log::error!("retired collaboration URL ignored: {}", url);
             } else {
                 log::error!("unhandled url: {}", url);
             }

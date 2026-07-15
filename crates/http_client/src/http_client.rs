@@ -173,9 +173,7 @@ pub struct HttpClientWithProxy {
 impl HttpClientWithProxy {
     /// Returns a new [`HttpClientWithProxy`] with the given proxy URL.
     pub fn new(client: Arc<dyn HttpClient>, proxy_url: Option<String>) -> Self {
-        let proxy_url = proxy_url
-            .and_then(|proxy| proxy.parse().ok())
-            .or_else(read_proxy_from_env);
+        let proxy_url = resolve_proxy_url(proxy_url.as_deref());
 
         Self::new_url(client, proxy_url)
     }
@@ -351,6 +349,31 @@ pub fn read_proxy_from_env() -> Option<Url> {
         .iter()
         .find_map(|var| std::env::var(var).ok())
         .and_then(|env| env.parse().ok())
+}
+
+pub fn resolve_proxy_url(configured_proxy: Option<&str>) -> Option<Url> {
+    resolve_proxy_url_with_fallback(configured_proxy, read_proxy_from_env())
+}
+
+fn resolve_proxy_url_with_fallback(
+    configured_proxy: Option<&str>,
+    fallback_proxy: Option<Url>,
+) -> Option<Url> {
+    let configured_proxy = configured_proxy
+        .map(str::trim)
+        .filter(|proxy| !proxy.is_empty());
+
+    let Some(configured_proxy) = configured_proxy else {
+        return fallback_proxy;
+    };
+
+    match configured_proxy.parse() {
+        Ok(proxy) => Some(proxy),
+        Err(error) => {
+            log::error!("Error parsing proxy settings: {error}");
+            fallback_proxy
+        }
+    }
 }
 
 pub fn read_no_proxy_from_env() -> Option<String> {
@@ -548,6 +571,42 @@ mod tests {
         assert_eq!(
             client.proxy().map(Url::as_str),
             Some("http://localhost:3128/")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_proxy_takes_precedence_over_environment_proxy() -> Result<()> {
+        let environment_proxy = Url::parse("http://environment.example:8080")?;
+
+        let proxy = resolve_proxy_url_with_fallback(
+            Some("  http://configured.example:3128  "),
+            Some(environment_proxy),
+        );
+
+        assert_eq!(
+            proxy.as_ref().map(Url::as_str),
+            Some("http://configured.example:3128/")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn blank_or_invalid_proxy_falls_back_to_environment_proxy() -> Result<()> {
+        let environment_proxy = Url::parse("http://environment.example:8080")?;
+
+        let blank_proxy =
+            resolve_proxy_url_with_fallback(Some("   "), Some(environment_proxy.clone()));
+        let invalid_proxy =
+            resolve_proxy_url_with_fallback(Some("://invalid"), Some(environment_proxy));
+
+        assert_eq!(
+            blank_proxy.as_ref().map(Url::as_str),
+            Some("http://environment.example:8080/")
+        );
+        assert_eq!(
+            invalid_proxy.as_ref().map(Url::as_str),
+            Some("http://environment.example:8080/")
         );
         Ok(())
     }

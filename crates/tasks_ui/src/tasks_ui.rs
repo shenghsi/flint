@@ -149,9 +149,7 @@ pub fn toggle_modal(
 ) -> Task<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
-    let can_open_modal = workspace
-        .project()
-        .read_with(cx, |project, _| !project.is_via_collab());
+    let can_open_modal = true;
     if can_open_modal {
         let task_contexts = task_contexts(workspace, window, cx);
         cx.spawn_in(window, async move |workspace, cx| {

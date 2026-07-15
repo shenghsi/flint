@@ -1,72 +1,24 @@
 ---
-title: AI Privacy - Zed
-description: Understand how Zed handles AI prompts, code context, hosted model requests, provider data boundaries, feedback, training data, and privacy controls.
+title: AI Privacy
+description: Understand Flint's provider-owned AI and authentication boundaries.
 ---
 
 # AI Privacy
 
-This page explains the privacy and trust boundaries for AI features in Zed,
-including [Zed Agent](./zed-agent.md), [Edit Prediction](./edit-prediction.md),
-[Inline Assistant](./inline-assistant.md), and
-[Git commit generation](../git.md#ai-support-in-git).
+Flint has no account system, hosted model proxy, AI telemetry service, or conversation store. It does not receive or retain prompts, responses, or code context.
 
-Zed does not retain your prompts or code context by default. For
-[Zed-hosted models](../account/zed-hosted-models.md), Zed has zero-data-retention
-and no-training commitments from model providers for inference requests. Zed only
-retains AI data when you explicitly share feedback or opt in to training data
-collection.
+## Agent Threads
 
-## AI Request Paths {#ai-request-paths}
+Agent Threads can use supported third-party tools such as Codex CLI and Claude Code. Flint reuses their existing login state rather than creating a Flint account. It may read provider credentials from the locations those tools use and contact the provider's usage API to display plan usage. Prompts, code context, tool calls, model routing, and retention are governed by the selected tool and provider.
 
-| Path                                                         | Who handles model requests                        | What to know                                                                                                                                                                                              | Details                                                                                           |
-| ------------------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| [Zed-hosted models](../account/zed-hosted-models.md)         | Zed routes requests to hosted model providers     | Provider agreements require zero data retention and prohibit training on your prompts or code context for inference requests.                                                                             | [Zed-hosted model commitments](#data-retention-and-training)                                      |
-| [Provider API keys](./use-api-access.md)                     | The configured provider                           | The provider handles requests under its own terms. Provider keys saved through Zed are stored in the system keychain, not in `settings.json`.                                                             | [Use API Access](./use-api-access.md)                                                             |
-| [Existing subscriptions](./use-an-existing-subscription.md)  | The subscription provider                         | The provider handles requests under the subscription terms.                                                                                                                                               | [Use an Existing Subscription](./use-an-existing-subscription.md)                                 |
-| [Gateways](./use-a-gateway.md)                               | The configured gateway and upstream providers     | The gateway and upstream providers handle requests under their own terms.                                                                                                                                 | [Use a Gateway](./use-a-gateway.md)                                                               |
-| [Local models](./use-a-local-model.md)                       | The local server or self-hosted endpoint          | The local server handles requests according to how you configured that server.                                                                                                                            | [Use a Local Model](./use-a-local-model.md)                                                       |
-| [External Agents](./external-agents.md)                      | The External Agent and its configured providers   | The External Agent handles model requests under its own terms. Tool and MCP behavior depends on agent and ACP configuration.                                                                              | [External Agents](./external-agents.md)                                                           |
-| [Terminal Threads](./terminal-threads.md)                    | The CLI or TUI running in the terminal            | The CLI or TUI owns its auth, model routing, tools, instructions, MCP configuration, and data handling.                                                                                                   | [Terminal Threads](./terminal-threads.md)                                                         |
-| [Edit Prediction](./edit-prediction.md)                      | The selected edit prediction provider             | Each keystroke can send local editing context to the selected provider. Zeta requests are processed transiently unless training data collection is enabled; third-party providers follow their own terms. | [Edit Prediction](./edit-prediction.md), [Feedback and Training Data](./ai-improvement.md)        |
-| [Agent tools](./tools.md), [MCP](./mcp.md), and integrations | Zed, configured MCP servers, and external systems | Tools can read, edit, search, run commands, fetch URLs, or call external systems depending on profile, MCP server, and tool permission settings.                                                          | [Agent Profiles](./agent-profiles.md), [Tool Permissions](./tool-permissions.md), [MCP](./mcp.md) |
-| Project trust and instructions                               | Zed and the trusted worktree                      | Project-local instructions and skills are loaded from trusted worktrees. External Agents and Terminal Threads may read their own instruction files.                                                       | [Worktree Trust](../worktree-trust.md), [Skills](./skills.md), [Instructions](./instructions.md)  |
+Signing out or changing provider authentication is done through the provider's CLI. Flint does not upload those credentials to Flint or Zed.
 
-## Zed-Hosted Model Commitments {#data-retention-and-training}
+## Local and External Services
 
-For Zed-hosted models, Zed has commitments from model providers that prohibit
-training on your prompts or code context and require zero data retention for
-inference requests. The public provider documents linked below describe provider
-programs or default API terms; Zed-hosted model requests are governed by Zed's
-provider agreements.
+Local models, external agents, extensions, and MCP servers can read or transmit data according to their own configuration and permissions. Review each service before granting access to a worktree or running tools.
 
-| Provider  | No training reference                                   | Zero-data-retention reference                                                                                                                 |
-| --------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Anthropic | [Yes](https://www.anthropic.com/legal/commercial-terms) | [Yes](https://privacy.anthropic.com/en/articles/8956058-i-have-a-zero-data-retention-agreement-with-anthropic-what-products-does-it-apply-to) |
-| Google    | [Yes](https://cloud.google.com/terms/service-terms)     | [Yes](https://cloud.google.com/terms/service-terms), see Service Terms sections 18 and 20(h)                                                  |
-| OpenAI    | [Yes](https://openai.com/enterprise-privacy/)           | [Yes](https://platform.openai.com/docs/guides/your-data)                                                                                      |
+## Diagnostics
 
-## AI Data Retained by Zed {#ai-data-retained-by-zed}
+Flint stores logs, crash artifacts, hang traces, and input-latency reports locally. It does not upload them. See [Local Diagnostics](../telemetry.md) for locations and self-debugging instructions.
 
-Zed may retain AI data only when you explicitly share it or opt in:
-
-- [Response ratings and feedback](./ai-improvement.md#ai-feedback-with-ratings)
-  can send a conversation thread to Zed for review and improvement.
-- [Edit Prediction training data](./ai-improvement.md#edit-predictions) is
-  collected only when you opt in, the project is open source, and the file is not
-  excluded.
-
-See [Feedback and Training Data](./ai-improvement.md) for the full list of what
-can be stored in each opt-in case.
-
-## Controls and Related Privacy Docs {#controls-and-related-privacy-docs}
-
-- [Telemetry](../telemetry.md): What telemetry Zed collects and how to control
-  it.
-- [Privacy for Business](../business/privacy.md): How Zed Business enforces
-  privacy settings across an organization.
-- [Admin Controls](../business/admin-controls.md): How owners and admins control
-  Zed-hosted models, Edit Prediction, and feedback sharing.
-- [AI Quick Start](./quick-start.md#turn-ai-off): How to turn AI off.
-- [Privacy Policy](https://zed.dev/privacy-policy): Zed's privacy policy.
-- [Subprocessors](https://zed.dev/subprocessors): Zed's subprocessors.
-- [Terms of Service](https://zed.dev/terms): Zed's terms.
+Flint also has no AI feedback, ratings, or training-data upload path. See [Feedback and Training Data](./ai-improvement.md).

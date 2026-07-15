@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::item::test::TestItem;
-use client::proto;
 use fs::{FakeFs, Fs};
 use gpui::{TestAppContext, VisualTestContext};
+use rpc::proto;
 use serde_json::json;
 use settings::SettingsStore;
 use util::path;

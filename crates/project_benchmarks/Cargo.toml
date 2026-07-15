@@ -8,7 +8,6 @@ edition.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 clap.workspace = true
-client.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true

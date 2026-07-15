@@ -1,5 +1,4 @@
 use anyhow::{Context as _, Result, anyhow};
-use client::ProjectId;
 use collections::HashMap;
 use collections::HashSet;
 use gpui::TasksIncluded;
@@ -14,8 +13,8 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment, ProjectPath,
-    ToolchainStore, WorktreeId,
+    LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment, ProjectId,
+    ProjectPath, ToolchainStore, WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     git_store::GitStore,
     image_store::ImageId,
@@ -417,7 +416,7 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::AddWorktree>,
         mut cx: AsyncApp,
     ) -> Result<proto::AddWorktreeResponse> {
-        use client::ErrorCodeExt;
+        use rpc::ErrorCodeExt;
         let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let path = PathBuf::from(shellexpand::tilde(&message.payload.path).to_string());
 

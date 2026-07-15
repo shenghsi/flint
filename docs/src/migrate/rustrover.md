@@ -326,31 +326,18 @@ Several features that might require plugins in other editors are built into Zed:
 - rust-analyzer integration
 - rustfmt formatting
 
-### What's Not in Zed
+### What's Not in Flint
 
-Here's what RustRover offers that Zed doesn't have:
+Here's what RustRover offers that Flint doesn't have:
 
 - **Profiler integration** — Use `cargo flamegraph`, `perf`, or external profiling tools
 - **Database tools** — Use DataGrip, DBeaver, or TablePlus
 - **HTTP Client** — Use tools like `curl`, `httpie`, or Postman
 - **Coverage visualization** — Use `cargo tarpaulin` or `cargo llvm-cov` externally
 
-## A Note on Licensing and Telemetry
+## A Note on Licensing and Privacy
 
-On licensing and telemetry:
-
-- **Zed is open source** (primarily GPL-licensed, with Apache-licensed components)
-- **Telemetry is optional** and can be disabled during onboarding or in settings
-
-## Collaboration in Zed vs. RustRover
-
-RustRover offers Code With Me as a separate feature for collaboration. Zed has collaboration built into the core experience.
-
-- Open the Collab Panel in the left dock
-- Create a channel and [invite your collaborators](https://zed.dev/docs/collaboration#inviting-a-collaborator) to join
-- [Share your screen or your codebase](https://zed.dev/docs/collaboration#share-a-project) directly
-
-Once connected, you'll see each other's cursors, selections, and edits in real time. Voice chat is included. There's no need for separate tools or third-party logins.
+Flint is open source and has no telemetry, account, or collaboration service. Logs and reliability diagnostics remain local. Flint preserves SSH remote editing for working on another machine, but SSH is not a multi-user collaboration system.
 
 ## Using AI in Zed
 

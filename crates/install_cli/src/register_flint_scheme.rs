@@ -1,5 +1,6 @@
-use client::ZED_URL_SCHEME;
 use gpui::{AsyncApp, actions};
+
+pub const FLINT_URL_SCHEME: &str = "flint";
 
 actions!(
     cli,
@@ -10,5 +11,6 @@ actions!(
 );
 
 pub async fn register_flint_scheme(cx: &AsyncApp) -> anyhow::Result<()> {
-    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME)).await
+    cx.update(|cx| cx.register_url_scheme(FLINT_URL_SCHEME))
+        .await
 }

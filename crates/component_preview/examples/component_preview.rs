@@ -4,7 +4,6 @@
 use fs::RealFs;
 use gpui::{AppContext as _, Bounds, KeyBinding, WindowBounds, WindowOptions, actions, size};
 
-use client::{Client, UserStore};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use project::Project;
@@ -42,11 +41,7 @@ fn main() {
         theme_settings::init(theme::LoadThemes::JustBase, cx);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
-        let client = Client::production(cx);
-        client::init(&client, cx);
-
-        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+        let workspace_store = cx.new(WorkspaceStore::new);
         let session_id = uuid::Uuid::new_v4().to_string();
         let kvp = db::kvp::KeyValueStore::global(cx);
         let session = cx
@@ -57,8 +52,7 @@ fn main() {
 
         let app_state = Arc::new(AppState {
             languages,
-            client,
-            user_store,
+            http_client: cx.http_client(),
             workspace_store,
             fs,
             build_window_options: |_, _| Default::default(),
@@ -84,9 +78,8 @@ fn main() {
                     theme_settings::setup_ui_font(window, cx);
 
                     let project = Project::local(
-                        app_state.client.clone(),
+                        app_state.http_client.clone(),
                         app_state.node_runtime.clone(),
-                        app_state.user_store.clone(),
                         app_state.languages.clone(),
                         app_state.fs.clone(),
                         None,
@@ -110,14 +103,11 @@ fn main() {
                     workspace.update(cx, |workspace, cx| {
                         let weak_workspace = cx.entity().downgrade();
                         let language_registry = app_state.languages.clone();
-                        let user_store = app_state.user_store.clone();
-
                         let component_preview = cx.new(|cx| {
                             ComponentPreview::new(
                                 weak_workspace,
                                 project,
                                 language_registry,
-                                user_store,
                                 None,
                                 None,
                                 window,

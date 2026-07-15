@@ -62,7 +62,6 @@ jobs:
     runs-on: macos-15
     env:
       CARGO_INCREMENTAL: 0
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -89,7 +88,6 @@ jobs:
     runs-on: macos-15
     env:
       CARGO_INCREMENTAL: 0
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -116,7 +114,6 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       CARGO_INCREMENTAL: 0
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - run: ./script/linux
@@ -165,7 +162,6 @@ jobs:
       CARGO_INCREMENTAL: 0
       CC: clang
       CXX: clang++
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - run: ./script/linux
@@ -212,7 +208,6 @@ jobs:
     runs-on: windows-2022
     env:
       CARGO_INCREMENTAL: 0
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup sccache
@@ -237,7 +232,6 @@ jobs:
     runs-on: windows-11-arm
     env:
       CARGO_INCREMENTAL: 0
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup sccache

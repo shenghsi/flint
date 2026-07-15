@@ -10,7 +10,6 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashMap;
 use futures::future;
@@ -32,6 +31,7 @@ use lsp::{
     DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
     OneOf, RenameOptions, ServerCapabilities,
 };
+use rpc::proto::{self, PeerId};
 use serde_json::Value;
 
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};

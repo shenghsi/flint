@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Expression, Level, Push, Run, Step, Use, Workflow, ctx::Context};
+use gh_workflow::{Event, Expression, Level, Push, Run, Step, Workflow, ctx::Context};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
@@ -151,18 +151,6 @@ impl ReleaseBundleJobs {
             self.windows_x86_64,
         ]
     }
-}
-
-pub(crate) fn create_sentry_release() -> Step<Use> {
-    named::uses(
-        "getsentry",
-        "action-release",
-        "526942b68292201ac6bbb99b9a0747d4abee354c", // v3
-    )
-    .add_env(("SENTRY_ORG", "zed-dev"))
-    .add_env(("SENTRY_PROJECT", "zed"))
-    .add_env(("SENTRY_AUTH_TOKEN", vars::SENTRY_AUTH_TOKEN))
-    .add_with(("environment", "production"))
 }
 
 pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report-${GITHUB_REF_NAME}.md";

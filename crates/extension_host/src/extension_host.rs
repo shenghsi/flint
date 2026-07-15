@@ -9,7 +9,6 @@ mod extension_store_test;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::{Client, proto, telemetry::Telemetry};
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides, GetExtensionsResponse};
 use collections::{BTreeMap, BTreeSet, FxHashSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
@@ -43,6 +42,7 @@ use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
 use remote::RemoteClient;
+use rpc::proto;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{SemanticTokenRules, Settings, SettingsStore};
@@ -104,10 +104,13 @@ pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
     SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
 }
 
-fn upstream_zed_extension_http_client(
-    http_client: Arc<HttpClientWithUrl>,
-) -> Arc<HttpClientWithUrl> {
-    Arc::new(http_client.with_base_url(UPSTREAM_ZED_EXTENSION_SERVER_URL))
+fn upstream_zed_extension_http_client(http_client: Arc<dyn HttpClient>) -> Arc<HttpClientWithUrl> {
+    let proxy = http_client.proxy().cloned();
+    Arc::new(HttpClientWithUrl::new_url(
+        http_client,
+        UPSTREAM_ZED_EXTENSION_SERVER_URL,
+        proxy,
+    ))
 }
 
 /// Returns whether the given extension version is compatible with this version of Flint.
@@ -139,7 +142,6 @@ pub struct ExtensionStore {
     pub extension_index: ExtensionIndex,
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<HttpClientWithUrl>,
-    pub telemetry: Option<Arc<Telemetry>>,
     pub reload_tx: UnboundedSender<Option<Arc<str>>>,
     pub reload_complete_senders: Vec<oneshot::Sender<()>>,
     pub installed_dir: PathBuf,
@@ -223,7 +225,7 @@ actions!(
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
-    client: Arc<Client>,
+    http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
@@ -233,9 +235,8 @@ pub fn init(
             None,
             extension_host_proxy,
             fs,
-            client.http_client(),
-            client.http_client(),
-            Some(client.telemetry().clone()),
+            http_client.clone(),
+            http_client,
             node_runtime,
             cx,
         )
@@ -264,9 +265,8 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         extension_host_proxy: Arc<ExtensionHostProxy>,
         fs: Arc<dyn Fs>,
-        http_client: Arc<HttpClientWithUrl>,
+        http_client: Arc<dyn HttpClient>,
         builder_client: Arc<dyn HttpClient>,
-        telemetry: Option<Arc<Telemetry>>,
         node_runtime: NodeRuntime,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -300,7 +300,6 @@ impl ExtensionStore {
             wasm_extensions: Vec::new(),
             fs,
             http_client: extension_http_client,
-            telemetry,
             reload_tx,
             tasks: Vec::new(),
 
@@ -1209,18 +1208,6 @@ impl ExtensionStore {
             reload_count,
             extensions_to_unload.len() - reload_count
         );
-
-        let extension_ids = extensions_to_load
-            .iter()
-            .filter_map(|id| {
-                Some((
-                    id.clone(),
-                    new_index.extensions.get(id)?.manifest.version.clone(),
-                ))
-            })
-            .collect::<Vec<_>>();
-
-        telemetry::event!("Extensions Loaded", id_and_versions = extension_ids);
 
         let themes_to_remove = old_index
             .themes

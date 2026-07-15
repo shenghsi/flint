@@ -2,8 +2,6 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use client::{Client, UserStore};
-use clock::FakeSystemClock;
 use collections::HashSet;
 use languages::rust_lang;
 
@@ -2711,22 +2709,10 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
         }
     });
 
-    let client = cx.update(|cx| {
-        Client::new(
-            Arc::new(FakeSystemClock::new()),
-            FakeHttpClient::with_404_response(),
-            cx,
-        )
-    });
-
+    let http_client = FakeHttpClient::with_404_response();
     let node = NodeRuntime::unavailable();
-    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
 
-    cx.update(|cx| {
-        Project::init(&client, cx);
-    });
-
-    cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, false, cx))
+    cx.update(|cx| Project::remote(ssh, http_client, node, languages, fs, false, cx))
 }

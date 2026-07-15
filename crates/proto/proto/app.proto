@@ -18,19 +18,6 @@ message OpenServerSettings {
   uint64 project_id = 1;
 }
 
-message GetCrashFiles {}
-
-message GetCrashFilesResponse {
-  repeated CrashReport crashes = 1;
-  reserved 2; // old panics
-}
-
-message CrashReport {
-  reserved 1, 2;
-  string metadata = 3;
-  bytes minidump_contents = 4;
-}
-
 message Extension {
   string id = 1;
   string version = 2;

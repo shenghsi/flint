@@ -1,12 +1,11 @@
 use anyhow::{Context as _, Result};
-use client::Client;
 use db::kvp::KeyValueStore;
 use futures_lite::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, TaskExt,
     Window, actions,
 };
-use http_client::{HttpClient, HttpClientWithUrl};
+use http_client::HttpClient;
 use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use semver::Version;
@@ -156,7 +155,7 @@ impl AutoUpdateStatus {
 pub struct AutoUpdater {
     status: AutoUpdateStatus,
     current_version: Version,
-    client: Arc<Client>,
+    http_client: Arc<dyn HttpClient>,
     pending_poll: Option<Task<Option<()>>>,
     quit_subscription: Option<gpui::Subscription>,
     update_check_type: UpdateCheckType,
@@ -219,7 +218,7 @@ struct GlobalAutoUpdate(Option<Entity<AutoUpdater>>);
 
 impl Global for GlobalAutoUpdate {}
 
-pub fn init(client: Arc<Client>, cx: &mut App) {
+pub fn init(http_client: Arc<dyn HttpClient>, cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_, action, window, cx| check(action, window, cx));
 
@@ -231,7 +230,7 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 
     let version = release_channel::AppVersion::global(cx);
     let auto_updater = cx.new(|cx| {
-        let updater = AutoUpdater::new(version, client, cx);
+        let updater = AutoUpdater::new(version, http_client, cx);
 
         let poll_for_updates = ReleaseChannel::try_global(cx)
             .map(|channel| channel.poll_for_updates())
@@ -299,23 +298,23 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
 
 pub fn release_notes_url(cx: &mut App) -> Option<String> {
     let release_channel = ReleaseChannel::try_global(cx)?;
-    let url = match release_channel {
+    let current_version = AutoUpdater::get(cx)?.read(cx).current_version.clone();
+    Some(release_notes_url_for(release_channel, &current_version))
+}
+
+fn release_notes_url_for(release_channel: ReleaseChannel, current_version: &Version) -> String {
+    match release_channel {
         ReleaseChannel::Stable | ReleaseChannel::Preview => {
-            let auto_updater = AutoUpdater::get(cx)?;
-            let auto_updater = auto_updater.read(cx);
-            let mut current_version = auto_updater.current_version.clone();
+            let mut current_version = current_version.clone();
             current_version.pre = semver::Prerelease::EMPTY;
             current_version.build = semver::BuildMetadata::EMPTY;
-            let release_channel = release_channel.dev_name();
-            let path = format!("/releases/{release_channel}/{current_version}");
-            auto_updater.client.http_client().build_url(&path)
+            format!("https://github.com/shenghsi/flint/releases/tag/v{current_version}")
         }
         ReleaseChannel::Nightly => {
-            "https://github.com/zed-industries/flint/commits/nightly/".to_string()
+            "https://github.com/shenghsi/flint/releases/tag/nightly".to_owned()
         }
-        ReleaseChannel::Dev => "https://github.com/zed-industries/flint/commits/main/".to_string(),
-    };
-    Some(url)
+        ReleaseChannel::Dev => "https://github.com/shenghsi/flint/commits/main".to_owned(),
+    }
 }
 
 pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {
@@ -381,7 +380,11 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    fn new(current_version: Version, client: Arc<Client>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        current_version: Version,
+        http_client: Arc<dyn HttpClient>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // On windows, executable files cannot be overwritten while they are
         // running, so we must wait to overwrite the application until quitting
         // or restarting. When quitting the app, we spawn the auto update helper
@@ -402,7 +405,7 @@ impl AutoUpdater {
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
-            client,
+            http_client,
             pending_poll: None,
             quit_subscription,
             update_check_type: UpdateCheckType::Automatic,
@@ -536,7 +539,7 @@ impl AutoUpdater {
         let version_path = platform_dir.join(format!("{}.gz", release.version));
         smol::fs::create_dir_all(&platform_dir).await.ok();
 
-        let client = this.read_with(cx, |this, _| this.client.http_client());
+        let http_client = this.read_with(cx, |this, _| this.http_client.clone());
 
         if smol::fs::metadata(&version_path).await.is_err() {
             log::info!(
@@ -544,7 +547,7 @@ impl AutoUpdater {
                 release.version
             );
             set_status("Downloading remote server", cx);
-            download_remote_server_binary(&version_path, release, client).await?;
+            download_remote_server_binary(&version_path, release, http_client).await?;
         }
 
         if let Err(error) =
@@ -590,7 +593,7 @@ impl AutoUpdater {
         arch: &str,
         cx: &mut AsyncApp,
     ) -> Result<ReleaseAsset> {
-        let client = this.read_with(cx, |this, _| this.client.clone());
+        let http_client = this.read_with(cx, |this, _| this.http_client.clone());
 
         let version = if let Some(mut version) = version {
             version.pre = semver::Prerelease::EMPTY;
@@ -599,8 +602,6 @@ impl AutoUpdater {
         } else {
             "latest".to_string()
         };
-        let http_client = client.http_client();
-
         // Flint has no release backend of its own, so every release asset is
         // fetched from this repo's own GitHub releases instead.
         let asset_name = match asset {
@@ -621,10 +622,10 @@ impl AutoUpdater {
     }
 
     async fn update(this: Entity<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let (client, installed_version, previous_status, release_channel) =
+        let (http_client, installed_version, previous_status, release_channel) =
             this.read_with(cx, |this, cx| {
                 (
-                    this.client.http_client(),
+                    this.http_client.clone(),
                     this.current_version.clone(),
                     this.status.clone(),
                     ReleaseChannel::try_global(cx).unwrap_or(ReleaseChannel::Stable),
@@ -674,7 +675,7 @@ impl AutoUpdater {
             .await
             .context("Failed to create installer dir")?;
         let target_path = Self::target_path(&installer_dir).await?;
-        download_release(&target_path, fetched_release_data, client)
+        download_release(&target_path, fetched_release_data, http_client)
             .await
             .with_context(|| format!("Failed to download update to {}", target_path.display()))?;
 
@@ -853,22 +854,23 @@ async fn get_release_from_github(
     release_channel: ReleaseChannel,
     version: &str,
     asset_name: &str,
-    http_client: Arc<HttpClientWithUrl>,
+    http_client: Arc<dyn HttpClient>,
 ) -> Result<ReleaseAsset> {
     const REPO: &str = "shenghsi/flint";
 
-    let http: Arc<dyn HttpClient> = http_client;
     let release = match release_channel {
         ReleaseChannel::Nightly => {
-            http_client::github::get_release_by_tag_name(REPO, "nightly", http).await?
+            http_client::github::get_release_by_tag_name(REPO, "nightly", http_client.clone())
+                .await?
         }
         _ if version == "latest" => {
             let pre_release = matches!(release_channel, ReleaseChannel::Preview);
-            http_client::github::latest_github_release(REPO, true, pre_release, http).await?
+            http_client::github::latest_github_release(REPO, true, pre_release, http_client.clone())
+                .await?
         }
         _ => {
             let tag = format!("v{version}");
-            http_client::github::get_release_by_tag_name(REPO, &tag, http).await?
+            http_client::github::get_release_by_tag_name(REPO, &tag, http_client).await?
         }
     };
 
@@ -892,7 +894,7 @@ async fn get_release_from_github(
 async fn download_remote_server_binary(
     target_path: &PathBuf,
     release: ReleaseAsset,
-    client: Arc<HttpClientWithUrl>,
+    client: Arc<dyn HttpClient>,
 ) -> Result<()> {
     let temp = tempfile::Builder::new().tempfile_in(remote_servers_dir())?;
     let mut temp_file = File::create(&temp).await?;
@@ -969,7 +971,7 @@ async fn cleanup_remote_server_cache(
 async fn download_release(
     target_path: &Path,
     release: ReleaseAsset,
-    client: Arc<HttpClientWithUrl>,
+    client: Arc<dyn HttpClient>,
 ) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
 
@@ -1170,8 +1172,6 @@ pub async fn finalize_auto_update_on_quit() {
 
 #[cfg(test)]
 mod tests {
-    use client::Client;
-    use clock::FakeSystemClock;
     use futures::channel::oneshot;
     use gpui::TestAppContext;
     use http_client::{FakeHttpClient, Response};
@@ -1227,7 +1227,6 @@ mod tests {
             let current_version = semver::Version::new(0, 100, 0);
             release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
 
-            let clock = Arc::new(FakeSystemClock::new());
             let release_available = Arc::clone(&release_available);
             let dmg_rx = Arc::new(parking_lot::Mutex::new(Some(dmg_rx)));
             let asset_name = match OS {
@@ -1277,8 +1276,7 @@ mod tests {
                     Ok(Response::builder().status(404).body("".into()).unwrap())
                 }
             });
-            let client = Client::new(clock, fake_client_http, cx);
-            crate::init(client, cx);
+            crate::init(fake_client_http, cx);
         });
 
         let auto_updater = cx.update(|cx| AutoUpdater::get(cx).expect("auto updater should exist"));
@@ -1346,6 +1344,28 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
             "<fake-flint-update>"
+        );
+    }
+
+    #[test]
+    fn release_notes_urls_point_to_flint_github() {
+        let version = Version::parse("1.2.3-pre.1+build").expect("valid test version");
+
+        assert_eq!(
+            release_notes_url_for(ReleaseChannel::Stable, &version),
+            "https://github.com/shenghsi/flint/releases/tag/v1.2.3"
+        );
+        assert_eq!(
+            release_notes_url_for(ReleaseChannel::Preview, &version),
+            "https://github.com/shenghsi/flint/releases/tag/v1.2.3"
+        );
+        assert_eq!(
+            release_notes_url_for(ReleaseChannel::Nightly, &version),
+            "https://github.com/shenghsi/flint/releases/tag/nightly"
+        );
+        assert_eq!(
+            release_notes_url_for(ReleaseChannel::Dev, &version),
+            "https://github.com/shenghsi/flint/commits/main"
         );
     }
 

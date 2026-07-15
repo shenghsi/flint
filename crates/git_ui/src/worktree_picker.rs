@@ -455,9 +455,7 @@ impl WorktreePickerDelegate {
 
     fn creation_blocked_reason(&self, cx: &App) -> Option<SharedString> {
         let project = self.project.read(cx);
-        if project.is_via_collab() {
-            Some("Worktree creation is not supported in collaborative projects".into())
-        } else if project.repositories(cx).is_empty() {
+        if project.repositories(cx).is_empty() {
             Some("Requires a Git repository in the project".into())
         } else {
             None
@@ -1491,9 +1489,8 @@ pub async fn open_remote_worktree(
     let new_project = cx.update(|_, cx| {
         project::Project::remote(
             session,
-            app_state.client.clone(),
+            app_state.http_client.clone(),
             app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
             true,

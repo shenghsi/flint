@@ -1,15 +1,11 @@
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use client::Client;
 use gpui::{AppContext, TasksIncluded, profiler};
-use parking_lot::Mutex;
 use ui::App;
 
 mod logging;
 mod task_traces;
-mod telemetry;
 
 gpui::actions!(
     dev,
@@ -23,7 +19,7 @@ gpui::actions!(
     ]
 );
 
-pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
+pub(crate) fn start(cx: &mut App) {
     let hang_time = if cfg!(debug_assertions) {
         if cfg!(windows) {
             // yes windows debug builds are horribly slow
@@ -40,7 +36,7 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
         log::warn!("debug build, only reporting hangs longer then {hang_time:?}");
     }
 
-    start_hang_detection(hang_time, client, cx);
+    start_hang_detection(hang_time);
 
     cx.on_action(move |_: &HangAction, _| {
         log::warn!(
@@ -75,20 +71,10 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
     });
 }
 
-fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &App) {
+fn start_hang_detection(report_longer_then: Duration) {
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
-    let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new(foreground_thread)));
     let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
-
-    let telemetry2 = Arc::clone(&telemetry);
-    cx.on_app_quit({
-        move |_| {
-            telemetry2.lock().send();
-            client.telemetry().flush_events()
-        }
-    })
-    .detach();
 
     // an OS thread to insulate detection and reporting from hangs on the fore
     // or background.
@@ -100,16 +86,8 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
             thread::sleep(Duration::from_millis(200));
             loop {
                 thread::sleep(monitor_interval);
-                // TODO(yara) the telemetry should not include still running tasks while the
-                // reports being logged should.
                 let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
                 let action_stats = profiler::take_action_stats();
-
-                {
-                    let mut telemetry = telemetry.lock();
-                    telemetry.update(&task_stats, &action_stats);
-                    telemetry.send_periodically();
-                }
 
                 let should_write_trace = log.check_and_report(&task_stats, &action_stats);
                 if should_write_trace {

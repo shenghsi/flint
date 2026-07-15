@@ -1,0 +1,33 @@
+syntax = "proto3";
+package flint.messages;
+
+import "git.proto";
+import "worktree.proto";
+
+message UpdateProject {
+  uint64 project_id = 1;
+  repeated WorktreeMetadata worktrees = 2;
+}
+
+message UpdateWorktree {
+  uint64 project_id = 1;
+  uint64 worktree_id = 2;
+  string root_name = 3;
+  repeated Entry updated_entries = 4;
+  repeated uint64 removed_entries = 5;
+  repeated RepositoryEntry updated_repositories = 6;
+  repeated uint64 removed_repositories = 7;
+  uint64 scan_id = 8;
+  bool is_last_update = 9;
+  string abs_path = 10;
+  optional string root_repo_common_dir = 11;
+}
+
+message RepositoryEntry {
+  uint64 repository_id = 1;
+  reserved 2;
+  repeated StatusEntry updated_statuses = 3;
+  repeated string removed_statuses = 4;
+  repeated string current_merge_conflicts = 5;
+  optional Branch branch_summary = 6;
+}

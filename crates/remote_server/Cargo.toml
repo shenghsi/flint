@@ -26,7 +26,6 @@ anyhow.workspace = true
 async-channel.workspace = true
 askpass.workspace = true
 clap.workspace = true
-client.workspace = true
 collections.workspace = true
 crashes.workspace = true
 env_logger.workspace = true
@@ -83,7 +82,6 @@ windows.workspace = true
 gpui = { workspace = true, features = ["windows-manifest"] }
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }

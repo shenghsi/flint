@@ -33,7 +33,6 @@ search.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 settings.workspace = true
-telemetry.workspace = true
 tempfile.workspace = true
 theme.workspace = true
 theme_settings.workspace = true

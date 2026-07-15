@@ -461,10 +461,6 @@ impl Item for WelcomePage {
         "Welcome".into()
     }
 
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("New Welcome Page Opened")
-    }
-
     fn show_toolbar(&self) -> bool {
         false
     }

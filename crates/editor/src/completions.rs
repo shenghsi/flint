@@ -209,11 +209,7 @@ impl Editor {
             return None;
         }
 
-        // OnTypeFormatting returns a list of edits, no need to pass them between Flint instances,
-        // hence we do LSP request & edit on host side only — add formats to host's history.
         let push_to_lsp_host_history = true;
-        // If this is not the host, append its history with new edits.
-        let push_to_client_history = project.read(cx).is_via_collab();
 
         let on_type_formatting = project.update(cx, |project, cx| {
             project.on_type_format(
@@ -225,13 +221,7 @@ impl Editor {
             )
         });
         Some(cx.spawn_in(window, async move |editor, cx| {
-            if let Some(transaction) = on_type_formatting.await? {
-                if push_to_client_history {
-                    buffer.update(cx, |buffer, _| {
-                        buffer.push_transaction(transaction, Instant::now());
-                        buffer.finalize_last_transaction();
-                    });
-                }
+            if on_type_formatting.await?.is_some() {
                 editor.update(cx, |editor, cx| {
                     editor.refresh_document_highlights(cx);
                 })?;

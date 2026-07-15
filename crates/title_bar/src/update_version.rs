@@ -62,10 +62,6 @@ impl UpdateVersion {
         cx.notify()
     }
 
-    pub fn show_update_in_menu_bar(&self) -> bool {
-        self.dismissed && self.status.is_updated()
-    }
-
     fn version_tooltip_message(version: &VersionCheckType) -> String {
         format!("Update to Version: {}", {
             match version {

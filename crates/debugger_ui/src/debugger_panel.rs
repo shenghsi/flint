@@ -1576,10 +1576,6 @@ impl Panel for DebugPanel {
         px(300.)
     }
 
-    fn remote_id() -> Option<proto::PanelId> {
-        Some(proto::PanelId::DebugPanel)
-    }
-
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
         DebuggerSettings::get_global(cx)
             .button

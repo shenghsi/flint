@@ -5,7 +5,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: '0'
   RUST_BACKTRACE: '1'
-  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
   ZED_EVAL_TELEMETRY: '1'
   MODEL_NAME: ${{ inputs.model_name }}
 on:

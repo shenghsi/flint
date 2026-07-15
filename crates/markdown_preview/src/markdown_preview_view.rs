@@ -894,10 +894,6 @@ impl Item for MarkdownPreviewView {
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
 
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("Markdown Preview Opened")
-    }
-
     fn can_save(&self, cx: &App) -> bool {
         self.active_editor
             .as_ref()

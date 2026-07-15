@@ -14,8 +14,6 @@ jobs:
     if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions') && ((github.event.action == 'labeled' && (github.event.label.name == 'run-nix' || github.event.label.name == 'run-bundling')) || (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-nix') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))))
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
@@ -46,8 +44,6 @@ jobs:
     if: (github.repository_owner == 'flint-industries' || github.repository_owner == 'flint-extensions') && ((github.event.action == 'labeled' && (github.event.label.name == 'run-nix' || github.event.label.name == 'run-bundling')) || (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-nix') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))))
     runs-on: namespace-profile-mac-large
     env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:

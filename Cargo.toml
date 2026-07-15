@@ -11,7 +11,6 @@ members = [
     "crates/breadcrumbs",
     "crates/buffer_diff",
     "crates/cli",
-    "crates/client",
     "crates/clock",
     "crates/cloud_api_types",
     "crates/collections",
@@ -94,7 +93,6 @@ members = [
     "crates/net",
     "crates/node_runtime",
     "crates/notifications",
-    "crates/oauth_callback_server",
     "crates/onboarding",
     "crates/open_path_prompt",
     "crates/outline",
@@ -145,8 +143,6 @@ members = [
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
-    "crates/telemetry",
-    "crates/telemetry_events",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
@@ -219,7 +215,6 @@ auto_update_ui = { path = "crates/auto_update_ui" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
 cli = { path = "crates/cli" }
-client = { path = "crates/client" }
 clock = { path = "crates/clock" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 collections = { path = "crates/collections", version = "0.1.0" }
@@ -302,7 +297,6 @@ miniprofiler_ui = { path = "crates/miniprofiler_ui" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
-oauth_callback_server = { path = "crates/oauth_callback_server" }
 onboarding = { path = "crates/onboarding" }
 open_path_prompt = { path = "crates/open_path_prompt" }
 outline = { path = "crates/outline" }
@@ -350,8 +344,6 @@ syntax_theme = { path = "crates/syntax_theme" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
-telemetry = { path = "crates/telemetry" }
-telemetry_events = { path = "crates/telemetry_events" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
@@ -840,7 +832,6 @@ reqwest_client = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
-telemetry_events = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }
 ui_input = { codegen-units = 1 }

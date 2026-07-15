@@ -17,10 +17,9 @@ const _: () = assert!(
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{Client, ProxySettings, UserStore, parse_flint_link};
 use collections::HashMap;
 use crashes::InitCrashHandler;
-use db::kvp::{GlobalKeyValueStore, KeyValueStore};
+use db::kvp::KeyValueStore;
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
@@ -52,7 +51,7 @@ use project::{project_settings::ProjectSettings, trusted_worktrees};
 use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
+use settings::{Settings, SettingsStore, watch_config_file};
 use smol::future::poll_once;
 use std::{
     cell::RefCell,
@@ -304,8 +303,8 @@ fn main() {
             app_version,
             app_commit_sha,
             *release_channel::RELEASE_CHANNEL,
-            client::telemetry::os_name(),
-            client::telemetry::os_version(),
+            system_specs::os_name(),
+            system_specs::os_version(),
         );
         println!("Flint System Specs (from CLI):\n{}", system_specs);
         return;
@@ -334,10 +333,6 @@ fn main() {
     let app = build_application().with_assets(Assets);
 
     let app_db = db::AppDatabase::new();
-    let system_id = app.background_executor().spawn(system_id());
-    let installation_id = app
-        .background_executor()
-        .spawn(installation_id(KeyValueStore::from_app_db(&app_db)));
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().spawn(Session::new(
         session_id.clone(),
@@ -504,7 +499,9 @@ fn main() {
             std::env::consts::OS,
             std::env::consts::ARCH
         );
-        let proxy_url = ProxySettings::get_global(cx).proxy_url();
+        let proxy_url = http_client::resolve_proxy_url(
+            settings::ProxySettings::get_global(cx).proxy.as_deref(),
+        );
         let http = {
             let _guard = Tokio::handle(cx).enter();
 
@@ -523,8 +520,6 @@ fn main() {
         extension::init(cx);
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
-        let client = Client::production(cx);
-        cx.set_http_client(client.http_client());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
@@ -555,13 +550,12 @@ fn main() {
         .detach();
         ui::on_new_scrollbars::<SettingsStore>(cx);
 
-        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+        let node_runtime = NodeRuntime::new(cx.http_client(), Some(shell_env_loaded_rx), rx);
 
         latex_render::LatexRenderer::init(node_runtime.clone(), cx);
 
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
-        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+        let workspace_store = cx.new(WorkspaceStore::new);
 
         language_extension::init(
             language_extension::LspAccess::ViaWorkspaces({
@@ -582,70 +576,20 @@ fn main() {
             languages.clone(),
         );
 
-        Client::set_global(client.clone(), cx);
-        log::info!("init: client");
-
         flint::init(cx);
         #[cfg(target_os = "macos")]
         flint::move_to_applications::init(cx);
-        project::Project::init(&client, cx);
-        client::init(&client, cx);
         title_bar::init(cx);
         feature_flags::FeatureFlagStore::init(cx);
-        log::info!("init: project/client/title_bar");
+        log::info!("init: project/title_bar");
 
-        let system_id = cx.foreground_executor().block_on(system_id).ok();
-        let installation_id = cx.foreground_executor().block_on(installation_id).ok();
         let session = cx.foreground_executor().block_on(session);
-        log::info!("init: system_id/installation_id/session");
-
-        let telemetry = client.telemetry();
-        telemetry.start(
-            system_id.as_ref().map(|id| id.to_string()),
-            installation_id.as_ref().map(|id| id.to_string()),
-            session.id().to_owned(),
-            cx,
-        );
-        cx.subscribe(&user_store, {
-            let telemetry = telemetry.clone();
-            move |_, evt: &client::user::Event, cx| match evt {
-                client::user::Event::PrivateUserInfoUpdated => {
-                    if let Some(crash_client) = cx.try_global::<CrashHandler>() {
-                        crashes::set_user_info(
-                            &crash_client.0,
-                            crashes::UserInfo {
-                                metrics_id: telemetry.metrics_id().map(|s| s.to_string()),
-                                is_staff: telemetry.is_staff(),
-                            },
-                        );
-                    }
-                }
-                _ => {}
-            }
-        })
-        .detach();
-
-        // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
-        if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
-            match (&system_id, &installation_id) {
-                (IdType::New(_), IdType::New(_)) => {
-                    telemetry::event!("App First Opened");
-                    telemetry::event!("App First Opened For Release Channel");
-                }
-                (IdType::Existing(_), IdType::New(_)) => {
-                    telemetry::event!("App First Opened For Release Channel");
-                }
-                (_, IdType::Existing(_)) => {
-                    telemetry::event!("App Opened");
-                }
-            }
-        }
+        log::info!("init: session");
         let app_session = cx.new(|cx| AppSession::new(session, cx));
 
         let app_state = Arc::new(AppState {
             languages,
-            client: client.clone(),
-            user_store,
+            http_client: cx.http_client(),
             fs: fs.clone(),
             build_window_options,
             workspace_store,
@@ -654,13 +598,13 @@ fn main() {
         });
         AppState::set_global(app_state.clone(), cx);
 
-        auto_update::init(client.clone(), cx);
-        reliability::init(client.clone(), cx);
+        auto_update::init(cx.http_client(), cx);
+        reliability::init(cx);
         log::info!("init: auto_update/reliability");
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
-            app_state.client.clone(),
+            cx.http_client(),
             app_state.node_runtime.clone(),
             cx,
         );
@@ -674,7 +618,6 @@ fn main() {
         );
         command_palette::init(cx);
         if ENABLE_RETIRED_PRODUCT_SURFACES {
-            flint::telemetry_log::init(cx);
             flint::remote_debug::init(cx);
         }
         snippet_provider::init(cx);
@@ -724,7 +667,6 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
-        notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         git_ui::init(cx);
         log::info!("init: vim/terminal/panels/notifications/git");
         if ENABLE_RETIRED_PRODUCT_SURFACES {
@@ -748,8 +690,6 @@ fn main() {
         log::info!("init: ui components complete");
 
         cx.observe_global::<SettingsStore>({
-            let http = app_state.client.http_client();
-            let client = app_state.client.clone();
             move |cx| {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
@@ -771,14 +711,6 @@ fn main() {
                         }
                     },
                 );
-
-                let new_host = &client::ClientSettings::get_global(cx).server_url;
-                if &http.base_url() != new_host {
-                    http.set_base_url(new_host);
-                    if client.status().borrow().is_connected() {
-                        client.reconnect(&cx.to_async());
-                    }
-                }
             }
         })
         .detach();
@@ -790,17 +722,6 @@ fn main() {
             }
         })
         .detach();
-        telemetry::event!(
-            "Settings Changed",
-            setting = "theme",
-            value = cx.theme().name.to_string()
-        );
-        telemetry::event!(
-            "Settings Changed",
-            setting = "keymap",
-            value = BaseKeymap::get_global(cx).to_string()
-        );
-        telemetry.flush_events().detach();
 
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
@@ -1203,43 +1124,6 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         })
         .detach();
     }
-}
-
-async fn system_id() -> Result<IdType> {
-    let key_name = "system_id".to_string();
-    let db = GlobalKeyValueStore::global();
-
-    if let Ok(Some(system_id)) = db.read_kvp(&key_name) {
-        return Ok(IdType::Existing(system_id));
-    }
-
-    let system_id = Uuid::new_v4().to_string();
-
-    db.write_kvp(key_name, system_id.clone()).await?;
-
-    Ok(IdType::New(system_id))
-}
-
-async fn installation_id(db: KeyValueStore) -> Result<IdType> {
-    let legacy_key_name = "device_id".to_string();
-    let key_name = "installation_id".to_string();
-
-    // Migrate legacy key to new key
-    if let Ok(Some(installation_id)) = db.read_kvp(&legacy_key_name) {
-        db.write_kvp(key_name, installation_id.clone()).await?;
-        db.delete_kvp(legacy_key_name).await?;
-        return Ok(IdType::Existing(installation_id));
-    }
-
-    if let Ok(Some(installation_id)) = db.read_kvp(&key_name) {
-        return Ok(IdType::Existing(installation_id));
-    }
-
-    let installation_id = Uuid::new_v4().to_string();
-
-    db.write_kvp(key_name, installation_id.clone()).await?;
-
-    Ok(IdType::New(installation_id))
 }
 
 pub(crate) async fn restore_or_create_workspace(
@@ -1701,21 +1585,7 @@ struct Args {
     etw_socket: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-enum IdType {
-    New(String),
-    Existing(String),
-}
-
-impl ToString for IdType {
-    fn to_string(&self) -> String {
-        match self {
-            IdType::New(id) | IdType::Existing(id) => id.clone(),
-        }
-    }
-}
-
-fn parse_url_arg(arg: &str, cx: &App) -> String {
+fn parse_url_arg(arg: &str, _cx: &App) -> String {
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => format!("file://{}", path.display()),
         Err(_) => {
@@ -1723,7 +1593,6 @@ fn parse_url_arg(arg: &str, cx: &App) -> String {
                 || arg.starts_with("flint://")
                 || arg.starts_with("flint-cli://")
                 || arg.starts_with("ssh://")
-                || parse_flint_link(arg, cx).is_some()
             {
                 arg.into()
             } else {

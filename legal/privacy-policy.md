@@ -3,15 +3,13 @@ title: Privacy Policy
 slug: privacy-policy
 ---
 
-**Last Updated**: June 21, 2026
+**Last Updated**: July 15, 2026
 
 Flint is an open-source, community-maintained fork of Zed. There is no company behind it, no account system, and no telemetry backend of its own.
 
 ## What Flint Collects
 
-By default, Flint does not collect or transmit any usage data, diagnostics, or telemetry. This is controlled by the `telemetry.diagnostics` and `telemetry.metrics` settings, both of which are off by default.
-
-If you turn telemetry on, anonymized diagnostics or usage metrics are sent to Zed's servers, since Flint does not run its own telemetry backend. That data is handled under [Zed's Privacy Policy](https://zed.dev/privacy-policy), not this one.
+Flint does not collect or transmit usage data, diagnostics, crash dumps, hang reports, or telemetry. It has no telemetry setting or upload endpoint. Logs and reliability artifacts are stored locally so you can inspect and debug them yourself; see [Local Diagnostics](../docs/src/telemetry.md).
 
 ## AI Features
 
@@ -20,6 +18,8 @@ AI features are off by default. If you enable them and configure a model provide
 ## Extensions
 
 Installing an extension fetches it from Zed's extension registry, since Flint does not run its own. That request is handled under [Zed's Privacy Policy](https://zed.dev/privacy-policy).
+
+Checking for and downloading Flint updates uses GitHub Releases. Those requests are handled under [GitHub's Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
 
 ## Source Code
 

@@ -1080,13 +1080,7 @@ impl Editor {
             };
 
             if let Some(url) = url {
-                cx.update(|window, cx| {
-                    if parse_flint_link(&url, cx).is_some() {
-                        window.dispatch_action(Box::new(flint_actions::OpenFlintUrl { url }), cx);
-                    } else {
-                        cx.open_url(&url);
-                    }
-                })?;
+                cx.update(|_, cx| cx.open_url(&url))?;
             }
 
             anyhow::Ok(())
@@ -1696,16 +1690,7 @@ impl Editor {
                 // If there is one url or file, open it directly
                 match first_url_or_file {
                     Some(Either::Left(url)) => {
-                        cx.update(|window, cx| {
-                            if parse_flint_link(&url, cx).is_some() {
-                                window.dispatch_action(
-                                    Box::new(flint_actions::OpenFlintUrl { url }),
-                                    cx,
-                                );
-                            } else {
-                                cx.open_url(&url);
-                            }
-                        })?;
+                        cx.update(|_, cx| cx.open_url(&url))?;
                         Ok(Navigated::Yes)
                     }
                     Some(Either::Right(file_target)) => {

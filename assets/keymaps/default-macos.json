@@ -40,7 +40,6 @@
       "fn-f": "flint::ToggleFullScreen",
       "ctrl-cmd-f": "flint::ToggleFullScreen",
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",
-      "ctrl-cmd-c": "editor::DisplayCursorNames",
       "ctrl-cmd-s": "workspace::ToggleWorktreeSecurity",
     },
   },
@@ -602,7 +601,6 @@
       "cmd-k n": "encoding_selector::Toggle",
       "cmd-k m": "language_selector::Toggle",
       "cmd-k cmd-m": "toolchain::AddToolchain",
-      "escape": "workspace::Unfollow",
       "cmd-k cmd-left": "workspace::ActivatePaneLeft",
       "cmd-k cmd-right": "workspace::ActivatePaneRight",
       "cmd-k cmd-up": "workspace::ActivatePaneUp",
@@ -748,7 +746,6 @@
   {
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
       // TODO: Move this to a dock open action
       // Only available in debug builds: opens an element inspector for development.
       "cmd-alt-i": "dev::ToggleInspector",

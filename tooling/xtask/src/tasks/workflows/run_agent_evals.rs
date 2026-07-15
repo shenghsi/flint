@@ -24,7 +24,6 @@ pub(crate) fn run_unit_evals() -> Workflow {
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))
-        .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_EVAL_TELEMETRY", 1))
         .add_env(("MODEL_NAME", model_name.to_string()))
         .add_job(unit_evals.name, unit_evals.job)
@@ -52,7 +51,6 @@ pub(crate) fn run_cron_unit_evals() -> Workflow {
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))
-        .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_job(unit_evals.name, unit_evals.job)
 }
 

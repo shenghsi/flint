@@ -1,8 +1,7 @@
 use crate::tasks::workflows::{
     nix_build::build_nix,
     release::{
-        ReleaseBundleJobs, create_sentry_release, download_workflow_artifacts, notify_on_failure,
-        prep_release_artifacts,
+        ReleaseBundleJobs, download_workflow_artifacts, notify_on_failure, prep_release_artifacts,
     },
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests::run_platform_tests_no_filter,
@@ -138,7 +137,6 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
                 RefSha::Context,
                 &token,
                 true,
-            ))
-            .add_step(create_sentry_release()),
+            )),
     }
 }

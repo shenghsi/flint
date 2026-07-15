@@ -63,6 +63,7 @@ use project::{
     *,
 };
 use rand::{Rng as _, rngs::StdRng};
+use rpc::{AnyProtoClient, NoopProtoClient};
 use serde_json::json;
 use settings::SettingsStore;
 #[cfg(not(windows))]
@@ -92,6 +93,13 @@ use util::{
     uri,
 };
 use worktree::WorktreeModelHandle as _;
+
+#[test]
+fn project_id_round_trips_through_the_protocol_value() {
+    let project_id = ProjectId(42);
+
+    assert_eq!(project_id.to_proto(), 42);
+}
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -5854,7 +5862,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
             0,
             ReplicaId::REMOTE_SERVER,
             metadata,
-            project.read(cx).client().into(),
+            AnyProtoClient::new(NoopProtoClient::new()),
             project.read(cx).path_style(cx),
             cx,
         )

@@ -107,8 +107,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    workspace::FollowableViewRegistry::register::<DebugSession>(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace
             .register_action(spawn_task_or_modal)

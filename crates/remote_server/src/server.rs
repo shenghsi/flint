@@ -10,7 +10,6 @@ pub use headless_project::{HeadlessAppState, HeadlessProject};
 
 use anyhow::{Context as _, Result, anyhow};
 use clap::Subcommand;
-use client::ProxySettings;
 use collections::HashMap;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
@@ -20,15 +19,14 @@ use futures::{
     select, select_biased,
 };
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Context, UpdateGlobal as _};
 use gpui_tokio::Tokio;
-use http_client::{Url, read_proxy_from_env};
+use http_client::{Url, resolve_proxy_url};
 use language::LanguageRegistry;
 use net::async_net::{UnixListener, UnixStream};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
-use proto::CrashReport;
 use release_channel::{AppCommitSha, AppVersion, RELEASE_CHANNEL, ReleaseChannel};
 use remote::{
     RemoteClient,
@@ -37,9 +35,9 @@ use remote::{
     proxy::ProxyLaunchError,
 };
 use reqwest_client::ReqwestClient;
+use rpc::AnyProtoClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
-use rpc::{AnyProtoClient, TypedEnvelope};
-use settings::{Settings, SettingsStore, watch_config_file};
+use settings::{ProxySettings, Settings, SettingsStore, watch_config_file};
 use smol::{
     Timer,
     channel::{Receiver, Sender},
@@ -302,59 +300,6 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         .init();
 
     Ok(rx)
-}
-
-fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyProtoClient) {
-    client.add_request_handler(
-        project.downgrade(),
-        |_, _: TypedEnvelope<proto::GetCrashFiles>, _cx| async move {
-            let mut legacy_panics = Vec::new();
-            let mut crashes = Vec::new();
-            let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
-            while let Some(child) = children.next().await {
-                let child = child?;
-                let child_path = child.path();
-
-                let extension = child_path.extension();
-                if extension == Some(OsStr::new("panic")) {
-                    let filename = if let Some(filename) = child_path.file_name() {
-                        filename.to_string_lossy()
-                    } else {
-                        continue;
-                    };
-
-                    if !filename.starts_with("flint") {
-                        continue;
-                    }
-
-                    let file_contents = smol::fs::read_to_string(&child_path)
-                        .await
-                        .context("error reading panic file")?;
-
-                    legacy_panics.push(file_contents);
-                    smol::fs::remove_file(&child_path)
-                        .await
-                        .context("error removing panic")
-                        .log_err();
-                } else if extension == Some(OsStr::new("dmp")) {
-                    let mut json_path = child_path.clone();
-                    json_path.set_extension("json");
-                    if let Ok(json_content) = smol::fs::read_to_string(&json_path).await {
-                        crashes.push(CrashReport {
-                            metadata: json_content,
-                            minidump_contents: smol::fs::read(&child_path).await?,
-                        });
-                        smol::fs::remove_file(&child_path).await.log_err();
-                        smol::fs::remove_file(&json_path).await.log_err();
-                    } else {
-                        log::error!("Couldn't find json metadata for crash: {child_path:?}");
-                    }
-                }
-            }
-
-            anyhow::Ok(proto::GetCrashFilesResponse { crashes })
-        },
-    );
 }
 
 struct ServerListeners {
@@ -691,8 +636,6 @@ pub fn execute_run(
                 cx,
             )
         });
-
-        handle_crash_files_requests(&project, &session);
 
         cx.background_spawn(async move {
             cleanup_old_binaries_wsl();
@@ -1275,19 +1218,7 @@ pub fn handle_settings_file_changes(
 }
 
 fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
-    let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-
-    proxy_str
-        .as_deref()
-        .map(str::trim)
-        .filter(|input| !input.is_empty())
-        .and_then(|input| {
-            input
-                .parse::<Url>()
-                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                .ok()
-        })
-        .or_else(read_proxy_from_env)
+    resolve_proxy_url(ProxySettings::get_global(cx).proxy.as_deref())
 }
 
 fn cleanup_old_binaries() -> Result<()> {

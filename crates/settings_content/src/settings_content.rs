@@ -210,20 +210,8 @@ pub struct SettingsContent {
 
     pub proxy: Option<String>,
 
-    /// The URL of the Flint server to connect to.
-    pub server_url: Option<String>,
-
-    /// The URL used as the key for credential storage.
-    ///
-    /// When set, credentials are stored under this URL instead of `server_url`.
-    /// This allows running multiple Flint instances side by side without them
-    /// overwriting each other's keychain entries.
-    pub credentials_url: Option<String>,
-
     /// Configuration for session-related features
     pub session: Option<SessionSettingsContent>,
-    /// Control what info is collected by Flint.
-    pub telemetry: Option<TelemetrySettingsContent>,
 
     /// Configuration of the terminal in Flint.
     pub terminal: Option<TerminalSettingsContent>,
@@ -454,29 +442,6 @@ impl strum::VariantNames for BaseKeymapContent {
         "Cursor",
         "None",
     ];
-}
-
-/// Control what info is collected by Flint.
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
-pub struct TelemetrySettingsContent {
-    /// Send debug info like crash reports.
-    ///
-    /// Default: true
-    pub diagnostics: Option<bool>,
-    /// Send anonymized usage data like what languages you're using Flint with.
-    ///
-    /// Default: true
-    pub metrics: Option<bool>,
-}
-
-impl Default for TelemetrySettingsContent {
-    fn default() -> Self {
-        Self {
-            diagnostics: Some(true),
-            metrics: Some(true),
-        }
-    }
 }
 
 #[derive(

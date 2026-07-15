@@ -8,7 +8,6 @@ use std::{
 
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
-use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
 use gpui::{Action as _, Anchor, App, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
@@ -1320,12 +1319,6 @@ impl Render for LspButton {
         }
 
         let state = self.server_state.read(cx);
-        let is_via_ssh = state
-            .workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server())
-            .unwrap_or(false);
-
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;
@@ -1373,13 +1366,7 @@ impl Render for LspButton {
 
         div().child(
             PopoverMenu::new("lsp-tool")
-                .on_open(Rc::new(move |_window, _cx| {
-                    telemetry::event!(
-                        "Toolbar Menu Opened",
-                        name = "Language Servers",
-                        is_via_ssh,
-                    );
-                }))
+                .on_open(Rc::new(move |_window, _cx| {}))
                 .menu(move |_, cx| {
                     lsp_button
                         .read_with(cx, |lsp_button, _| lsp_button.lsp_menu.clone())

@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     deploy_docs::deploy_docs_workflow_call,
-    release::{self, notify_on_failure},
+    release::notify_on_failure,
     runners,
     steps::{CommonJobConditions, NamedJob, checkout_repo, dependant_job, named},
     vars::{self, StepOutput, WorkflowInput},
@@ -24,14 +24,9 @@ pub fn after_release() -> Workflow {
     let deploy_docs = deploy_docs_workflow_call(DOCS_CHANNEL, TAG_NAME_ENV);
     let post_to_discord = post_to_discord(&[&refresh_zed_dev]);
     let publish_winget = publish_winget();
-    let create_sentry_release = create_sentry_release();
     let notify_on_failure = {
-        let notify_on_failure = notify_on_failure(&[
-            &refresh_zed_dev,
-            &post_to_discord,
-            &publish_winget,
-            &create_sentry_release,
-        ]);
+        let notify_on_failure =
+            notify_on_failure(&[&refresh_zed_dev, &post_to_discord, &publish_winget]);
         NamedJob {
             name: notify_on_failure.name,
             job: notify_on_failure.job.add_need(deploy_docs.name.clone()),
@@ -53,7 +48,6 @@ pub fn after_release() -> Workflow {
         .add_job(deploy_docs.name, deploy_docs.job)
         .add_job(post_to_discord.name, post_to_discord.job)
         .add_job(publish_winget.name, publish_winget.job)
-        .add_job(create_sentry_release.name, create_sentry_release.job)
         .add_job(notify_on_failure.name, notify_on_failure.job)
 }
 
@@ -183,13 +177,4 @@ echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
             .add_step(set_package_name)
             .add_step(winget_releaser(&package_name)),
     )
-}
-
-fn create_sentry_release() -> NamedJob {
-    let job = Job::default()
-        .runs_on(runners::LINUX_SMALL)
-        .with_repository_owner_guard()
-        .add_step(checkout_repo())
-        .add_step(release::create_sentry_release());
-    named::job(job)
 }

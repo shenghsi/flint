@@ -78,7 +78,6 @@ pub(crate) fn bundle_mac(
                 job.add_step(set_release_channel(platform, release_channel))
             })
             .add_step(steps::setup_node())
-            .add_step(steps::setup_sentry())
             .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
             .add_step(bundle_mac(arch))
             .add_step(upload_artifact(&format!(
@@ -124,7 +123,6 @@ pub(crate) fn bundle_linux(
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
-            .add_step(steps::setup_sentry())
             .map(steps::install_linux_dependencies)
             .add_step(
                 named::bash(indoc! {r#"
@@ -180,7 +178,6 @@ pub(crate) fn bundle_windows(
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
-            .add_step(steps::setup_sentry())
             .add_step(bundle_windows(arch))
             .add_step(upload_artifact(&format!("target/{artifact_name}")))
             .add_step(upload_artifact(&format!(

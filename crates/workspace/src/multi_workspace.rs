@@ -415,16 +415,10 @@ impl MultiWorkspace {
     }
 
     pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
-        let side = match self.sidebar_side(cx) {
-            SidebarSide::Left => "left",
-            SidebarSide::Right => "right",
-        };
-        telemetry::event!("Sidebar Toggled", action = "open", side = side);
         self.apply_open_sidebar(cx);
     }
 
-    /// Restores the sidebar to open state from persisted session data without
-    /// firing a telemetry event, since this is not a user-initiated action.
+    /// Restores the sidebar to open state from persisted session data.
     pub(crate) fn restore_open_sidebar(&mut self, cx: &mut Context<Self>) {
         self.apply_open_sidebar(cx);
     }
@@ -443,11 +437,6 @@ impl MultiWorkspace {
     }
 
     pub fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let side = match self.sidebar_side(cx) {
-            SidebarSide::Left => "left",
-            SidebarSide::Right => "right",
-        };
-        telemetry::event!("Sidebar Toggled", action = "close", side = side);
         self.sidebar_open = false;
         for workspace in self.retained_workspaces.clone() {
             workspace.update(cx, |workspace, _cx| {
@@ -949,9 +938,8 @@ impl MultiWorkspace {
 
                 let app_state = this.workspace().read(cx).app_state().clone();
                 let project = Project::local(
-                    app_state.client.clone(),
+                    app_state.http_client.clone(),
                     app_state.node_runtime.clone(),
-                    app_state.user_store.clone(),
                     app_state.languages.clone(),
                     app_state.fs.clone(),
                     None,
@@ -1012,9 +1000,8 @@ impl MultiWorkspace {
                 // No other project groups remain — create an empty workspace.
                 let app_state = this.workspace().read(cx).app_state().clone();
                 let project = Project::local(
-                    app_state.client.clone(),
+                    app_state.http_client.clone(),
                     app_state.node_runtime.clone(),
-                    app_state.user_store.clone(),
                     app_state.languages.clone(),
                     app_state.fs.clone(),
                     None,
@@ -1200,9 +1187,8 @@ impl MultiWorkspace {
             let new_project = cx.update(|cx| {
                 Project::remote(
                     session,
-                    app_state.client.clone(),
+                    app_state.http_client.clone(),
                     app_state.node_runtime.clone(),
-                    app_state.user_store.clone(),
                     app_state.languages.clone(),
                     app_state.fs.clone(),
                     true,
@@ -1404,10 +1390,6 @@ impl MultiWorkspace {
 
         let key = workspace.read(cx).project_group_key(cx);
         self.retain_workspace(workspace, key, cx);
-        telemetry::event!(
-            "Workspace Added",
-            workspace_count = self.retained_workspaces.len()
-        );
         cx.notify();
     }
 
@@ -1776,9 +1758,8 @@ impl MultiWorkspace {
     ) -> Task<()> {
         let app_state = self.workspace().read(cx).app_state().clone();
         let project = Project::local(
-            app_state.client.clone(),
+            app_state.http_client.clone(),
             app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,

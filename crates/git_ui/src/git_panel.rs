@@ -714,7 +714,6 @@ const MAX_PANEL_EDITOR_LINES: usize = 6;
 pub(crate) fn commit_message_editor(
     commit_message_buffer: Entity<Buffer>,
     placeholder: Option<SharedString>,
-    project: Entity<Project>,
     in_panel: bool,
     window: &mut Window,
     cx: &mut Context<Editor>,
@@ -731,7 +730,6 @@ pub(crate) fn commit_message_editor(
         window,
         cx,
     );
-    commit_editor.set_collaboration_hub(Box::new(project));
     commit_editor.set_use_autoclose(false);
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_use_modal_editing(true);
@@ -801,9 +799,8 @@ impl GitPanel {
             // just to let us render a placeholder editor.
             // Once the active git repo is set, this buffer will be replaced.
             let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
-            let commit_editor = cx.new(|cx| {
-                commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
-            });
+            let commit_editor =
+                cx.new(|cx| commit_message_editor(temporary_buffer, None, true, window, cx));
 
             commit_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
@@ -2134,9 +2131,7 @@ impl GitPanel {
         let is_amend = self.amend_pending;
         if self.commit(&self.commit_editor.focus_handle(cx), window, cx) {
             if is_amend {
-                telemetry::event!("Git Amended", source = "Git Panel");
             } else {
-                telemetry::event!("Git Committed", source = "Git Panel");
             }
         }
     }
@@ -2169,9 +2164,7 @@ impl GitPanel {
     }
 
     fn on_amend(&mut self, _: &Amend, window: &mut Window, cx: &mut Context<Self>) {
-        if self.amend(&self.commit_editor.focus_handle(cx), window, cx) {
-            telemetry::event!("Git Amended", source = "Git Panel");
-        }
+        if self.amend(&self.commit_editor.focus_handle(cx), window, cx) {}
     }
 
     /// Enters the amend state on first invocation, loading the last commit
@@ -2379,7 +2372,6 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        telemetry::event!("Git Uncommitted");
 
         let confirmation = self.check_for_pushed_commits(window, cx);
         let prior_head = self.load_commit_details("HEAD".to_string(), cx);
@@ -2709,7 +2701,6 @@ impl GitPanel {
             return;
         };
 
-        telemetry::event!("Git Commit Message Generated");
         self.commit_message_generation_error = None;
         cx.notify();
 
@@ -2979,7 +2970,6 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        telemetry::event!("Git Fetched");
         let askpass = self.askpass_delegate("git fetch", window, cx);
         let this = cx.weak_entity();
 
@@ -3124,7 +3114,6 @@ impl GitPanel {
         let Some(branch) = repo.read(cx).branch.as_ref() else {
             return;
         };
-        telemetry::event!("Git Pulled");
         let branch = branch.clone();
         let remote = self.get_remote(false, false, window, cx);
         cx.spawn_in(window, async move |this, cx| {
@@ -3187,7 +3176,6 @@ impl GitPanel {
         let Some(branch) = repo.read(cx).branch.as_ref() else {
             return;
         };
-        telemetry::event!("Git Pushed");
         let branch = branch.clone();
 
         let options = if force_push {
@@ -3378,7 +3366,7 @@ impl GitPanel {
     }
 
     fn can_push_and_pull(&self, cx: &App) -> bool {
-        !self.project.read(cx).is_via_collab()
+        !self.project.read(cx).is_read_only(cx)
     }
 
     fn get_remote(
@@ -3716,7 +3704,6 @@ impl GitPanel {
                         commit_message_editor(
                             buffer,
                             git_panel.suggest_commit_message(cx).map(SharedString::from),
-                            git_panel.project.clone(),
                             true,
                             window,
                             cx,
@@ -4978,7 +4965,6 @@ impl GitPanel {
                 .on_click({
                     let git_panel = cx.weak_entity();
                     move |_, window, cx| {
-                        telemetry::event!("Git Committed", source = "Git Panel");
                         git_panel
                             .update(cx, |git_panel, cx| {
                                 git_panel.commit_changes(
@@ -5739,11 +5725,9 @@ impl GitPanel {
                 KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
             )
             .on_open_project(|_, window, cx| {
-                telemetry::event!("Git Panel Add Project Clicked");
                 window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
             })
             .on_clone_repo(|_, window, cx| {
-                telemetry::event!("Git Panel Clone Repo Clicked");
                 window.dispatch_action(git::Clone.boxed_clone(), cx);
             })
             .into_any_element()

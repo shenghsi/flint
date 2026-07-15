@@ -436,12 +436,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ascii"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
-
-[[package]]
 name = "ascii-canvas"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -888,8 +882,6 @@ name = "auto_update"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
- "clock",
  "ctor",
  "db",
  "futures 0.3.32",
@@ -931,19 +923,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
- "client",
  "db",
  "editor",
  "flint_actions",
  "gpui",
+ "http_client",
  "markdown_preview",
  "notifications",
  "release_channel",
  "semver",
- "serde",
- "serde_json",
- "smol",
- "telemetry",
  "ui",
  "util",
  "workspace",
@@ -1720,12 +1708,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chunked_transfer"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
-
-[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1860,62 +1842,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel 2.5.0",
- "async-tungstenite",
- "base64 0.22.1",
- "chrono",
- "clock",
- "cloud_api_types",
- "collections",
- "credentials_provider",
- "derive_more",
- "feature_flags",
- "flint_credentials_provider",
- "fs",
- "futures 0.3.32",
- "gpui",
- "gpui_tokio",
- "http_client",
- "http_client_tls",
- "httparse",
- "log",
- "objc2-foundation 0.3.2",
- "parking_lot",
- "paths",
- "postage",
- "rand 0.9.4",
- "regex",
- "release_channel",
- "rpc",
- "rustls-pki-types",
- "semver",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "settings",
- "sha2",
- "smol",
- "telemetry",
- "telemetry_events",
- "text",
- "thiserror 2.0.17",
- "time",
- "tiny_http",
- "tokio",
- "tokio-native-tls",
- "tokio-rustls",
- "tokio-socks",
- "url",
- "util",
- "windows 0.61.3",
- "worktree",
-]
-
-[[package]]
 name = "clock"
 version = "0.1.0"
 dependencies = [
@@ -1928,14 +1854,11 @@ dependencies = [
 name = "cloud_api_types"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "chrono",
- "ciborium",
  "pretty_assertions",
  "serde",
  "serde_json",
  "strum",
- "uuid",
 ]
 
 [[package]]
@@ -1967,7 +1890,7 @@ dependencies = [
  "cocoa-foundation 0.1.2",
  "core-foundation 0.9.4",
  "core-graphics 0.23.2",
- "foreign-types 0.5.0",
+ "foreign-types",
  "libc",
  "objc",
 ]
@@ -1983,7 +1906,7 @@ dependencies = [
  "cocoa-foundation 0.2.0",
  "core-foundation 0.10.0",
  "core-graphics 0.24.0",
- "foreign-types 0.5.0",
+ "foreign-types",
  "libc",
  "objc",
 ]
@@ -2073,7 +1996,6 @@ name = "command_palette"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "collections",
  "command_palette_hooks",
  "db",
@@ -2090,7 +2012,6 @@ dependencies = [
  "project",
  "serde",
  "settings",
- "telemetry",
  "theme",
  "theme_settings",
  "time",
@@ -2146,7 +2067,6 @@ name = "component_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "collections",
  "component",
  "db",
@@ -2328,7 +2248,7 @@ dependencies = [
  "bitflags 1.3.2",
  "core-foundation 0.9.4",
  "core-graphics-types 0.1.3",
- "foreign-types 0.5.0",
+ "foreign-types",
  "libc",
 ]
 
@@ -2341,7 +2261,7 @@ dependencies = [
  "bitflags 2.10.0",
  "core-foundation 0.10.0",
  "core-graphics-types 0.2.0",
- "foreign-types 0.5.0",
+ "foreign-types",
  "libc",
 ]
 
@@ -2354,7 +2274,7 @@ dependencies = [
  "bitflags 2.10.0",
  "core-foundation 0.9.4",
  "core-graphics-types 0.1.3",
- "foreign-types 0.5.0",
+ "foreign-types",
  "libc",
 ]
 
@@ -2410,7 +2330,7 @@ checksum = "a593227b66cbd4007b2a050dfdd9e1d1318311409c8d600dc82ba1b15ca9c130"
 dependencies = [
  "core-foundation 0.10.0",
  "core-graphics 0.24.0",
- "foreign-types 0.5.0",
+ "foreign-types",
  "libc",
 ]
 
@@ -2657,6 +2577,7 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-process",
  "crash-handler",
  "log",
@@ -2666,6 +2587,7 @@ dependencies = [
  "serde",
  "serde_json",
  "system_specs",
+ "tempfile",
  "windows 0.61.3",
  "zstd",
 ]
@@ -3482,7 +3404,6 @@ dependencies = [
  "base64 0.22.1",
  "breadcrumbs",
  "buffer_diff",
- "client",
  "clock",
  "collections",
  "convert_case 0.11.0",
@@ -3529,7 +3450,6 @@ dependencies = [
  "snippet",
  "sum_tree",
  "task",
- "telemetry",
  "text",
  "theme",
  "theme_settings",
@@ -3994,7 +3914,6 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
- "client",
  "cloud_api_types",
  "collections",
  "criterion",
@@ -4017,13 +3936,13 @@ dependencies = [
  "release_channel",
  "remote",
  "reqwest_client",
+ "rpc",
  "semver",
  "serde",
  "serde_json",
  "serde_json_lenient",
  "settings",
  "task",
- "telemetry",
  "tempfile",
  "theme",
  "theme_extension",
@@ -4065,7 +3984,6 @@ dependencies = [
  "settings",
  "smallvec",
  "strum",
- "telemetry",
  "theme_settings",
  "ui",
  "util",
@@ -4195,7 +4113,6 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
- "client",
  "extension_host",
  "flint_actions",
  "gpui",
@@ -4210,7 +4127,6 @@ name = "file_finder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "collections",
  "ctor",
  "editor",
@@ -4316,7 +4232,6 @@ dependencies = [
  "chrono",
  "clap",
  "cli",
- "client",
  "collections",
  "command_palette",
  "component",
@@ -4413,8 +4328,7 @@ dependencies = [
  "tab_switcher",
  "task",
  "tasks_ui",
- "telemetry",
- "telemetry_events",
+ "tempfile",
  "terminal_view",
  "theme",
  "theme_extension",
@@ -4606,21 +4520,12 @@ dependencies = [
 
 [[package]]
 name = "foreign-types"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"
-dependencies = [
- "foreign-types-shared 0.1.1",
-]
-
-[[package]]
-name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d737d9aa519fb7b749cbc3b962edcf310a8dd1f4b67c91c4f83975dbdd17d965"
 dependencies = [
  "foreign-types-macros",
- "foreign-types-shared 0.3.1",
+ "foreign-types-shared",
 ]
 
 [[package]]
@@ -4633,12 +4538,6 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
-
-[[package]]
-name = "foreign-types-shared"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "foreign-types-shared"
@@ -4712,7 +4611,6 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "telemetry",
  "tempfile",
  "text",
  "thiserror 2.0.17",
@@ -5174,7 +5072,6 @@ dependencies = [
  "strum",
  "sysinfo 0.37.2",
  "task",
- "telemetry",
  "terminal",
  "theme",
  "theme_settings",
@@ -5458,7 +5355,7 @@ dependencies = [
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
- "foreign-types 0.5.0",
+ "foreign-types",
  "futures 0.3.32",
  "futures-concurrency",
  "getrandom 0.3.4",
@@ -5594,7 +5491,7 @@ dependencies = [
  "derive_more",
  "dispatch2",
  "etagere",
- "foreign-types 0.5.0",
+ "foreign-types",
  "futures 0.3.32",
  "gpui",
  "image",
@@ -6599,10 +6496,8 @@ name = "input_latency_ui"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "collections",
  "gpui",
  "hdrhistogram",
- "telemetry",
 ]
 
 [[package]]
@@ -6631,7 +6526,6 @@ name = "install_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "gpui",
  "release_channel",
  "smol",
@@ -7041,7 +6935,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "telemetry",
  "tempfile",
  "theme",
  "theme_settings",
@@ -7294,7 +7187,6 @@ name = "language_tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "collections",
  "command_palette_hooks",
  "editor",
@@ -7312,7 +7204,6 @@ dependencies = [
  "serde_json",
  "settings",
  "sysinfo 0.37.2",
- "telemetry",
  "theme",
  "theme_settings",
  "tree-sitter",
@@ -8028,7 +7919,7 @@ dependencies = [
  "core-foundation 0.10.0",
  "core-video",
  "ctor",
- "foreign-types 0.5.0",
+ "foreign-types",
  "metal",
  "objc",
 ]
@@ -8176,7 +8067,7 @@ dependencies = [
  "bitflags 2.10.0",
  "block",
  "core-graphics-types 0.2.0",
- "foreign-types 0.5.0",
+ "foreign-types",
  "log",
  "objc",
  "paste",
@@ -8496,23 +8387,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "native-tls"
-version = "0.2.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "465500e14ea162429d264d44189adc38b199b62b1c21eea9f69e4b73cb03bbf2"
-dependencies = [
- "libc",
- "log",
- "openssl",
- "openssl-probe",
- "openssl-sys",
- "schannel",
- "security-framework",
- "security-framework-sys",
- "tempfile",
-]
-
-[[package]]
 name = "nbformat"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8629,17 +8503,10 @@ dependencies = [
 name = "notifications"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "client",
  "component",
  "flint_actions",
- "futures-lite 1.13.0",
  "gpui",
- "rpc",
- "sum_tree",
- "time",
  "ui",
- "util",
  "workspace",
 ]
 
@@ -8905,17 +8772,6 @@ dependencies = [
  "rmpv",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "oauth_callback_server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.32",
- "log",
- "tiny_http",
- "url",
 ]
 
 [[package]]
@@ -9193,7 +9049,6 @@ name = "onboarding"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "cloud_api_types",
  "collections",
  "component",
@@ -9210,7 +9065,6 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
- "telemetry",
  "theme",
  "theme_settings",
  "ui",
@@ -9320,47 +9174,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "openssl"
-version = "0.10.79"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf0b434746ee2832f4f0baf10137e1cabb18cbe6912c69e2e33263c45250f542"
-dependencies = [
- "bitflags 2.10.0",
- "cfg-if",
- "foreign-types 0.3.2",
- "libc",
- "openssl-macros",
- "openssl-sys",
-]
-
-[[package]]
-name = "openssl-macros"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
-
-[[package]]
-name = "openssl-sys"
-version = "0.9.115"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "158fe5b292746440aa6e7a7e690e55aeb72d41505e2804c23c6973ad0e9c9781"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "vcpkg",
-]
 
 [[package]]
 name = "optfield"
@@ -10724,7 +10541,6 @@ dependencies = [
  "base64 0.22.1",
  "buffer_diff",
  "circular-buffer",
- "client",
  "clock",
  "collections",
  "credentials_provider",
@@ -10798,7 +10614,6 @@ dependencies = [
  "anyhow",
  "askpass",
  "clap",
- "client",
  "futures 0.3.32",
  "gpui",
  "gpui_platform",
@@ -10819,7 +10634,6 @@ name = "project_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "collections",
  "command_palette_hooks",
  "criterion",
@@ -10838,6 +10652,7 @@ dependencies = [
  "notifications",
  "pretty_assertions",
  "project",
+ "proto",
  "rayon",
  "remote_connection",
  "schemars",
@@ -10846,7 +10661,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "telemetry",
  "tempfile",
  "theme",
  "theme_settings",
@@ -11443,7 +11257,6 @@ dependencies = [
  "serde_json",
  "settings",
  "task",
- "telemetry",
  "ui",
  "ui_input",
  "util",
@@ -11648,7 +11461,6 @@ dependencies = [
  "async-channel 2.5.0",
  "cargo_toml",
  "clap",
- "client",
  "clock",
  "collections",
  "crash-handler",
@@ -11725,7 +11537,6 @@ dependencies = [
  "async-trait",
  "async-tungstenite",
  "base64 0.22.1",
- "client",
  "collections",
  "command_palette_hooks",
  "editor",
@@ -11749,6 +11560,7 @@ dependencies = [
  "nbformat",
  "picker",
  "project",
+ "proto",
  "remote",
  "runtimelib",
  "serde",
@@ -11757,7 +11569,6 @@ dependencies = [
  "shlex",
  "smol",
  "task",
- "telemetry",
  "terminal",
  "terminal_view",
  "theme",
@@ -12803,7 +12614,6 @@ name = "settings_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cloud_api_types",
  "component",
  "editor",
  "feature_flags",
@@ -12832,7 +12642,6 @@ dependencies = [
  "settings",
  "shell_command_parser",
  "strum",
- "telemetry",
  "theme",
  "theme_settings",
  "title_bar",
@@ -13680,11 +13489,14 @@ dependencies = [
  "anyhow",
  "gpui",
  "human_bytes",
+ "log",
+ "objc2-foundation 0.3.2",
  "pciid-parser",
  "release_channel",
  "semver",
  "serde",
  "sysinfo 0.37.2",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -13800,25 +13612,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
-]
-
-[[package]]
-name = "telemetry"
-version = "0.1.0"
-dependencies = [
- "futures 0.3.32",
- "serde",
- "serde_json",
- "telemetry_events",
-]
-
-[[package]]
-name = "telemetry_events"
-version = "0.1.0"
-dependencies = [
- "semver",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -14038,7 +13831,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "telemetry",
  "theme",
  "theme_settings",
  "ui",
@@ -14209,18 +14001,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tiny_http"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
-dependencies = [
- "ascii",
- "chunked_transfer",
- "httpdate",
- "log",
-]
-
-[[package]]
 name = "tinystr"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14263,7 +14043,6 @@ dependencies = [
  "arrayvec",
  "auto_update",
  "chrono",
- "client",
  "cloud_api_types",
  "db",
  "flint_actions",
@@ -14283,7 +14062,6 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "telemetry",
  "theme",
  "ui",
  "util",
@@ -14331,16 +14109,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-native-tls"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
-dependencies = [
- "native-tls",
- "tokio",
-]
-
-[[package]]
 name = "tokio-rustls"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14357,7 +14125,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d4770b8024672c1101b3f6733eab95b18007dbe0847a8afe341fcf79e06043f"
 dependencies = [
  "either",
- "futures-io",
  "futures-util",
  "thiserror 1.0.69",
  "tokio",
@@ -17742,7 +17509,6 @@ dependencies = [
  "anyhow",
  "async-recursion",
  "chrono",
- "client",
  "clock",
  "collections",
  "component",
@@ -17768,6 +17534,7 @@ dependencies = [
  "proptest",
  "proptest-derive",
  "remote",
+ "rpc",
  "schemars",
  "serde",
  "serde_json",
@@ -17777,7 +17544,6 @@ dependencies = [
  "sqlez",
  "strum",
  "task",
- "telemetry",
  "tempfile",
  "theme",
  "theme_settings",

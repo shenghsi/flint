@@ -163,8 +163,7 @@ Flint is made up of several smaller crates - let's go over those you're most lik
 - [`vim`](/crates/vim) is a thin implementation of Vim workflow over `editor`.
 - [`lsp`](/crates/lsp) handles communication with external LSP server.
 - [`language`](/crates/language) drives `editor`'s understanding of language - from providing a list of symbols to the syntax map.
-- [`collab`](/crates/collab) is the collaboration server itself, driving the collaboration features such as project sharing.
-- [`rpc`](/crates/rpc) defines messages to be exchanged with collaboration server.
+- [`rpc`](/crates/rpc) defines messages exchanged with Flint's SSH remote server.
 - [`theme`](/crates/theme) defines the theme system and provides a default theme.
 - [`ui`](/crates/ui) is a collection of UI components and common patterns used throughout Flint.
 - [`cli`](/crates/cli) is the CLI crate which invokes the Flint binary.

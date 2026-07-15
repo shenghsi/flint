@@ -109,13 +109,7 @@ pub fn init(cx: &mut App) {
             cx.defer_in(window, |editor, _window, cx| {
                 let project = editor.project().cloned();
 
-                let is_valid_project = project
-                    .as_ref()
-                    .map(|project| {
-                        let p = project.read(cx);
-                        !p.is_via_collab()
-                    })
-                    .unwrap_or(false);
+                let is_valid_project = project.is_some();
 
                 if !is_valid_project {
                     return;
@@ -208,10 +202,6 @@ impl Item for ReplSessionsPage {
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "REPL Sessions".into()
-    }
-
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("REPL Session Started")
     }
 
     fn show_toolbar(&self) -> bool {

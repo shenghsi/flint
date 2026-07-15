@@ -168,15 +168,6 @@ pub fn setup_node() -> Step<Use> {
     .add_with(("node-version", "20"))
 }
 
-pub fn setup_sentry() -> Step<Use> {
-    named::uses(
-        "matbour",
-        "setup-sentry-cli",
-        "3e938c54b3018bdd019973689ef984e033b0454b",
-    )
-    .add_with(("token", vars::SENTRY_AUTH_TOKEN))
-}
-
 pub fn prettier() -> Step<Run> {
     named::bash("./script/prettier")
 }

@@ -954,7 +954,7 @@ List of `string` values
 - Setting: `cursors`
 - Default: `true`
 
-Cursor indicators appear as small marks on the scrollbar showing where other collaborators' cursors are positioned in the file.
+Cursor indicators appear as small marks showing additional local cursors outside the visible region.
 
 **Options**
 
@@ -4073,43 +4073,6 @@ List of `integer` column numbers
 - `enabled`: Whether tasks are enabled
 - `prefer_lsp`: Whether to prefer LSP-provided tasks over Zed language extension ones
 
-## Telemetry
-
-- Description: Control what info is collected by Zed.
-- Setting: `telemetry`
-- Default:
-
-```json [settings]
-{
-  "telemetry": {
-    "diagnostics": true,
-    "metrics": true
-  }
-}
-```
-
-**Options**
-
-### Diagnostics
-
-- Description: Setting for sending debug-related data, such as crash reports.
-- Setting: `diagnostics`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Metrics
-
-- Description: Setting for sending anonymized usage data, such as what languages you're using Zed with.
-- Setting: `metrics`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
 ## Terminal
 
 - Description: Configuration for the terminal.
@@ -5306,28 +5269,6 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ## Agent
 
 Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more about AI setup.
-
-## Collaboration Panel
-
-- Description: Customizations for the collaboration panel.
-- Setting: `collaboration_panel`
-- Default:
-
-```json [settings]
-{
-  "collaboration_panel": {
-    "button": true,
-    "dock": "left",
-    "default_width": 240
-  }
-}
-```
-
-**Options**
-
-- `button`: Whether to show the collaboration panel button in the status bar
-- `dock`: Where to dock the collaboration panel. Can be `left` or `right`
-- `default_width`: Default width of the collaboration panel
 
 ## Debugger
 

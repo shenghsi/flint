@@ -20,14 +20,6 @@ pub struct OpenBrowser {
     pub url: String,
 }
 
-/// Opens a flint:// URL within the application.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = flint)]
-#[serde(deny_unknown_fields)]
-pub struct OpenFlintUrl {
-    pub url: String,
-}
-
 /// Opens the keymap to either add a keybinding or change an existing one
 #[derive(PartialEq, Clone, Default, Action, JsonSchema, Serialize, Deserialize)]
 #[action(namespace = flint, no_json, no_register)]
@@ -67,8 +59,6 @@ actions!(
         OpenLicenses,
         /// Opens the Flint status page.
         OpenStatusPage,
-        /// Opens the telemetry log.
-        OpenTelemetryLog,
         /// Opens the performance profiler.
         OpenPerformanceProfiler,
         /// Opens the onboarding view.
@@ -107,12 +97,6 @@ pub struct Extensions {
 #[action(namespace = flint)]
 #[serde(deny_unknown_fields)]
 pub struct AcpRegistry;
-
-/// Show call diagnostics and connection quality statistics.
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-#[action(namespace = collab)]
-#[serde(deny_unknown_fields)]
-pub struct ShowCallStats;
 
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]

@@ -7,13 +7,12 @@ use std::{
     time::Duration,
 };
 
-use client::parse_flint_link;
 use command_palette_hooks::{
     CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
     GlobalCommandPaletteInterceptor,
 };
 
-use flint_actions::{OpenFlintUrl, command_palette::Toggle};
+use flint_actions::command_palette::Toggle;
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -451,14 +450,12 @@ impl PickerDelegate for CommandPaletteDelegate {
         let (mut tx, mut rx) = postage::dispatch::channel(1);
 
         let query_str = query.as_str();
-        let is_flint_link = parse_flint_link(query_str, cx).is_some();
 
         let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
             let hit_counts = self.hit_counts(cx);
             let executor = cx.background_executor().clone();
             let query = normalize_action_query(query_str);
-            let query_for_link = query_str.to_string();
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -484,19 +481,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 )
                 .await;
 
-                let intercept_result = if is_flint_link {
-                    CommandInterceptResult {
-                        results: vec![CommandInterceptItem {
-                            action: OpenFlintUrl {
-                                url: query_for_link.clone(),
-                            }
-                            .boxed_clone(),
-                            string: query_for_link,
-                            positions: vec![],
-                        }],
-                        exclusive: false,
-                    }
-                } else if let Some(task) = intercept_task {
+                let intercept_result = if let Some(task) = intercept_task {
                     task.await
                 } else {
                     CommandInterceptResult::default()
@@ -586,11 +571,6 @@ impl PickerDelegate for CommandPaletteDelegate {
 
         let action_ix = self.matches[self.selected_ix].candidate_id;
         let command = self.commands.swap_remove(action_ix);
-        telemetry::event!(
-            "Action Invoked",
-            source = "command palette",
-            action = command.name
-        );
         self.matches.clear();
         self.commands.clear();
         let command_name = command.name.clone();

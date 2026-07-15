@@ -184,11 +184,8 @@ impl CommitModal {
             git_panel.set_modal_open(true, cx);
             let buffer = git_panel.commit_message_buffer(cx);
             let panel_editor = git_panel.commit_editor.clone();
-            let project = git_panel.project.clone();
-
             cx.new(|cx| {
-                let mut editor =
-                    commit_message_editor(buffer, None, project.clone(), false, window, cx);
+                let mut editor = commit_message_editor(buffer, None, false, window, cx);
                 editor.sync_selections(panel_editor, cx).detach();
 
                 editor
@@ -450,7 +447,6 @@ impl CommitModal {
                                 .mr_0p5(),
                         )
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            telemetry::event!("Git Committed", source = "Git Modal");
                             this.git_panel.update(cx, |git_panel, cx| {
                                 git_panel.commit_changes(
                                     CommitOptions {
@@ -510,9 +506,7 @@ impl CommitModal {
         });
         if did_execute {
             if is_amend {
-                telemetry::event!("Git Amended", source = "Git Modal");
             } else {
-                telemetry::event!("Git Committed", source = "Git Modal");
             }
             cx.emit(DismissEvent);
         }
@@ -522,7 +516,6 @@ impl CommitModal {
         if self.git_panel.update(cx, |git_panel, cx| {
             git_panel.amend(&self.commit_editor.focus_handle(cx), window, cx)
         }) {
-            telemetry::event!("Git Amended", source = "Git Modal");
             cx.emit(DismissEvent);
         }
     }

@@ -3,7 +3,7 @@ title: Terms of Service
 slug: terms
 ---
 
-**Last Updated**: June 21, 2026
+**Last Updated**: July 15, 2026
 
 Flint is an open-source, community-maintained fork of [Zed](https://github.com/zed-industries/zed). It is not operated by a company and there is no paid subscription, account, or hosted service associated with it. These Terms exist only to set basic expectations for using the Software.
 
@@ -21,7 +21,7 @@ AI features are off by default. If you turn them on and configure a model provid
 
 ## Infrastructure
 
-Flint does not run its own extension registry or telemetry backend. Where the Software talks to a server for these purposes, it uses Zed's infrastructure. See [Zed's Privacy Policy](https://zed.dev/privacy-policy) and [Zed's Terms of Service](https://zed.dev/terms) for how that data is handled.
+Flint does not run an account, collaboration, telemetry, crash-reporting, extension-registry, or update service. Extension requests use Zed's public extension registry and are governed by Zed's terms. Update requests use GitHub Releases and are governed by GitHub's terms. Flint stores reliability diagnostics locally and does not upload them.
 
 ## Changes
 

@@ -83,9 +83,8 @@ pub async fn open_test_workspace(
     let window_size = size(px(1280.0), px(800.0));
     let project = cx.update(|cx| {
         project::Project::local(
-            app_state.client.clone(),
+            app_state.http_client.clone(),
             app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,

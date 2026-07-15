@@ -4,8 +4,6 @@ use flint_actions::ShowUpdateNotification;
 use gpui::{App, DismissEvent, Entity, TaskExt, Window, actions, prelude::*};
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
-use serde::Deserialize;
-use smol::io::AsyncReadExt;
 use util::{ResultExt as _, maybe};
 use workspace::{
     Workspace,
@@ -40,12 +38,6 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
-}
-
-#[derive(Deserialize)]
-struct ReleaseNotesBody {
-    title: String,
-    release_notes: String,
 }
 
 fn notify_release_notes_failed_to_show(
@@ -87,14 +79,14 @@ fn view_release_notes_locally(
         return;
     }
 
-    let version = AppVersion::global(cx).to_string();
-
-    let client = client::Client::global(cx).http_client();
-    let url = client.build_url(&format!(
-        "/api/release_notes/v2/{}/{}",
-        release_channel.dev_name(),
-        version
-    ));
+    let mut version = AppVersion::global(cx).to_string();
+    if let Ok(mut semantic_version) = version.parse::<semver::Version>() {
+        semantic_version.pre = semver::Prerelease::EMPTY;
+        semantic_version.build = semver::BuildMetadata::EMPTY;
+        version = semantic_version.to_string();
+    }
+    let tag = format!("v{version}");
+    let http_client = cx.http_client();
 
     let markdown = workspace
         .app_state()
@@ -103,21 +95,23 @@ fn view_release_notes_locally(
 
     cx.spawn_in(window, async move |workspace, cx| {
         let markdown = markdown.await.log_err();
-        let response = client.get(&url, Default::default(), true).await;
-        let Some(mut response) = response.log_err() else {
+        let release =
+            http_client::github::get_release_by_tag_name("shenghsi/flint", &tag, http_client).await;
+        let Some(release) = release.log_err() else {
+            workspace
+                .update_in(cx, notify_release_notes_failed_to_show)
+                .log_err();
+            return;
+        };
+        let title = release.name.unwrap_or(release.tag_name);
+        let Some(release_notes) = release.body else {
             workspace
                 .update_in(cx, notify_release_notes_failed_to_show)
                 .log_err();
             return;
         };
 
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await.ok();
-
-        let body: serde_json::Result<ReleaseNotesBody> = serde_json::from_slice(body.as_slice());
-
         let res: Option<()> = maybe!(async {
-            let body = body.ok()?;
             let project = workspace
                 .read_with(cx, |workspace, _| workspace.project().clone())
                 .ok()?;
@@ -129,10 +123,10 @@ fn view_release_notes_locally(
             });
             let buffer = buffer.await.ok()?;
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(0..0, body.release_notes)], None, cx)
+                buffer.edit([(0..0, release_notes)], None, cx)
             });
 
-            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(body.title));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title));
 
             let ws_handle = workspace.clone();
             workspace

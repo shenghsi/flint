@@ -1,8 +1,7 @@
-use client::telemetry;
 use extension_host::ExtensionStore;
 use flint_actions::feedback::{EmailFlint, FileBugReport, RequestFeature};
 use gpui::{App, ClipboardItem, PromptLevel, actions};
-use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
+use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs, os_name, os_version};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -53,8 +52,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, window, cx| {
-                let specs =
-                    SystemSpecs::new(window, cx, telemetry::os_name(), telemetry::os_version());
+                let specs = SystemSpecs::new(window, cx, os_name(), os_version());
 
                 cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await.to_string();
@@ -89,8 +87,7 @@ pub fn init(cx: &mut App) {
                 cx.open_url(REQUEST_FEATURE_URL);
             })
             .register_action(move |_, _: &FileBugReport, window, cx| {
-                let specs =
-                    SystemSpecs::new(window, cx, telemetry::os_name(), telemetry::os_version());
+                let specs = SystemSpecs::new(window, cx, os_name(), os_version());
                 cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await;
                     cx.update(|_, cx| {
@@ -101,8 +98,7 @@ pub fn init(cx: &mut App) {
                 .detach();
             })
             .register_action(move |_, _: &EmailFlint, window, cx| {
-                let specs =
-                    SystemSpecs::new(window, cx, telemetry::os_name(), telemetry::os_version());
+                let specs = SystemSpecs::new(window, cx, os_name(), os_version());
                 cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await;
                     cx.update(|_, cx| {

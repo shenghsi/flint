@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use client::proto::{
+use proto::{
     self, DapChecksum, DapChecksumAlgorithm, DapEvaluateContext, DapModule, DapScope,
     DapScopePresentationHint, DapSource, DapSourcePresentationHint, DapStackFrame, DapVariable,
 };

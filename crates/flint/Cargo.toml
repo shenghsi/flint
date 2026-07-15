@@ -1,5 +1,5 @@
 [package]
-description = "The fast, collaborative code editor."
+description = "The fast code editor."
 edition.workspace = true
 name = "flint"
 version = "0.4.3"
@@ -44,7 +44,6 @@ breadcrumbs.workspace = true
 chrono.workspace = true
 clap.workspace = true
 cli.workspace = true
-client.workspace = true
 collections.workspace = true
 command_palette.workspace = true
 component.workspace = true
@@ -138,8 +137,6 @@ sysinfo.workspace = true
 tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
-telemetry.workspace = true
-telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
@@ -203,6 +200,7 @@ language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 semver.workspace = true
+tempfile.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
 title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

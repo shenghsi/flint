@@ -17,6 +17,8 @@ pub struct GitHubLspBinaryVersion {
 #[derive(Deserialize, Debug)]
 pub struct GithubRelease {
     pub tag_name: String,
+    pub name: Option<String>,
+    pub body: Option<String>,
     #[serde(rename = "prerelease")]
     pub pre_release: bool,
     pub assets: Vec<GithubReleaseAsset>,
@@ -172,7 +174,24 @@ pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -
 
 #[cfg(test)]
 mod tests {
-    use crate::github::{AssetKind, build_asset_url};
+    use crate::github::{AssetKind, GithubRelease, build_asset_url};
+
+    #[test]
+    fn github_release_includes_local_release_note_fields() {
+        let release: GithubRelease = serde_json::from_value(serde_json::json!({
+            "tag_name": "v1.2.3",
+            "name": "Flint 1.2.3",
+            "body": "## Improvements",
+            "prerelease": false,
+            "assets": [],
+            "tarball_url": "https://example.com/source.tar.gz",
+            "zipball_url": "https://example.com/source.zip"
+        }))
+        .expect("valid GitHub release response");
+
+        assert_eq!(release.name.as_deref(), Some("Flint 1.2.3"));
+        assert_eq!(release.body.as_deref(), Some("## Improvements"));
+    }
 
     #[test]
     fn test_build_asset_url() {

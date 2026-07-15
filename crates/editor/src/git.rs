@@ -408,14 +408,7 @@ impl Editor {
         // Dismiss overlays that have no comments for their hunks
         self.dismiss_overlays_without_comments(cx);
 
-        // Get the current user's avatar URI from the project's user_store
-        let user_avatar_uri = self.project.as_ref().and_then(|project| {
-            let user_store = project.read(cx).user_store();
-            user_store
-                .read(cx)
-                .current_user()
-                .map(|user| user.avatar_uri.clone())
-        });
+        let user_avatar_uri = None;
 
         // Create anchor at the end of the last row so the block appears immediately below it
         // Use multibuffer coordinates for anchor creation

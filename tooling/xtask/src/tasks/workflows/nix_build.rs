@@ -138,8 +138,6 @@ pub(crate) fn build_nix(
         .continue_on_error(true)
         .with_repository_owner_guard()
         .runs_on(runner)
-        .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
-        .add_env(("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT))
         .add_env((
             "ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON",
             vars::ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON,

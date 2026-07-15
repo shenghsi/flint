@@ -221,9 +221,8 @@ pub async fn open_remote_project(
 
         let window = cx.open_window(options, |window, cx| {
             let project = project::Project::local(
-                app_state.client.clone(),
+                app_state.http_client.clone(),
                 app_state.node_runtime.clone(),
-                app_state.user_store.clone(),
                 app_state.languages.clone(),
                 app_state.fs.clone(),
                 None,

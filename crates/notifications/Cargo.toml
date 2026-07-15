@@ -15,25 +15,14 @@ doctest = false
 [features]
 test-support = [
     "gpui/test-support",
-    "rpc/test-support",
 ]
 
 [dependencies]
-anyhow.workspace = true
-client.workspace = true
-futures-lite.workspace = true
 component.workspace = true
 gpui.workspace = true
-rpc.workspace = true
-sum_tree.workspace = true
-time.workspace = true
 ui.workspace = true
-util.workspace = true
 workspace.workspace = true
 flint_actions.workspace = true
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-rpc = { workspace = true, features = ["test-support"] }
-util = { workspace = true, features = ["test-support"] }

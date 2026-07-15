@@ -165,7 +165,7 @@ impl RenderOnce for UpdateButton {
 
 impl Component for UpdateButton {
     fn scope() -> ComponentScope {
-        ComponentScope::Collaboration
+        ComponentScope::Status
     }
 
     fn name() -> &'static str {

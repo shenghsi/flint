@@ -4,9 +4,7 @@ use crate::status_bar::HideStatusItem;
 use crate::{DraggedDock, Event, FocusFollowsMouse, ModalLayer, Pane, WorkspaceSettings};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
-use client::proto;
 use db::kvp::KeyValueStore;
-
 use gpui::{
     Action, Anchor, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
@@ -30,8 +28,6 @@ pub enum PanelEvent {
     Activate,
     Close,
 }
-
-pub use proto::PanelId;
 
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
@@ -77,9 +73,6 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn pane(&self) -> Option<Entity<Pane>> {
         None
     }
-    fn remote_id() -> Option<proto::PanelId> {
-        None
-    }
     fn activation_priority(&self) -> u32;
     fn enabled(&self, _cx: &App) -> bool {
         true
@@ -105,7 +98,6 @@ pub trait PanelHandle: Send + Sync {
     fn is_zoomed(&self, window: &Window, cx: &App) -> bool;
     fn set_zoomed(&self, zoomed: bool, window: &mut Window, cx: &mut App);
     fn set_active(&self, active: bool, window: &mut Window, cx: &mut App);
-    fn remote_id(&self) -> Option<proto::PanelId>;
     fn pane(&self, cx: &App) -> Option<Entity<Pane>>;
     fn default_size(&self, window: &Window, cx: &App) -> Pixels;
     fn min_size(&self, window: &Window, cx: &App) -> Option<Pixels>;
@@ -183,10 +175,6 @@ where
 
     fn pane(&self, cx: &App) -> Option<Entity<Pane>> {
         self.read(cx).pane()
-    }
-
-    fn remote_id(&self) -> Option<PanelId> {
-        T::remote_id()
     }
 
     fn default_size(&self, window: &Window, cx: &App) -> Pixels {
@@ -447,7 +435,6 @@ impl Dock {
                 }
                 cx.emit(Event::ZoomChanged);
                 workspace.dismiss_zoomed_items_to_reveal(Some(position), window, cx);
-                workspace.update_active_view_for_followers(window, cx)
             }
         })
         .detach();
@@ -501,12 +488,6 @@ impl Dock {
         self.panel_entries
             .iter()
             .position(|entry| entry.panel.persistent_name() == ui_name)
-    }
-
-    pub fn panel_index_for_proto_id(&self, panel_id: PanelId) -> Option<usize> {
-        self.panel_entries
-            .iter()
-            .position(|entry| entry.panel.remote_id() == Some(panel_id))
     }
 
     pub fn panel_for_id(&self, panel_id: EntityId) -> Option<&Arc<dyn PanelHandle>> {

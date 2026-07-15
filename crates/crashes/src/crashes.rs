@@ -170,7 +170,6 @@ pub struct CrashServer {
     initialization_params: Mutex<Option<InitCrashHandler>>,
     panic_info: Mutex<Option<CrashPanic>>,
     active_gpu: Mutex<Option<system_specs::GpuSpecs>>,
-    user_info: Mutex<Option<UserInfo>>,
     has_connection: Arc<AtomicBool>,
     logs_dir: PathBuf,
 }
@@ -182,7 +181,6 @@ pub struct CrashInfo {
     pub minidump_error: Option<String>,
     pub gpus: Vec<system_specs::GpuInfo>,
     pub active_gpu: Option<system_specs::GpuSpecs>,
-    pub user_info: Option<UserInfo>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -198,12 +196,6 @@ pub struct InitCrashHandler {
 pub struct CrashPanic {
     pub message: String,
     pub span: String,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct UserInfo {
-    pub metrics_id: Option<String>,
-    pub is_staff: Option<bool>,
 }
 
 fn send_crash_server_message(crash_client: &Arc<Client>, message: CrashServerMessage) {
@@ -224,30 +216,43 @@ pub fn set_gpu_info(crash_client: &Arc<Client>, specs: GpuSpecs) {
     send_crash_server_message(crash_client, CrashServerMessage::GPUInfo(specs));
 }
 
-pub fn set_user_info(crash_client: &Arc<Client>, info: UserInfo) {
-    send_crash_server_message(crash_client, CrashServerMessage::UserInfo(info));
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 enum CrashServerMessage {
     Init(InitCrashHandler),
     Panic(CrashPanic),
     GPUInfo(GpuSpecs),
-    UserInfo(UserInfo),
+}
+
+fn persist_minidump(path: &Path) -> io::Result<()> {
+    let source = File::open(path)?;
+    let compressed_path = path.with_extension("zstd");
+    let destination = File::create(&compressed_path)?;
+    zstd::stream::copy_encode(source, destination, 0)?;
+    fs::rename(&compressed_path, path)?;
+    Ok(())
+}
+
+fn write_crash_metadata(logs_dir: &Path, crash_info: &CrashInfo) -> io::Result<PathBuf> {
+    let path = logs_dir
+        .join(&crash_info.init.session_id)
+        .with_extension("json");
+    let data = serde_json::to_vec(crash_info).map_err(io::Error::other)?;
+    fs::write(&path, data)?;
+    Ok(path)
 }
 
 impl minidumper::ServerHandler for CrashServer {
     fn create_minidump_file(&self) -> Result<(File, PathBuf), io::Error> {
+        let initialization_params = self.initialization_params.lock();
+        let initialization_params = initialization_params.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "missing crash initialization data",
+            )
+        })?;
         let dump_path = self
             .logs_dir
-            .join(
-                &self
-                    .initialization_params
-                    .lock()
-                    .as_ref()
-                    .expect("Missing initialization data")
-                    .session_id,
-            )
+            .join(&initialization_params.session_id)
             .with_extension("dmp");
         let file = File::create(&dump_path)?;
         Ok((file, dump_path))
@@ -257,15 +262,18 @@ impl minidumper::ServerHandler for CrashServer {
         let minidump_error = match result {
             Ok(MinidumpBinary { mut file, path, .. }) => {
                 use io::Write;
-                file.flush().ok();
-                // TODO: clean this up once https://github.com/EmbarkStudios/crash-handling/issues/101 is addressed
+                let flush_result = file.flush();
                 drop(file);
-                let original_file = File::open(&path).unwrap();
-                let compressed_path = path.with_extension("zstd");
-                let compressed_file = File::create(&compressed_path).unwrap();
-                zstd::stream::copy_encode(original_file, compressed_file, 0).ok();
-                fs::rename(&compressed_path, path).unwrap();
-                None
+                match flush_result.and_then(|()| persist_minidump(&path)) {
+                    Ok(()) => None,
+                    Err(error) => {
+                        log::error!(
+                            "Failed to persist local minidump at {}: {error}",
+                            path.display()
+                        );
+                        Some(error.to_string())
+                    }
+                }
             }
             Err(e) => Some(format!("{e:?}")),
         };
@@ -282,32 +290,35 @@ impl minidumper::ServerHandler for CrashServer {
             }
         };
 
+        let Some(init) = self.initialization_params.lock().clone() else {
+            log::error!("Cannot write crash metadata without initialization data");
+            return LoopAction::Exit;
+        };
         let crash_info = CrashInfo {
-            init: self
-                .initialization_params
-                .lock()
-                .clone()
-                .expect("not initialized"),
+            init,
             panic: self.panic_info.lock().clone(),
             minidump_error,
             active_gpu: self.active_gpu.lock().clone(),
             gpus,
-            user_info: self.user_info.lock().clone(),
         };
-
-        let crash_data_path = self
-            .logs_dir
-            .join(&crash_info.init.session_id)
-            .with_extension("json");
-
-        fs::write(crash_data_path, serde_json::to_vec(&crash_info).unwrap()).ok();
+        if let Err(error) = write_crash_metadata(&self.logs_dir, &crash_info) {
+            log::error!(
+                "Failed to write local crash metadata for session {}: {error}",
+                crash_info.init.session_id
+            );
+        }
 
         LoopAction::Exit
     }
 
     fn on_message(&self, _: u32, buffer: Vec<u8>) {
-        let message: CrashServerMessage =
-            serde_json::from_slice(&buffer).expect("invalid init data");
+        let message: CrashServerMessage = match serde_json::from_slice(&buffer) {
+            Ok(message) => message,
+            Err(error) => {
+                log::error!("Ignoring invalid crash server message: {error}");
+                return;
+            }
+        };
         match message {
             CrashServerMessage::Init(init_data) => {
                 self.initialization_params.lock().replace(init_data);
@@ -317,9 +328,6 @@ impl minidumper::ServerHandler for CrashServer {
             }
             CrashServerMessage::GPUInfo(gpu_specs) => {
                 self.active_gpu.lock().replace(gpu_specs);
-            }
-            CrashServerMessage::UserInfo(user_info) => {
-                self.user_info.lock().replace(user_info);
             }
         }
     }
@@ -336,7 +344,7 @@ impl minidumper::ServerHandler for CrashServer {
 
 /// Rust's string-slicing panics embed the user's string content in the message,
 /// e.g. "byte index 4 is out of bounds of `a`". Strip that suffix so we
-/// don't upload arbitrary user text in crash reports.
+/// avoid retaining arbitrary user text in local crash metadata.
 fn strip_user_string_from_panic(message: &str) -> String {
     const STRING_PANIC_PREFIXES: &[&str] = &[
         // Older rustc (pre-1.95):
@@ -523,7 +531,6 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
             Box::new(CrashServer {
                 initialization_params: Mutex::default(),
                 panic_info: Mutex::default(),
-                user_info: Mutex::default(),
                 has_connection,
                 active_gpu: Mutex::default(),
                 logs_dir,
@@ -532,4 +539,50 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
             Some(CRASH_HANDLER_PING_TIMEOUT),
         )
         .expect("failed to run server");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persists_local_crash_artifacts_without_user_identity() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let dump_path = directory.path().join("session.dmp");
+        fs::write(&dump_path, b"local minidump")?;
+
+        persist_minidump(&dump_path)?;
+        let decoded = zstd::stream::decode_all(File::open(&dump_path)?)?;
+        assert_eq!(decoded, b"local minidump");
+
+        let crash_info = CrashInfo {
+            init: InitCrashHandler {
+                session_id: "session".to_owned(),
+                flint_version: "1.2.3".to_owned(),
+                binary: "flint".to_owned(),
+                release_channel: "stable".to_owned(),
+                commit_sha: "abc123".to_owned(),
+            },
+            panic: Some(CrashPanic {
+                message: "test panic".to_owned(),
+                span: "crates/flint/src/main.rs:1".to_owned(),
+            }),
+            minidump_error: None,
+            gpus: Vec::new(),
+            active_gpu: None,
+        };
+
+        let metadata_path = write_crash_metadata(directory.path(), &crash_info)?;
+        let metadata: serde_json::Value = serde_json::from_slice(&fs::read(metadata_path)?)?;
+        assert_eq!(metadata["init"]["flint_version"], "1.2.3");
+        assert_eq!(metadata["init"]["binary"], "flint");
+        assert_eq!(metadata["init"]["release_channel"], "stable");
+        assert_eq!(metadata["init"]["commit_sha"], "abc123");
+        assert_eq!(metadata["panic"]["message"], "test panic");
+        assert!(metadata.get("user_info").is_none());
+        assert!(metadata.get("metrics_id").is_none());
+        assert!(metadata.get("installation_id").is_none());
+
+        Ok(())
+    }
 }
