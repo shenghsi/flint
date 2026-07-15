@@ -4314,6 +4314,7 @@ dependencies = [
  "latex_render",
  "line_ending_selector",
  "log",
+ "lsp_locations",
  "markdown",
  "markdown_preview",
  "menu",
@@ -7644,6 +7645,31 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "lsp_locations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "file_icons",
+ "fuzzy",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "lsp",
+ "picker",
+ "project",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
