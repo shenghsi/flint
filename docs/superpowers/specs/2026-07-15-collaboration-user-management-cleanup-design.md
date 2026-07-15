@@ -254,9 +254,11 @@ Delete:
 - onboarding and component-preview parameters that only forward `UserStore`;
 - account-specific test fixtures and dependencies.
 
-Generic local toasts and application notifications remain. Delete the cloud
-`notifications` crate; its current behavior is account/contact notification
-storage and collaboration RPC handling.
+Generic local toasts and application notifications remain. Keep the
+`notifications` crate for `status_toast`, but delete its cloud-backed
+`notification_store` module, account/contact notification storage, and
+collaboration RPC handling. Remove the crate's `client` and `rpc` dependencies
+once that module is gone.
 
 ### Project collaboration
 
