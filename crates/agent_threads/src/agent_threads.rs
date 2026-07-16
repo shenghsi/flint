@@ -115,6 +115,11 @@ pub struct AgentKindDefinition {
 }
 
 pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
+    // Antigravity CLI is intentionally not registered: its supported `/resume`
+    // picker owns cross-project history, while this panel is project-scoped.
+    // Matching the integrations below would require depending on private
+    // SQLite/protobuf formats, and AGY exposes no supported quota API for the
+    // usage header. Reconsider when stable host-integration APIs exist.
     vec![
         AgentKindDefinition {
             id: "codex",
