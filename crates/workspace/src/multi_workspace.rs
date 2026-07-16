@@ -249,6 +249,7 @@ pub struct MultiWorkspace {
     window_id: WindowId,
     retained_workspaces: Vec<Entity<Workspace>>,
     project_groups: Vec<ProjectGroupState>,
+    recently_activated_project_groups: Vec<ProjectGroupKey>,
     active_workspace: Entity<Workspace>,
     /// Source of truth for which workspace is presented in this window, shared
     /// with each member `Workspace` so they can tell whether they own the
@@ -302,6 +303,7 @@ impl MultiWorkspace {
             window_id: window.window_handle().window_id(),
             retained_workspaces: Vec::new(),
             project_groups: Vec::new(),
+            recently_activated_project_groups: Vec::new(),
             active_workspace: workspace,
             active_workspace_id,
             sidebar: None,
@@ -745,6 +747,21 @@ impl MultiWorkspace {
             .iter()
             .map(|group| group.key.clone())
             .collect()
+    }
+
+    pub fn recently_activated_project_group_keys(&self) -> Vec<ProjectGroupKey> {
+        let mut project_group_keys = self
+            .recently_activated_project_groups
+            .iter()
+            .filter(|key| self.project_groups.iter().any(|group| group.key == **key))
+            .cloned()
+            .collect::<Vec<_>>();
+        for group in &self.project_groups {
+            if !project_group_keys.contains(&group.key) {
+                project_group_keys.push(group.key.clone());
+            }
+        }
+        project_group_keys
     }
 
     fn derived_project_groups(&self, cx: &App) -> Vec<ProjectGroup> {
@@ -1435,6 +1452,9 @@ impl MultiWorkspace {
         if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == active_key) {
             group.last_active_workspace = Some(self.active_workspace.downgrade());
         }
+        self.recently_activated_project_groups
+            .retain(|key| key != &active_key);
+        self.recently_activated_project_groups.insert(0, active_key);
 
         if !should_retain_workspaces && !old_active_was_retained {
             self.detach_workspace(&old_active_workspace, cx);

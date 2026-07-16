@@ -413,7 +413,7 @@ pub fn init(cx: &mut App) {
                     multi_workspace
                         .update(cx, |multi_workspace, window, cx| {
                             let window_project_groups: Vec<ProjectGroupKey> =
-                                multi_workspace.project_group_keys();
+                                multi_workspace.recently_activated_project_group_keys();
 
                             let workspace = multi_workspace.workspace().clone();
                             workspace.update(cx, |workspace, cx| {
