@@ -72,7 +72,7 @@ Flint shells out to the `ssh` on your path, and so it will inherit any configura
 }
 ```
 
-There are two additional Flint-specific options per connection, `upload_binary_over_ssh` and `nickname`:
+There are three additional Flint-specific options per connection: `upload_binary_over_ssh`, `nickname`, and `agent_route`:
 
 ```json [settings]
 {
@@ -85,7 +85,9 @@ There are two additional Flint-specific options per connection, `upload_binary_o
       // This is useful when your remote server has restricted internet access.
       "upload_binary_over_ssh": true,
       // Shown in the Flint UI to help distinguish multiple hosts.
-      "nickname": "lil-linux"
+      "nickname": "lil-linux",
+      // Route agent provider traffic through Flint. If omitted, agents connect directly.
+      "agent_route": "through_flint"
     }
   ]
 }

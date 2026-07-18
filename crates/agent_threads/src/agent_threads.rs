@@ -1,4 +1,5 @@
 pub mod agent_release;
+mod artifact_cache;
 mod claude_history;
 mod codex_history;
 mod history;

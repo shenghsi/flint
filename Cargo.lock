@@ -160,6 +160,7 @@ dependencies = [
  "sha2",
  "smol",
  "task",
+ "tempfile",
  "terminal",
  "terminal_view",
  "theme",

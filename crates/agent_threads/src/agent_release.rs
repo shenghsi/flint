@@ -119,7 +119,7 @@ impl<'a> AgentReleaseCatalog<'a> {
                     release.version
                 );
             }
-            if !self.is_official_source(release.source_url) {
+            if !source_is_official(release.source_url, self.official_source_prefixes) {
                 anyhow::bail!(
                     "{} {} does not use an official HTTPS source",
                     self.agent_id,
@@ -137,18 +137,18 @@ impl<'a> AgentReleaseCatalog<'a> {
         }
         Ok(())
     }
+}
 
-    fn is_official_source(&self, source: &str) -> bool {
-        let Ok(source) = url::Url::parse(source) else {
-            return false;
-        };
-        if source.scheme() != "https" {
-            return false;
-        }
-        self.official_source_prefixes.iter().any(|prefix| {
-            url::Url::parse(prefix).is_ok_and(|prefix| source.as_str().starts_with(prefix.as_str()))
-        })
+pub fn source_is_official(source: &str, official_source_prefixes: &[&str]) -> bool {
+    let Ok(source) = url::Url::parse(source) else {
+        return false;
+    };
+    if source.scheme() != "https" {
+        return false;
     }
+    official_source_prefixes.iter().any(|prefix| {
+        url::Url::parse(prefix).is_ok_and(|prefix| source.as_str().starts_with(prefix.as_str()))
+    })
 }
 
 impl AgentArtifactFormat {

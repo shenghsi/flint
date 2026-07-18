@@ -169,6 +169,11 @@ pub fn data_dir() -> &'static PathBuf {
     })
 }
 
+pub fn agent_artifact_cache_dir() -> &'static PathBuf {
+    static AGENT_ARTIFACT_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+    AGENT_ARTIFACT_CACHE_DIR.get_or_init(|| data_dir().join("agent_artifacts"))
+}
+
 pub fn state_dir() -> &'static PathBuf {
     static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
     STATE_DIR.get_or_init(|| {

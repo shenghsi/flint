@@ -1,7 +1,8 @@
 use crate::{
     remote_connections::{
-        Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettings, SshConnection,
-        SshConnectionHeader, connect, determine_paths_with_positions, open_remote_project,
+        Connection, RemoteAgentRoute, RemoteConnectionModal, RemoteConnectionPrompt,
+        RemoteSettings, SshConnection, SshConnectionHeader, connect,
+        determine_paths_with_positions, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -45,9 +46,9 @@ use std::{
 };
 
 use ui::{
-    CommonAnimationExt, HighlightedLabel, IconButtonShape, KeyBinding, List, ListItem,
-    ListSeparator, Modal, ModalFooter, ModalHeader, Navigable, NavigableEntry, ScrollAxes,
-    Scrollbars, Section, Tooltip, WithScrollbar, prelude::*,
+    CommonAnimationExt, ContextMenu, DropdownMenu, DropdownStyle, HighlightedLabel,
+    IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal, ModalFooter, ModalHeader,
+    Navigable, NavigableEntry, ScrollAxes, Scrollbars, Section, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -614,6 +615,12 @@ impl std::fmt::Display for WslServerIndex {
 enum ServerIndex {
     Ssh(SshServerIndex),
     Wsl(WslServerIndex),
+}
+
+#[derive(Clone)]
+enum AgentRouteTarget {
+    Saved(SshServerIndex),
+    SshConfig(SharedString),
 }
 impl From<SshServerIndex> for ServerIndex {
     fn from(index: SshServerIndex) -> Self {
@@ -1515,6 +1522,21 @@ impl RemoteServerProjects {
         let connection = remote_server.connection().into_owned();
         let shared_connection = Rc::new(connection.clone());
         let host_positions = visible.host_positions.to_vec();
+        let agent_route = match remote_server {
+            RemoteEntry::Project {
+                connection: Connection::Ssh(connection),
+                index: ServerIndex::Ssh(index),
+                ..
+            } => Some((
+                connection.effective_agent_route(),
+                AgentRouteTarget::Saved(*index),
+            )),
+            RemoteEntry::SshConfig { host, .. } => Some((
+                RemoteAgentRoute::NotThroughFlint,
+                AgentRouteTarget::SshConfig(host.clone()),
+            )),
+            _ => None,
+        };
 
         let (main_label, aux_label, is_wsl) = match &connection {
             Connection::Ssh(connection) => {
@@ -1566,7 +1588,14 @@ impl RemoteServerProjects {
                         aux_label.map(|label| {
                             Label::new(label).size(LabelSize::Small).color(Color::Muted)
                         }),
-                    ),
+                    )
+                    .when_some(agent_route, |this, (route, target)| {
+                        this.child(
+                            div().ml_auto().child(
+                                self.render_agent_route_selector(ix, route, target, window, cx),
+                            ),
+                        )
+                    }),
             )
             .child(match remote_server {
                 RemoteEntry::Project {
@@ -1709,6 +1738,85 @@ impl RemoteServerProjects {
                         ),
                 ),
             })
+    }
+
+    fn render_agent_route_selector(
+        &self,
+        row_index: usize,
+        selected_route: RemoteAgentRoute,
+        target: AgentRouteTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let remote_servers = cx.weak_entity();
+        let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+            for route in RemoteAgentRoute::ALL {
+                let remote_servers = remote_servers.clone();
+                let target = target.clone();
+                menu = menu.toggleable_entry(
+                    route.label(),
+                    route == selected_route,
+                    ui::IconPosition::Start,
+                    None,
+                    move |_, cx| {
+                        remote_servers
+                            .update(cx, |this, cx| {
+                                this.set_agent_route(target.clone(), selected_route, route, cx);
+                            })
+                            .ok();
+                    },
+                );
+            }
+            menu
+        });
+
+        DropdownMenu::new(
+            ("remote-agent-route", row_index),
+            format!("Agent: {}", selected_route.label()),
+            menu,
+        )
+        .style(DropdownStyle::Ghost)
+        .trigger_tooltip(Tooltip::text(
+            "Choose how agents on this server reach their provider",
+        ))
+    }
+
+    fn set_agent_route(
+        &mut self,
+        target: AgentRouteTarget,
+        previous_route: RemoteAgentRoute,
+        route: RemoteAgentRoute,
+        cx: &mut Context<Self>,
+    ) {
+        if route == previous_route {
+            return;
+        }
+
+        match target {
+            AgentRouteTarget::Saved(index) => {
+                self.update_settings_file(cx, move |settings, _| {
+                    if let Some(connection) = settings
+                        .ssh_connections
+                        .as_mut()
+                        .and_then(|connections| connections.get_mut(index.0))
+                    {
+                        connection.agent_route = Some(route);
+                    }
+                });
+            }
+            AgentRouteTarget::SshConfig(host) => {
+                self.update_settings_file(cx, move |settings, _| {
+                    settings
+                        .ssh_connections
+                        .get_or_insert_with(Vec::new)
+                        .push(SshConnection {
+                            host: host.to_string(),
+                            agent_route: Some(route),
+                            ..Default::default()
+                        });
+                });
+            }
+        }
     }
 
     fn render_remote_project(
@@ -1951,6 +2059,7 @@ impl RemoteServerProjects {
                     upload_binary_over_ssh: None,
                     port_forwards: connection_options.port_forwards,
                     connection_timeout: connection_options.connection_timeout,
+                    agent_route: None,
                 })
         });
     }
