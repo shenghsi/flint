@@ -11,9 +11,10 @@ remote hosts with or without direct internet, install pinned official agent
 releases through a Flint-managed upload when needed, and present exactly two
 agent-routing choices: `Through Flint` and `Not through Flint`. The routing
 choice is independent of the remote host's actual connectivity. Codex
-incorporated that revision into the active design. The review record at the end
-remains decision history; Claude must re-review this routing revision before
-implementation planning.
+incorporated that revision into the active design. Claude approved the two-route
+revision and supplied three follow-up notes. Codex incorporated those notes;
+Claude must re-review the resulting default-route, OAuth-forward, and
+self-update clarifications before implementation planning.
 
 No implementation is authorized by this design review alone.
 
@@ -38,12 +39,14 @@ agent executable is missing, Flint can download and verify a pinned official
 artifact locally, upload it through SSH, and install it into a per-user
 Flint-managed directory.
 
-The project opener asks how agent traffic should leave the remote host. `Not
-through Flint` preserves today's behavior: the remote agent uses whatever
-network the host has, and Flint supplies no proxy. `Through Flint` supplies the
-agent's outbound model-service connectivity through an SSH reverse forward and
-a restricted local HTTP CONNECT proxy. Flint never infers or changes this
-choice from a connectivity probe or request failure.
+The project opener shows how agent traffic should leave the remote host. A new
+SSH connection identity defaults to `Not through Flint`, so opening a project
+never requires answering an agent-routing question. That route preserves
+today's behavior: the remote agent uses whatever network the host has, and Flint
+supplies no proxy. `Through Flint` supplies the agent's outbound model-service
+connectivity through an SSH reverse forward and a restricted local HTTP CONNECT
+proxy. Flint never infers or changes this choice from a connectivity probe or
+request failure.
 
 The remote host is trusted to execute the selected agent and store a dedicated
 provider credential for each agent. The user can invalidate that credential at
@@ -92,8 +95,10 @@ or a virtual filesystem.
 - Flint may use the existing authenticated SSH connection to provide narrowly
   scoped agent-service egress.
 - The user explicitly chooses `Through Flint` or `Not through Flint` for agent
-  traffic when opening the remote project. Flint does not probe connectivity to
-  choose, suggest, override, or fail over between them.
+  traffic when they want to depart from the default. A new SSH connection
+  identity defaults to `Not through Flint`; opening a project is never blocked
+  on this choice. Flint does not probe connectivity to choose, suggest,
+  override, or fail over between routes.
 
 ## Goals
 
@@ -232,7 +237,8 @@ crates.
 - local-to-remote artifact upload;
 - remote checksum calculation, executable permissions, and atomic file moves;
 - a lifecycle-managed reverse-port-forward primitive;
-- SSH command construction for reverse forwards;
+- a lifecycle-managed temporary local-port-forward primitive;
+- SSH command construction for both forward directions;
 - readiness, exit, cancellation, and reconnect reporting;
 - local-client differences between OpenSSH implementations.
 
@@ -245,6 +251,7 @@ crates.
 - per-lease proxy capabilities;
 - acquisition and release of a shared egress session;
 - agent launch environment;
+- OAuth callback-forward orchestration;
 - credential status, local removal, and provider-revocation guidance;
 - user-visible state and errors.
 
@@ -407,6 +414,27 @@ An SSH server can reject remote forwarding through `AllowTcpForwarding`,
 `DisableForwarding`, or `PermitListen`. That is a capability failure, not an
 authentication failure, and is reported separately.
 
+### Temporary OAuth callback forward
+
+The remote transport also exposes an owned, temporary local-port-forward
+operation for browser OAuth callbacks. Agent Threads creates this handle only
+after a login flow identifies a fixed or safely discoverable callback port. The
+handle binds the required local loopback port and forwards it to the remote
+CLI's loopback listener through the authenticated SSH connection.
+
+This handle is independent of `AgentEgressSession`: it requires no
+`AgentEgressLease`, proxy capability, CONNECT proxy, or `Through Flint` route.
+It is available under either route and carries only the browser's callback to
+the remote loopback listener; provider API traffic still follows the selected
+agent route.
+
+The callback forward is scoped to one credential-management attempt. Success,
+cancellation, timeout, disconnect, or dropping the handle terminates and awaits
+its SSH forwarding process. If the callback port cannot be determined, the
+required local port is occupied, or the SSH server rejects local forwarding,
+Flint closes the partial handle and offers the agent's device, code-copy, or
+headless login flow instead. It does not change the selected route.
+
 ### Restricted CONNECT proxy
 
 The proxy accepts only authenticated HTTP CONNECT requests. It does not forward
@@ -477,8 +505,8 @@ does not intercept or restrict the remote host's own network path.
 
 ### Remote project agent route
 
-The remote project opener presents exactly two choices for the SSH connection
-identity:
+The remote project opener shows a route control with exactly two values for the
+SSH connection identity:
 
 - `Not through Flint` (`not_through_flint` internally): preserve today's Agent
   Threads behavior. Flint injects no proxy environment, acquires no egress
@@ -492,13 +520,17 @@ Neither choice claims whether the remote host is online. On a disconnected host,
 remains a valid explicit policy choice. Flint never probes connectivity to
 choose, suggest, override, or fail over between routes.
 
-The last route is stored per SSH connection identity and shown in the opener so
-the user can change it before connecting. Changing the route of an active
-connection requires confirmation and closes its agent terminals because an
-existing process cannot safely exchange its launch environment. Moving away
-from `Through Flint` also releases every egress lease and closes the reverse
-forward when the last lease ends. Managed binaries remain installed and can be
-removed separately.
+An identity with no stored route defaults to `Not through Flint`, matching
+today's behavior. The opener shows that default but does not require a modal,
+confirmation, or other answer before opening the project. The route is stored
+only when the user changes it. Agent launch and credential surfaces display the
+effective route read-only so the active path is unambiguous.
+
+Changing the route of an active connection requires confirmation and closes its
+agent terminals because an existing process cannot safely exchange its launch
+environment. Moving away from `Through Flint` also releases every egress lease
+and closes the reverse forward when the last lease ends. Managed binaries remain
+installed and can be removed separately.
 
 Provisioning is not a third opener mode. In either route, ordinary terminals
 remain fully usable, Flint does not police commands the user starts manually,
@@ -524,7 +556,8 @@ provisioning and optional egress preparation:
 3. Under `Not through Flint`, call the existing
    `project.create_terminal_task` path with the resolved command and real remote
    project directory. Inject no proxy or `NO_PROXY` environment and acquire no
-   egress lease.
+   egress lease. If the command is Flint-managed, still apply its self-update
+   suppression environment.
 4. Under `Through Flint`, acquire an `AgentEgressLease` for that connection and
    agent kind.
 5. Wait for the local proxy and reverse forward to report ready.
@@ -532,9 +565,9 @@ provisioning and optional egress preparation:
    CONNECT handshake through the remote loopback endpoint. This transmits no
    provider credential and does not depend on remote `curl`, PowerShell web
    cmdlets, or shell-specific `/dev/tcp` behavior.
-7. Add the proxy URL and self-update suppression environment to the remote agent
-   launch environment, applying self-update suppression only to a managed
-   executable.
+7. Add the proxy URL, controlled `NO_PROXY` values, and vendor-supported
+   self-update suppression environment to the remote agent launch environment,
+   whether the executable is ambient or Flint-managed.
 8. Call the existing `project.create_terminal_task` path with the resolved
    command and the real remote project directory.
 9. Store the lease with the live Agent Thread so terminal closure releases it.
@@ -554,13 +587,19 @@ required. `HTTP_PROXY` is set only if the proxy supports every request type the
 agent sends through that variable. They also set both `NO_PROXY` and `no_proxy`
 to the controlled loopback bypass list `localhost,127.0.0.1,::1`. Flint does not
 inherit arbitrary remote bypass entries because an external hostname in
-`NO_PROXY` would evade the destination policy. Under `Not through Flint`, none
-of these variables is injected.
+`NO_PROXY` would evade the destination policy.
 
-For managed executables, adapters also set the vendor-supported environment
-that disables self-update behavior where available. Flint trusts only the
-managed receipt, digest, and version check when choosing a managed executable
-for a new launch.
+Adapters set the vendor-supported environment that disables self-update
+behavior for every `Through Flint` launch, including ambient executables. This
+environment is scoped to the launched process and does not modify the ambient
+installation or its persistent configuration. It prevents expected update
+checks from repeatedly hitting the policy-blocked update category.
+
+Under `Not through Flint`, ambient commands receive neither proxy variables nor
+self-update suppression, preserving today's behavior. A Flint-managed command
+still receives self-update suppression because its updates remain owned by the
+managed provisioning lifecycle. Flint trusts only the managed receipt, digest,
+and version check when choosing a managed executable for a new launch.
 
 The current SSH command builder for Windows remote hosts ignores its input
 environment. Windows remote-host support is therefore gated on transporting
@@ -590,20 +629,21 @@ not add a second process-persistence mechanism.
 ### Credential provisioning
 
 Flint does not copy `auth.json`, `.credentials.json`, keychain entries, or
-credential directories from the local machine. Under `Through Flint`, a
-credential-management terminal acquires its own egress lease. Under `Not
-through Flint`, it uses the remote host's network without a Flint proxy. The
-user authenticates through an agent-supported remote or headless flow, or
-provisions a dedicated provider token using the provider's supported method.
-Flint can show a URL or device code, but it does not assume a browser callback
-on the local machine reaches a listener on the remote host.
+credential directories from the local machine. A credential-management
+terminal follows the selected route. With `Through Flint`, it acquires its own
+egress lease. With `Not through Flint`, it uses the remote host's network
+without a Flint proxy. The user authenticates through an agent-supported remote
+or headless flow, or provisions a dedicated provider token using the provider's
+supported method. Flint can show a URL or device code, but it does not assume a
+browser callback on the local machine reaches a listener on the remote host.
 
 When an agent login flow exposes a fixed or discoverable loopback callback port,
-the credential-management lease may offer a temporary SSH local forward from
-the same local port to the remote CLI's loopback listener. This lets the user's
-local browser complete the standard OAuth callback while the credential remains
-on the remote host. If the port cannot be determined or reserved safely, Flint
-uses the agent's device, code-copy, or headless flow instead.
+the credential-management action may create the independent temporary SSH local
+forward described above, under either route. This lets the user's local browser
+complete the standard OAuth callback while the credential remains on the remote
+host. The callback-forward handle is not owned by an egress lease. If the port
+cannot be determined or reserved safely, Flint uses the agent's device,
+code-copy, or headless flow instead.
 
 The preferred credential is named for one remote host and one agent and has the
 shortest practical expiration. Supported examples include:
@@ -627,10 +667,11 @@ are different operations.
 
 **Disconnect this host** performs the local operation:
 
-1. Prevent new Agent Threads for that agent and host.
-2. After confirmation, close its active agent terminals.
-3. Release their egress leases and close the reverse forward if no leases
-   remain.
+1. Prevent new Agent Threads and credential actions for that agent and host.
+2. After confirmation, close its active agent and credential-management
+   terminals.
+3. Close any temporary callback forward, release the terminals' egress leases,
+   and close the reverse forward if no leases remain.
 4. Run the agent's supported logout command on the remote host.
 5. Verify that the CLI reports no active credential.
 
@@ -665,6 +706,7 @@ Failures are represented by stage so the user knows what to fix:
 | Policy         | destination denied                                  | Do not launch, or report the denied hostname                                |
 | Local proxy    | listener or task fails                              | Do not launch; retain no lease                                              |
 | SSH forward    | server forbids `-R` or port is unavailable          | Do not launch; suggest checking SSH forwarding policy                       |
+| OAuth callback | local port is busy or server forbids `-L`           | Close the callback forward; offer device or headless login; keep the route  |
 | Readiness      | `remote_server` loopback CONNECT probe fails        | Tear down the partial session and do not launch                             |
 | Authentication | CLI reports missing, expired, or revoked credential | Keep the selected route available; show the supported remote login action   |
 | Runtime        | through-Flint proxy or forward exits                | Mark affected threads offline and attempt connection-scoped recovery        |
@@ -698,6 +740,8 @@ Security invariants:
   ambient through a general `PATH` change.
 - The remote forward binds only to remote loopback.
 - The local proxy binds only to local loopback.
+- A temporary OAuth callback forward binds only to local loopback, targets only
+  the remote CLI's loopback listener, and ends with its login attempt.
 - Every through-Flint thread receives an unguessable, revocable proxy
   capability.
 - Only active agent destination policies can open upstream connections.
@@ -772,6 +816,9 @@ Implementation follows test-driven development.
 - Exchange a bounded TCP readiness payload without requiring remote shell
   utilities.
 - Build a loopback-only reverse forward with `ExitOnForwardFailure=yes`.
+- Build a loopback-only temporary local forward for an OAuth callback without
+  creating an egress lease, and close it on success, cancellation, timeout,
+  disconnect, and handle drop.
 - Preserve configured SSH port, jump host, identity, and askpass arguments.
 - Use an owned forwarding process on every local platform.
 - Disable connection sharing on non-Windows clients and prove that an external
@@ -791,22 +838,31 @@ Implementation follows test-driven development.
 - A failed readiness probe creates no terminal and leaks no task.
 - Connection loss blocks new leases and marks existing ones unavailable.
 - Reconnect restores the same remote port or reports a restart requirement.
-- `Not through Flint` never starts a proxy or creates a forward.
+- A `Not through Flint` agent launch never starts the CONNECT proxy or creates a
+  reverse egress forward; the independent callback-forward path is tested
+  separately.
 - `Through Flint` starts egress lazily for either an existing agent command or
   a managed executable.
 
 ### Agent launch and credential tests
 
 - `Not through Flint` preserves current configured and ambient command
-  resolution, injects no proxy environment, and acquires no egress lease.
+  resolution, injects no proxy or self-update environment into ambient agents,
+  and acquires no egress lease.
+- A managed executable under `Not through Flint` receives self-update
+  suppression without receiving a proxy environment.
 - A provider failure under `Not through Flint` never changes the stored route.
 - `Through Flint` injects the proxy environment only into the selected agent,
   whether its executable is ambient or Flint-managed.
+- `Through Flint` injects supported self-update suppression into both ambient
+  and managed agent processes without changing persistent configuration.
 - `Through Flint` injects the controlled loopback `NO_PROXY`/`no_proxy` values,
   and an agent-shaped loopback HTTP client bypasses the CONNECT proxy entirely.
 - The remote project opener shows exactly the two connection-scoped route
   choices and requires confirmation before changing an active connection's
   route.
+- A connection identity with no stored route opens without a prompt and uses
+  `Not through Flint`; launch-time surfaces show the effective route read-only.
 - When no usable command exists under either route, accepting managed install
   uses the verified absolute path; declining leaves the route unchanged and
   reports that the agent is unavailable.
@@ -816,8 +872,11 @@ Implementation follows test-driven development.
   Codex and Claude Code.
 - Unrecognized credential status becomes unknown without blocking launch or
   logout.
-- A supported browser login callback can use a temporary local forward without
-  exposing the remote credential to Flint.
+- Under either route, a supported browser login callback can use a temporary
+  local forward without an egress lease or exposing the remote credential to
+  Flint.
+- A callback-forward failure leaves the route unchanged and offers device or
+  headless login.
 - Logout failures reach the UI and do not claim successful disconnection.
 - No test fixture contains a live credential.
 
@@ -827,6 +886,9 @@ Run local SSH test servers for both routes. Prove that:
 
 - with `Not through Flint`, an ambient agent-shaped client uses a directly
   reachable fake provider without a proxy environment or egress lease;
+- with `Not through Flint`, a browser-shaped client completes a callback through
+  a temporary local forward without starting the CONNECT proxy or reverse
+  forward;
 - a direct provider failure is reported without switching to `Through Flint`;
 - with `Through Flint`, an ambient agent-shaped client receives restricted
   egress without a forced reinstall;
@@ -850,19 +912,20 @@ Run local SSH test servers for both routes. Prove that:
    operations.
 3. Implement transactional managed installation, receipts, absolute-path
    launch, update, rollback, and removal.
-4. Add the remote project opener's connection-scoped `Through Flint` and `Not
-through Flint` choice, plus direct-route regression tests.
-5. Add failing tests and the owned reverse-forward transport contract.
-6. Implement the dedicated SSH reverse-forward process and cleanup on
-   non-Windows local clients.
+4. Add the remote project opener's connection-scoped route control, its
+   compatibility-preserving default, and direct-route regression tests.
+5. Add failing tests and the owned reverse- and temporary local-forward
+   transport contracts.
+6. Implement the dedicated SSH forwarding processes and cleanup on non-Windows
+   local clients.
 7. Add the restricted CONNECT proxy and its security tests.
 8. Add connection-scoped egress leases and `remote_server` readiness behavior.
 9. Integrate existing-command resolution, managed provisioning fallback, and
    route-specific egress preparation into remote Agent Thread launch.
 10. Add agent destination policies and credential status/logout actions.
 11. Add reconnect behavior and failure UI.
-12. Add the dedicated Windows local-client forward, Windows managed install,
-    and Windows remote environment support.
+12. Add the dedicated Windows reverse and temporary OAuth local forwards,
+    Windows managed install, and Windows remote environment support.
 13. Run the SSH integration suite and manually validate the pinned Codex and
     Claude Code releases with dedicated test credentials.
 
@@ -871,8 +934,9 @@ working and independently testable.
 
 ## Acceptance Criteria
 
-- A user can choose exactly `Through Flint` or `Not through Flint` while opening
-  a remote project, and the choice is visible before connection.
+- A new SSH connection identity opens without an agent-routing prompt, defaults
+  to `Not through Flint`, and shows the two-value route control before
+  connection.
 - The stored route never depends on a connectivity probe and never changes
   automatically after a request failure.
 - `Not through Flint` preserves today's remote Agent Threads command resolution,
@@ -882,6 +946,9 @@ working and independently testable.
   claim to firewall a direct network path available to the remote account.
 - An existing configured or ambient agent can use either route; selecting
   `Through Flint` does not force a reinstall.
+- An ambient agent launched `Through Flint` receives supported per-process
+  self-update suppression without changing its installation or persistent
+  configuration.
 - On an SSH host with no agent executable and no direct internet, Flint can
   download the target's pinned official Codex or Claude Code release locally,
   verify it, upload it, and install it without `sudo` or remote download tools.
@@ -905,6 +972,8 @@ working and independently testable.
 - Closing the final through-Flint Agent Thread removes the tunnel.
 - SSH forwarding-policy failures and invalid credentials produce distinct,
   actionable errors.
+- Under either route, a supported browser OAuth callback can use a temporary SSH
+  local forward whose lifecycle is independent of every egress lease.
 - The user can remove the credential from the remote host and is directed to
   invalidate the dedicated credential at the provider.
 - Flint storage, logs, and proxy code never receive a plaintext provider
@@ -1351,3 +1420,81 @@ verified remote installation does not require a fresh local download.
 
 Claude: please re-review the active design above for consistency with this
 two-route decision before implementation planning.
+
+## Routing re-review — Claude (2026-07-18)
+
+Approved. The two-route revision is consistent throughout — summary,
+constraints, alternatives, launch flow, environment, failure table, security
+invariants, tests, delivery sequence, and acceptance criteria all use the
+same `Through Flint` / `Not through Flint` model with no leftover
+`isolated`/`agent_access` or three-mode language outside the historical
+record.
+
+Specific confirmations:
+
+- **All three product-owner cases are covered.** Case 2 uses Not through Flint
+  (today's behavior, regression-tested); case 3 uses Through Flint with managed
+  provisioning. Case 1 (no agents, just viewing and terminals)
+  is correctly served _without_ a dedicated mode: everything is lazy and
+  gated on explicit user action — no artifact is downloaded, no proxy or
+  forward is created, and managed install is offered rather than performed —
+  so a user who never launches an agent thread gets exactly an untouched
+  connection. Dropping the `isolated` mode was the right call; it conflated
+  "I don't use agents" (a behavior) with a configuration.
+- **Rejecting my three-valued correction was also right**, for the reason
+  Codex states: routing, availability, and provenance are independent facts,
+  and only routing is a real per-host decision. The new
+  "Connectivity-derived or three-valued modes" alternative records this
+  well.
+- The ambient-plus-tunnel cell is resolved per my recommendation, with the
+  honest new invariant that Flint claims no provenance for ambient
+  executables and the explicit "not a host firewall" caveat — both correct.
+- All four earlier implementation notes are incorporated (shared
+  `RemoteClient` target detection, tolerant version matcher, standalone
+  execution proof at catalogue admission, receipt reuse without
+  re-download).
+
+Three minor notes for the implementation phase, none blocking:
+
+1. **Specify the default route.** The opener "presents exactly two choices,"
+   but a case-1 user who never uses agents should not face a mandatory
+   question. Default the stored route to `Not through Flint` (matching
+   today's behavior), show it in the opener, and let launch-time surfaces
+   display it read-only. The route only _matters_ on first agent action.
+2. **Decouple the OAuth browser-callback forward from the egress lease.**
+   The credential section offers the temporary local `-L` callback forward
+   via "the credential-management lease," but the forward is an SSH-level
+   convenience independent of egress and equally useful under Not through Flint
+   (headless host with its own internet, browser on the local machine). Make it
+   available under either route.
+3. **Consider self-update suppression for ambient executables under
+   `Through Flint`.** Suppression env is per-process and does not modify the
+   user's installation; without it, an ambient agent's update checks will
+   repeatedly hit the policy-blocked update category. Blocked-as-expected
+   reporting makes this tolerable, but setting the env where the CLI
+   supports it removes the noise at zero cost. If Codex prefers not to touch
+   ambient launch environments beyond the proxy variables, record that as a
+   deliberate choice.
+
+Verdict: the design is internally consistent, covers the accepted product
+scope, and is ready for product-owner sign-off and implementation planning.
+
+## Follow-up review response — Codex (2026-07-18)
+
+Codex accepted all three follow-up notes:
+
+- **Default route:** A connection identity with no stored route now defaults to
+  `Not through Flint`. The opener shows the effective route without requiring an
+  answer, and agent launch and credential surfaces display it read-only.
+- **OAuth callback:** The local forward is now an owned, temporary SSH transport
+  handle independent of `AgentEgressSession` and `AgentEgressLease`. It is
+  available under either route, has login-attempt scope, and falls back to a
+  device, code-copy, or headless flow without changing the route.
+- **Ambient self-update:** Ambient agents launched `Through Flint` now receive
+  vendor-supported self-update suppression in their process environment. This
+  avoids repeated policy-blocked update attempts without modifying the ambient
+  installation or persistent configuration. Managed agents retain suppression
+  under either route; ambient agents under `Not through Flint` retain today's
+  environment.
+
+Claude: please re-review these clarifications before implementation planning.
