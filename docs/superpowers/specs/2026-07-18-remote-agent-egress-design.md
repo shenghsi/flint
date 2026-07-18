@@ -1,35 +1,51 @@
-# Remote Agent Egress Design
+# Remote Agent Egress and Provisioning Design
 
 ## Status
 
-Proposed for Claude's review on 2026-07-18. Reviewed and approved by Claude on
-2026-07-18. Claude's review and Codex's response are recorded at the end. The
-accepted review changes are incorporated into this document. No implementation
-is authorized by this design review alone.
+The original egress design was reviewed and approved by Claude on 2026-07-18.
+Claude's review, Codex's response, and Claude's re-review are recorded at the
+end.
+
+On 2026-07-18, the product owner expanded the accepted scope: the remote host is
+offline, and Flint must install pinned official agent releases through a
+Flint-managed upload. Codex incorporated that revision into the active design.
+The earlier Claude reviews remain decision history and predate this provisioning
+scope, which requires re-review before implementation planning.
+
+No implementation is authorized by this design review alone.
 
 Design owner: Codex.
 
+Managed-provisioning revision owner: Codex.
+
 This document supersedes the Remote Agent Workspace and ACP recommendation in
 the [archived remote-control discussion](../archive/2026-07-18-remote-control-discussion.md)
-only for hosts where the agent CLI can run. For hosts where the CLI cannot run
-at all, ACP and the Remote Agent Workspace remain the recorded future direction.
-The archived discussion remains the decision history for both scopes.
+only for hosts where an official agent executable can run after Flint uploads
+it. For hosts where policy or platform constraints prevent any agent executable
+from running, ACP and the Remote Agent Workspace remain the recorded future
+direction. The archived discussion remains the decision history for both
+scopes.
 
 ## Summary
 
-Run Codex and Claude Code on the SSH host, in the real remote project, while
-Flint supplies their outbound model-service connectivity through an SSH reverse
-forward and a restricted local HTTP CONNECT proxy.
+Run Codex and Claude Code on an offline SSH host, in the real remote project.
+Flint downloads and verifies a pinned official agent artifact locally, uploads
+it through SSH, and installs it into a per-user Flint-managed directory. Flint
+then supplies the agent's outbound model-service connectivity through an SSH
+reverse forward and a restricted local HTTP CONNECT proxy.
 
-The agent CLI is installed on the remote host before Flint launches it. The
-remote host is trusted to store a dedicated provider credential for each agent.
-The user can invalidate that credential at the provider and remove the local
-copy from the remote host. Flint never copies a local credential store or reads
-the provider secret.
+The remote host is trusted to execute the managed agent and store a dedicated
+provider credential for each agent. The user can invalidate that credential at
+the provider and remove the local copy from the remote host. Flint never copies
+a local credential store or reads the provider secret.
 
 This preserves Flint's terminal-first Agent Threads model:
 
 ```text
+local Flint
+  -> download pinned official artifact
+  -> verify provenance and checksum
+  -> SSH upload and atomic per-user install
 remote Codex or Claude TUI
   -> HTTPS_PROXY on remote loopback
   -> SSH reverse port forward
@@ -43,25 +59,32 @@ or a virtual filesystem.
 
 ## Accepted Constraints
 
-- Codex and Claude Code can be installed and executed on the remote host.
-- Installation is a provisioning precondition, not a remote-internet
-  requirement. On an offline host, the user or administrator may use an
-  internal package mirror, removable media, or a manual transfer appropriate
-  for the remote operating system and architecture before enabling the feature.
-- The remote host may lack direct internet access.
+- The remote host has no direct outbound network access.
+- The local Flint installation can reach the official agent artifact and model
+  service endpoints.
+- The remote operating system, architecture, libc where relevant, and execution
+  policy support an official Codex or Claude Code artifact.
+- The remote user has a writable per-user application-data directory and can
+  execute files from it without `sudo`.
+- Flint installs only exact official agent releases pinned and tested by the
+  current Flint release. User-supplied binaries and arbitrary download URLs are
+  not accepted.
 - The remote host is trusted to hold an agent credential.
 - A dedicated credential per remote host and agent is acceptable.
 - Provider-side invalidation is the authoritative credential kill switch.
 - Native Codex and Claude Code terminal interfaces must remain available.
 - Flint may use the existing authenticated SSH connection to provide narrowly
   scoped agent-service egress.
-- Tunnel mode is explicitly enabled. Flint does not create egress automatically
-  after a failed request.
+- The user explicitly chooses whether the SSH connection remains isolated or
+  receives managed agent access when opening the remote project. Flint does not
+  create egress automatically after a failed request.
 
 ## Goals
 
 - Launch the existing remote Agent Thread with its real remote project as its
   working directory.
+- Download, verify, upload, install, update, and remove pinned official agent
+  releases without requiring remote network access or administrator privileges.
 - Give that remote process access to the model, authentication, and required
   agent control-plane endpoints through Flint.
 - Preserve native agent tools, configuration, permissions, history, resume,
@@ -76,12 +99,13 @@ or a virtual filesystem.
   provider.
 - Surface setup, authentication, policy, and connection failures in Agent
   Threads before or during launch.
+- Let the user choose visible `isolated` or `agent access through Flint` behavior
+  while opening a remote project.
 - Support local macOS, Linux, and Windows SSH clients and POSIX and Windows SSH
   hosts in the completed design.
 
 ## Non-goals
 
-- Installing, uploading, or updating the agent CLI on the remote host.
 - Running the agent locally for an SSH project.
 - Restoring ACP or building a Remote Agent Workspace, MCP file bridge, remote
   filesystem mount, or local project mirror.
@@ -90,6 +114,12 @@ or a virtual filesystem.
 - Giving arbitrary remote commands general internet access.
 - Providing network access to package managers, user processes, or arbitrary
   MCP servers.
+- Running a vendor installer on the remote host or granting installer, update,
+  or package-manager traffic through the egress tunnel.
+- Installing a user-supplied, locally discovered, third-party, or unpinned agent
+  executable.
+- Performing a system-wide installation, invoking `sudo`, or changing the
+  remote user's shell profile or general `PATH`.
 - Guaranteeing that an untrusted or compromised remote account cannot copy its
   own credential or proxy capability.
 - Automating provider-side credential creation or revocation when the provider
@@ -130,6 +160,37 @@ This was rejected because it turns an editor feature into general egress for
 the remote account. The accepted proxy understands only HTTP CONNECT, requires
 per-lease authentication, and enforces a destination policy.
 
+### Run the vendor installer through tunneled egress
+
+Flint could expose download hosts through the reverse proxy and execute each
+vendor's installer on the remote host.
+
+This was rejected because it grants installer and update processes network
+access, depends on remote shell tools and package-manager behavior, and makes
+the installed bytes harder for Flint to pin and verify. Agent artifact traffic
+belongs on the trusted local side of the SSH boundary.
+
+### Bundle agent binaries inside Flint
+
+Flint could ship every supported Codex and Claude Code platform binary inside
+each app release.
+
+This was rejected because it substantially increases the application download,
+duplicates artifacts irrelevant to the local and remote platforms, and turns
+Flint releases into a redistribution channel. Downloading the exact official
+artifact locally when first needed preserves provenance without imposing that
+cost.
+
+### Upload an existing local executable
+
+Flint could copy whichever `codex` or `claude` executable is found on the local
+machine.
+
+This was rejected because the local and remote platforms can differ and Flint
+cannot establish that an arbitrary executable is an official, unmodified,
+supported release. Managed provisioning accepts only catalogued official
+artifacts whose digests are pinned by the current Flint release.
+
 ## Architecture
 
 ### Responsibilities
@@ -139,6 +200,8 @@ crates.
 
 `remote` owns transport mechanics:
 
+- local-to-remote artifact upload;
+- remote checksum calculation, executable permissions, and atomic file moves;
 - a lifecycle-managed reverse-port-forward primitive;
 - SSH command construction for reverse forwards;
 - readiness, exit, cancellation, and reconnect reporting;
@@ -146,6 +209,8 @@ crates.
 
 `agent_threads` owns agent policy and orchestration:
 
+- the pinned official-agent release catalogue;
+- managed installation and update orchestration;
 - the local CONNECT proxy;
 - per-agent destination policies;
 - per-lease proxy capabilities;
@@ -154,9 +219,85 @@ crates.
 - credential status, local removal, and provider-revocation guidance;
 - user-visible state and errors.
 
-The SSH transport does not know about Codex, Claude, credentials, or provider
-domains. Agent Threads does not construct raw `ssh -R` commands or inspect SSH
-control sockets.
+The SSH transport does not know about Codex, Claude, credentials, provider
+domains, or official artifact URLs. Agent Threads does not construct raw
+`ssh -R` commands, inspect SSH control sockets, or implement platform-specific
+upload commands.
+
+### Pinned official-agent catalogue
+
+The signed Flint release contains an `AgentRelease` entry for each supported
+agent and remote target. Each entry contains:
+
+- the agent kind and exact version;
+- remote operating system, architecture, and libc variant where relevant;
+- the provider's official artifact URL;
+- the expected SHA-256 digest;
+- provider signature or signed-manifest metadata when the provider publishes
+  it;
+- the executable name and expected `--version` output;
+- agent-specific environment needed to disable self-update behavior.
+
+Updating an entry requires a Flint change that validates the official release,
+endpoint policy, login behavior, history compatibility, and platform support.
+Runtime settings cannot replace the URL, digest, or version. Artifact URLs must
+match the official source rules compiled for that agent kind. Flint does not
+offer a file picker or arbitrary URL override.
+
+[Claude Code publishes platform binaries through signed manifests with SHA-256
+digests](https://code.claude.com/docs/en/installation).
+[Codex publishes standalone installers and supports a caller-selected install
+directory](https://learn.chatgpt.com/docs/config-file/environment-variables.md).
+Flint's release process resolves those official distributions into the same
+pinned `AgentRelease` contract; the runtime provisioner does not execute either
+vendor installer on the remote host.
+
+### `ManagedAgentProvisioner`
+
+One `ManagedAgentProvisioner` coordinates local acquisition and remote
+installation without owning SSH implementation details. For an agent launch it:
+
+1. Resolves the remote target already detected by `RemoteClient`.
+2. Selects the exact `AgentRelease` pinned by the current Flint release.
+3. Downloads the artifact with Flint's local HTTP client into a
+   content-addressed local cache.
+4. Verifies the provider signature or signed manifest when available and always
+   verifies the pinned SHA-256 digest before upload.
+5. Uploads the artifact through the generic remote transport to a unique
+   temporary file in the remote user's Flint application-data directory.
+6. Uses `remote_server`, not a remote shell utility such as `sha256sum`, to
+   compute the uploaded digest and rejects any mismatch.
+7. Sets user-only executable permissions where required and atomically moves the
+   file into the versioned managed installation directory.
+8. Runs the managed executable with `--version` and accepts the installation
+   only when the output matches the catalogue entry.
+9. Records a non-secret receipt containing agent kind, version, target, digest,
+   and absolute executable path.
+
+The managed root is the remote user's standard per-user application-data
+directory, under `flint/agents/<agent>/<version>/<target>/`. Installation never
+uses `sudo`, a system package manager, a shell profile, or a general `PATH`
+change. Agent Threads launches the absolute managed executable path and ignores
+ambient `codex` or `claude` commands in `agent_access` mode.
+
+Provisioning is lazy per agent. Opening a connection with managed agent access
+does not download every registered agent; the first launch, login, or explicit
+install action provisions the selected agent. Concurrent requests for the same
+agent, version, and target share one installation task.
+
+An update is available only when a newer pinned version arrives in a Flint
+release. The user starts the update explicitly. Flint installs the new version
+beside the old one, switches new launches only after verification, and retains
+the prior version until no live thread uses it. A hash or version mismatch in a
+managed installation marks it invalid and triggers a verified reinstall from
+the local cache rather than trusting an agent self-update.
+
+**Remove managed agent** first prevents new launches of that agent on the
+connection. After confirmation it closes the agent's active terminals, releases
+their egress leases, and deletes Flint-managed versions and receipts. It does
+not delete the agent's credential or history; those remain separate, explicit
+actions. Local content-addressed artifacts follow Flint's normal cache eviction
+policy and never contain provider credentials.
 
 ### `AgentEgressSession`
 
@@ -259,13 +400,13 @@ definition rather than a second provider registry. They distinguish:
 
 - required model and authentication endpoints;
 - optional telemetry endpoints;
-- optional update and artifact endpoints;
+- unsupported update, installer, package, and artifact endpoints;
 - unsupported general-purpose endpoints.
 
 The default policy enables only endpoints required for normal interactive
-agent operation and authentication. Optional telemetry, update, and artifact
-destinations are blocked by default. The user can enable an optional category
-per host when the corresponding agent feature requires it.
+agent operation and authentication. Optional telemetry is blocked by default.
+Agent binary download and update hosts are never part of remote egress because
+managed provisioning fetches those artifacts locally.
 
 Blocked requests identify the hostname and policy category in the Agent Thread
 error surface without logging secrets. Policy additions require a Flint update
@@ -288,33 +429,49 @@ configures those destinations.
 
 ## Launch and Runtime Flow
 
-### Enablement
+### Remote project access choice
 
-Agent egress is an explicit network mode associated with the SSH connection
-identity:
+The remote project opener presents an explicit access choice for the SSH
+connection identity:
 
-- `direct`: current behavior; Flint adds no proxy environment;
-- `tunnel`: acquire managed agent egress before launching a remote agent;
-- `disabled`: do not launch Agent Threads on that remote connection.
+- `isolated`: open the remote project without provisioning agents or creating
+  egress; remote Agent Threads are unavailable;
+- `agent_access`: allow Flint-managed agent provisioning and acquire restricted
+  agent egress when an agent or credential action needs it.
 
-The mode is stored independently of whether the connection originated in
-Flint settings or `~/.ssh/config`. Flint never changes `direct` to `tunnel`
-after observing a network error.
+The last choice is stored per SSH connection identity and shown in the opener so
+the user can change it before connecting. It is not inferred from a failed
+network request. Changing an active connection to `isolated` requires
+confirmation, closes its agent terminals, releases every egress lease, and
+prevents new agent launches. Managed binaries may remain installed but have no
+Flint-provided network path; the user can remove them separately.
+
+The choice cannot honestly provide a project-level isolation boundary when two
+projects share the same remote operating-system account. A process running as
+that user can inspect another agent process's environment and capability.
+Therefore access is connection-identity scoped even though the user selects it
+while opening a project.
 
 ### Thread launch
 
-`spawn_thread_task` keeps the current remote terminal path but gains an egress
-preparation step for SSH projects in tunnel mode:
+`spawn_thread_task` keeps the current remote terminal path but gains managed
+provisioning and egress preparation for SSH projects with `agent_access`:
 
 1. Resolve the selected agent kind and remote connection identity.
-2. Acquire an `AgentEgressLease` for that connection and agent kind.
-3. Wait for the local proxy and reverse forward to report ready.
-4. Verify the remote loopback endpoint with an authenticated CONNECT handshake
-   that transmits no provider credential.
-5. Add the proxy URL to the remote agent launch environment.
-6. Call the existing `project.create_terminal_task` path with the real remote
-   project directory.
-7. Store the lease with the live Agent Thread so terminal closure releases it.
+2. Reject the launch if the connection is `isolated`.
+3. Ask `ManagedAgentProvisioner` for the verified absolute executable path,
+   installing the pinned release when necessary.
+4. Acquire an `AgentEgressLease` for that connection and agent kind.
+5. Wait for the local proxy and reverse forward to report ready.
+6. Use a bounded `remote_server` TCP-exchange RPC to send an authenticated
+   CONNECT handshake through the remote loopback endpoint. This transmits no
+   provider credential and does not depend on remote `curl`, PowerShell web
+   cmdlets, or shell-specific `/dev/tcp` behavior.
+7. Add the proxy URL and self-update suppression environment to the remote agent
+   launch environment.
+8. Call the existing `project.create_terminal_task` path with the absolute
+   managed executable and the real remote project directory.
+9. Store the lease with the live Agent Thread so terminal closure releases it.
 
 The proxy URL is applied only to the agent process. It is not added to the
 remote project's general environment or persisted in project settings.
@@ -325,15 +482,20 @@ project path, so existing remote history discovery continues to work.
 
 ### Environment
 
-Agent adapters set the proxy variables the current CLI supports, including
+Agent adapters set the proxy variables the pinned CLI supports, including
 `HTTPS_PROXY` and the corresponding lowercase form when required. `HTTP_PROXY`
 is set only if the proxy supports every request type the agent sends through
 that variable. They also set both `NO_PROXY` and `no_proxy` to the controlled
 loopback bypass list `localhost,127.0.0.1,::1`. Flint does not inherit arbitrary
-remote bypass entries into tunnel mode because an external hostname in
-`NO_PROXY` would evade the destination policy. If a supported CLI version does
-not honor a loopback bypass, tunnel mode is unavailable for that version rather
+remote bypass entries into `agent_access` mode because an external hostname in
+`NO_PROXY` would evade the destination policy. If a CLI version does not honor a
+loopback bypass, Flint does not add that version to the release catalogue rather
 than silently breaking local services or weakening policy.
+
+Adapters also set the vendor-supported environment that disables background and
+manual self-update paths where available. Regardless of that setting, Flint
+trusts only the managed receipt, digest, and version check when choosing an
+executable for a new launch.
 
 The current SSH command builder for Windows remote hosts ignores its input
 environment. Windows remote-host support is therefore gated on transporting
@@ -360,7 +522,7 @@ not add a second process-persistence mechanism.
 
 ## Credential Lifecycle
 
-### Provisioning
+### Credential provisioning
 
 Flint does not copy `auth.json`, `.credentials.json`, keychain entries, or
 credential directories from the local machine. A credential-management
@@ -385,7 +547,7 @@ shortest practical expiration. Supported examples include:
 - a separately listed Claude Code authorization token.
 
 Flint derives credential status on demand through the agent CLI. It keeps only
-non-secret runtime state and the configured network mode; it does not persist a
+non-secret runtime state and the configured access mode; it does not persist a
 parallel credential inventory. Flint does not promise that a credential is
 dedicated when the provider or CLI does not expose enough metadata to verify
 that claim. If a CLI version's status output cannot be parsed, Flint reports the
@@ -428,17 +590,24 @@ Failures are represented by stage so the user knows what to fix:
 
 | Stage          | Example                                             | Result                                                                      |
 | -------------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| Policy         | tunnel mode disabled or destination denied          | Do not launch, or report the denied hostname                                |
+| Access         | connection is `isolated`                            | Open the project without Agent Threads or egress                            |
+| Catalogue      | remote target has no pinned official artifact       | Do not download or launch; report the unsupported target                    |
+| Download       | local Flint cannot reach the official artifact      | Preserve any valid installed version; offer retry                           |
+| Verification   | source, signature, digest, or version is invalid    | Delete the staged artifact and do not upload or launch                      |
+| Upload         | SSH transfer fails or remote storage is full        | Delete the partial remote file when reachable and report the transfer error |
+| Installation   | remote digest, permissions, move, or version fails  | Leave the prior version active and do not launch the staged version         |
+| Policy         | destination denied                                  | Do not launch, or report the denied hostname                                |
 | Local proxy    | listener or task fails                              | Do not launch; retain no lease                                              |
 | SSH forward    | server forbids `-R` or port is unavailable          | Do not launch; suggest checking SSH forwarding policy                       |
-| Readiness      | remote loopback probe fails                         | Tear down the partial session and do not launch                             |
+| Readiness      | `remote_server` loopback CONNECT probe fails        | Tear down the partial session and do not launch                             |
 | Authentication | CLI reports missing, expired, or revoked credential | Keep the tunnel available for login; show the supported remote login action |
 | Runtime        | proxy or forward exits                              | Mark active threads offline and attempt connection-scoped recovery          |
 | Reconnect      | stable remote port cannot be restored               | Fail the egress session and require thread restart                          |
 | Logout         | CLI cannot remove its local credential              | Keep the host marked authenticated and show the command error               |
 
-Startup is transactional: a failure before terminal creation releases the
-capability, closes a newly created forward when it has no other leases, and
+Startup is transactional: a failure before terminal creation removes staged
+local and remote files, leaves any prior verified installation active, releases
+the capability, closes a newly created forward when it has no other leases, and
 propagates an error to the Agent Threads UI. Errors are never discarded with
 `let _ =`.
 
@@ -455,6 +624,12 @@ system account that owns it.
 
 Security invariants:
 
+- Agent artifacts come only from agent-specific official source rules embedded
+  in the signed Flint release.
+- Flint verifies the pinned digest before upload and verifies the uploaded bytes
+  again on the remote host before an atomic installation.
+- Agent Threads launches an absolute Flint-managed executable path, never an
+  ambient command from the remote `PATH`.
 - The remote forward binds only to remote loopback.
 - The local proxy binds only to local loopback.
 - Every thread receives an unguessable, revocable proxy capability.
@@ -465,7 +640,7 @@ Security invariants:
 - Proxy capabilities and proxy URLs are redacted from logs and errors.
 - Closing the last lease removes the egress path.
 - Local logout and provider revocation are presented as separate actions.
-- Direct mode retains today's behavior and opens no new listener or forward.
+- `isolated` mode provisions nothing new and opens no proxy or forward.
 
 A malicious process running as the same remote user can inspect the agent's
 credential store or environment and can impersonate the agent. Dedicated,
@@ -475,6 +650,25 @@ That host-level risk is accepted by choosing remote credential storage.
 ## Testing Strategy
 
 Implementation follows test-driven development.
+
+### Managed provisioning unit tests
+
+- Resolve each supported remote OS, architecture, and libc variant to exactly
+  one pinned release.
+- Reject an unsupported target, unpinned version, non-official source URL,
+  missing digest, signature failure, and digest mismatch.
+- Reuse a valid content-addressed local artifact without another download.
+- Share one install task across concurrent requests for the same release.
+- Upload only after local verification succeeds.
+- Reject a remote checksum or `--version` mismatch and leave the prior managed
+  version active.
+- Install atomically into a user-only directory and clean partial files after
+  every failure stage.
+- Launch the absolute managed path even when a different executable exists on
+  the remote `PATH`.
+- Install an update beside the prior version and keep live threads on the
+  version with which they started.
+- Restore a managed version whose receipt, digest, or executable has drifted.
 
 ### CONNECT proxy unit tests
 
@@ -492,6 +686,11 @@ Implementation follows test-driven development.
 
 ### Remote transport unit tests
 
+- Upload a local artifact to a unique remote temporary path.
+- Compute its SHA-256 digest through `remote_server`, set executable
+  permissions, and move it atomically without agent-specific knowledge.
+- Exchange a bounded TCP readiness payload without requiring remote shell
+  utilities.
 - Build a loopback-only reverse forward with `ExitOnForwardFailure=yes`.
 - Preserve configured SSH port, jump host, identity, and askpass arguments.
 - Use an owned forwarding process on every local platform.
@@ -512,13 +711,15 @@ Implementation follows test-driven development.
 - A failed readiness probe creates no terminal and leaks no task.
 - Connection loss blocks new leases and marks existing ones unavailable.
 - Reconnect restores the same remote port or reports a restart requirement.
-- Direct mode never starts proxy or forwarding work.
+- `isolated` mode never provisions, starts a proxy, or creates a forward.
 
 ### Agent launch and credential tests
 
-- Tunnel mode injects the proxy environment only into the selected agent.
-- Tunnel mode injects the controlled loopback `NO_PROXY`/`no_proxy` values, and
-  an agent-shaped loopback HTTP client bypasses the CONNECT proxy entirely.
+- `agent_access` injects the proxy environment only into the selected agent.
+- `agent_access` injects the controlled loopback `NO_PROXY`/`no_proxy` values,
+  and an agent-shaped loopback HTTP client bypasses the CONNECT proxy entirely.
+- The remote project opener shows the connection-scoped choice and requires
+  confirmation before changing an active connection to `isolated`.
 - The remote project directory remains the process working directory.
 - POSIX and Windows remote launch paths preserve the proxy environment.
 - Credential status and logout commands are covered by versioned fixtures for
@@ -535,6 +736,9 @@ Implementation follows test-driven development.
 Run a local SSH test server with direct outbound access denied and a fake TLS
 model endpoint reachable only through Flint. Prove that:
 
+- the remote begins without an agent executable or download access;
+- Flint verifies a signed test release locally, uploads it, installs it without
+  `sudo`, and launches its absolute managed path;
 - the remote agent-shaped client completes an authenticated CONNECT and
   exchanges a streaming response;
 - an unapproved destination is rejected;
@@ -545,27 +749,48 @@ model endpoint reachable only through Flint. Prove that:
 
 ## Delivery Sequence
 
-1. Add failing tests and the owned reverse-forward transport contract.
-2. Implement the dedicated SSH reverse-forward process and cleanup on
+1. Add failing tests for the pinned release catalogue and generic remote upload,
+   digest, permission, atomic-move, and TCP-exchange contracts.
+2. Implement local verified artifact caching and the generic remote transport
+   operations.
+3. Implement transactional managed installation, receipts, absolute-path
+   launch, update, rollback, and removal.
+4. Add the remote project opener's connection-scoped `isolated` and
+   `agent_access` choice.
+5. Add failing tests and the owned reverse-forward transport contract.
+6. Implement the dedicated SSH reverse-forward process and cleanup on
    non-Windows local clients.
-3. Add the restricted CONNECT proxy and its security tests.
-4. Add connection-scoped egress leases and readiness behavior.
-5. Integrate tunnel-mode preparation into remote Agent Thread launch.
-6. Add agent destination policies and credential status/logout actions.
-7. Add reconnect behavior and failure UI.
-8. Add the dedicated Windows local-client forward and Windows remote
-   environment support.
-9. Run the SSH integration suite and manually validate Codex and Claude Code
-   with dedicated test credentials.
+7. Add the restricted CONNECT proxy and its security tests.
+8. Add connection-scoped egress leases and `remote_server` readiness behavior.
+9. Integrate managed provisioning and egress preparation into remote Agent
+   Thread launch.
+10. Add agent destination policies and credential status/logout actions.
+11. Add reconnect behavior and failure UI.
+12. Add the dedicated Windows local-client forward, Windows managed install,
+    and Windows remote environment support.
+13. Run the SSH integration suite and manually validate the pinned Codex and
+    Claude Code releases with dedicated test credentials.
 
-Each step keeps direct-mode Agent Threads working and independently testable.
+Each step keeps ordinary remote projects and `isolated` mode working and
+independently testable.
 
 ## Acceptance Criteria
 
-- On an SSH host with no direct internet, an installed and authenticated Codex
-  or Claude Code CLI can complete model requests through Flint.
-- An offline host may be provisioned before use without Flint owning agent CLI
-  installation or requiring the host itself to reach an installer.
+- A user can choose `isolated` or `agent access through Flint` while opening a
+  remote project, and the choice is visible before connection.
+- In `isolated` mode, Flint does not download or install an agent, start a proxy,
+  or create a reverse forward, and Agent Threads are unavailable.
+- On an SSH host with no agent executable and no direct internet, Flint can
+  download the target's pinned official Codex or Claude Code release locally,
+  verify it, upload it, and install it without `sudo` or remote download tools.
+- Flint rejects unpinned, user-supplied, non-official, corrupt, incorrectly
+  signed, wrong-target, and wrong-version artifacts.
+- A verified managed agent can authenticate and complete model requests through
+  Flint while the remote host retains no other outbound network route.
+- Agent launch uses the absolute versioned managed path and does not depend on
+  the remote `PATH`.
+- Updates are explicit and switch new launches only after complete verification;
+  a failed update preserves the prior working installation.
 - The native agent TUI, tools, history, permissions, project path, and resume
   behavior remain intact.
 - Commands and file operations execute on the remote host.
@@ -580,8 +805,7 @@ Each step keeps direct-mode Agent Threads working and independently testable.
   invalidate the dedicated credential at the provider.
 - Flint storage, logs, and proxy code never receive a plaintext provider
   credential.
-- Direct remote Agent Threads behave exactly as before when tunnel mode is not
-  enabled.
+- Ordinary remote editing behavior is unchanged in both access modes.
 
 ## Original Review Requests for Claude
 
@@ -818,3 +1042,28 @@ Two residual implementation notes, neither blocking approval:
 
 Verdict: approved as revised. Ready for product-owner sign-off and
 implementation planning.
+
+## Managed-provisioning revision — Codex (2026-07-18)
+
+The product owner subsequently clarified that the remote host has no network
+and selected **Flint-managed upload** for agent installation. Only official
+releases are eligible, and each Flint release pins the exact tested agent
+versions.
+
+This revision supersedes the earlier provisioning assumption and finding-2
+resolution. Flint now owns local artifact download, provenance and digest
+verification, generic SSH upload, remote digest verification, atomic per-user
+installation, absolute-path launch, explicit update, rollback, and removal. It
+does not run vendor installers remotely, accept user binaries, invoke `sudo`, or
+grant download and package-manager traffic through agent egress.
+
+The remote project opener now chooses between a fully `isolated` connection and
+restricted `agent_access` through Flint. The setting is connection scoped
+because multiple projects under the same remote operating-system user cannot be
+honestly isolated from each other's process environment.
+
+Claude: please re-review the active design's provisioning catalogue,
+transactional installation lifecycle, connection-scoped access choice, failure
+handling, tests, and delivery sequence. The previous egress and credential
+decisions remain unchanged except where this revision explicitly supersedes the
+manual provisioning assumption.
