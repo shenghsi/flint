@@ -2091,7 +2091,7 @@ fn build_command_posix(
 fn build_command_windows(
     input_program: Option<String>,
     input_args: &[String],
-    _input_env: &HashMap<String, String>,
+    input_env: &HashMap<String, String>,
     working_dir: Option<String>,
     port_forward: Option<(u16, String, u16)>,
     ssh_env: HashMap<String, String>,
@@ -2121,17 +2121,25 @@ fn build_command_windows(
         )?;
     }
 
-    // Windows OpenSSH has an 8K character limit for command lines. Sending a lot of environment variables easily puts us over the limit.
-    // Until we have a better solution for this, we just won't set environment variables for now.
-    // for (k, v) in input_env.iter() {
-    //     write!(
-    //         exec,
-    //         "$env:{}={} {} ",
-    //         k,
-    //         shell_kind.try_quote(v).context("shell quoting")?,
-    //         shell_kind.sequential_and_commands_separator()
-    //     )?;
-    // }
+    let mut environment = input_env.iter().collect::<Vec<_>>();
+    environment.sort_unstable_by_key(|(name, _)| name.as_str());
+    for (name, value) in environment {
+        let mut characters = name.chars();
+        let valid_name = characters
+            .next()
+            .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+            && characters.all(|character| character == '_' || character.is_ascii_alphanumeric());
+        if !valid_name {
+            return Err(anyhow!("invalid environment variable name {name:?}"));
+        }
+
+        write!(
+            exec,
+            "$env:{name}={} {} ",
+            shell_kind.try_quote(value).context("shell quoting")?,
+            shell_kind.sequential_and_commands_separator()
+        )?;
+    }
 
     if let Some(input_program) = input_program {
         write!(
@@ -2182,7 +2190,13 @@ fn build_command_windows(
     let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
     let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&byte_slice);
 
-    args.push(format!("powershell.exe -E {}", base64_encoded));
+    let encoded_command = format!("powershell.exe -E {base64_encoded}");
+    if encoded_command.len() > 8191 {
+        return Err(anyhow!(
+            "encoded Windows SSH command exceeds the 8191-character command-line limit"
+        ));
+    }
+    args.push(encoded_command);
 
     Ok(CommandTemplate {
         program: "ssh".into(),
@@ -2486,6 +2500,101 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_build_command_windows_sets_validated_environment() -> Result<()> {
+        use base64::Engine as _;
+
+        let mut input_env = HashMap::default();
+        input_env.insert(
+            "HTTPS_PROXY".to_string(),
+            "http://user:p'ass@127.0.0.1:4312".to_string(),
+        );
+        input_env.insert(
+            "NO_PROXY".to_string(),
+            "localhost,127.0.0.1,::1".to_string(),
+        );
+
+        let command = build_command_windows(
+            Some("C:\\agent path\\codex.exe".to_string()),
+            &["argument with spaces".to_string()],
+            &input_env,
+            Some("C:\\project path".to_string()),
+            None,
+            HashMap::default(),
+            PathStyle::Windows,
+            "powershell.exe",
+            ShellKind::PowerShell,
+            vec![],
+            "user@host",
+            Interactive::No,
+        )?;
+
+        let encoded_command = command
+            .args
+            .last()
+            .and_then(|argument| argument.strip_prefix("powershell.exe -E "))
+            .context("missing encoded PowerShell command")?;
+        let command_bytes = base64::engine::general_purpose::STANDARD.decode(encoded_command)?;
+        let command_units = command_bytes
+            .chunks_exact(2)
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+            .collect::<Vec<_>>();
+        let decoded_command = String::from_utf16(&command_units)?;
+
+        assert!(decoded_command.contains("$env:HTTPS_PROXY='http://user:p''ass@127.0.0.1:4312'"));
+        assert!(decoded_command.contains("$env:NO_PROXY='localhost,127.0.0.1,::1'"));
+        assert!(decoded_command.contains("Set-Location -Path 'C:\\project path'"));
+        assert!(decoded_command.contains("&'C:\\agent path\\codex.exe' 'argument with spaces'"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_command_windows_rejects_invalid_environment_names() {
+        let mut input_env = HashMap::default();
+        input_env.insert("BAD;Write-Error injected".to_string(), "value".to_string());
+
+        let result = build_command_windows(
+            Some("codex.exe".to_string()),
+            &[],
+            &input_env,
+            None,
+            None,
+            HashMap::default(),
+            PathStyle::Windows,
+            "powershell.exe",
+            ShellKind::PowerShell,
+            vec![],
+            "user@host",
+            Interactive::No,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_command_windows_rejects_oversized_encoded_command() {
+        let mut input_env = HashMap::default();
+        input_env.insert("HTTPS_PROXY".to_string(), "x".repeat(8192));
+
+        let result = build_command_windows(
+            Some("codex.exe".to_string()),
+            &[],
+            &input_env,
+            None,
+            None,
+            HashMap::default(),
+            PathStyle::Windows,
+            "powershell.exe",
+            ShellKind::PowerShell,
+            vec![],
+            "user@host",
+            Interactive::No,
+        );
+
+        assert!(result.is_err());
     }
 
     #[test]
