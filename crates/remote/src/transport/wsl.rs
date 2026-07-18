@@ -479,6 +479,7 @@ impl RemoteConnection for WslRemoteConnection {
     async fn open_reverse_port_forward(
         &self,
         _local_port: u16,
+        _executor: &gpui::BackgroundExecutor,
     ) -> Result<crate::RemotePortForward> {
         anyhow::bail!("reverse port forwarding is supported only for SSH connections")
     }
@@ -487,6 +488,7 @@ impl RemoteConnection for WslRemoteConnection {
         &self,
         _local_port: u16,
         _remote_port: u16,
+        _executor: &gpui::BackgroundExecutor,
     ) -> Result<crate::LocalPortForward> {
         anyhow::bail!("local port forwarding is supported only for SSH connections")
     }

@@ -497,12 +497,17 @@ mod tests {
     fn concurrent_acquisitions_share_one_download() {
         smol::block_on(async {
             let request_count = Arc::new(AtomicUsize::new(0));
+            let (download_started, download_started_receiver) = async_channel::bounded(1);
+            let (release_download, release_download_receiver) = async_channel::bounded(1);
             let http_client = FakeHttpClient::create({
                 let request_count = request_count.clone();
                 move |_| {
                     request_count.fetch_add(1, Ordering::SeqCst);
-                    async {
-                        smol::Timer::after(std::time::Duration::from_millis(10)).await;
+                    let download_started = download_started.clone();
+                    let release_download_receiver = release_download_receiver.clone();
+                    async move {
+                        download_started.send(()).await?;
+                        release_download_receiver.recv().await?;
                         Ok(Response::builder()
                             .status(200)
                             .body(AsyncBody::from("agent-bytes"))
@@ -515,10 +520,17 @@ mod tests {
             let release = fixture_release("https://downloads.example.test/agent");
             let prefixes = ["https://downloads.example.test/"];
 
-            let (first, second) = futures::join!(
+            let release_gate = async {
+                download_started_receiver.recv().await?;
+                release_download.send(()).await?;
+                anyhow::Ok(())
+            };
+            let (first, second, released) = futures::join!(
                 cache.acquire(&release, &prefixes),
-                cache.acquire(&release, &prefixes)
+                cache.acquire(&release, &prefixes),
+                release_gate,
             );
+            released.expect("test download should be released");
 
             assert_eq!(
                 first.expect("first acquisition should succeed"),

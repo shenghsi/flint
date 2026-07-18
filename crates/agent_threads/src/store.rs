@@ -243,7 +243,6 @@ impl AgentThreadStore {
                         .ok_or_else(|| anyhow!("agent thread workspace closed"))?,
                     entry
                         .window
-                        .clone()
                         .ok_or_else(|| anyhow!("agent thread window closed"))?,
                     entry.metadata.terminal_item_id,
                 ))
@@ -786,8 +785,14 @@ fn spawn_thread_task(
     apply_self_update_policy(&mut command, kind);
     let kind = kind.clone();
     cx.spawn_in(window, async move |workspace, cx| {
+        let executor = cx.background_executor().clone();
         let egress = egress_manager
-            .acquire(remote_client_id, remote_connection, kind.egress_hosts())
+            .acquire(
+                remote_client_id,
+                remote_connection,
+                kind.egress_hosts(),
+                &executor,
+            )
             .await?;
         let proxy_url = egress.proxy_url();
         apply_proxy_environment(&mut command, &proxy_url);

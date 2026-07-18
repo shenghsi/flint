@@ -443,11 +443,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn posix_probe_reports_a_tagged_local_target() {
-        let (program, arguments) = posix_target_probe_command();
-        let output = std::process::Command::new(program)
-            .args(arguments)
-            .output()
-            .expect("POSIX shell should run the target probe");
+        let output = smol::block_on(async {
+            let (program, arguments) = posix_target_probe_command();
+            smol::process::Command::new(program)
+                .args(arguments)
+                .output()
+                .await
+                .expect("POSIX shell should run the target probe")
+        });
         let stdout = String::from_utf8(output.stdout).expect("probe output should be UTF-8");
 
         let result = parse_platform(&stdout).expect("probe output should parse");

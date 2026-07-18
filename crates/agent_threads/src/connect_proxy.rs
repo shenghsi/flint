@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use collections::HashMap;
 use futures::{AsyncReadExt as _, AsyncWriteExt as _, FutureExt as _};
+use gpui::BackgroundExecutor;
 use parking_lot::Mutex;
 use smol::net::{TcpListener, TcpStream};
 use std::{
@@ -52,7 +53,7 @@ pub struct ConnectProxyServer {
 }
 
 impl ConnectProxyServer {
-    pub async fn start() -> Result<Self> {
+    pub async fn start(executor: BackgroundExecutor) -> Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let local_port = listener.local_addr()?.port();
         let capabilities = Arc::new(Mutex::new(HashMap::default()));
@@ -61,6 +62,7 @@ impl ConnectProxyServer {
             listener,
             capabilities.clone(),
             shutdown_receiver,
+            executor,
         ))
         .detach();
         Ok(Self {
@@ -143,6 +145,7 @@ async fn run_listener(
     listener: TcpListener,
     capabilities: CapabilityRegistry,
     shutdown: async_channel::Receiver<()>,
+    executor: BackgroundExecutor,
 ) {
     loop {
         let accept = listener.accept().fuse();
@@ -153,8 +156,9 @@ async fn run_listener(
                 Ok((stream, _)) => {
                     let capabilities = capabilities.clone();
                     let shutdown = shutdown.clone();
+                    let executor = executor.clone();
                     smol::spawn(async move {
-                        if let Err(error) = handle_connection(stream, &capabilities, shutdown).await {
+                        if let Err(error) = handle_connection(stream, &capabilities, shutdown, &executor).await {
                             log::debug!("agent CONNECT proxy denied or ended a connection: {error:#}");
                         }
                     }).detach();
@@ -173,10 +177,11 @@ async fn handle_connection(
     mut client: TcpStream,
     capabilities: &CapabilityRegistry,
     server_shutdown: async_channel::Receiver<()>,
+    executor: &BackgroundExecutor,
 ) -> Result<()> {
     let request = {
         let read = read_request(&mut client).fuse();
-        let timeout = smol::Timer::after(std::time::Duration::from_secs(10)).fuse();
+        let timeout = executor.timer(std::time::Duration::from_secs(10)).fuse();
         futures::pin_mut!(read, timeout);
         futures::select! {
             request = read => request,
@@ -315,6 +320,7 @@ fn authorize_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
     use std::net::SocketAddr;
 
     fn registry() -> CapabilityRegistry {
@@ -362,39 +368,36 @@ mod tests {
         assert_eq!(format!("{capability:?}"), "ProxyCapability([REDACTED])");
     }
 
-    #[test]
-    fn listener_binds_only_to_ipv4_loopback() {
-        smol::block_on(async {
-            let proxy = ConnectProxyServer::start()
-                .await
-                .expect("proxy should bind");
-            let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), proxy.local_port());
-            TcpStream::connect(address)
-                .await
-                .expect("loopback listener should accept connections");
-        });
+    #[gpui::test]
+    async fn listener_binds_only_to_ipv4_loopback(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let proxy = ConnectProxyServer::start(cx.background_executor.clone())
+            .await
+            .expect("proxy should bind");
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), proxy.local_port());
+        TcpStream::connect(address)
+            .await
+            .expect("loopback listener should accept connections");
     }
 
-    #[test]
-    fn leases_have_distinct_capabilities_and_revoke_independently() {
-        smol::block_on(async {
-            let proxy = ConnectProxyServer::start()
-                .await
-                .expect("proxy should bind");
-            let first = proxy.acquire(&["api.example.com"], 41001);
-            let second = proxy.acquire(&["auth.example.com"], 41001);
-            assert_ne!(first.authorization, second.authorization);
-            assert_eq!(proxy.capabilities.lock().len(), 2);
+    #[gpui::test]
+    async fn leases_have_distinct_capabilities_and_revoke_independently(cx: &mut TestAppContext) {
+        let proxy = ConnectProxyServer::start(cx.background_executor.clone())
+            .await
+            .expect("proxy should bind");
+        let first = proxy.acquire(&["api.example.com"], 41001);
+        let second = proxy.acquire(&["auth.example.com"], 41001);
+        assert_ne!(first.authorization, second.authorization);
+        assert_eq!(proxy.capabilities.lock().len(), 2);
 
-            first.close();
+        first.close();
 
-            assert_eq!(proxy.capabilities.lock().len(), 1);
-            assert!(
-                proxy
-                    .capabilities
-                    .lock()
-                    .contains_key(&second.authorization)
-            );
-        });
+        assert_eq!(proxy.capabilities.lock().len(), 1);
+        assert!(
+            proxy
+                .capabilities
+                .lock()
+                .contains_key(&second.authorization)
+        );
     }
 }

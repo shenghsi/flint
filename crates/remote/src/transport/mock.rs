@@ -262,6 +262,7 @@ impl RemoteConnection for MockRemoteConnection {
     async fn open_reverse_port_forward(
         &self,
         _local_port: u16,
+        _executor: &gpui::BackgroundExecutor,
     ) -> Result<crate::RemotePortForward> {
         anyhow::bail!("mock connection does not support reverse port forwarding")
     }
@@ -270,6 +271,7 @@ impl RemoteConnection for MockRemoteConnection {
         &self,
         _local_port: u16,
         _remote_port: u16,
+        _executor: &gpui::BackgroundExecutor,
     ) -> Result<crate::LocalPortForward> {
         anyhow::bail!("mock connection does not support local port forwarding")
     }

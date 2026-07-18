@@ -14,7 +14,7 @@ use futures::{
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
     select_biased,
 };
-use gpui::{App, AppContext as _, AsyncApp, Task};
+use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use paths::remote_server_dir_relative;
 use release_channel::{AppVersion, ReleaseChannel};
@@ -564,7 +564,11 @@ impl RemoteConnection for SshRemoteConnection {
         .await
     }
 
-    async fn open_reverse_port_forward(&self, local_port: u16) -> Result<RemotePortForward> {
+    async fn open_reverse_port_forward(
+        &self,
+        local_port: u16,
+        executor: &BackgroundExecutor,
+    ) -> Result<RemotePortForward> {
         let arguments = reverse_port_forward_arguments(&self.socket, local_port);
         let mut command = util::command::new_command("ssh");
         command
@@ -594,7 +598,7 @@ impl RemoteConnection for SshRemoteConnection {
             };
             let read_port = futures::FutureExt::fuse(read_port);
             let timeout =
-                futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(15)));
+                futures::FutureExt::fuse(executor.timer(std::time::Duration::from_secs(15)));
             futures::pin_mut!(read_port, timeout);
             futures::select! {
                 result = read_port => result?,
@@ -617,6 +621,7 @@ impl RemoteConnection for SshRemoteConnection {
         &self,
         local_port: u16,
         remote_port: u16,
+        executor: &BackgroundExecutor,
     ) -> Result<LocalPortForward> {
         let arguments = local_port_forward_arguments(&self.socket, local_port, remote_port);
         let mut command = util::command::new_command("ssh");
@@ -644,8 +649,7 @@ impl RemoteConnection for SshRemoteConnection {
             anyhow::bail!("SSH exited before opening the local-forward port")
         };
         let ready = futures::FutureExt::fuse(ready);
-        let timeout =
-            futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(15)));
+        let timeout = futures::FutureExt::fuse(executor.timer(std::time::Duration::from_secs(15)));
         futures::pin_mut!(ready, timeout);
         futures::select! {
             result = ready => result?,

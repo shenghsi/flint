@@ -1716,11 +1716,16 @@ pub trait RemoteConnection: Send + Sync {
         cx: &App,
     ) -> Task<Result<()>>;
     async fn upload_file_now(&self, src_path: PathBuf, dest_path: RemotePathBuf) -> Result<()>;
-    async fn open_reverse_port_forward(&self, local_port: u16) -> Result<RemotePortForward>;
+    async fn open_reverse_port_forward(
+        &self,
+        local_port: u16,
+        executor: &BackgroundExecutor,
+    ) -> Result<RemotePortForward>;
     async fn open_local_port_forward(
         &self,
         local_port: u16,
         remote_port: u16,
+        executor: &BackgroundExecutor,
     ) -> Result<LocalPortForward>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;

@@ -1,7 +1,7 @@
 use crate::connect_proxy::{ConnectProxyLease, ConnectProxyServer};
 use anyhow::Result;
 use collections::HashMap;
-use gpui::EntityId;
+use gpui::{BackgroundExecutor, EntityId};
 use std::sync::{Arc, Weak};
 
 pub struct AgentEgressManager {
@@ -20,6 +20,7 @@ impl AgentEgressManager {
         remote_client_id: EntityId,
         connection: Arc<dyn remote::RemoteConnection>,
         allowed_hosts: &'static [&'static str],
+        executor: &BackgroundExecutor,
     ) -> Result<AgentEgressLease> {
         let mut sessions = self.sessions.lock().await;
         sessions.retain(|_, session| session.strong_count() > 0);
@@ -27,9 +28,9 @@ impl AgentEgressManager {
         {
             session
         } else {
-            let proxy = ConnectProxyServer::start().await?;
+            let proxy = ConnectProxyServer::start(executor.clone()).await?;
             let forward = connection
-                .open_reverse_port_forward(proxy.local_port())
+                .open_reverse_port_forward(proxy.local_port(), executor)
                 .await?;
             let session = Arc::new(AgentEgressSession {
                 remote_port: forward.remote_port(),
