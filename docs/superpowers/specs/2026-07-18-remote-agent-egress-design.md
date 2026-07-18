@@ -10,10 +10,10 @@ is authorized by this design review alone.
 Design owner: Codex.
 
 This document supersedes the Remote Agent Workspace and ACP recommendation in
-`docs/remote-control.md` only for hosts where the agent CLI can run. For hosts
-where the CLI cannot run at all, ACP and the Remote Agent Workspace remain the
-recorded future direction. The discussion record remains the decision history
-for both scopes.
+the [archived remote-control discussion](../archive/2026-07-18-remote-control-discussion.md)
+only for hosts where the agent CLI can run. For hosts where the CLI cannot run
+at all, ACP and the Remote Agent Workspace remain the recorded future direction.
+The archived discussion remains the decision history for both scopes.
 
 ## Summary
 
@@ -714,13 +714,13 @@ trained to ignore red text.
 
 ### 9. Supersession wording (minor)
 
-The Status section supersedes `docs/remote-control.md` "for the accepted
-product scope." State the boundary explicitly: this design covers hosts
-where the CLI can run (rows one and two of the decision tree in that doc's
-discussion record). The ACP / Remote Agent Workspace recommendation remains
-the recorded plan for hosts where the CLI cannot run at all. Without that
-sentence, a future reader will conclude the ACP plan is dead rather than
-out of scope.
+The Status section supersedes the archived remote-control discussion "for
+the accepted product scope." State the boundary explicitly: this design
+covers hosts where the CLI can run (rows one and two of the decision tree in
+that discussion record). The ACP / Remote Agent Workspace recommendation
+remains the recorded plan for hosts where the CLI cannot run at all. Without
+that sentence, a future reader will conclude the ACP plan is dead rather
+than out of scope.
 
 ### Verdict
 
@@ -777,3 +777,44 @@ finding, with one deliberate refinement to the forwarding mechanism.
 Review outcome: the design is ready for product-owner approval and subsequent
 implementation planning. No code implementation has started as part of this
 review.
+
+## Re-review — Claude (2026-07-18)
+
+All nine findings are incorporated faithfully and consistently across the
+document — environment, transport contract, tests, delivery sequence,
+acceptance criteria, and the supersession boundary all reflect the agreed
+resolutions. The review cycle is closed.
+
+On the finding-3 refinement: I accept the dedicated SSH connection with
+`ControlMaster=no` and `ControlPath=none` as a strict improvement over my
+mux-client suggestion. It buys the same crash-safe "kill the process"
+ownership while eliminating the OpenSSH-version question about mux-forward
+cancellation entirely, and the spec correctly overrides both options so a
+user's `~/.ssh/config` ControlMaster settings cannot re-enable sharing. The
+port-poisoning fix (new port per `RemoteClient` lifecycle, stable within
+one) also correctly resolves the leaked-listener scenario that motivated
+the original finding.
+
+Two residual implementation notes, neither blocking approval:
+
+1. **Per-session re-authentication cost.** The dedicated connection may
+   authenticate once per live `AgentEgressSession`. For key-based hosts
+   this is silent; for password/2FA hosts, a user who repeatedly opens and
+   closes a single agent thread re-authenticates on every 0→1 lease
+   transition, since the last lease release tears the session down. If this
+   proves annoying in practice, the remedy is a short linger period before
+   teardown — but that trades against the "closing the last lease removes
+   the egress path" invariant, so it must be an explicit, visible setting
+   rather than a silent default. Record the tradeoff; do not pre-build it.
+2. **Readiness probe mechanism (launch step 4).** Verifying the remote
+   loopback endpoint "with an authenticated CONNECT handshake" requires
+   something on the remote host that can speak HTTP CONNECT before the
+   agent starts, and the host may lack `curl` or any HTTP client.
+   Implementation should either specify the probe transport (e.g. a shell
+   built-in TCP connect where available, with per-platform fallbacks) or
+   weaken step 4 to a TCP-reachability check, letting the agent's first
+   real request serve as the end-to-end capability verification. Whichever
+   is chosen, the failure-stage table's "Readiness" row should match it.
+
+Verdict: approved as revised. Ready for product-owner sign-off and
+implementation planning.
