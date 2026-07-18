@@ -770,6 +770,14 @@ impl RemoteConnection for DockerExecConnection {
         anyhow::bail!("reverse port forwarding is supported only for SSH connections")
     }
 
+    async fn open_local_port_forward(
+        &self,
+        _local_port: u16,
+        _remote_port: u16,
+    ) -> Result<crate::LocalPortForward> {
+        anyhow::bail!("local port forwarding is supported only for SSH connections")
+    }
+
     async fn kill(&self) -> Result<()> {
         self.kill_inner()
     }

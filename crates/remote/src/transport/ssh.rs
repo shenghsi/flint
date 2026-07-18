@@ -1,8 +1,8 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
     remote_client::{
-        CommandTemplate, ConnectionSharing, Interactive, RemoteConnection, RemoteConnectionOptions,
-        RemotePortForward,
+        CommandTemplate, ConnectionSharing, Interactive, LocalPortForward, RemoteConnection,
+        RemoteConnectionOptions, RemotePortForward,
     },
     transport::{parse_platform, parse_shell, posix_target_probe_command},
 };
@@ -62,6 +62,11 @@ fn parse_allocated_remote_forward_port(line: &str) -> Option<u16> {
     port.parse().ok()
 }
 
+fn local_forward_is_ready(line: &str, local_port: u16) -> bool {
+    line.strip_prefix("debug1: ").unwrap_or(line)
+        == format!("Local forwarding listening on 127.0.0.1 port {local_port}.")
+}
+
 fn reverse_port_forward_arguments(socket: &SshSocket, local_port: u16) -> Vec<String> {
     let mut arguments = socket.ssh_command_options(ConnectionSharing::Dedicated);
     arguments.extend([
@@ -72,6 +77,25 @@ fn reverse_port_forward_arguments(socket: &SshSocket, local_port: u16) -> Vec<St
         "ExitOnForwardFailure=yes".to_string(),
         "-R".to_string(),
         format!("127.0.0.1:0:127.0.0.1:{local_port}"),
+        socket.connection_options.ssh_destination(),
+    ]);
+    arguments
+}
+
+fn local_port_forward_arguments(
+    socket: &SshSocket,
+    local_port: u16,
+    remote_port: u16,
+) -> Vec<String> {
+    let mut arguments = socket.ssh_command_options(ConnectionSharing::Dedicated);
+    arguments.extend([
+        "-N".to_string(),
+        "-T".to_string(),
+        "-v".to_string(),
+        "-o".to_string(),
+        "ExitOnForwardFailure=yes".to_string(),
+        "-L".to_string(),
+        format!("127.0.0.1:{local_port}:127.0.0.1:{remote_port}"),
         socket.connection_options.ssh_destination(),
     ]);
     arguments
@@ -587,6 +611,56 @@ impl RemoteConnection for SshRemoteConnection {
         })
         .detach();
         Ok(RemotePortForward::new(remote_port, process))
+    }
+
+    async fn open_local_port_forward(
+        &self,
+        local_port: u16,
+        remote_port: u16,
+    ) -> Result<LocalPortForward> {
+        let arguments = local_port_forward_arguments(&self.socket, local_port, remote_port);
+        let mut command = util::command::new_command("ssh");
+        command
+            .args(arguments)
+            .envs(&self.socket.envs)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut process = command
+            .spawn()
+            .context("failed to start SSH local forward")?;
+        let stderr = process
+            .stderr
+            .take()
+            .context("SSH local forward stderr was not captured")?;
+        let mut lines = futures::io::BufReader::new(stderr).lines();
+        let ready = async {
+            while let Some(line) = lines.next().await {
+                if local_forward_is_ready(&line?, local_port) {
+                    return Ok(());
+                }
+            }
+            anyhow::bail!("SSH exited before opening the local-forward port")
+        };
+        let ready = futures::FutureExt::fuse(ready);
+        let timeout =
+            futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(15)));
+        futures::pin_mut!(ready, timeout);
+        futures::select! {
+            result = ready => result?,
+            _ = timeout => anyhow::bail!("SSH timed out opening the local-forward port"),
+        }
+        smol::spawn(async move {
+            while let Some(line) = lines.next().await {
+                if let Err(error) = line {
+                    log::debug!("failed reading SSH local-forward diagnostics: {error}");
+                    break;
+                }
+            }
+        })
+        .detach();
+        Ok(LocalPortForward::new(local_port, process))
     }
 
     fn start_proxy(
@@ -2334,6 +2408,48 @@ mod tests {
             arguments.last().map(String::as_str),
             Some("developer@build.example.com")
         );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn local_forward_is_dedicated_loopback_only_and_route_independent() {
+        let socket = SshSocket {
+            connection_options: SshConnectionOptions {
+                host: "build.example.com".into(),
+                username: Some("developer".to_string()),
+                port: Some(2222),
+                ..Default::default()
+            },
+            socket_path: std::path::PathBuf::from("/tmp/flint-ssh-socket"),
+            envs: HashMap::default(),
+        };
+
+        let arguments = local_port_forward_arguments(&socket, 1455, 1456);
+
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-o", "ControlMaster=no"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-o", "ControlPath=none"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-L", "127.0.0.1:1455:127.0.0.1:1456"] })
+        );
+        assert!(!arguments.iter().any(|argument| argument == "-R"));
+        assert!(local_forward_is_ready(
+            "debug1: Local forwarding listening on 127.0.0.1 port 1455.",
+            1455
+        ));
+        assert!(!local_forward_is_ready(
+            "debug1: Local forwarding listening on ::1 port 1455.",
+            1455
+        ));
     }
 
     #[test]
