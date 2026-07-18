@@ -133,6 +133,8 @@ name = "agent_threads"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-compression",
+ "async-tar",
  "async-trait",
  "chrono",
  "collections",

@@ -16,7 +16,9 @@ use workspace::{Workspace, WorkspaceId};
 
 use crate::{
     AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread,
-    agent_kind_registry, resolve_default_launch_args,
+    agent_kind_registry,
+    managed_agent::{CachedAgentArtifactSource, ManagedAgentProvisioner, RemoteClientAgentHost},
+    resolve_default_launch_args,
 };
 
 #[derive(Clone)]
@@ -506,6 +508,91 @@ fn spawn_thread(
         window,
         cx,
     )
+    .detach_and_log_err(cx);
+}
+
+pub fn launch_managed_thread(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    extra_args: &[String],
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project().clone();
+    let Some(remote_client) = project.read(cx).remote_client() else {
+        workspace.show_error(
+            &anyhow!("managed agents are available only for remote projects"),
+            cx,
+        );
+        return;
+    };
+    let Some(platform) = remote_client.read(cx).platform() else {
+        workspace.show_error(&anyhow!("remote agent target could not be detected"), cx);
+        return;
+    };
+    let Some(release) = kind.release_for(platform).copied() else {
+        workspace.show_error(
+            &anyhow!(
+                "no pinned {} release supports this remote target",
+                kind.label
+            ),
+            cx,
+        );
+        return;
+    };
+    let remote_host = match RemoteClientAgentHost::new(remote_client.read(cx)) {
+        Ok(remote_host) => remote_host,
+        Err(error) => {
+            workspace.show_error(&error, cx);
+            return;
+        }
+    };
+    let artifacts = CachedAgentArtifactSource::new(
+        project.read(cx).http_client(),
+        kind.official_source_prefixes(),
+    );
+    let provisioner = ManagedAgentProvisioner::new(artifacts, remote_host);
+    let kind = kind.clone();
+    let extra_args = extra_args.to_vec();
+
+    cx.spawn_in(window, async move |workspace, cx| {
+        match provisioner.install(kind.id, &release).await {
+            Ok(installation) => {
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let mut command = AgentThreadSettings::get_global(cx)
+                        .command_for_kind(kind.id)
+                        .clone();
+                    command.command =
+                        Some(installation.executable_path.to_string_lossy().into_owned());
+                    command.args.extend(
+                        kind.self_update_policy()
+                            .arguments
+                            .iter()
+                            .map(|argument| argument.to_string()),
+                    );
+                    command.args.extend(extra_args);
+                    for (name, value) in kind.self_update_policy().environment {
+                        command
+                            .env
+                            .insert((*name).to_string(), (*value).to_string());
+                    }
+                    spawn_thread(
+                        workspace,
+                        &kind,
+                        SharedString::from(format!("New {} thread", kind.label)),
+                        command,
+                        None,
+                        window,
+                        cx,
+                    );
+                })?;
+            }
+            Err(error) => {
+                workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+            }
+        }
+        anyhow::Ok(())
+    })
     .detach_and_log_err(cx);
 }
 

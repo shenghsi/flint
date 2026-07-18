@@ -1,8 +1,9 @@
 pub mod agent_release;
-mod artifact_cache;
+pub mod artifact_cache;
 mod claude_history;
 mod codex_history;
 mod history;
+pub mod managed_agent;
 mod panel;
 mod plan_usage;
 mod store;
@@ -23,7 +24,9 @@ pub use store::{
     snapshot_live_agent_threads,
 };
 
-use agent_release::{AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy};
+use agent_release::{
+    AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy, CLAUDE_RELEASES, CODEX_RELEASES,
+};
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
 use history::AgentHistoryProvider;
@@ -129,6 +132,10 @@ impl AgentKindDefinition {
     pub fn self_update_policy(&self) -> AgentSelfUpdatePolicy {
         self.self_update_policy
     }
+
+    pub fn official_source_prefixes(&self) -> &'static [&'static str] {
+        self.official_source_prefixes
+    }
 }
 
 pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
@@ -149,8 +156,11 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             // Codex CLI has no flag for assigning a session id to a fresh
             // session, so fresh Codex threads stay non-restorable.
             session_id_flag: None,
-            official_source_prefixes: &["https://github.com/openai/codex/releases/download/"],
-            releases: &[],
+            official_source_prefixes: &[
+                "https://github.com/openai/codex/releases/download/",
+                "https://release-assets.githubusercontent.com/",
+            ],
+            releases: CODEX_RELEASES,
             self_update_policy: AgentSelfUpdatePolicy {
                 environment: &[],
                 arguments: &["--config", "check_for_update_on_startup=false"],
@@ -171,7 +181,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             }],
             session_id_flag: Some("--session-id"),
             official_source_prefixes: &["https://downloads.claude.ai/claude-code-releases/"],
-            releases: &[],
+            releases: CLAUDE_RELEASES,
             self_update_policy: AgentSelfUpdatePolicy {
                 environment: &[("DISABLE_UPDATES", "1")],
                 arguments: &[],

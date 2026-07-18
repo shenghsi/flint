@@ -552,6 +552,15 @@ impl AgentThreadsPanel {
         let workspace = self.workspace.clone();
         let resume_options = kind.resume_options.clone();
         let effective_id = effective_new_thread_launch_option_id(cx, &kind);
+        let managed_available = workspace.upgrade().is_some_and(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_client()
+                .and_then(|client| client.read(cx).platform())
+                .is_some_and(|platform| kind.release_for(platform).is_some())
+        });
         let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
             {
                 let workspace = workspace.clone();
@@ -601,6 +610,23 @@ impl AgentThreadsPanel {
                         );
                         workspace.update(cx, |workspace, cx| {
                             store::launch_new_thread(workspace, &kind, &args, window, cx);
+                        });
+                    },
+                );
+            }
+            if managed_available {
+                let workspace = workspace.clone();
+                let kind = kind.clone();
+                context_menu = context_menu.separator().entry(
+                    SharedString::from(format!("New — Flint-managed {}", kind.label)),
+                    None,
+                    move |window, cx| {
+                        let Some(workspace) = workspace.upgrade() else {
+                            return;
+                        };
+                        let kind = kind.clone();
+                        workspace.update(cx, |workspace, cx| {
+                            store::launch_managed_thread(workspace, &kind, &[], window, cx);
                         });
                     },
                 );

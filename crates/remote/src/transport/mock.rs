@@ -255,6 +255,10 @@ impl RemoteConnection for MockRemoteConnection {
         Task::ready(Ok(()))
     }
 
+    async fn upload_file_now(&self, _src_path: PathBuf, _dest_path: RemotePathBuf) -> Result<()> {
+        Ok(())
+    }
+
     fn connection_options(&self) -> RemoteConnectionOptions {
         RemoteConnectionOptions::Mock(self.options.clone())
     }

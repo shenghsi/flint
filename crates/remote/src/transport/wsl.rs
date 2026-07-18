@@ -455,6 +455,27 @@ impl RemoteConnection for WslRemoteConnection {
         })
     }
 
+    async fn upload_file_now(&self, src_path: PathBuf, dest_path: RemotePathBuf) -> Result<()> {
+        let wsl_source = windows_path_to_wsl_path_impl(&self.connection_options, &src_path).await?;
+        let command = wsl_command_impl(
+            &self.connection_options,
+            "cp",
+            &[&wsl_source, &dest_path.to_string()],
+            true,
+        );
+        run_wsl_command_impl(command)
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                anyhow!(
+                    "failed to upload file {} -> {}: {}",
+                    src_path.display(),
+                    dest_path,
+                    error
+                )
+            })
+    }
+
     async fn kill(&self) -> Result<()> {
         Ok(())
     }

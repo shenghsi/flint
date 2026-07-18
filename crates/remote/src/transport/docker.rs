@@ -753,6 +753,16 @@ impl RemoteConnection for DockerExecConnection {
         ))
     }
 
+    async fn upload_file_now(&self, src_path: PathBuf, dest_path: RemotePathBuf) -> Result<()> {
+        Self::upload_and_chown(
+            self.docker_cli().to_string(),
+            self.connection_options.clone(),
+            src_path.display().to_string(),
+            dest_path.to_string(),
+        )
+        .await
+    }
+
     async fn kill(&self) -> Result<()> {
         self.kill_inner()
     }

@@ -1463,38 +1463,76 @@ async fn set_user_private_directory_permissions(_path: &Path) -> Result<()> {
 }
 
 async fn commit_staged_file(source: &Path, destination: &Path) -> Result<()> {
-    if destination.exists() {
-        anyhow::bail!("destination {} already exists", destination.display());
-    }
-    match smol::fs::hard_link(source, destination).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            anyhow::bail!("destination {} already exists", destination.display());
-        }
-        Err(error) => {
-            return Err(error).with_context(|| {
+    let source = source.to_path_buf();
+    let destination = destination.to_path_buf();
+    smol::unblock(
+        move || match rename_path_without_overwrite(&source, &destination) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                anyhow::bail!("destination {} already exists", destination.display())
+            }
+            Err(error) => Err(error).with_context(|| {
                 format!(
                     "failed to commit {} to {}",
                     source.display(),
                     destination.display()
                 )
-            });
-        }
+            }),
+        },
+    )
+    .await
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_path_without_overwrite(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
+
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let destination = CString::new(destination.as_os_str().as_bytes())?;
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
-    if let Err(remove_error) = smol::fs::remove_file(source).await {
-        if let Err(rollback_error) = smol::fs::remove_file(destination).await {
-            anyhow::bail!(
-                "failed to remove staged file {}: {}; also failed to roll back {}: {}",
-                source.display(),
-                remove_error,
-                destination.display(),
-                rollback_error
-            );
-        }
-        return Err(remove_error)
-            .with_context(|| format!("failed to remove staged file {}", source.display()));
+}
+
+#[cfg(target_os = "macos")]
+fn rename_path_without_overwrite(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
+
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let destination = CString::new(destination.as_os_str().as_bytes())?;
+    let result =
+        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
-    Ok(())
+}
+
+#[cfg(any(
+    windows,
+    not(any(target_os = "linux", target_os = "android", target_os = "macos"))
+))]
+fn rename_path_without_overwrite(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if destination.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "destination already exists",
+        ));
+    }
+    std::fs::rename(source, destination)
 }
 
 async fn remove_remote_path(path: &Path, recursive: bool, ignore_if_missing: bool) -> Result<()> {
@@ -1591,6 +1629,33 @@ mod remote_management_tests {
                 b"existing"
             );
             assert!(source.exists());
+        });
+    }
+
+    #[test]
+    fn commits_a_staged_directory_without_overwriting() {
+        smol::block_on(async {
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let source = directory.path().join("staged");
+            let destination = directory.path().join("installed");
+            smol::fs::create_dir(&source)
+                .await
+                .expect("staged directory should be created");
+            smol::fs::write(source.join("agent"), b"verified")
+                .await
+                .expect("staged executable should be written");
+
+            commit_staged_file(&source, &destination)
+                .await
+                .expect("staged directory should be committed");
+
+            assert!(!source.exists());
+            assert_eq!(
+                smol::fs::read(destination.join("agent"))
+                    .await
+                    .expect("committed executable should remain readable"),
+                b"verified"
+            );
         });
     }
 }

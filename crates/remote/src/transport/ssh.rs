@@ -504,6 +504,18 @@ impl RemoteConnection for SshRemoteConnection {
         ))
     }
 
+    async fn upload_file_now(&self, src_path: PathBuf, dest_path: RemotePathBuf) -> Result<()> {
+        let source = src_path.display().to_string();
+        let destination = dest_path.to_string();
+        run_file_upload(
+            self.build_sftp_command(),
+            self.build_scp_command(&src_path, &destination, None),
+            source,
+            destination,
+        )
+        .await
+    }
+
     fn start_proxy(
         &self,
         unique_identifier: String,

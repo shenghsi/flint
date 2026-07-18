@@ -1,5 +1,6 @@
 use crate::agent_release::{AgentArtifactFormat, AgentRelease, source_is_official};
 use anyhow::{Context as _, Result};
+use async_compression::futures::bufread::GzipDecoder;
 use futures::{AsyncReadExt as _, AsyncWriteExt as _};
 use http_client::{AsyncBody, HttpClient};
 use sha2::{Digest as _, Sha256};
@@ -51,10 +52,6 @@ impl AgentArtifactCache {
         release: &AgentRelease,
         official_source_prefixes: &[&str],
     ) -> Result<PathBuf> {
-        if release.artifact != AgentArtifactFormat::Raw {
-            anyhow::bail!("archive normalization is not supported for this release");
-        }
-
         let destination = self
             .root
             .join("executables")
@@ -81,10 +78,6 @@ impl AgentArtifactCache {
             self.download(release, official_source_prefixes, &source)
                 .await?;
         }
-        if release.source_sha256 != release.executable_sha256 {
-            anyhow::bail!("raw artifact source and executable digests differ");
-        }
-
         let parent = destination
             .parent()
             .context("artifact cache destination has no parent")?;
@@ -94,9 +87,27 @@ impl AgentArtifactCache {
             release.executable_name,
             uuid::Uuid::new_v4()
         ));
-        smol::fs::copy(&source, &partial)
-            .await
-            .context("failed to normalize cached executable")?;
+        let normalization_result = match release.artifact {
+            AgentArtifactFormat::Raw => {
+                if release.source_sha256 != release.executable_sha256 {
+                    Err(anyhow::anyhow!(
+                        "raw artifact source and executable digests differ"
+                    ))
+                } else {
+                    smol::fs::copy(&source, &partial)
+                        .await
+                        .context("failed to normalize cached executable")
+                        .map(|_| ())
+                }
+            }
+            AgentArtifactFormat::TarGz { executable_path } => {
+                extract_verified_tar_executable(&source, &partial, executable_path).await
+            }
+        };
+        if let Err(error) = normalization_result {
+            remove_partial(&partial).await;
+            return Err(error);
+        }
         if !file_has_digest(&partial, release.executable_sha256).await? {
             remove_partial(&partial).await;
             anyhow::bail!("normalized executable failed installed-byte verification");
@@ -194,6 +205,49 @@ impl AgentArtifactCache {
     }
 }
 
+async fn extract_verified_tar_executable(
+    source: &PathBuf,
+    destination: &PathBuf,
+    executable_path: &str,
+) -> Result<()> {
+    use futures::TryStreamExt as _;
+
+    let source = smol::fs::File::open(source).await?;
+    let decompressed = GzipDecoder::new(futures::io::BufReader::new(source));
+    let mut entries = async_tar::Archive::new(decompressed).entries()?;
+    let mut found = false;
+    while let Some(entry) = entries.try_next().await? {
+        let path = entry.path()?.into_owned();
+        if path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            anyhow::bail!("agent archive contains an unsafe path");
+        }
+        if path.to_string_lossy() == executable_path {
+            if found {
+                anyhow::bail!("agent archive contains duplicate executable entries");
+            }
+            if !entry.header().entry_type().is_file() {
+                anyhow::bail!("agent archive executable is not a regular file");
+            }
+            let mut output = smol::fs::File::create(destination).await?;
+            let mut bounded_entry = entry.take(MAX_ARTIFACT_BYTES + 1);
+            let copied = futures::io::copy(&mut bounded_entry, &mut output).await?;
+            if copied > MAX_ARTIFACT_BYTES {
+                anyhow::bail!("normalized executable exceeds the maximum size");
+            }
+            output.flush().await?;
+            output.sync_all().await?;
+            found = true;
+        }
+    }
+    if !found {
+        anyhow::bail!("agent archive does not contain the pinned executable path");
+    }
+    Ok(())
+}
+
 async fn write_verified_response(
     mut body: AsyncBody,
     partial: &PathBuf,
@@ -272,6 +326,34 @@ mod tests {
 
     const DIGEST: &str = "2c18a5823d3012a1dd7bee6409d4d05b98dfa47733ac4c22e8161445523c10f0";
 
+    async fn tar_gz(path: &str, content: &[u8]) -> Vec<u8> {
+        use async_compression::futures::write::GzipEncoder;
+        use futures::io::Cursor;
+
+        let mut archive = async_tar::Builder::new(Cursor::new(Vec::new()));
+        let mut header = async_tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, path, Cursor::new(content))
+            .await
+            .expect("tar fixture entry should be appended");
+        archive.finish().await.expect("tar fixture should finish");
+        let tar_bytes = archive
+            .into_inner()
+            .await
+            .expect("tar fixture should return its buffer")
+            .into_inner();
+        let mut encoder = GzipEncoder::new(Cursor::new(Vec::new()));
+        encoder
+            .write_all(&tar_bytes)
+            .await
+            .expect("tar fixture should compress");
+        encoder.close().await.expect("gzip fixture should finish");
+        encoder.into_inner().into_inner()
+    }
+
     fn fixture_release(source_url: &'static str) -> AgentRelease {
         AgentRelease {
             version: "1.2.3",
@@ -326,6 +408,43 @@ mod tests {
                 smol::fs::read(first)
                     .await
                     .expect("cached artifact should be readable"),
+                b"agent-bytes"
+            );
+        });
+    }
+
+    #[test]
+    fn normalizes_only_the_pinned_tar_executable() {
+        smol::block_on(async {
+            let archive = tar_gz("codex-target", b"agent-bytes").await;
+            let source_digest: &'static str =
+                Box::leak(format!("{:x}", Sha256::digest(&archive)).into_boxed_str());
+            let http_client = FakeHttpClient::create(move |_| {
+                let archive = archive.clone();
+                async move {
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(archive))
+                        .expect("fixture response should build"))
+                }
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let mut release = fixture_release("https://downloads.example.test/codex.tar.gz");
+            release.source_sha256 = source_digest;
+            release.artifact = AgentArtifactFormat::TarGz {
+                executable_path: "codex-target",
+            };
+
+            let executable = cache
+                .acquire(&release, &["https://downloads.example.test/"])
+                .await
+                .expect("pinned archive executable should normalize");
+
+            assert_eq!(
+                smol::fs::read(executable)
+                    .await
+                    .expect("normalized executable should be readable"),
                 b"agent-bytes"
             );
         });

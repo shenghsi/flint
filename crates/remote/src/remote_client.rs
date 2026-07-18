@@ -1667,6 +1667,7 @@ pub trait RemoteConnection: Send + Sync {
         dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>>;
+    async fn upload_file_now(&self, src_path: PathBuf, dest_path: RemotePathBuf) -> Result<()>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn shares_network_interface(&self) -> bool {
