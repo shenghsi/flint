@@ -2,6 +2,7 @@ use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
     remote_client::{
         CommandTemplate, ConnectionSharing, Interactive, RemoteConnection, RemoteConnectionOptions,
+        RemotePortForward,
     },
     transport::{parse_platform, parse_shell, posix_target_probe_command},
 };
@@ -9,7 +10,7 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
-    AsyncReadExt as _, FutureExt as _,
+    AsyncBufReadExt as _, AsyncReadExt as _, FutureExt as _, StreamExt as _,
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
     select_biased,
 };
@@ -51,6 +52,29 @@ pub(crate) struct SshRemoteConnection {
     ssh_shell_kind: ShellKind,
     ssh_default_system_shell: String,
     _temp_dir: TempDir,
+}
+
+fn parse_allocated_remote_forward_port(line: &str) -> Option<u16> {
+    let port = line
+        .strip_prefix("Allocated port ")?
+        .split_once(" for remote forward")?
+        .0;
+    port.parse().ok()
+}
+
+fn reverse_port_forward_arguments(socket: &SshSocket, local_port: u16) -> Vec<String> {
+    let mut arguments = socket.ssh_command_options(ConnectionSharing::Dedicated);
+    arguments.extend([
+        "-N".to_string(),
+        "-T".to_string(),
+        "-v".to_string(),
+        "-o".to_string(),
+        "ExitOnForwardFailure=yes".to_string(),
+        "-R".to_string(),
+        format!("127.0.0.1:0:127.0.0.1:{local_port}"),
+        socket.connection_options.ssh_destination(),
+    ]);
+    arguments
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -298,7 +322,7 @@ impl MasterProcess {
             let n = reader.read_line(&mut line).await?;
             if n == 0 {
                 anyhow::bail!("ssh process exited before connection established");
-            }
+            };
 
             if line.contains(Self::CONNECTION_ESTABLISHED_MAGIC) {
                 return Ok(());
@@ -514,6 +538,55 @@ impl RemoteConnection for SshRemoteConnection {
             destination,
         )
         .await
+    }
+
+    async fn open_reverse_port_forward(&self, local_port: u16) -> Result<RemotePortForward> {
+        let arguments = reverse_port_forward_arguments(&self.socket, local_port);
+        let mut command = util::command::new_command("ssh");
+        command
+            .args(arguments)
+            .envs(&self.socket.envs)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut process = command
+            .spawn()
+            .context("failed to start SSH reverse forward")?;
+        let stderr = process
+            .stderr
+            .take()
+            .context("SSH reverse forward stderr was not captured")?;
+        let mut lines = futures::io::BufReader::new(stderr).lines();
+        let remote_port = {
+            let read_port = async {
+                while let Some(line) = lines.next().await {
+                    let line = line?;
+                    if let Some(port) = parse_allocated_remote_forward_port(&line) {
+                        return Ok(port);
+                    }
+                }
+                anyhow::bail!("SSH exited before allocating a reverse-forward port")
+            };
+            let read_port = futures::FutureExt::fuse(read_port);
+            let timeout =
+                futures::FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(15)));
+            futures::pin_mut!(read_port, timeout);
+            futures::select! {
+                result = read_port => result?,
+                _ = timeout => anyhow::bail!("SSH timed out allocating a reverse-forward port"),
+            }
+        };
+        smol::spawn(async move {
+            while let Some(line) = lines.next().await {
+                if let Err(error) = line {
+                    log::debug!("failed reading SSH reverse-forward diagnostics: {error}");
+                    break;
+                }
+            }
+        })
+        .detach();
+        Ok(RemotePortForward::new(remote_port, process))
     }
 
     fn start_proxy(
@@ -2045,6 +2118,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_only_the_allocated_reverse_forward_port_message() {
+        assert_eq!(
+            parse_allocated_remote_forward_port(
+                "Allocated port 43123 for remote forward to 127.0.0.1:8080"
+            ),
+            Some(43123)
+        );
+        assert_eq!(
+            parse_allocated_remote_forward_port("debug1: remote forward success for: listen 0"),
+            None
+        );
+        assert_eq!(
+            parse_allocated_remote_forward_port(
+                "Allocated port 70000 for remote forward to 127.0.0.1:8080"
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn sftp_put_command_quotes_paths_with_shell_metacharacters() {
         assert_eq!(
             sftp_put_command(
@@ -2182,6 +2275,64 @@ mod tests {
                 "-o".to_string(),
                 "ControlPath=none".to_string(),
             ]
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn reverse_forward_is_dedicated_and_loopback_only() {
+        let socket = SshSocket {
+            connection_options: SshConnectionOptions {
+                host: "build.example.com".into(),
+                username: Some("developer".to_string()),
+                port: Some(2222),
+                args: Some(vec![
+                    "-J".to_string(),
+                    "jump.example.com".to_string(),
+                    "-i".to_string(),
+                    "/tmp/test-key".to_string(),
+                ]),
+                ..Default::default()
+            },
+            socket_path: std::path::PathBuf::from("/tmp/flint-ssh-socket"),
+            envs: HashMap::default(),
+        };
+
+        let arguments = reverse_port_forward_arguments(&socket, 43123);
+
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-o", "ControlMaster=no"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-o", "ControlPath=none"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-o", "ExitOnForwardFailure=yes"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-R", "127.0.0.1:0:127.0.0.1:43123"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-p", "2222"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-J", "jump.example.com"] })
+        );
+        assert_eq!(
+            arguments.last().map(String::as_str),
+            Some("developer@build.example.com")
         );
     }
 

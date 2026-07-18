@@ -121,6 +121,30 @@ pub struct CommandTemplate {
     pub env: HashMap<String, String>,
 }
 
+pub struct RemotePortForward {
+    remote_port: u16,
+    process: util::command::Child,
+}
+
+impl RemotePortForward {
+    pub fn new(remote_port: u16, process: util::command::Child) -> Self {
+        Self {
+            remote_port,
+            process,
+        }
+    }
+
+    pub fn remote_port(&self) -> u16 {
+        self.remote_port
+    }
+
+    pub async fn close(mut self) -> Result<()> {
+        self.process.kill()?;
+        self.process.status().await?;
+        Ok(())
+    }
+}
+
 /// Whether a command should be run with TTY allocation for interactive use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Interactive {
@@ -1668,6 +1692,7 @@ pub trait RemoteConnection: Send + Sync {
         cx: &App,
     ) -> Task<Result<()>>;
     async fn upload_file_now(&self, src_path: PathBuf, dest_path: RemotePathBuf) -> Result<()>;
+    async fn open_reverse_port_forward(&self, local_port: u16) -> Result<RemotePortForward>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn shares_network_interface(&self) -> bool {

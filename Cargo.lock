@@ -133,9 +133,12 @@ name = "agent_threads"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "async-compression",
+ "async-lock",
  "async-tar",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "collections",
  "db",
@@ -148,6 +151,7 @@ dependencies = [
  "hmac",
  "http_client",
  "log",
+ "parking_lot",
  "paths",
  "pretty_assertions",
  "project",

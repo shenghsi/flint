@@ -2,6 +2,8 @@ pub mod agent_release;
 pub mod artifact_cache;
 mod claude_history;
 mod codex_history;
+pub mod connect_proxy;
+mod egress;
 mod history;
 pub mod managed_agent;
 mod panel;
@@ -13,7 +15,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use gpui::{App, Context, SharedString, Window, actions};
-use settings::{RegisterSetting, Settings};
+use settings::{ExtendingVec, RegisterSetting, Settings};
 use ui::IconName;
 use workspace::Workspace;
 
@@ -121,6 +123,7 @@ pub struct AgentKindDefinition {
     official_source_prefixes: &'static [&'static str],
     releases: &'static [AgentRelease],
     self_update_policy: AgentSelfUpdatePolicy,
+    egress_hosts: &'static [&'static str],
 }
 
 impl AgentKindDefinition {
@@ -135,6 +138,10 @@ impl AgentKindDefinition {
 
     pub fn official_source_prefixes(&self) -> &'static [&'static str] {
         self.official_source_prefixes
+    }
+
+    pub fn egress_hosts(&self) -> &'static [&'static str] {
+        self.egress_hosts
     }
 }
 
@@ -165,6 +172,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 environment: &[],
                 arguments: &["--config", "check_for_update_on_startup=false"],
             },
+            egress_hosts: &["api.openai.com", "auth.openai.com", "chatgpt.com"],
         },
         AgentKindDefinition {
             id: "claude",
@@ -186,6 +194,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 environment: &[("DISABLE_UPDATES", "1")],
                 arguments: &[],
             },
+            egress_hosts: &["api.anthropic.com", "claude.ai", "console.anthropic.com"],
         },
     ]
 }
@@ -199,6 +208,52 @@ pub struct AgentThreadSettings {
     pub notify_when_finished: bool,
     pub reopen_sessions_on_startup: settings::AgentThreadReopenSessionsOnStartup,
     pub dock: settings::DockSide,
+}
+
+#[derive(RegisterSetting)]
+pub(crate) struct RemoteAgentRoutingSettings {
+    ssh_connections: ExtendingVec<settings::SshConnection>,
+}
+
+impl Settings for RemoteAgentRoutingSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self {
+            ssh_connections: content
+                .remote
+                .ssh_connections
+                .clone()
+                .unwrap_or_default()
+                .into(),
+        }
+    }
+}
+
+impl RemoteAgentRoutingSettings {
+    pub fn route_for(
+        &self,
+        connection_options: &remote::RemoteConnectionOptions,
+    ) -> Option<settings::RemoteAgentRoute> {
+        let remote::RemoteConnectionIdentity::Ssh {
+            host,
+            username,
+            port,
+        } = remote::remote_connection_identity(connection_options)
+        else {
+            return None;
+        };
+        Some(
+            self.ssh_connections
+                .0
+                .iter()
+                .find(|connection| {
+                    connection.host == host
+                        && connection.username == username
+                        && connection.port == port
+                })
+                .map(settings::SshConnection::effective_agent_route)
+                .unwrap_or_default(),
+        )
+    }
 }
 
 impl AgentThreadSettings {
@@ -243,6 +298,7 @@ fn launch_command_from_content(
 
 pub fn init(cx: &mut App) {
     AgentThreadSettings::register(cx);
+    RemoteAgentRoutingSettings::register(cx);
     store::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
@@ -293,6 +349,64 @@ fn new_claude_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_route_lookup_defaults_direct_and_matches_only_ssh_identity() {
+        let settings = RemoteAgentRoutingSettings {
+            ssh_connections: ExtendingVec(vec![settings::SshConnection {
+                host: "build.example.com".to_string(),
+                username: Some("dev".to_string()),
+                port: Some(2222),
+                nickname: Some("ignored nickname".to_string()),
+                agent_route: Some(settings::RemoteAgentRoute::ThroughFlint),
+                ..Default::default()
+            }]),
+        };
+        let matching = remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "build.example.com".into(),
+            username: Some("dev".to_string()),
+            port: Some(2222),
+            nickname: Some("runtime nickname".to_string()),
+            ..Default::default()
+        });
+        let unknown = remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "new.example.com".into(),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings.route_for(&matching),
+            Some(settings::RemoteAgentRoute::ThroughFlint)
+        );
+        assert_eq!(
+            settings.route_for(&unknown),
+            Some(settings::RemoteAgentRoute::NotThroughFlint)
+        );
+        assert_eq!(
+            settings.route_for(&remote::RemoteConnectionOptions::Wsl(
+                remote::WslConnectionOptions {
+                    distro_name: "Ubuntu".to_string(),
+                    user: None,
+                }
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn destination_policy_contains_only_required_model_and_authentication_hosts() {
+        let codex = kind_by_id("codex").expect("Codex should be registered");
+        let claude = kind_by_id("claude").expect("Claude should be registered");
+
+        assert_eq!(
+            codex.egress_hosts(),
+            ["api.openai.com", "auth.openai.com", "chatgpt.com"]
+        );
+        assert_eq!(
+            claude.egress_hosts(),
+            ["api.anthropic.com", "claude.ai", "console.anthropic.com"]
+        );
+    }
 
     fn command_with_default(default_launch_option: Option<&str>) -> AgentLaunchCommand {
         AgentLaunchCommand {

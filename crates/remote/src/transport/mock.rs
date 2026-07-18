@@ -259,6 +259,13 @@ impl RemoteConnection for MockRemoteConnection {
         Ok(())
     }
 
+    async fn open_reverse_port_forward(
+        &self,
+        _local_port: u16,
+    ) -> Result<crate::RemotePortForward> {
+        anyhow::bail!("mock connection does not support reverse port forwarding")
+    }
+
     fn connection_options(&self) -> RemoteConnectionOptions {
         RemoteConnectionOptions::Mock(self.options.clone())
     }

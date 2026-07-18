@@ -16,7 +16,8 @@ use workspace::{Workspace, WorkspaceId};
 
 use crate::{
     AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread,
-    agent_kind_registry,
+    RemoteAgentRoutingSettings, agent_kind_registry,
+    egress::{AgentEgressLease, AgentEgressManager},
     managed_agent::{CachedAgentArtifactSource, ManagedAgentProvisioner, RemoteClientAgentHost},
     resolve_default_launch_args,
 };
@@ -130,12 +131,14 @@ pub struct AgentThreadStore {
     /// concurrent triggers can't resume the same session twice, and closing
     /// a restored thread doesn't bring it back on the next trigger.
     restore_attempted: HashSet<WorkspaceId>,
+    egress_manager: std::sync::Arc<AgentEgressManager>,
 }
 
 struct ThreadEntry {
     metadata: AgentThreadMetadata,
     workspace: WeakEntity<Workspace>,
     terminal_view: WeakEntity<TerminalView>,
+    _egress: Option<AgentEgressLease>,
 }
 
 struct GlobalAgentThreadStore(Entity<AgentThreadStore>);
@@ -152,6 +155,7 @@ impl AgentThreadStore {
             threads: HashMap::default(),
             subscriptions: HashMap::default(),
             restore_attempted: HashSet::default(),
+            egress_manager: std::sync::Arc::new(AgentEgressManager::new()),
         });
         cx.set_global(GlobalAgentThreadStore(store));
     }
@@ -256,6 +260,7 @@ impl AgentThreadStore {
         launched_at: SystemTime,
         workspace: Entity<Workspace>,
         terminal_view: Entity<TerminalView>,
+        egress: Option<AgentEgressLease>,
         cx: &mut Context<Self>,
     ) {
         let terminal_item_id = terminal_view.entity_id();
@@ -273,6 +278,7 @@ impl AgentThreadStore {
                 metadata,
                 workspace: workspace.downgrade(),
                 terminal_view: terminal_view.downgrade(),
+                _egress: egress,
             },
         );
 
@@ -600,8 +606,103 @@ fn spawn_thread_task(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
     summary: SharedString,
+    mut command: AgentLaunchCommand,
+    resumed_session_id: Option<SharedString>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<Result<()>> {
+    let remote_client = workspace.project().read(cx).remote_client();
+    let remote_connection = remote_client
+        .as_ref()
+        .and_then(|client| client.read(cx).remote_connection());
+    let route = remote_connection.as_ref().and_then(|connection| {
+        RemoteAgentRoutingSettings::get_global(cx).route_for(&connection.connection_options())
+    });
+    if route != Some(settings::RemoteAgentRoute::ThroughFlint) {
+        return spawn_thread_task_inner(
+            workspace,
+            kind,
+            summary,
+            command,
+            resumed_session_id,
+            None,
+            window,
+            cx,
+        );
+    }
+    let Some(remote_connection) = remote_connection else {
+        return Task::ready(Err(anyhow!("Through Flint requires an SSH connection")));
+    };
+    let Some(remote_client_id) = remote_client.map(|client| client.entity_id()) else {
+        return Task::ready(Err(anyhow!("Through Flint requires a remote client")));
+    };
+    let egress_manager = AgentThreadStore::global(cx).read(cx).egress_manager.clone();
+    apply_self_update_policy(&mut command, kind);
+    let kind = kind.clone();
+    cx.spawn_in(window, async move |workspace, cx| {
+        let egress = egress_manager
+            .acquire(remote_client_id, remote_connection, kind.egress_hosts())
+            .await?;
+        let proxy_url = egress.proxy_url();
+        apply_proxy_environment(&mut command, &proxy_url);
+        let task = workspace.update_in(cx, |workspace, window, cx| {
+            spawn_thread_task_inner(
+                workspace,
+                &kind,
+                summary,
+                command,
+                resumed_session_id,
+                Some(egress),
+                window,
+                cx,
+            )
+        })?;
+        task.await
+    })
+}
+
+fn apply_proxy_environment(command: &mut AgentLaunchCommand, proxy_url: &str) {
+    for name in ["HTTPS_PROXY", "https_proxy"] {
+        command.env.insert(name.to_string(), proxy_url.to_string());
+    }
+    for name in ["NO_PROXY", "no_proxy"] {
+        command
+            .env
+            .insert(name.to_string(), "localhost,127.0.0.1,::1".to_string());
+    }
+}
+
+fn apply_self_update_policy(command: &mut AgentLaunchCommand, kind: &AgentKindDefinition) {
+    let policy = kind.self_update_policy();
+    if !policy.arguments.is_empty()
+        && !command
+            .args
+            .windows(policy.arguments.len())
+            .any(|arguments| {
+                arguments
+                    .iter()
+                    .map(String::as_str)
+                    .eq(policy.arguments.iter().copied())
+            })
+    {
+        command
+            .args
+            .extend(policy.arguments.iter().map(|argument| argument.to_string()));
+    }
+    for (name, value) in policy.environment {
+        command
+            .env
+            .insert((*name).to_string(), (*value).to_string());
+    }
+}
+
+fn spawn_thread_task_inner(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    summary: SharedString,
     command: AgentLaunchCommand,
     resumed_session_id: Option<SharedString>,
+    egress: Option<AgentEgressLease>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<Result<()>> {
@@ -662,6 +763,7 @@ fn spawn_thread_task(
                 launched_at,
                 workspace_entity,
                 terminal_view,
+                egress,
                 cx,
             );
         });
@@ -894,6 +996,47 @@ mod tests {
                 },
             })
             .collect()
+    }
+
+    #[test]
+    fn through_flint_environment_is_scoped_to_https_and_replaces_bypass_rules() {
+        let mut command = AgentLaunchCommand::default();
+        command
+            .env
+            .insert("NO_PROXY".to_string(), "metadata.internal".to_string());
+
+        apply_proxy_environment(&mut command, "http://flint:redacted@127.0.0.1:43123");
+
+        assert_eq!(
+            command.env.get("HTTPS_PROXY").map(String::as_str),
+            Some("http://flint:redacted@127.0.0.1:43123")
+        );
+        assert_eq!(
+            command.env.get("https_proxy").map(String::as_str),
+            Some("http://flint:redacted@127.0.0.1:43123")
+        );
+        assert_eq!(
+            command.env.get("NO_PROXY").map(String::as_str),
+            Some("localhost,127.0.0.1,::1")
+        );
+        assert_eq!(
+            command.env.get("no_proxy").map(String::as_str),
+            Some("localhost,127.0.0.1,::1")
+        );
+        for name in ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+            assert!(!command.env.contains_key(name));
+        }
+    }
+
+    #[test]
+    fn self_update_suppression_is_idempotent() {
+        for kind in agent_kind_registry() {
+            let mut command = AgentLaunchCommand::default();
+            apply_self_update_policy(&mut command, &kind);
+            let once = command.clone();
+            apply_self_update_policy(&mut command, &kind);
+            assert_eq!(command, once, "{} policy was applied twice", kind.id);
+        }
     }
 
     #[test]

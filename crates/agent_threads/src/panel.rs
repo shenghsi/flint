@@ -28,7 +28,10 @@ use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
     merge_threads,
 };
-use crate::{AgentKindDefinition, AgentThreadSettings, HistoricalThread, agent_kind_registry};
+use crate::{
+    AgentKindDefinition, AgentThreadSettings, HistoricalThread, RemoteAgentRoutingSettings,
+    agent_kind_registry,
+};
 
 enum HistoricalState {
     Loading,
@@ -809,6 +812,17 @@ impl AgentThreadsPanel {
         let (rows, truncated) = apply_visible_cap(rows, cap, show_all);
         let new_thread_launch_option_label = new_thread_launch_option_label(cx, kind);
         let new_thread_launch_option_visual = new_thread_launch_option_visual(cx, kind);
+        let agent_route = self.workspace.upgrade().and_then(|workspace| {
+            let connection_options = workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_client()?
+                .read(cx)
+                .remote_connection()?
+                .connection_options();
+            RemoteAgentRoutingSettings::get_global(cx).route_for(&connection_options)
+        });
 
         let kind_id = kind.id;
         let header = h_flex()
@@ -848,6 +862,13 @@ impl AgentThreadsPanel {
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
                     )
+                    .when_some(agent_route, |header, route| {
+                        header.child(
+                            Label::new(route.label())
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    })
                     .when_some(
                         usage.and_then(|u| u.five_hour_percent.map(|p| (p, u.five_hour_reset_at))),
                         |header, (percent, reset_at)| {
