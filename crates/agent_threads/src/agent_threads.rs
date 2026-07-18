@@ -1,3 +1,4 @@
+pub mod agent_release;
 mod claude_history;
 mod codex_history;
 mod history;
@@ -21,6 +22,7 @@ pub use store::{
     snapshot_live_agent_threads,
 };
 
+use agent_release::{AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy};
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
 use history::AgentHistoryProvider;
@@ -112,6 +114,20 @@ pub struct AgentKindDefinition {
     /// internally that Flint never learns, so fresh threads can't be
     /// resumed or restored across app restarts.
     pub session_id_flag: Option<&'static str>,
+    official_source_prefixes: &'static [&'static str],
+    releases: &'static [AgentRelease],
+    self_update_policy: AgentSelfUpdatePolicy,
+}
+
+impl AgentKindDefinition {
+    pub fn release_for(&self, target: remote::RemotePlatform) -> Option<&AgentRelease> {
+        AgentReleaseCatalog::new(self.id, self.official_source_prefixes, self.releases)
+            .release_for(target)
+    }
+
+    pub fn self_update_policy(&self) -> AgentSelfUpdatePolicy {
+        self.self_update_policy
+    }
 }
 
 pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
@@ -132,6 +148,12 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             // Codex CLI has no flag for assigning a session id to a fresh
             // session, so fresh Codex threads stay non-restorable.
             session_id_flag: None,
+            official_source_prefixes: &["https://github.com/openai/codex/releases/download/"],
+            releases: &[],
+            self_update_policy: AgentSelfUpdatePolicy {
+                environment: &[],
+                arguments: &["--config", "check_for_update_on_startup=false"],
+            },
         },
         AgentKindDefinition {
             id: "claude",
@@ -147,6 +169,12 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 args: vec!["--dangerously-skip-permissions".to_string()],
             }],
             session_id_flag: Some("--session-id"),
+            official_source_prefixes: &["https://downloads.claude.ai/claude-code-releases/"],
+            releases: &[],
+            self_update_policy: AgentSelfUpdatePolicy {
+                environment: &[("DISABLE_UPDATES", "1")],
+                arguments: &[],
+            },
         },
     ]
 }

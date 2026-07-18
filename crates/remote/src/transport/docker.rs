@@ -27,7 +27,7 @@ use rpc::proto::Envelope;
 use crate::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs, RemotePlatform,
     remote_client::{CommandTemplate, ConnectionSharing, Interactive},
-    transport::parse_platform,
+    transport::{parse_platform, posix_target_probe_command},
 };
 
 #[derive(
@@ -165,10 +165,11 @@ impl DockerExecConnection {
     }
 
     async fn check_remote_platform(&self) -> Result<RemotePlatform> {
-        let uname = self
-            .run_docker_exec("uname", None, &Default::default(), &["-sm"])
+        let (program, arguments) = posix_target_probe_command();
+        let output = self
+            .run_docker_exec(program, None, &Default::default(), &arguments)
             .await?;
-        parse_platform(&uname)
+        parse_platform(&output)
     }
 
     async fn ensure_server_binary(
@@ -622,6 +623,10 @@ impl DockerExecConnection {
 
 #[async_trait(?Send)]
 impl RemoteConnection for DockerExecConnection {
+    fn platform(&self) -> Option<RemotePlatform> {
+        self.remote_platform
+    }
+
     fn has_wsl_interop(&self) -> bool {
         false
     }
@@ -732,6 +737,20 @@ impl RemoteConnection for DockerExecConnection {
         );
 
         cx.background_spawn(upload_task)
+    }
+
+    fn upload_file(
+        &self,
+        src_path: PathBuf,
+        dest_path: RemotePathBuf,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        cx.background_spawn(Self::upload_and_chown(
+            self.docker_cli().to_string(),
+            self.connection_options.clone(),
+            src_path.display().to_string(),
+            dest_path.to_string(),
+        ))
     }
 
     async fn kill(&self) -> Result<()> {

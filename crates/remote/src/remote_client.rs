@@ -52,7 +52,7 @@ use util::{
     paths::{PathStyle, RemotePathBuf},
 };
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RemoteOs {
     Linux,
     MacOs,
@@ -79,7 +79,7 @@ impl std::fmt::Display for RemoteOs {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RemoteArch {
     X86_64,
     Aarch64,
@@ -100,10 +100,18 @@ impl std::fmt::Display for RemoteArch {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RemoteLibc {
+    Glibc,
+    Musl,
+    Unknown,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RemotePlatform {
     pub os: RemoteOs,
     pub arch: RemoteArch,
+    pub libc: Option<RemoteLibc>,
 }
 
 #[derive(Clone, Debug)]
@@ -336,6 +344,7 @@ pub struct RemoteClient {
     client: Arc<ChannelClient>,
     unique_identifier: String,
     connection_options: RemoteConnectionOptions,
+    platform: Option<RemotePlatform>,
     path_style: PathStyle,
     state: Option<State>,
 }
@@ -435,10 +444,12 @@ impl RemoteClient {
                 });
 
                 let path_style = remote_connection.path_style();
+                let platform = remote_connection.platform();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
                     connection_options: remote_connection.connection_options(),
+                    platform,
                     path_style,
                     state: Some(State::Connecting),
                 });
@@ -1005,12 +1016,110 @@ impl RemoteClient {
         connection.upload_directory(src_path, dest_path, cx)
     }
 
+    pub fn upload_file(
+        &self,
+        src_path: PathBuf,
+        dest_path: RemotePathBuf,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let Some(connection) = self.remote_connection() else {
+            return Task::ready(Err(anyhow!("no remote connection")));
+        };
+        connection.upload_file(src_path, dest_path, cx)
+    }
+
     pub fn proto_client(&self) -> AnyProtoClient {
         self.client.clone().into()
     }
 
+    pub fn remote_app_data_directory(&self, cx: &App) -> Task<Result<PathBuf>> {
+        let request = self
+            .proto_client()
+            .request(proto::GetRemoteAppDataDirectory {});
+        cx.background_spawn(async move {
+            let response = request.await?;
+            if response.path.is_empty() {
+                anyhow::bail!("remote server returned an empty application data directory");
+            }
+            Ok(PathBuf::from(response.path))
+        })
+    }
+
+    pub fn compute_remote_file_sha256(&self, path: PathBuf, cx: &App) -> Task<Result<String>> {
+        let request = self.proto_client().request(proto::ComputeRemoteFileSha256 {
+            path: path.to_string_lossy().into_owned(),
+        });
+        cx.background_spawn(async move {
+            let response = request.await?;
+            if response.sha256.len() != 64 {
+                anyhow::bail!("remote server returned an invalid SHA-256 digest");
+            }
+            Ok(response.sha256)
+        })
+    }
+
+    pub fn create_private_remote_directory(&self, path: PathBuf, cx: &App) -> Task<Result<()>> {
+        let request = self
+            .proto_client()
+            .request(proto::CreatePrivateRemoteDirectory {
+                path: path.to_string_lossy().into_owned(),
+            });
+        cx.background_spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
+    pub fn set_remote_file_executable(&self, path: PathBuf, cx: &App) -> Task<Result<()>> {
+        let request = self.proto_client().request(proto::SetRemoteFileExecutable {
+            path: path.to_string_lossy().into_owned(),
+        });
+        cx.background_spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
+    pub fn rename_remote_path(
+        &self,
+        source: PathBuf,
+        destination: PathBuf,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let request = self.proto_client().request(proto::RenameRemotePath {
+            source: source.to_string_lossy().into_owned(),
+            destination: destination.to_string_lossy().into_owned(),
+        });
+        cx.background_spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
+    pub fn remove_remote_path(
+        &self,
+        path: PathBuf,
+        recursive: bool,
+        ignore_if_missing: bool,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let request = self.proto_client().request(proto::RemoveRemotePath {
+            path: path.to_string_lossy().into_owned(),
+            recursive,
+            ignore_if_missing,
+        });
+        cx.background_spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
     pub fn connection_options(&self) -> RemoteConnectionOptions {
         self.connection_options.clone()
+    }
+
+    pub fn platform(&self) -> Option<RemotePlatform> {
+        self.platform
     }
 
     pub fn connection(&self) -> Option<Arc<dyn RemoteConnection>> {
@@ -1534,6 +1643,8 @@ pub struct OpenWslPath {
 
 #[async_trait(?Send)]
 pub trait RemoteConnection: Send + Sync {
+    fn platform(&self) -> Option<RemotePlatform>;
+
     fn start_proxy(
         &self,
         unique_identifier: String,
@@ -1545,6 +1656,12 @@ pub trait RemoteConnection: Send + Sync {
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>>;
     fn upload_directory(
+        &self,
+        src_path: PathBuf,
+        dest_path: RemotePathBuf,
+        cx: &App,
+    ) -> Task<Result<()>>;
+    fn upload_file(
         &self,
         src_path: PathBuf,
         dest_path: RemotePathBuf,

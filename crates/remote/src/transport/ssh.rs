@@ -3,7 +3,7 @@ use crate::{
     remote_client::{
         CommandTemplate, ConnectionSharing, Interactive, RemoteConnection, RemoteConnectionOptions,
     },
-    transport::{parse_platform, parse_shell},
+    transport::{parse_platform, parse_shell, posix_target_probe_command},
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -108,6 +108,52 @@ fn bracket_ipv6(host: &str) -> String {
     } else {
         host.to_string()
     }
+}
+
+fn sftp_put_command(source: &str, destination: &str) -> String {
+    fn quote(path: &str) -> String {
+        format!("\"{}\"", path.replace('\\', "\\\\").replace('\"', "\\\""))
+    }
+
+    format!("put {} {}\n", quote(source), quote(destination))
+}
+
+async fn run_file_upload(
+    mut sftp_command: util::command::Command,
+    mut scp_command: util::command::Command,
+    source: String,
+    destination: String,
+) -> Result<()> {
+    if SshRemoteConnection::is_sftp_available().await {
+        let mut child = sftp_command.spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use futures::AsyncWriteExt as _;
+            stdin
+                .write_all(sftp_put_command(&source, &destination).as_bytes())
+                .await?;
+            stdin.flush().await?;
+        }
+        let output = child.output().await?;
+        if output.status.success() {
+            return Ok(());
+        }
+        log::debug!(
+            "failed to upload file via SFTP {source} -> {destination}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output = scp_command.output().await?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!(
+        "failed to upload file via SFTP/SCP {} -> {}: {}",
+        source,
+        destination,
+        stderr
+    );
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -275,6 +321,10 @@ impl AsMut<Child> for MasterProcess {
 
 #[async_trait(?Send)]
 impl RemoteConnection for SshRemoteConnection {
+    fn platform(&self) -> Option<RemotePlatform> {
+        Some(self.ssh_platform)
+    }
+
     async fn kill(&self) -> Result<()> {
         self.killed.store(true, Ordering::Release);
         let Some(mut process) = self.master_process.lock().take() else {
@@ -434,6 +484,24 @@ impl RemoteConnection for SshRemoteConnection {
                 stderr,
             );
         })
+    }
+
+    fn upload_file(
+        &self,
+        src_path: PathBuf,
+        dest_path: RemotePathBuf,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let source = src_path.display().to_string();
+        let destination = dest_path.to_string();
+        let sftp_command = self.build_sftp_command();
+        let scp_command = self.build_scp_command(&src_path, &destination, None);
+        cx.background_spawn(run_file_upload(
+            sftp_command,
+            scp_command,
+            source,
+            destination,
+        ))
     }
 
     fn start_proxy(
@@ -1188,58 +1256,15 @@ impl SshRemoteConnection {
     }
 
     async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
-        log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
-
-        let src_path_display = src_path.display().to_string();
-        let dest_path_str = dest_path.display(self.path_style());
-
-        // We will try SFTP first, and if that fails, we will fall back to SCP.
-        // If SCP fails also, we give up and return an error.
-        // The reason we allow a fallback from SFTP to SCP is that if the user has to specify a password,
-        // depending on the implementation of SSH stack, SFTP may disable interactive password prompts in batch mode.
-        // This is for example the case on Windows as evidenced by this implementation snippet:
-        // https://github.com/PowerShell/openssh-portable/blob/b8c08ef9da9450a94a9c5ef717d96a7bd83f3332/sshconnect2.c#L417
-        if Self::is_sftp_available().await {
-            log::debug!("using SFTP for file upload");
-            let mut command = self.build_sftp_command();
-            let sftp_batch = format!("put {src_path_display} {dest_path_str}\n");
-
-            let mut child = command.spawn()?;
-            if let Some(mut stdin) = child.stdin.take() {
-                use futures::AsyncWriteExt;
-                stdin.write_all(sftp_batch.as_bytes()).await?;
-                stdin.flush().await?;
-            }
-
-            let output = child.output().await?;
-            if output.status.success() {
-                return Ok(());
-            }
-
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            log::debug!(
-                "failed to upload file via SFTP {src_path_display} -> {dest_path_str}: {stderr}"
-            );
-        }
-
-        log::debug!("using SCP for file upload");
-        let mut command = self.build_scp_command(src_path, &dest_path_str, None);
-        let output = command.output().await?;
-
-        if output.status.success() {
-            return Ok(());
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::debug!(
-            "failed to upload file via SCP {src_path_display} -> {dest_path_str}: {stderr}",
-        );
-        anyhow::bail!(
-            "failed to upload file via STFP/SCP {} -> {}: {}",
-            src_path_display,
-            dest_path_str,
-            stderr,
-        );
+        let source = src_path.display().to_string();
+        let destination = dest_path.display(self.path_style()).into_owned();
+        run_file_upload(
+            self.build_sftp_command(),
+            self.build_scp_command(src_path, &destination, None),
+            source,
+            destination,
+        )
+        .await
     }
 
     async fn is_sftp_available() -> bool {
@@ -1412,10 +1437,11 @@ impl SshSocket {
     }
 
     async fn platform_posix(&self, shell: ShellKind) -> Result<RemotePlatform> {
+        let (program, arguments) = posix_target_probe_command();
         let output = self
-            .run_command(shell, "uname", &["-sm"], false)
+            .run_command(shell, program, &arguments, false)
             .await
-            .context("Failed to run 'uname -sm' to determine platform")?;
+            .context("Failed to run the POSIX target probe")?;
         parse_platform(&output)
     }
 
@@ -1441,6 +1467,7 @@ impl SshSocket {
                     "Prebuilt remote servers are not yet available for windows-{arch}. See https://github.com/shenghsi/flint/blob/main/docs/src/remote-development.md"
                 ),
             },
+            libc: None,
         })
     }
 
@@ -2004,6 +2031,17 @@ fn build_command_windows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sftp_put_command_quotes_paths_with_shell_metacharacters() {
+        assert_eq!(
+            sftp_put_command(
+                "/tmp/local agent $build",
+                "/remote/agent staging/agent \"candidate\""
+            ),
+            "put \"/tmp/local agent $build\" \"/remote/agent staging/agent \\\"candidate\\\"\"\n"
+        );
+    }
 
     #[test]
     fn test_build_command() -> Result<()> {

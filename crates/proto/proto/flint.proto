@@ -11,6 +11,7 @@ import "git.proto";
 import "image.proto";
 import "lsp.proto";
 import "remote_project.proto";
+import "remote_management.proto";
 import "task.proto";
 import "toolchain.proto";
 import "worktree.proto";
@@ -390,7 +391,15 @@ message Envelope {
     ResolveDocumentLink resolve_document_link = 455;
     ResolveDocumentLinkResponse resolve_document_link_response = 456;
     ReadRemoteFile read_remote_file = 457;
-    ReadRemoteFileResponse read_remote_file_response = 458; // current max
+    ReadRemoteFileResponse read_remote_file_response = 458;
+    GetRemoteAppDataDirectory get_remote_app_data_directory = 459;
+    GetRemoteAppDataDirectoryResponse get_remote_app_data_directory_response = 460;
+    ComputeRemoteFileSha256 compute_remote_file_sha256 = 461;
+    ComputeRemoteFileSha256Response compute_remote_file_sha256_response = 462;
+    CreatePrivateRemoteDirectory create_private_remote_directory = 463;
+    SetRemoteFileExecutable set_remote_file_executable = 464;
+    RenameRemotePath rename_remote_path = 465;
+    RemoveRemotePath remove_remote_path = 466; // current max
   }
 
   reserved 87 to 88;
