@@ -8,8 +8,8 @@ use futures::StreamExt as _;
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton, MouseDownEvent, ParentElement,
-    Pixels, Point, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, anchored,
-    deferred, div,
+    Pixels, Point, PromptLevel, Render, SharedString, Styled, Subscription, Task, WeakEntity,
+    Window, anchored, deferred, div,
 };
 use settings::{DockSide, Settings, SettingsStore};
 use ui::{
@@ -564,6 +564,14 @@ impl AgentThreadsPanel {
                 .and_then(|client| client.read(cx).platform())
                 .is_some_and(|platform| kind.release_for(platform).is_some())
         });
+        let remote_available = workspace.upgrade().is_some_and(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_client()
+                .is_some()
+        });
         let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
             {
                 let workspace = workspace.clone();
@@ -632,6 +640,114 @@ impl AgentThreadsPanel {
                             store::launch_managed_thread(workspace, &kind, &[], window, cx);
                         });
                     },
+                );
+            }
+            if remote_available {
+                let credential_policy = kind.credential_policy();
+                {
+                    let workspace = workspace.clone();
+                    let kind = kind.clone();
+                    context_menu = context_menu.separator().entry(
+                        SharedString::from(format!("Sign in to {} on remote", kind.label)),
+                        None,
+                        move |window, cx| {
+                            let Some(workspace) = workspace.upgrade() else {
+                                return;
+                            };
+                            let kind = kind.clone();
+                            workspace.update(cx, |workspace, cx| {
+                                store::launch_credential_command(
+                                    workspace,
+                                    &kind,
+                                    SharedString::from(format!("Sign in to {}", kind.label)),
+                                    credential_policy.login_arguments,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        },
+                    );
+                }
+                {
+                    let workspace = workspace.clone();
+                    let kind = kind.clone();
+                    context_menu = context_menu.entry(
+                        SharedString::from(format!("Check {} sign-in", kind.label)),
+                        None,
+                        move |window, cx| {
+                            let Some(workspace) = workspace.upgrade() else {
+                                return;
+                            };
+                            let kind = kind.clone();
+                            workspace.update(cx, |workspace, cx| {
+                                store::launch_credential_command(
+                                    workspace,
+                                    &kind,
+                                    SharedString::from(format!("{} sign-in status", kind.label)),
+                                    credential_policy.status_arguments,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        },
+                    );
+                }
+                {
+                    let workspace = workspace.clone();
+                    let kind = kind.clone();
+                    context_menu = context_menu.entry(
+                        SharedString::from(format!("Sign out {} on remote…", kind.label)),
+                        None,
+                        move |window, cx| {
+                            let confirmation = window.prompt(
+                                PromptLevel::Warning,
+                                &format!(
+                                    "Remove the {} credential from this remote host?",
+                                    kind.label
+                                ),
+                                Some("This does not revoke the credential at the provider."),
+                                &["Sign out on remote", "Cancel"],
+                                cx,
+                            );
+                            let workspace = workspace.clone();
+                            let kind = kind.clone();
+                            let window_handle = window
+                                .window_handle()
+                                .downcast::<workspace::MultiWorkspace>();
+                            cx.spawn(async move |cx| {
+                                if confirmation.await.ok() != Some(0) {
+                                    return anyhow::Ok(());
+                                }
+                                let window_handle = window_handle
+                                    .ok_or_else(|| anyhow::anyhow!("agent window closed"))?;
+                                let workspace = workspace
+                                    .upgrade()
+                                    .ok_or_else(|| anyhow::anyhow!("agent workspace closed"))?;
+                                window_handle.update(cx, |_multi_workspace, window, cx| {
+                                    workspace.update(cx, |workspace, cx| {
+                                        store::launch_credential_command(
+                                            workspace,
+                                            &kind,
+                                            SharedString::from(format!(
+                                                "Sign out {} on remote",
+                                                kind.label
+                                            )),
+                                            credential_policy.logout_arguments,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                })?;
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
+                        },
+                    );
+                }
+                context_menu = context_menu.entry(
+                    SharedString::from(format!("Revoke {} credential at provider…", kind.label)),
+                    None,
+                    move |_, cx| cx.open_url(credential_policy.provider_management_url),
                 );
             }
             context_menu

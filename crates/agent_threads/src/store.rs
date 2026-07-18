@@ -5,14 +5,14 @@ use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, Global, SharedString,
-    Subscription, Task, TaskExt, WeakEntity, Window,
+    Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use task::{RevealStrategy, RevealTarget, Shell, SpawnInTerminal};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use util::ResultExt as _;
-use workspace::{Workspace, WorkspaceId};
+use workspace::{MultiWorkspace, SaveIntent, Workspace, WorkspaceId};
 
 use crate::{
     AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread,
@@ -132,12 +132,14 @@ pub struct AgentThreadStore {
     /// a restored thread doesn't bring it back on the next trigger.
     restore_attempted: HashSet<WorkspaceId>,
     egress_manager: std::sync::Arc<AgentEgressManager>,
+    route_changes: HashSet<remote::RemoteConnectionIdentity>,
 }
 
 struct ThreadEntry {
     metadata: AgentThreadMetadata,
     workspace: WeakEntity<Workspace>,
     terminal_view: WeakEntity<TerminalView>,
+    window: Option<WindowHandle<MultiWorkspace>>,
     _egress: Option<AgentEgressLease>,
 }
 
@@ -156,12 +158,42 @@ impl AgentThreadStore {
             subscriptions: HashMap::default(),
             restore_attempted: HashSet::default(),
             egress_manager: std::sync::Arc::new(AgentEgressManager::new()),
+            route_changes: HashSet::default(),
         });
         cx.set_global(GlobalAgentThreadStore(store));
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalAgentThreadStore>().0.clone()
+    }
+
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalAgentThreadStore>()
+            .map(|store| store.0.clone())
+    }
+
+    pub fn begin_route_change(
+        &mut self,
+        connection_options: &remote::RemoteConnectionOptions,
+    ) -> Result<()> {
+        let identity = remote::remote_connection_identity(connection_options);
+        if !self.route_changes.insert(identity) {
+            anyhow::bail!("the agent route is already changing for this host");
+        }
+        Ok(())
+    }
+
+    pub fn finish_route_change(&mut self, connection_options: &remote::RemoteConnectionOptions) {
+        self.route_changes
+            .remove(&remote::remote_connection_identity(connection_options));
+    }
+
+    fn route_change_in_progress(
+        &self,
+        connection_options: &remote::RemoteConnectionOptions,
+    ) -> bool {
+        self.route_changes
+            .contains(&remote::remote_connection_identity(connection_options))
     }
 
     pub fn live_threads_for_project(
@@ -180,6 +212,66 @@ impl AgentThreadStore {
             })
             .cloned()
             .collect()
+    }
+
+    pub fn active_thread_count_for_connection(
+        &self,
+        connection_options: &remote::RemoteConnectionOptions,
+        cx: &App,
+    ) -> usize {
+        self.threads
+            .values()
+            .filter(|entry| entry_matches_connection(entry, connection_options, cx))
+            .count()
+    }
+
+    pub fn close_threads_for_connection(
+        connection_options: remote::RemoteConnectionOptions,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let store = Self::global(cx);
+        let entries = store
+            .read(cx)
+            .threads
+            .values()
+            .filter(|entry| entry_matches_connection(entry, &connection_options, cx))
+            .map(|entry| {
+                anyhow::Ok((
+                    entry
+                        .workspace
+                        .upgrade()
+                        .ok_or_else(|| anyhow!("agent thread workspace closed"))?,
+                    entry
+                        .window
+                        .clone()
+                        .ok_or_else(|| anyhow!("agent thread window closed"))?,
+                    entry.metadata.terminal_item_id,
+                ))
+            })
+            .collect::<Result<Vec<_>>>();
+        let entries = match entries {
+            Ok(entries) => entries,
+            Err(error) => return Task::ready(Err(error)),
+        };
+
+        cx.spawn(async move |cx| {
+            for (workspace, window_handle, terminal_item_id) in entries {
+                let close_task = window_handle.update(cx, |_multi_workspace, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        let pane = workspace
+                            .pane_for_item_id(terminal_item_id)
+                            .ok_or_else(|| anyhow!("agent thread pane closed"))?;
+                        anyhow::Ok(pane.update(cx, |pane, cx| {
+                            pane.close_items(window, cx, SaveIntent::Close, &move |item_id| {
+                                item_id == terminal_item_id
+                            })
+                        }))
+                    })
+                })??;
+                close_task.await?;
+            }
+            anyhow::Ok(())
+        })
     }
 
     fn live_threads_for_workspace(
@@ -260,6 +352,7 @@ impl AgentThreadStore {
         launched_at: SystemTime,
         workspace: Entity<Workspace>,
         terminal_view: Entity<TerminalView>,
+        window: Option<WindowHandle<MultiWorkspace>>,
         egress: Option<AgentEgressLease>,
         cx: &mut Context<Self>,
     ) {
@@ -278,6 +371,7 @@ impl AgentThreadStore {
                 metadata,
                 workspace: workspace.downgrade(),
                 terminal_view: terminal_view.downgrade(),
+                window,
                 _egress: egress,
             },
         );
@@ -324,6 +418,24 @@ impl AgentThreadStore {
     }
 }
 
+fn entry_matches_connection(
+    entry: &ThreadEntry,
+    connection_options: &remote::RemoteConnectionOptions,
+    cx: &App,
+) -> bool {
+    entry
+        .workspace
+        .upgrade()
+        .and_then(|workspace| workspace.read(cx).project().read(cx).remote_client())
+        .and_then(|client| client.read(cx).remote_connection())
+        .is_some_and(|connection| {
+            remote::same_remote_connection_identity(
+                Some(&connection.connection_options()),
+                Some(connection_options),
+            )
+        })
+}
+
 pub fn launch_new_thread(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
@@ -352,6 +464,31 @@ pub fn launch_new_thread(
         window,
         cx,
     );
+}
+
+pub fn launch_credential_command(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    summary: SharedString,
+    arguments: &[&str],
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let mut command = AgentThreadSettings::get_global(cx)
+        .command_for_kind(kind.id)
+        .clone();
+    command.args = arguments
+        .iter()
+        .map(|argument| (*argument).to_string())
+        .collect();
+    let task = spawn_thread_task(workspace, kind, summary, command, None, window, cx);
+    cx.spawn_in(window, async move |workspace, cx| {
+        if let Err(error) = task.await {
+            workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+        }
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 /// Namespace for the per-thread "remembered launch option" key-value store
@@ -615,6 +752,15 @@ fn spawn_thread_task(
     let remote_connection = remote_client
         .as_ref()
         .and_then(|client| client.read(cx).remote_connection());
+    if let Some(connection) = remote_connection.as_ref()
+        && AgentThreadStore::global(cx)
+            .read(cx)
+            .route_change_in_progress(&connection.connection_options())
+    {
+        return Task::ready(Err(anyhow!(
+            "the agent route is changing for this remote host"
+        )));
+    }
     let route = remote_connection.as_ref().and_then(|connection| {
         RemoteAgentRoutingSettings::get_global(cx).route_for(&connection.connection_options())
     });
@@ -740,6 +886,7 @@ fn spawn_thread_task_inner(
     };
 
     let workspace_entity = cx.entity();
+    let window_handle = window.window_handle().downcast::<MultiWorkspace>();
     let launched_at = SystemTime::now();
     let terminal_view_task =
         TerminalPanel::add_center_terminal_view(workspace, window, cx, |project, cx| {
@@ -763,6 +910,7 @@ fn spawn_thread_task_inner(
                 launched_at,
                 workspace_entity,
                 terminal_view,
+                window_handle,
                 egress,
                 cx,
             );

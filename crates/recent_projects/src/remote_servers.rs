@@ -619,8 +619,24 @@ enum ServerIndex {
 
 #[derive(Clone)]
 enum AgentRouteTarget {
-    Saved(SshServerIndex),
+    Saved {
+        index: SshServerIndex,
+        connection: SshConnection,
+    },
     SshConfig(SharedString),
+}
+
+impl AgentRouteTarget {
+    fn connection_options(&self) -> remote::RemoteConnectionOptions {
+        let connection = match self {
+            Self::Saved { connection, .. } => connection.clone(),
+            Self::SshConfig(host) => SshConnection {
+                host: host.to_string(),
+                ..Default::default()
+            },
+        };
+        remote::RemoteConnectionOptions::Ssh(connection.into())
+    }
 }
 impl From<SshServerIndex> for ServerIndex {
     fn from(index: SshServerIndex) -> Self {
@@ -1529,7 +1545,10 @@ impl RemoteServerProjects {
                 ..
             } => Some((
                 connection.effective_agent_route(),
-                AgentRouteTarget::Saved(*index),
+                AgentRouteTarget::Saved {
+                    index: *index,
+                    connection: connection.clone(),
+                },
             )),
             RemoteEntry::SshConfig { host, .. } => Some((
                 RemoteAgentRoute::NotThroughFlint,
@@ -1758,10 +1777,16 @@ impl RemoteServerProjects {
                     route == selected_route,
                     ui::IconPosition::Start,
                     None,
-                    move |_, cx| {
+                    move |window, cx| {
                         remote_servers
                             .update(cx, |this, cx| {
-                                this.set_agent_route(target.clone(), selected_route, route, cx);
+                                this.set_agent_route(
+                                    target.clone(),
+                                    selected_route,
+                                    route,
+                                    window,
+                                    cx,
+                                );
                             })
                             .ok();
                     },
@@ -1786,14 +1811,70 @@ impl RemoteServerProjects {
         target: AgentRouteTarget,
         previous_route: RemoteAgentRoute,
         route: RemoteAgentRoute,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if route == previous_route {
             return;
         }
 
+        let connection_options = target.connection_options();
+        let active_count = agent_threads::active_remote_agent_thread_count(&connection_options, cx);
+        if active_count == 0 {
+            self.persist_agent_route(target, route, cx);
+            return;
+        }
+
+        let message = format!(
+            "Changing the agent route will close {active_count} active agent {} on this host.",
+            if active_count == 1 {
+                "terminal"
+            } else {
+                "terminals"
+            }
+        );
+        let confirmation = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            Some("Ordinary remote editing and terminals are not affected."),
+            &["Change route", "Cancel"],
+            cx,
+        );
+        let remote_servers = cx.weak_entity();
+        cx.spawn_in(window, async move |_this, cx| {
+            if confirmation.await.ok() != Some(0) {
+                return anyhow::Ok(());
+            }
+            cx.update(|_, cx| {
+                agent_threads::begin_remote_agent_route_change(&connection_options, cx)
+            })??;
+            let result = async {
+                let close_task = cx.update(|_, cx| {
+                    agent_threads::close_remote_agent_threads(connection_options.clone(), cx)
+                })?;
+                close_task.await?;
+                remote_servers.update(cx, |this, cx| {
+                    this.persist_agent_route(target, route, cx);
+                })?;
+                anyhow::Ok(())
+            }
+            .await;
+            cx.update(|_, cx| {
+                agent_threads::finish_remote_agent_route_change(&connection_options, cx);
+            })?;
+            result
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn persist_agent_route(
+        &mut self,
+        target: AgentRouteTarget,
+        route: RemoteAgentRoute,
+        cx: &mut Context<Self>,
+    ) {
         match target {
-            AgentRouteTarget::Saved(index) => {
+            AgentRouteTarget::Saved { index, .. } => {
                 self.update_settings_file(cx, move |settings, _| {
                     if let Some(connection) = settings
                         .ssh_connections

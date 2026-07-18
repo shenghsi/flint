@@ -11233,6 +11233,7 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
+ "agent_threads",
  "anyhow",
  "askpass",
  "chrono",
