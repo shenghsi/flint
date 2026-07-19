@@ -9,6 +9,7 @@ pub mod managed_agent;
 mod managed_agent_progress;
 mod panel;
 mod plan_usage;
+mod remote_process;
 mod store;
 
 use std::path::PathBuf;
