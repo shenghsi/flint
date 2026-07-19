@@ -69,6 +69,23 @@ fn apply_visible_cap(
     (rows, truncated)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RemoteCredentialMenuPolicy {
+    sign_in: bool,
+    sign_in_status: bool,
+    sign_out: bool,
+    provider_management: bool,
+}
+
+fn remote_credential_menu_policy(_kind: &AgentKindDefinition) -> RemoteCredentialMenuPolicy {
+    RemoteCredentialMenuPolicy {
+        sign_in: false,
+        sign_in_status: false,
+        sign_out: true,
+        provider_management: false,
+    }
+}
+
 pub struct AgentThreadsPanel {
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
@@ -647,10 +664,12 @@ impl AgentThreadsPanel {
             }
             if remote_available {
                 let credential_policy = kind.credential_policy();
-                {
+                let menu_policy = remote_credential_menu_policy(&kind);
+                context_menu = context_menu.separator();
+                if menu_policy.sign_in {
                     let workspace = workspace.clone();
                     let kind = kind.clone();
-                    context_menu = context_menu.separator().entry(
+                    context_menu = context_menu.entry(
                         SharedString::from(format!("Sign in to {} on remote", kind.label)),
                         None,
                         move |window, cx| {
@@ -671,7 +690,7 @@ impl AgentThreadsPanel {
                         },
                     );
                 }
-                {
+                if menu_policy.sign_in_status {
                     let workspace = workspace.clone();
                     let kind = kind.clone();
                     context_menu = context_menu.entry(
@@ -695,7 +714,7 @@ impl AgentThreadsPanel {
                         },
                     );
                 }
-                {
+                if menu_policy.sign_out {
                     let workspace = workspace.clone();
                     let kind = kind.clone();
                     context_menu = context_menu.entry(
@@ -747,11 +766,16 @@ impl AgentThreadsPanel {
                         },
                     );
                 }
-                context_menu = context_menu.entry(
-                    SharedString::from(format!("Revoke {} credential at provider…", kind.label)),
-                    None,
-                    move |_, cx| cx.open_url(credential_policy.provider_management_url),
-                );
+                if menu_policy.provider_management {
+                    context_menu = context_menu.entry(
+                        SharedString::from(format!(
+                            "Revoke {} credential at provider…",
+                            kind.label
+                        )),
+                        None,
+                        move |_, cx| cx.open_url(credential_policy.provider_management_url),
+                    );
+                }
             }
             context_menu
         });
@@ -1419,6 +1443,23 @@ mod tests {
     // before the terminal is ever registered.
     static SPAWNING_TEST_ROOT: LazyLock<String> =
         LazyLock::new(|| std::env::temp_dir().to_string_lossy().into_owned());
+
+    #[test]
+    fn codex_and_claude_remote_credential_menus_only_offer_sign_out() {
+        for kind in agent_kind_registry() {
+            assert_eq!(
+                remote_credential_menu_policy(&kind),
+                RemoteCredentialMenuPolicy {
+                    sign_in: false,
+                    sign_in_status: false,
+                    sign_out: true,
+                    provider_management: false,
+                },
+                "{} remote credential menu policy",
+                kind.id
+            );
+        }
+    }
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
