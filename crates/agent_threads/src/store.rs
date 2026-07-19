@@ -570,23 +570,14 @@ pub fn launch_new_thread(
     cx: &mut Context<Workspace>,
 ) {
     let settings = AgentThreadSettings::get_global(cx);
-    let mut command = settings.command_for_kind(kind.id).clone();
-    command.args.extend(extra_args.iter().cloned());
-    // Assign the session id ourselves when the CLI supports it, so the
-    // thread is resumable and restorable from birth; otherwise the CLI
-    // generates an id internally that Flint never learns.
-    let session_id = kind.session_id_flag.map(|flag| {
-        let session_id = uuid::Uuid::new_v4().to_string();
-        command.args.push(flag.to_string());
-        command.args.push(session_id.clone());
-        SharedString::from(session_id)
-    });
+    let base = settings.command_for_kind(kind.id);
+    let launch = build_new_thread_launch(kind, base, extra_args, None);
     spawn_thread(
         workspace,
         kind,
         kind.label.clone(),
-        command,
-        session_id,
+        launch.command,
+        launch.session_id,
         window,
         cx,
     );
@@ -885,6 +876,37 @@ fn current_remote_agent_route(
     let remote_client = workspace.project().read(cx).remote_client()?;
     let connection_options = remote_client.read(cx).connection_options();
     RemoteAgentRoutingSettings::get_global(cx).route_for(&connection_options)
+}
+
+struct NewThreadLaunch {
+    command: AgentLaunchCommand,
+    session_id: Option<SharedString>,
+}
+
+fn build_new_thread_launch(
+    kind: &AgentKindDefinition,
+    base: &AgentLaunchCommand,
+    extra_args: &[String],
+    managed_executable: Option<&std::path::Path>,
+) -> NewThreadLaunch {
+    let mut command = base.clone();
+    command.args.extend(extra_args.iter().cloned());
+    // Assign the session id ourselves when the CLI supports it, so a fresh
+    // thread remains resumable and restorable before the CLI writes history.
+    let session_id = kind.session_id_flag.map(|flag| {
+        let session_id = SharedString::from(uuid::Uuid::new_v4().to_string());
+        command.args.push(flag.to_string());
+        command.args.push(session_id.to_string());
+        session_id
+    });
+    if let Some(managed_executable) = managed_executable {
+        command.command = Some(managed_executable.to_string_lossy().into_owned());
+        apply_self_update_policy(&mut command, kind);
+    }
+    NewThreadLaunch {
+        command,
+        session_id,
+    }
 }
 
 fn build_resume_command(
@@ -1214,24 +1236,19 @@ pub fn launch_managed_thread(
                         &managed_agent_notification_id(kind.id, &prepared.installation.version),
                         cx,
                     );
-                    let mut command = AgentThreadSettings::get_global(cx)
-                        .command_for_kind(kind.id)
-                        .clone();
-                    command.command = Some(
-                        prepared
-                            .installation
-                            .executable_path
-                            .to_string_lossy()
-                            .into_owned(),
+                    let base = AgentThreadSettings::get_global(cx).command_for_kind(kind.id);
+                    let launch = build_new_thread_launch(
+                        &kind,
+                        base,
+                        &extra_args,
+                        Some(&prepared.installation.executable_path),
                     );
-                    command.args.extend(extra_args);
-                    apply_self_update_policy(&mut command, &kind);
                     spawn_thread(
                         workspace,
                         &kind,
                         SharedString::from(format!("New {} thread", kind.label)),
-                        command,
-                        None,
+                        launch.command,
+                        launch.session_id,
                         window,
                         cx,
                     );
@@ -1866,6 +1883,66 @@ mod tests {
             command.env.get("CODEX_HOME").map(String::as_str),
             Some("/remote/codex-home")
         );
+    }
+
+    #[test]
+    fn new_thread_builder_preserves_options_environment_and_managed_executable() {
+        for kind in agent_kind_registry() {
+            let mut environment = HashMap::default();
+            environment.insert("EXISTING".to_string(), "value".to_string());
+            let base = AgentLaunchCommand {
+                command: Some(format!("ambient-{}", kind.id)),
+                args: vec!["base".to_string()],
+                env: environment,
+                ..AgentLaunchCommand::default()
+            };
+            let managed_executable = PathBuf::from(format!("/managed/{}/cli", kind.id));
+            let option_arguments = kind.resume_options[0].args.clone();
+
+            let launch = build_new_thread_launch(
+                &kind,
+                &base,
+                &option_arguments,
+                Some(&managed_executable),
+            );
+
+            assert_eq!(
+                launch.command.command.as_deref(),
+                managed_executable.to_str()
+            );
+            assert_eq!(
+                launch.command.env.get("EXISTING").map(String::as_str),
+                Some("value")
+            );
+            let mut expected_prefix = vec!["base".to_string()];
+            expected_prefix.extend(option_arguments);
+            assert!(launch.command.args.starts_with(&expected_prefix));
+            let mut expected = launch.command.clone();
+            apply_self_update_policy(&mut expected, &kind);
+            assert_eq!(launch.command, expected);
+        }
+    }
+
+    #[test]
+    fn managed_claude_new_thread_keeps_its_generated_session_id() {
+        let kind = agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == "claude")
+            .expect("Claude should be registered");
+        let launch = build_new_thread_launch(
+            &kind,
+            &AgentLaunchCommand::default(),
+            &[],
+            Some(std::path::Path::new("/managed/claude")),
+        );
+
+        let session_id = launch
+            .session_id
+            .expect("Claude launch should have a session id");
+        assert!(launch.command.args.ends_with(&[
+            "--session-id".to_string(),
+            session_id.to_string(),
+        ]));
     }
 
     #[test]
