@@ -20,23 +20,22 @@ pub mod mock;
 pub mod ssh;
 pub mod wsl;
 
-const POSIX_TARGET_PROBE: &str = r#"
-os=$(uname -s) || exit 1
-arch=$(uname -m) || exit 1
-libc=none
-if [ "$os" = Linux ]; then
-    libc=unknown
-    if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
-        libc=glibc
-    else
-        ldd_output=$(ldd --version 2>&1)
-        case "$ldd_output" in
-            *musl*) libc=musl ;;
-        esac
-    fi
-fi
-printf '__FLINT_REMOTE_TARGET__\t%s\t%s\t%s\n' "$os" "$arch" "$libc"
-"#;
+// SSH cannot safely preserve multiline arguments through every supported login shell.
+const POSIX_TARGET_PROBE: &str = concat!(
+    "os=$(uname -s) || exit 1; ",
+    "arch=$(uname -m) || exit 1; ",
+    "libc=none; ",
+    "if [ \"$os\" = Linux ]; then ",
+    "libc=unknown; ",
+    "if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then ",
+    "libc=glibc; ",
+    "else ",
+    "ldd_output=$(ldd --version 2>&1); ",
+    "case \"$ldd_output\" in *musl*) libc=musl ;; esac; ",
+    "fi; ",
+    "fi; ",
+    "printf '__FLINT_REMOTE_TARGET__\\t%s\\t%s\\t%s\\n' \"$os\" \"$arch\" \"$libc\"",
+);
 
 fn posix_target_probe_command() -> (&'static str, [&'static str; 2]) {
     ("sh", ["-c", POSIX_TARGET_PROBE])
@@ -439,6 +438,17 @@ async fn which(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn posix_probe_command_arguments_are_single_line() {
+        let (_, arguments) = posix_target_probe_command();
+
+        assert!(
+            arguments
+                .iter()
+                .all(|argument| !argument.contains(['\n', '\r']))
+        );
+    }
 
     #[cfg(unix)]
     #[test]
