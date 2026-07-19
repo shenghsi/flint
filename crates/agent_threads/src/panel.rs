@@ -86,6 +86,10 @@ fn remote_credential_menu_policy(_kind: &AgentKindDefinition) -> RemoteCredentia
     }
 }
 
+fn show_explicit_managed_launch(managed_available: bool, through_flint: bool) -> bool {
+    managed_available && !through_flint
+}
+
 pub struct AgentThreadsPanel {
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
@@ -581,9 +585,16 @@ impl AgentThreadsPanel {
                 .and_then(|client| client.read(cx).platform())
                 .is_some_and(|platform| kind.release_for(platform).is_some())
         });
-        let managed_label = workspace.upgrade().map_or_else(
-            || SharedString::from(format!("New — Flint-managed {}", kind.label)),
-            |workspace| store::managed_agent_launch_label(workspace.read(cx), &kind, cx),
+        let through_flint = workspace.upgrade().is_some_and(|workspace| {
+            store::workspace_uses_through_flint(workspace.read(cx), cx)
+        });
+        let managed_label = show_explicit_managed_launch(managed_available, through_flint).then(
+            || {
+                workspace.upgrade().map_or_else(
+                    || SharedString::from(format!("New — Flint-managed {}", kind.label)),
+                    |workspace| store::managed_agent_launch_label(workspace.read(cx), &kind, cx),
+                )
+            },
         );
         let remote_available = workspace.upgrade().is_some_and(|workspace| {
             workspace
@@ -646,7 +657,7 @@ impl AgentThreadsPanel {
                     },
                 );
             }
-            if managed_available {
+            if let Some(managed_label) = managed_label {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
                 context_menu =
@@ -1459,6 +1470,14 @@ mod tests {
                 kind.id
             );
         }
+    }
+
+    #[test]
+    fn explicit_managed_launch_is_hidden_only_in_through_flint_mode() {
+        assert!(!show_explicit_managed_launch(true, true));
+        assert!(show_explicit_managed_launch(true, false));
+        assert!(!show_explicit_managed_launch(false, true));
+        assert!(!show_explicit_managed_launch(false, false));
     }
 
     fn init_test(cx: &mut TestAppContext) {

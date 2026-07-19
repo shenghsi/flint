@@ -902,6 +902,10 @@ fn current_remote_agent_route(
     RemoteAgentRoutingSettings::get_global(cx).route_for(&connection_options)
 }
 
+pub(crate) fn workspace_uses_through_flint(workspace: &Workspace, cx: &App) -> bool {
+    uses_managed_agent_route(current_remote_agent_route(workspace, cx))
+}
+
 struct NewThreadLaunch {
     command: AgentLaunchCommand,
     session_id: Option<SharedString>,
