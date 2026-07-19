@@ -1487,23 +1487,56 @@ async fn commit_staged_file(source: &Path, destination: &Path) -> Result<()> {
 fn rename_path_without_overwrite(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
 
-    let source = CString::new(source.as_os_str().as_bytes())?;
-    let destination = CString::new(destination.as_os_str().as_bytes())?;
+    let source_cstring = CString::new(source.as_os_str().as_bytes())?;
+    let destination_cstring = CString::new(destination.as_os_str().as_bytes())?;
     let result = unsafe {
         libc::syscall(
             libc::SYS_renameat2,
             libc::AT_FDCWD,
-            source.as_ptr(),
+            source_cstring.as_ptr(),
             libc::AT_FDCWD,
-            destination.as_ptr(),
+            destination_cstring.as_ptr(),
             libc::RENAME_NOREPLACE,
         )
     };
-    if result == 0 {
+    let result = if result == 0 {
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())
+    };
+    finish_no_replace_rename(source, destination, result)
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "android"))]
+fn finish_no_replace_rename(
+    source: &Path,
+    destination: &Path,
+    result: std::io::Result<()>,
+) -> std::io::Result<()> {
+    let error = match result {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    if !matches!(
+        error.raw_os_error(),
+        Some(libc::EINVAL | libc::ENOSYS | libc::EOPNOTSUPP)
+    ) {
+        return Err(error);
     }
+    if !std::fs::symlink_metadata(source)?.is_dir() {
+        return Err(error);
+    }
+    match std::fs::symlink_metadata(destination) {
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "destination already exists",
+            ));
+        }
+        Err(destination_error) if destination_error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(destination_error) => return Err(destination_error),
+    }
+    std::fs::rename(source, destination)
 }
 
 #[cfg(target_os = "macos")]
@@ -1561,6 +1594,14 @@ async fn remove_remote_path(path: &Path, recursive: bool, ignore_if_missing: boo
 #[cfg(test)]
 mod remote_management_tests {
     use super::*;
+
+    fn staged_directory() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let source = directory.path().join("staged");
+        let destination = directory.path().join("installed");
+        std::fs::create_dir(&source).expect("staged directory should be created");
+        (directory, source, destination)
+    }
 
     #[test]
     fn computes_sha256_without_a_remote_shell_utility() {
@@ -1657,5 +1698,130 @@ mod remote_management_tests {
                 b"verified"
             );
         });
+    }
+
+    #[test]
+    fn unsupported_no_replace_rename_falls_back_for_a_directory() {
+        let (_directory, source, destination) = staged_directory();
+        std::fs::write(source.join("agent"), b"verified")
+            .expect("staged executable should be written");
+
+        finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        )
+        .expect("unsupported no-replace rename should use the directory fallback");
+
+        assert!(!source.exists());
+        assert_eq!(
+            std::fs::read(destination.join("agent"))
+                .expect("committed executable should remain readable"),
+            b"verified"
+        );
+    }
+
+    #[test]
+    fn unsupported_no_replace_rename_does_not_fall_back_for_a_file() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let source = directory.path().join("staged");
+        let destination = directory.path().join("installed");
+        std::fs::write(&source, b"verified").expect("staged file should be written");
+
+        let error = finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        )
+        .expect_err("file source should retain the no-replace failure");
+
+        assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
+        assert!(source.exists());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn directory_fallback_rejects_an_existing_destination() {
+        let (_directory, source, destination) = staged_directory();
+        std::fs::write(source.join("agent"), b"verified")
+            .expect("staged executable should be written");
+        std::fs::create_dir(&destination).expect("destination directory should be created");
+
+        let error = finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        )
+        .expect_err("existing destination should reject the fallback");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(source.exists());
+        assert!(destination.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_fallback_rejects_a_dangling_destination_symlink() {
+        let (_directory, source, destination) = staged_directory();
+        std::os::unix::fs::symlink("missing-target", &destination)
+            .expect("destination symlink should be created");
+
+        let error = finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        )
+        .expect_err("destination symlink should reject the fallback");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(source.exists());
+        assert!(std::fs::symlink_metadata(&destination).is_ok());
+    }
+
+    #[test]
+    fn unrelated_no_replace_errors_do_not_use_the_fallback() {
+        let (_directory, source, destination) = staged_directory();
+
+        for error_code in [libc::EACCES, libc::EXDEV] {
+            let error = finish_no_replace_rename(
+                &source,
+                &destination,
+                Err(std::io::Error::from_raw_os_error(error_code)),
+            )
+            .expect_err("unrelated error should not use the fallback");
+            assert_eq!(error.raw_os_error(), Some(error_code));
+        }
+        assert!(source.exists());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn missing_no_replace_syscall_falls_back_for_a_directory() {
+        let (_directory, source, destination) = staged_directory();
+
+        finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::ENOSYS)),
+        )
+        .expect("missing no-replace syscall should use the directory fallback");
+
+        assert!(!source.exists());
+        assert!(destination.exists());
+    }
+
+    #[test]
+    fn unsupported_no_replace_filesystem_falls_back_for_a_directory() {
+        let (_directory, source, destination) = staged_directory();
+
+        finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
+        )
+        .expect("unsupported no-replace filesystem should use the directory fallback");
+
+        assert!(!source.exists());
+        assert!(destination.exists());
     }
 }
