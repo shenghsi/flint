@@ -121,8 +121,7 @@ pub struct CommandTemplate {
     pub env: HashMap<String, String>,
 }
 
-type RemotePortForwardCloser =
-    Box<dyn FnOnce() -> BoxFuture<'static, Result<()>> + Send + 'static>;
+type RemotePortForwardCloser = Box<dyn FnOnce() -> BoxFuture<'static, Result<()>> + Send + 'static>;
 
 pub struct RemotePortForward {
     remote_port: u16,
@@ -1553,20 +1552,16 @@ mod tests {
     #[gpui::test]
     async fn remote_port_forward_close_runs_closer_once(cx: &mut TestAppContext) {
         let close_count = Arc::new(AtomicUsize::new(0));
-        let forward = RemotePortForward::with_closer(
-            43123,
-            cx.background_executor.clone(),
-            {
-                let close_count = close_count.clone();
-                move || {
-                    async move {
-                        close_count.fetch_add(1, SeqCst);
-                        Ok(())
-                    }
-                    .boxed()
+        let forward = RemotePortForward::with_closer(43123, cx.background_executor.clone(), {
+            let close_count = close_count.clone();
+            move || {
+                async move {
+                    close_count.fetch_add(1, SeqCst);
+                    Ok(())
                 }
-            },
-        );
+                .boxed()
+            }
+        });
 
         forward.close().await.expect("close should succeed");
         cx.run_until_parked();
@@ -1577,20 +1572,16 @@ mod tests {
     #[gpui::test]
     async fn dropping_remote_port_forward_schedules_closer_once(cx: &mut TestAppContext) {
         let close_count = Arc::new(AtomicUsize::new(0));
-        let forward = RemotePortForward::with_closer(
-            43123,
-            cx.background_executor.clone(),
-            {
-                let close_count = close_count.clone();
-                move || {
-                    async move {
-                        close_count.fetch_add(1, SeqCst);
-                        Ok(())
-                    }
-                    .boxed()
+        let forward = RemotePortForward::with_closer(43123, cx.background_executor.clone(), {
+            let close_count = close_count.clone();
+            move || {
+                async move {
+                    close_count.fetch_add(1, SeqCst);
+                    Ok(())
                 }
-            },
-        );
+                .boxed()
+            }
+        });
 
         drop(forward);
         cx.run_until_parked();
@@ -1600,11 +1591,9 @@ mod tests {
 
     #[gpui::test]
     async fn remote_port_forward_close_propagates_failure(cx: &mut TestAppContext) {
-        let forward = RemotePortForward::with_closer(
-            43123,
-            cx.background_executor.clone(),
-            || async { Err(anyhow!("cancel failed")) }.boxed(),
-        );
+        let forward = RemotePortForward::with_closer(43123, cx.background_executor.clone(), || {
+            async { Err(anyhow!("cancel failed")) }.boxed()
+        });
 
         let error = forward.close().await.expect_err("close should fail");
 
