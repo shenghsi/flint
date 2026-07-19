@@ -614,7 +614,11 @@ impl RemoteConnection for SshRemoteConnection {
             }
         })
         .detach();
-        Ok(RemotePortForward::new(remote_port, process))
+        Ok(RemotePortForward::new(
+            remote_port,
+            process,
+            executor.clone(),
+        ))
     }
 
     async fn open_local_port_forward(

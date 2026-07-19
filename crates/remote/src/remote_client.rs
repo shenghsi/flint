@@ -121,16 +121,41 @@ pub struct CommandTemplate {
     pub env: HashMap<String, String>,
 }
 
+type RemotePortForwardCloser =
+    Box<dyn FnOnce() -> BoxFuture<'static, Result<()>> + Send + 'static>;
+
 pub struct RemotePortForward {
     remote_port: u16,
-    process: util::command::Child,
+    closer: Option<RemotePortForwardCloser>,
+    executor: BackgroundExecutor,
 }
 
 impl RemotePortForward {
-    pub fn new(remote_port: u16, process: util::command::Child) -> Self {
+    pub fn new(
+        remote_port: u16,
+        process: util::command::Child,
+        executor: BackgroundExecutor,
+    ) -> Self {
+        Self::with_closer(remote_port, executor, move || {
+            async move {
+                let mut process = process;
+                process.kill()?;
+                process.status().await?;
+                Ok(())
+            }
+            .boxed()
+        })
+    }
+
+    pub(crate) fn with_closer(
+        remote_port: u16,
+        executor: BackgroundExecutor,
+        closer: impl FnOnce() -> BoxFuture<'static, Result<()>> + Send + 'static,
+    ) -> Self {
         Self {
             remote_port,
-            process,
+            closer: Some(Box::new(closer)),
+            executor,
         }
     }
 
@@ -139,9 +164,25 @@ impl RemotePortForward {
     }
 
     pub async fn close(mut self) -> Result<()> {
-        self.process.kill()?;
-        self.process.status().await?;
-        Ok(())
+        let Some(closer) = self.closer.take() else {
+            return Ok(());
+        };
+        closer().await
+    }
+}
+
+impl Drop for RemotePortForward {
+    fn drop(&mut self) {
+        let Some(closer) = self.closer.take() else {
+            return;
+        };
+        self.executor
+            .spawn(async move {
+                if let Err(error) = closer().await {
+                    log::error!("failed to close remote port forward: {error}");
+                }
+            })
+            .detach();
     }
 }
 
@@ -1507,6 +1548,68 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use rpc::{ErrorCodeExt, proto::ErrorCode};
+    use std::sync::atomic::AtomicUsize;
+
+    #[gpui::test]
+    async fn remote_port_forward_close_runs_closer_once(cx: &mut TestAppContext) {
+        let close_count = Arc::new(AtomicUsize::new(0));
+        let forward = RemotePortForward::with_closer(
+            43123,
+            cx.background_executor.clone(),
+            {
+                let close_count = close_count.clone();
+                move || {
+                    async move {
+                        close_count.fetch_add(1, SeqCst);
+                        Ok(())
+                    }
+                    .boxed()
+                }
+            },
+        );
+
+        forward.close().await.expect("close should succeed");
+        cx.run_until_parked();
+
+        assert_eq!(close_count.load(SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn dropping_remote_port_forward_schedules_closer_once(cx: &mut TestAppContext) {
+        let close_count = Arc::new(AtomicUsize::new(0));
+        let forward = RemotePortForward::with_closer(
+            43123,
+            cx.background_executor.clone(),
+            {
+                let close_count = close_count.clone();
+                move || {
+                    async move {
+                        close_count.fetch_add(1, SeqCst);
+                        Ok(())
+                    }
+                    .boxed()
+                }
+            },
+        );
+
+        drop(forward);
+        cx.run_until_parked();
+
+        assert_eq!(close_count.load(SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn remote_port_forward_close_propagates_failure(cx: &mut TestAppContext) {
+        let forward = RemotePortForward::with_closer(
+            43123,
+            cx.background_executor.clone(),
+            || async { Err(anyhow!("cancel failed")) }.boxed(),
+        );
+
+        let error = forward.close().await.expect_err("close should fail");
+
+        assert_eq!(error.to_string(), "cancel failed");
+    }
 
     #[test]
     fn test_ssh_display_name_prefers_nickname() {
