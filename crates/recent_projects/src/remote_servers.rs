@@ -824,6 +824,28 @@ impl DefaultState {
         self.filtered_servers = Some(filter::run_sync(&self.filter_data, query));
     }
 
+    fn set_saved_agent_route(
+        &mut self,
+        target_index: SshServerIndex,
+        route: RemoteAgentRoute,
+    ) -> bool {
+        for server in &mut self.servers {
+            let RemoteEntry::Project {
+                connection: Connection::Ssh(connection),
+                index: ServerIndex::Ssh(index),
+                ..
+            } = server
+            else {
+                continue;
+            };
+            if *index == target_index {
+                connection.agent_route = Some(route);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Resolves [`filtered_servers`] (or the unfiltered source list) into a
     /// flat list of borrowed `RemoteEntry`s paired with their highlight
     /// positions. Rendering iterates this list rather than touching either
@@ -1821,7 +1843,7 @@ impl RemoteServerProjects {
         let connection_options = target.connection_options();
         let active_count = agent_threads::active_remote_agent_thread_count(&connection_options, cx);
         if active_count == 0 {
-            self.persist_agent_route(target, route, cx);
+            self.apply_and_persist_agent_route(target, route, cx);
             return;
         }
 
@@ -1854,7 +1876,7 @@ impl RemoteServerProjects {
                 })?;
                 close_task.await?;
                 remote_servers.update(cx, |this, cx| {
-                    this.persist_agent_route(target, route, cx);
+                    this.apply_and_persist_agent_route(target, route, cx);
                 })?;
                 anyhow::Ok(())
             }
@@ -1865,6 +1887,21 @@ impl RemoteServerProjects {
             result
         })
         .detach_and_log_err(cx);
+    }
+
+    fn apply_and_persist_agent_route(
+        &mut self,
+        target: AgentRouteTarget,
+        route: RemoteAgentRoute,
+        cx: &mut Context<Self>,
+    ) {
+        if let AgentRouteTarget::Saved { index, .. } = &target
+            && let Mode::Default(state) = &mut self.mode
+            && state.set_saved_agent_route(*index, route)
+        {
+            cx.notify();
+        }
+        self.persist_agent_route(target, route, cx);
     }
 
     fn persist_agent_route(
@@ -3410,11 +3447,6 @@ impl Render for RemoteServerProjects {
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window, cx);
             }))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                if matches!(this.mode, Mode::Default(_)) {
-                    cx.emit(DismissEvent)
-                }
-            }))
             .child(match &self.mode {
                 Mode::Default(state) => self
                     .render_default(state.clone(), window, cx)
@@ -3443,6 +3475,7 @@ impl Render for RemoteServerProjects {
 #[cfg(test)]
 mod filter_tests {
     use super::*;
+    use gpui::{Modifiers, point, px};
 
     fn ssh_config_entry(cx: &App, handle: &ScrollHandle, host: &'static str) -> RemoteEntry {
         RemoteEntry::SshConfig {
@@ -3488,5 +3521,86 @@ mod filter_tests {
             state.filter_sync("");
             assert!(state.filtered_servers.is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn remote_projects_content_does_not_own_outside_click_dismissal(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let dismissed = Arc::new(AtomicBool::new(false));
+        let dismissed_for_subscription = dismissed.clone();
+        let (remote_projects, cx) = cx.add_window_view(|window, cx| {
+            RemoteServerProjects::new(
+                false,
+                app_state.fs.clone(),
+                window,
+                WeakEntity::new_invalid(),
+                cx,
+            )
+        });
+        cx.update(|_, cx| {
+            cx.subscribe(&remote_projects, move |_, _: &DismissEvent, _| {
+                dismissed_for_subscription.store(true, atomic::Ordering::Release);
+            })
+            .detach();
+        });
+
+        drop(cx.update(|window, cx| window.draw(cx)));
+        let viewport_size = cx.update(|window, _| window.viewport_size());
+        cx.simulate_click(
+            point(viewport_size.width - px(1.), viewport_size.height - px(1.)),
+            Modifiers::none(),
+        );
+
+        assert!(!dismissed.load(atomic::Ordering::Acquire));
+    }
+
+    #[gpui::test]
+    fn saved_agent_route_updates_cached_row_in_place(cx: &mut App) {
+        let scroll_handle = ScrollHandle::new();
+        let open_folder = NavigableEntry::new(&scroll_handle, cx);
+        let original_focus_handle = open_folder.focus_handle.clone();
+        let servers = vec![RemoteEntry::Project {
+            open_folder,
+            projects: Vec::new(),
+            configure: NavigableEntry::new(&scroll_handle, cx),
+            connection: SshConnection {
+                host: "offline.example.com".to_string(),
+                ..Default::default()
+            }
+            .into(),
+            index: ServerIndex::Ssh(SshServerIndex(0)),
+        }];
+        let mut state = DefaultState {
+            scroll_handle: scroll_handle.clone(),
+            add_new_server: NavigableEntry::new(&scroll_handle, cx),
+            add_new_devcontainer: NavigableEntry::new(&scroll_handle, cx),
+            add_new_wsl: NavigableEntry::new(&scroll_handle, cx),
+            filter_data: Arc::new(FilterData::build(&servers)),
+            servers,
+            filtered_servers: None,
+        };
+
+        assert!(state.set_saved_agent_route(SshServerIndex(0), RemoteAgentRoute::ThroughFlint));
+
+        let RemoteEntry::Project {
+            open_folder,
+            connection: Connection::Ssh(connection),
+            ..
+        } = state.servers.first().expect("missing saved SSH connection")
+        else {
+            panic!("expected saved SSH connection");
+        };
+        assert_eq!(open_folder.focus_handle, original_focus_handle);
+        assert_eq!(
+            connection.effective_agent_route(),
+            RemoteAgentRoute::ThroughFlint
+        );
     }
 }
