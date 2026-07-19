@@ -121,7 +121,8 @@ pub struct CommandTemplate {
     pub env: HashMap<String, String>,
 }
 
-type RemotePortForwardCloser = Box<dyn FnOnce() -> BoxFuture<'static, Result<()>> + Send + 'static>;
+type RemotePortForwardCloser =
+    Box<dyn FnOnce() -> BoxFuture<'static, Result<()>> + Send + Sync + 'static>;
 
 pub struct RemotePortForward {
     remote_port: u16,
@@ -149,7 +150,7 @@ impl RemotePortForward {
     pub(crate) fn with_closer(
         remote_port: u16,
         executor: BackgroundExecutor,
-        closer: impl FnOnce() -> BoxFuture<'static, Result<()>> + Send + 'static,
+        closer: impl FnOnce() -> BoxFuture<'static, Result<()>> + Send + Sync + 'static,
     ) -> Self {
         Self {
             remote_port,
@@ -1548,6 +1549,13 @@ mod tests {
     use gpui::TestAppContext;
     use rpc::{ErrorCodeExt, proto::ErrorCode};
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn remote_port_forward_is_send_and_sync() {
+        fn assert_send_and_sync<T: Send + Sync>() {}
+
+        assert_send_and_sync::<RemotePortForward>();
+    }
 
     #[gpui::test]
     async fn remote_port_forward_close_runs_closer_once(cx: &mut TestAppContext) {
