@@ -585,17 +585,16 @@ impl AgentThreadsPanel {
                 .and_then(|client| client.read(cx).platform())
                 .is_some_and(|platform| kind.release_for(platform).is_some())
         });
-        let through_flint = workspace.upgrade().is_some_and(|workspace| {
-            store::workspace_uses_through_flint(workspace.read(cx), cx)
-        });
-        let managed_label = show_explicit_managed_launch(managed_available, through_flint).then(
-            || {
+        let through_flint = workspace
+            .upgrade()
+            .is_some_and(|workspace| store::workspace_uses_through_flint(workspace.read(cx), cx));
+        let managed_label =
+            show_explicit_managed_launch(managed_available, through_flint).then(|| {
                 workspace.upgrade().map_or_else(
                     || SharedString::from(format!("New — Flint-managed {}", kind.label)),
                     |workspace| store::managed_agent_launch_label(workspace.read(cx), &kind, cx),
                 )
-            },
-        );
+            });
         let remote_available = workspace.upgrade().is_some_and(|workspace| {
             workspace
                 .read(cx)

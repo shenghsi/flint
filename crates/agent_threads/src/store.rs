@@ -577,9 +577,7 @@ pub fn launch_new_thread(
             workspace,
             kind,
             extra_args,
-            Some(RequiredAgentRoute(
-                settings::RemoteAgentRoute::ThroughFlint,
-            )),
+            Some(RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint)),
             window,
             cx,
         ),
@@ -1007,9 +1005,7 @@ enum NewThreadLaunchRoute {
     ManagedThroughFlint,
 }
 
-fn new_thread_launch_route(
-    route: Option<settings::RemoteAgentRoute>,
-) -> NewThreadLaunchRoute {
+fn new_thread_launch_route(route: Option<settings::RemoteAgentRoute>) -> NewThreadLaunchRoute {
     if uses_managed_agent_route(route) {
         NewThreadLaunchRoute::ManagedThroughFlint
     } else {
@@ -1958,12 +1954,8 @@ mod tests {
             let managed_executable = PathBuf::from(format!("/managed/{}/cli", kind.id));
             let option_arguments = kind.resume_options[0].args.clone();
 
-            let launch = build_new_thread_launch(
-                &kind,
-                &base,
-                &option_arguments,
-                Some(&managed_executable),
-            );
+            let launch =
+                build_new_thread_launch(&kind, &base, &option_arguments, Some(&managed_executable));
 
             assert_eq!(
                 launch.command.command.as_deref(),
@@ -1998,10 +1990,12 @@ mod tests {
         let session_id = launch
             .session_id
             .expect("Claude launch should have a session id");
-        assert!(launch.command.args.ends_with(&[
-            "--session-id".to_string(),
-            session_id.to_string(),
-        ]));
+        assert!(
+            launch
+                .command
+                .args
+                .ends_with(&["--session-id".to_string(), session_id.to_string(),])
+        );
     }
 
     #[test]
