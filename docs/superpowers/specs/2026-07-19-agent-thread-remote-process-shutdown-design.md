@@ -1,7 +1,7 @@
 # Agent Thread Remote Process Shutdown Design
 
 **Date:** 2026-07-19  
-**Status:** Design approved; pending written-spec review
+**Status:** Approved for implementation
 
 ## Problem
 
@@ -18,7 +18,8 @@ closed, but still consumes remote resources and cannot be managed from Flint.
 
 ## Goals
 
-- Closing a remote Agent Thread explicitly terminates its remote agent process.
+- Closing a POSIX remote Agent Thread explicitly terminates its remote agent
+  process.
 - Give the agent a short opportunity to exit cleanly before forcing it.
 - Target only the process created for the closed Agent Thread and its children.
 - Keep Through-Flint egress alive while graceful shutdown is in progress.
@@ -33,6 +34,9 @@ closed, but still consumes remote resources and cannot be managed from Flint.
 - Guaranteeing remote termination while the SSH host is unreachable. Flint
   revokes local egress and reports the failure in that case.
 - Changing the existing SSH-disconnect or tunnel-restoration design.
+- Adding a Windows remote process supervisor. Windows keeps the graceful PTY
+  interruption and existing terminal teardown until a separately reviewed
+  platform-specific force-cleanup design is added.
 
 ## Considered Approaches
 
@@ -59,18 +63,21 @@ keeps the remote PTY and Codex process alive after the local SSH process exits.
 
 Every remote Agent Thread receives a random lifecycle UUID. Flint adds it to
 the agent environment as `FLINT_AGENT_THREAD_ID` and launches the agent through
-a fixed Flint-generated POSIX wrapper. Before replacing itself with the agent,
-the wrapper creates a user-private lifecycle directory and atomically records:
+a fixed Flint-generated POSIX supervisor. Before starting the agent as its
+foreground child, the supervisor creates a user-private lifecycle directory
+and atomically records:
 
 - the lifecycle UUID;
 - its process ID;
 - its process-group ID; and
 - the process start identity needed to reject PID reuse.
 
-The wrapper then uses `exec`, so the recorded process ID becomes the agent's
-process ID. Its process group is scoped to that interactive Agent Thread and
-contains commands launched by the agent unless those commands deliberately
-create a different session.
+The recorded process is the supervisor, whose process group is scoped to that
+interactive Agent Thread and contains the agent and commands it launches unless
+they deliberately create a different session. The supervisor waits for the
+agent and removes the lifecycle record on normal exit. Forced cleanup targets
+the validated process group rather than relying on the supervisor to run its
+exit handler.
 
 The record is stored below a mode-`0700` Flint runtime directory and written
 with mode `0600`. User-provided labels, paths, commands, and arguments are not
@@ -168,8 +175,9 @@ The focused Agent Threads tests run first. The full `agent_threads`, `terminal`,
 
 ## Acceptance Criteria
 
-- After closing a remote Agent Thread while SSH remains reachable, its recorded
-  agent PID no longer exists after the bounded shutdown interval.
+- After closing a POSIX remote Agent Thread while SSH remains reachable, its
+  recorded supervisor PID no longer exists after the bounded shutdown
+  interval.
 - A graceful Codex exit completes without the force cleanup path.
 - A non-responsive test agent is force-terminated without affecting another
   concurrent Agent Thread.
