@@ -652,9 +652,7 @@ pub fn launch_credential_command(
                         summary,
                         command,
                         None,
-                        Some(RequiredAgentRoute(
-                            settings::RemoteAgentRoute::ThroughFlint,
-                        )),
+                        Some(RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint)),
                         window,
                         cx,
                     )
@@ -917,10 +915,7 @@ fn build_managed_resume_command(
     Some(command)
 }
 
-fn build_credential_command(
-    base: &AgentLaunchCommand,
-    arguments: &[&str],
-) -> AgentLaunchCommand {
+fn build_credential_command(base: &AgentLaunchCommand, arguments: &[&str]) -> AgentLaunchCommand {
     let mut command = base.clone();
     command.args = arguments
         .iter()
@@ -1896,12 +1891,8 @@ mod tests {
             let managed_executable = PathBuf::from(format!("/managed/{}/cli", kind.id));
             let arguments = kind.credential_policy().logout_arguments;
 
-            let command = build_managed_credential_command(
-                &kind,
-                &base,
-                arguments,
-                &managed_executable,
-            );
+            let command =
+                build_managed_credential_command(&kind, &base, arguments, &managed_executable);
 
             assert_eq!(command.command.as_deref(), managed_executable.to_str());
             assert_eq!(
