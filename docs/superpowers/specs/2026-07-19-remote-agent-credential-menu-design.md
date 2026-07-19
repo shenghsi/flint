@@ -1,7 +1,7 @@
 # Remote Agent Credential Menu and Sign-Out Design
 
 **Date:** 2026-07-19  
-**Status:** Approved for implementation
+**Status:** Implemented and automatically verified
 
 ## Problem
 
@@ -88,3 +88,22 @@ test remote.
 - Launching Flint-managed Claude remains unchanged.
 - No live Claude process or provider request is used for validation in this
   iteration.
+
+## Implementation Verification
+
+Implemented on 2026-07-19. The remote credential menus now expose only
+sign-out for Codex and Claude. Through-Flint sign-out prepares the pinned
+managed executable and requires the Through-Flint route; Not-through-Flint
+sign-out retains the configured command.
+
+Verification completed with:
+
+- `cargo test -p agent_threads credential_command` — 3 passed;
+- `cargo test -p agent_threads codex_and_claude_remote_credential_menus_only_offer_sign_out` — 1 passed;
+- `cargo test -p agent_threads` — 151 passed;
+- `cargo fmt --all -- --check` — passed; and
+- `./script/clippy -p agent_threads` — passed with warnings denied.
+
+These automated tests construct Claude command values but do not launch Claude
+or contact Anthropic. Live Claude validation remains deferred to the separate
+remote selected by the user.

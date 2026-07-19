@@ -29,7 +29,7 @@
 - Consumes: `AgentKindDefinition::id` and the existing `remote_available` menu condition.
 - Produces: `remote_credential_menu_policy(kind: &AgentKindDefinition) -> RemoteCredentialMenuPolicy`, used only by remote credential menu rendering.
 
-- [ ] **Step 1: Write the failing menu-policy test**
+- [x] **Step 1: Write the failing menu-policy test**
 
 Add a pure policy value with four named booleans to the test expectation, before defining it in production code:
 
@@ -52,7 +52,7 @@ fn codex_and_claude_remote_credential_menus_only_offer_sign_out() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -62,7 +62,7 @@ cargo test -p agent_threads codex_and_claude_remote_credential_menus_only_offer_
 
 Expected: compilation fails because `RemoteCredentialMenuPolicy` and `remote_credential_menu_policy` do not exist.
 
-- [ ] **Step 3: Add the minimal policy and apply it to menu rendering**
+- [x] **Step 3: Add the minimal policy and apply it to menu rendering**
 
 Define the private copyable policy beside the panel menu helpers:
 
@@ -87,7 +87,7 @@ fn remote_credential_menu_policy(_kind: &AgentKindDefinition) -> RemoteCredentia
 
 In `deploy_new_thread_options_menu`, compute the policy inside `remote_available`, add the credential-section separator once, and guard each existing entry with its corresponding field. This preserves the sign-out confirmation copy and call site while hiding the other three actions for both registered kinds.
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Run:
 
@@ -97,7 +97,7 @@ cargo test -p agent_threads codex_and_claude_remote_credential_menus_only_offer_
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the menu slice**
+- [x] **Step 5: Commit the menu slice**
 
 ```bash
 git add crates/agent_threads/src/panel.rs
@@ -117,7 +117,7 @@ git commit -m "Simplify remote agent credential menus"
 - Consumes: `current_remote_agent_route`, `prepare_managed_agent`, `spawn_thread_task_for_route`, `RequiredAgentRoute`, `AgentCredentialPolicy::logout_arguments`, and `apply_self_update_policy`.
 - Produces: `build_credential_command(base: &AgentLaunchCommand, arguments: &[&str]) -> AgentLaunchCommand`, `build_managed_credential_command(kind: &AgentKindDefinition, base: &AgentLaunchCommand, arguments: &[&str], managed_executable: &std::path::Path) -> AgentLaunchCommand`, and `uses_managed_credential_command(route: Option<RemoteAgentRoute>) -> bool`.
 
-- [ ] **Step 1: Write failing command-selection tests**
+- [x] **Step 1: Write failing command-selection tests**
 
 Add tests that use only pure command values and pinned-path fixtures:
 
@@ -177,7 +177,7 @@ fn only_through_flint_credential_commands_use_managed_provisioning() {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -187,7 +187,7 @@ cargo test -p agent_threads credential_command
 
 Expected: compilation fails because the three helper functions do not exist.
 
-- [ ] **Step 3: Implement pure command construction**
+- [x] **Step 3: Implement pure command construction**
 
 Add the helpers near the existing resume command builders:
 
@@ -221,13 +221,13 @@ fn uses_managed_credential_command(route: Option<settings::RemoteAgentRoute>) ->
 }
 ```
 
-- [ ] **Step 4: Make credential launch route-aware**
+- [x] **Step 4: Make credential launch route-aware**
 
 Update `launch_credential_command` to read the selected route before launching. For Not-through-Flint or no remote route, build the configured command and pass the captured route as `RequiredAgentRoute` to `spawn_thread_task_for_route`.
 
 For Through Flint, call `prepare_managed_agent`. On `Ready`, set the existing progress notification to `ManagedAgentProgressState::Launching`, construct the command with `build_managed_credential_command`, dismiss the managed-agent notification, and call `spawn_thread_task_for_route` with `Some(RequiredAgentRoute(RemoteAgentRoute::ThroughFlint))`. Await the returned launch task so transport errors reach `workspace.show_error`. Treat `Cancelled` and `AlreadyInProgress` the same way as `launch_managed_thread`: do not launch another command. Preserve all existing provisioning progress and confirmation behavior.
 
-- [ ] **Step 5: Run focused and crate tests and verify GREEN**
+- [x] **Step 5: Run focused and crate tests and verify GREEN**
 
 Run:
 
@@ -238,7 +238,7 @@ cargo test -p agent_threads
 
 Expected: all tests pass; no provider CLI is launched.
 
-- [ ] **Step 6: Commit the managed sign-out slice**
+- [x] **Step 6: Commit the managed sign-out slice**
 
 ```bash
 git add crates/agent_threads/src/store.rs
@@ -257,7 +257,7 @@ git commit -m "Route remote agent sign-out through Flint"
 - Consumes: the completed menu and command-routing behavior from Tasks 1 and 2.
 - Produces: an implementation record with automated verification results and an explicit live-Claude deferral.
 
-- [ ] **Step 1: Run repository checks**
+- [x] **Step 1: Run repository checks**
 
 Run:
 
@@ -269,11 +269,11 @@ git diff --check
 
 Expected: all commands exit successfully.
 
-- [ ] **Step 2: Record completion without claiming live Claude validation**
+- [x] **Step 2: Record completion without claiming live Claude validation**
 
 Change the design status to `Implemented and automatically verified`; record the focused test, full crate test, formatting, and clippy results. Mark every completed plan checkbox. State explicitly that live Claude remote validation remains pending on the separate remote.
 
-- [ ] **Step 3: Commit the verification record**
+- [x] **Step 3: Commit the verification record**
 
 ```bash
 git add docs/superpowers/specs/2026-07-19-remote-agent-credential-menu-design.md docs/superpowers/plans/2026-07-19-remote-agent-credential-menu-implementation.md
