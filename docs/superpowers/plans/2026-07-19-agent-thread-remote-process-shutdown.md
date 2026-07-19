@@ -41,7 +41,7 @@
 - Consumes: `AgentLaunchCommand`, `remote::RemoteConnection`, `remote::Interactive`, and `remote::ConnectionSharing`.
 - Produces: `RemoteAgentProcess::prepare(command, connection, lifecycle_id) -> anyhow::Result<Self>` and `RemoteAgentProcess::force_terminate(&self) -> impl Future<Output = anyhow::Result<()>>`.
 
-- [ ] **Step 1: Write failing lifecycle-wrapper tests**
+- [x] **Step 1: Write failing lifecycle-wrapper tests**
 
 Add the module declaration and these tests before defining the production types:
 
@@ -100,7 +100,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -110,7 +110,7 @@ cargo test -p agent_threads remote_process::tests --lib
 
 Expected: compilation fails because `remote_process`, `wrap_remote_launch`, and `cleanup_request` do not exist.
 
-- [ ] **Step 3: Implement lifecycle IDs and fixed command descriptions**
+- [x] **Step 3: Implement lifecycle IDs and fixed command descriptions**
 
 Declare `mod remote_process;` in `agent_threads.rs`. In the new module, add these exact boundaries:
 
@@ -254,7 +254,7 @@ fn cleanup_request(lifecycle_id: &str) -> Result<CleanupRequest> {
 Keep both fixed scripts in `remote_process.rs`; they form one lifecycle
 component and do not justify separate shell asset files.
 
-- [ ] **Step 4: Add controller execution using shared SSH**
+- [x] **Step 4: Add controller execution using shared SSH**
 
 Add:
 
@@ -309,7 +309,7 @@ impl RemoteAgentProcess {
 
 Never log command environments or lifecycle record contents.
 
-- [ ] **Step 5: Run tests and verify GREEN**
+- [x] **Step 5: Run tests and verify GREEN**
 
 Run:
 
@@ -319,7 +319,7 @@ cargo test -p agent_threads remote_process::tests --lib
 
 Expected: all lifecycle-wrapper and cleanup-request tests pass.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```bash
 git add crates/agent_threads/src/agent_threads.rs crates/agent_threads/src/remote_process.rs
@@ -338,7 +338,7 @@ git commit -m "agent_threads: Track remote agent processes"
 - Consumes: `RemoteAgentProcess::force_terminate()` from Task 1.
 - Produces: `wait_for_graceful_exit_or_force(completion, timeout, force) -> anyhow::Result<ShutdownOutcome>` and `ShutdownOutcome::{Graceful, Forced}`.
 
-- [ ] **Step 1: Write failing shutdown-race tests**
+- [x] **Step 1: Write failing shutdown-race tests**
 
 ```rust
 #[gpui::test]
@@ -384,7 +384,7 @@ async fn timeout_runs_force_cleanup_once(cx: &mut gpui::TestAppContext) {
 }
 ```
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -394,7 +394,7 @@ cargo test -p agent_threads remote_process::tests --lib
 
 Expected: compilation fails because the shutdown policy and outcome do not exist.
 
-- [ ] **Step 3: Implement the minimal race policy**
+- [x] **Step 3: Implement the minimal race policy**
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -427,7 +427,7 @@ where
 }
 ```
 
-- [ ] **Step 4: Run tests and verify GREEN**
+- [x] **Step 4: Run tests and verify GREEN**
 
 Run:
 
@@ -437,7 +437,7 @@ cargo test -p agent_threads remote_process::tests --lib
 
 Expected: every `remote_process` test passes.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add crates/agent_threads/src/remote_process.rs
@@ -456,7 +456,7 @@ git commit -m "agent_threads: Define bounded agent shutdown"
 - Consumes: `RemoteAgentProcess::prepare()` from Task 1.
 - Produces: `ThreadEntry.remote_process: Option<RemoteAgentProcess>` and a wrapped `SpawnInTerminal` command for every non-Windows remote Agent Thread.
 
-- [ ] **Step 1: Write a failing launch-preparation test**
+- [x] **Step 1: Write a failing launch-preparation test**
 
 Extract a small helper whose desired API is:
 
@@ -497,7 +497,7 @@ fn local_agent_launch_is_not_wrapped() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -507,7 +507,7 @@ cargo test -p agent_threads prepare_remote_thread_process --lib
 
 Expected: compilation fails because the helper and `ThreadEntry.remote_process` do not exist.
 
-- [ ] **Step 3: Prepare the process after preserving the visible command label**
+- [x] **Step 3: Prepare the process after preserving the visible command label**
 
 In `spawn_thread_task_for_route`, retain a clone of the remote connection for process control. Pass it through both routing branches into `spawn_thread_task_inner`. In `spawn_thread_task_inner`:
 
@@ -536,7 +536,7 @@ Store the strong terminal entity intentionally: it keeps process control alive a
 
 For Windows remotes, leave the command unwrapped and return `None`; direct terminal interruption still occurs, but targeted POSIX force cleanup is unavailable.
 
-- [ ] **Step 4: Run launch and existing routing tests**
+- [x] **Step 4: Run launch and existing routing tests**
 
 Run:
 
@@ -546,7 +546,7 @@ cargo test -p agent_threads store::tests --lib
 
 Expected: all store tests pass, including managed resume, Through-Flint environment, and the new launch-preparation cases.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add crates/agent_threads/src/store.rs
@@ -565,7 +565,7 @@ git commit -m "agent_threads: Register remote process ownership"
 - Consumes: `ThreadEntry.terminal`, `ThreadEntry.remote_process`, `ThreadEntry.egress`, and `wait_for_graceful_exit_or_force()`.
 - Produces: `AgentThreadStore::begin_shutdown(terminal_item_id, cx) -> Option<Task<Result<()>>>` used by both release observation and `close_threads_for_connection`.
 
-- [ ] **Step 1: Write failing single-owner and lease-order tests**
+- [x] **Step 1: Write failing single-owner and lease-order tests**
 
 Introduce a focused shutdown resource type and test its ownership independently of workspace UI setup:
 
@@ -636,7 +636,7 @@ fn repeated_shutdown_cannot_take_the_same_entry() {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -646,7 +646,7 @@ cargo test -p agent_threads retain_resource_until_shutdown repeated_shutdown --l
 
 Expected: compilation fails because `ThreadShutdown`, the resource helper, and `begin_shutdown` do not exist.
 
-- [ ] **Step 3: Implement `ThreadShutdown::run`**
+- [x] **Step 3: Implement `ThreadShutdown::run`**
 
 Use the existing terminal completion and PTY APIs:
 
@@ -694,7 +694,7 @@ Move `terminal`, `remote_process`, and `egress` into the spawned future exactly
 as shown so no entity borrow crosses an `await`. Propagate both entity-update
 and cleanup errors with `?`.
 
-- [ ] **Step 4: Implement one-shot store shutdown and detached error reporting**
+- [x] **Step 4: Implement one-shot store shutdown and detached error reporting**
 
 Add the one-shot helper used by `begin_shutdown`:
 
@@ -715,7 +715,7 @@ The `TerminalView` release observer calls `begin_shutdown`, then awaits the retu
 
 Do not drop the returned task: GPUI cancels work when a `Task` is dropped.
 
-- [ ] **Step 5: Make route-change close await the same shutdown**
+- [x] **Step 5: Make route-change close await the same shutdown**
 
 For each entry in `close_threads_for_connection`:
 
@@ -726,7 +726,7 @@ For each entry in `close_threads_for_connection`:
 
 This ordering removes the UI immediately, prevents the release observer from starting duplicate cleanup, and keeps the route-change operation pending until the old process and egress lease are settled.
 
-- [ ] **Step 6: Run focused and full Agent Threads tests**
+- [x] **Step 6: Run focused and full Agent Threads tests**
 
 Run:
 
@@ -737,7 +737,7 @@ cargo test -p agent_threads --lib
 
 Expected: all Agent Threads tests pass; the new tests observe one shutdown and correct resource ordering.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add crates/agent_threads/src/store.rs
@@ -756,7 +756,7 @@ git commit -m "agent_threads: Stop agents when threads close"
 - Consumes: completed lifecycle, launch, and shutdown behavior from Tasks 1-4.
 - Produces: verified formatting, lint, tests, app bundle, and implementation-status documentation.
 
-- [ ] **Step 1: Run formatting and focused lint**
+- [x] **Step 1: Run formatting and focused lint**
 
 ```bash
 cargo fmt --all -- --check
@@ -765,7 +765,7 @@ cargo fmt --all -- --check
 
 Expected: both commands exit zero with no new warnings.
 
-- [ ] **Step 2: Run affected crate suites**
+- [x] **Step 2: Run affected crate suites**
 
 ```bash
 cargo test -p agent_threads --lib
@@ -776,7 +776,7 @@ cargo test -p remote --lib
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Build the local app bundle**
+- [x] **Step 3: Build the local app bundle**
 
 ```bash
 ./script/bundle-tmp-app
@@ -784,11 +784,11 @@ Expected: all tests pass.
 
 Expected: `/tmp/Flint-Local.app` contains the fresh build. If the documented debug `sign_binary` step fails after the bundle was built, copy `target/<target-triple>/debug/bundle/osx/Flint.app` to a new temporary path, preserve the old `/tmp/Flint-Local.app` by renaming it, then copy the fresh bundle into place.
 
-- [ ] **Step 4: Perform the remote acceptance check**
+- [x] **Step 4: Perform the remote acceptance check**
 
 Open a POSIX SSH project, launch two Agent Threads, record their remote lifecycle PIDs without printing environment values, close one thread, and confirm within three seconds that only its PID and process group are gone. Confirm the other thread still answers and retains its proxy route. Repeat once with `Not through Flint`.
 
-- [ ] **Step 5: Mark documentation implemented and commit**
+- [x] **Step 5: Mark documentation implemented and commit**
 
 Change the design status to `Implemented and verified`, check every completed plan checkbox, then run `git diff --check`.
 

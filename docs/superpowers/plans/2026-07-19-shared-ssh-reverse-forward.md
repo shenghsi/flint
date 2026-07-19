@@ -30,7 +30,7 @@
 - Consumes: `gpui::BackgroundExecutor`, `futures::future::BoxFuture<'static, anyhow::Result<()>>`.
 - Produces: `RemotePortForward::with_closer(remote_port, executor, closer)` and exactly-once explicit/drop cleanup.
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 Add `AtomicUsize` to the test-only atomic imports. Add GPUI tests that use an
 `Arc<AtomicUsize>` closer rather than a subprocess:
@@ -41,7 +41,7 @@ async fn remote_port_forward_close_runs_closer_once(cx: &mut TestAppContext) {
     let close_count = Arc::new(AtomicUsize::new(0));
     let forward = RemotePortForward::with_closer(
         43123,
-        cx.background_executor().clone(),
+        cx.background_executor.clone(),
         {
             let close_count = close_count.clone();
             move || {
@@ -65,7 +65,7 @@ async fn dropping_remote_port_forward_schedules_closer_once(cx: &mut TestAppCont
     let close_count = Arc::new(AtomicUsize::new(0));
     let forward = RemotePortForward::with_closer(
         43123,
-        cx.background_executor().clone(),
+        cx.background_executor.clone(),
         {
             let close_count = close_count.clone();
             move || {
@@ -87,7 +87,7 @@ async fn dropping_remote_port_forward_schedules_closer_once(cx: &mut TestAppCont
 
 Add a third test whose closer returns `Err(anyhow!("cancel failed"))` and assert that `close().await` returns that error.
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -97,7 +97,7 @@ cargo test -p remote remote_port_forward_
 
 Expected: compilation fails because `RemotePortForward::with_closer` does not exist.
 
-- [ ] **Step 3: Implement the minimal owned closer**
+- [x] **Step 3: Implement the minimal owned closer**
 
 Replace the process-only field with:
 
@@ -154,7 +154,7 @@ impl Drop for RemotePortForward {
 }
 ```
 
-- [ ] **Step 4: Run focused and crate tests and verify GREEN**
+- [x] **Step 4: Run focused and crate tests and verify GREEN**
 
 Run:
 
@@ -165,7 +165,7 @@ cargo test -p remote
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/remote/src/remote_client.rs
@@ -184,7 +184,7 @@ git commit -m "remote: Own asynchronous port-forward cleanup"
 - Consumes: `SshSocket::ssh_command_options(ConnectionSharing::Shared)`.
 - Produces: `reverse_port_forward_arguments`, `cancel_reverse_port_forward_arguments`, and `parse_allocated_remote_forward_port` behavior used by Task 3.
 
-- [ ] **Step 1: Replace the old dedicated-command expectation with failing POSIX tests**
+- [x] **Step 1: Replace the old dedicated-command expectation with failing POSIX tests**
 
 Rename `reverse_forward_is_dedicated_and_loopback_only` to `reverse_forward_uses_shared_master_and_is_loopback_only`. Assert that creation contains:
 
@@ -210,7 +210,7 @@ assert_eq!(parse_allocated_remote_forward_port("not-a-port\n"), None);
 
 Keep the local-forward test unchanged and still expecting `ControlPath=none`.
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -221,7 +221,7 @@ cargo test -p remote transport::ssh::tests::parses_only_the_allocated_reverse_fo
 
 Expected: creation still contains `ControlPath=none`, cancellation helper is missing, and bare allocated-port output is rejected.
 
-- [ ] **Step 3: Implement platform-specific argument builders and parsing**
+- [x] **Step 3: Implement platform-specific argument builders and parsing**
 
 On non-Windows platforms, build creation with `ConnectionSharing::Shared`, `-O forward`, `ExitOnForwardFailure=yes`, and the loopback dynamic `-R` request. Build cancellation with the same shared options, `-O cancel`, and the identical `-R` request.
 
@@ -229,7 +229,7 @@ Retain the existing dedicated `-N -T -v` creation arguments under `#[cfg(windows
 
 Update port parsing to accept either trimmed bare `u16` output from `ssh -O forward` or the existing verbose `Allocated port ...` diagnostic used by the Windows path. Reject zero and out-of-range values.
 
-- [ ] **Step 4: Run focused and crate tests and verify GREEN**
+- [x] **Step 4: Run focused and crate tests and verify GREEN**
 
 Run:
 
@@ -241,7 +241,7 @@ cargo test -p remote
 
 Expected: all tests pass; the existing local-forward test still proves callback routing is dedicated.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/remote/src/transport/ssh.rs
@@ -260,7 +260,7 @@ git commit -m "remote: Define shared SSH reverse forwarding"
 - Consumes: Task 1's `RemotePortForward::with_closer` and Task 2's creation/cancellation argument builders.
 - Produces: `SshRemoteConnection::open_reverse_port_forward` using the existing project ControlMaster on macOS/Linux.
 
-- [ ] **Step 1: Add failing command-result tests at an extracted helper seam**
+- [x] **Step 1: Add failing command-result tests at an extracted helper seam**
 
 Extract a pure result parser and add these POSIX-only tests. Import
 `std::os::unix::process::ExitStatusExt` in the test module and construct output
@@ -296,7 +296,7 @@ fn shared_reverse_forward_result_surfaces_redacted_ssh_failure() {
 
 Use the crate's platform-appropriate `ExitStatusExt` helpers inside the test module. Add a malformed-success case and assert it reports that OpenSSH returned no valid remote port.
 
-- [ ] **Step 2: Run the helper tests and verify RED**
+- [x] **Step 2: Run the helper tests and verify RED**
 
 Run:
 
@@ -306,7 +306,7 @@ cargo test -p remote shared_reverse_forward_result_
 
 Expected: compilation fails because `shared_reverse_forward_port` does not exist.
 
-- [ ] **Step 3: Implement one-shot POSIX creation and cancellation**
+- [x] **Step 3: Implement one-shot POSIX creation and cancellation**
 
 For non-Windows clients:
 
@@ -331,7 +331,7 @@ For Windows, preserve the existing verbose, long-lived dedicated child and const
 
 Do not log the `Command` value or environment in either path.
 
-- [ ] **Step 4: Run focused and regression tests and verify GREEN**
+- [x] **Step 4: Run focused and regression tests and verify GREEN**
 
 Run:
 
@@ -345,7 +345,7 @@ cargo test -p agent_threads
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/remote/src/transport/ssh.rs crates/remote/src/remote_client.rs
@@ -363,7 +363,7 @@ git commit -m "remote: Route reverse forwards through shared SSH"
 - Consumes: completed implementation from Tasks 1-3.
 - Produces: formatted, linted, tested code and a fresh `/tmp/Flint-Local.app` for live validation.
 
-- [ ] **Step 1: Run formatting and lint checks**
+- [x] **Step 1: Run formatting and lint checks**
 
 Run:
 
@@ -374,7 +374,7 @@ cargo fmt --all -- --check
 
 Expected: both commands succeed with no warnings.
 
-- [ ] **Step 2: Run final regression tests**
+- [x] **Step 2: Run final regression tests**
 
 Run:
 
@@ -385,7 +385,7 @@ cargo test -p agent_threads
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Build and install the local test app**
+- [x] **Step 3: Build and install the local test app**
 
 Run:
 
@@ -401,7 +401,7 @@ cp -R target/aarch64-apple-darwin/debug/bundle/osx/Flint.app /tmp/Flint-Local.ap
 
 Compare SHA-256 hashes of the target and `/tmp` executables before claiming the app is current.
 
-- [ ] **Step 4: Perform live acceptance on the load-balanced host**
+- [x] **Step 4: Perform live acceptance on the load-balanced host**
 
 Open a project Through Flint, launch Flint-managed Codex, and verify without printing proxy credentials:
 
@@ -411,7 +411,7 @@ pgrep -af codex
 
 Use the existing shared SSH ControlPath to confirm the advertised proxy port is listening on the same `hostname` as the remote project. Send a Codex prompt and confirm there is no WebSocket/HTTPS `Connection refused`. Close the Agent Thread and confirm both the Codex PID and reverse listener disappear after bounded cleanup.
 
-- [ ] **Step 5: Mark the plan complete and commit documentation state**
+- [x] **Step 5: Mark the plan complete and commit documentation state**
 
 Update the checkboxes in this file only after each command or live check succeeds, then run:
 
