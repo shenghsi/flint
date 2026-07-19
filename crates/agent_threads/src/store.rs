@@ -1,24 +1,33 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
+use futures::StreamExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, EventEmitter, Global, SharedString,
-    Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
+    App, AppContext as _, Context, Entity, EntityId, EventEmitter, Global, PromptLevel,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use task::{RevealStrategy, RevealTarget, Shell, SpawnInTerminal};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use util::ResultExt as _;
+use workspace::notifications::NotificationId;
 use workspace::{MultiWorkspace, SaveIntent, Workspace, WorkspaceId};
 
 use crate::{
     AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread,
     RemoteAgentRoutingSettings, agent_kind_registry,
+    artifact_cache::AgentArtifactCache,
     egress::{AgentEgressLease, AgentEgressManager},
     managed_agent::{CachedAgentArtifactSource, ManagedAgentProvisioner, RemoteClientAgentHost},
+    managed_agent_progress::{
+        ManagedAgentProgressEvent, ManagedAgentProgressNotification, ManagedAgentProgressReporter,
+        ManagedAgentProgressState, ManagedAgentProvisioningCoordinator,
+        ManagedAgentProvisioningKey, ManagedAgentProvisioningOwner,
+    },
     resolve_default_launch_args,
 };
 
@@ -133,6 +142,9 @@ pub struct AgentThreadStore {
     restore_attempted: HashSet<WorkspaceId>,
     egress_manager: std::sync::Arc<AgentEgressManager>,
     route_changes: HashSet<remote::RemoteConnectionIdentity>,
+    agent_artifact_cache: Option<Arc<AgentArtifactCache>>,
+    managed_provisioning:
+        ManagedAgentProvisioningCoordinator<Entity<ManagedAgentProgressNotification>>,
 }
 
 struct ThreadEntry {
@@ -159,6 +171,8 @@ impl AgentThreadStore {
             restore_attempted: HashSet::default(),
             egress_manager: std::sync::Arc::new(AgentEgressManager::new()),
             route_changes: HashSet::default(),
+            agent_artifact_cache: None,
+            managed_provisioning: ManagedAgentProvisioningCoordinator::default(),
         });
         cx.set_global(GlobalAgentThreadStore(store));
     }
@@ -682,25 +696,153 @@ pub fn launch_managed_thread(
         );
         return;
     };
+    let Some(remote_connection) = remote_client.read(cx).remote_connection() else {
+        workspace.show_error(&anyhow!("remote connection is unavailable"), cx);
+        return;
+    };
+    let key = ManagedAgentProvisioningKey {
+        remote_identity: remote::remote_connection_identity(
+            &remote_connection.connection_options(),
+        ),
+        agent_id: kind.id,
+        version: release.version,
+        platform,
+    };
+    let notification =
+        cx.new(|cx| ManagedAgentProgressNotification::new(kind.label.clone(), release.version, cx));
+    let store = AgentThreadStore::global(cx);
+    let owner = match store.update(cx, |store, _| {
+        store
+            .managed_provisioning
+            .begin(key.clone(), notification.clone())
+    }) {
+        Ok(owner) => owner,
+        Err(active_notification) => {
+            show_managed_agent_progress(
+                workspace,
+                kind.id,
+                release.version,
+                active_notification,
+                cx,
+            );
+            return;
+        }
+    };
+    show_managed_agent_progress(
+        workspace,
+        kind.id,
+        release.version,
+        notification.clone(),
+        cx,
+    );
     let remote_host = match RemoteClientAgentHost::new(remote_client.read(cx)) {
         Ok(remote_host) => remote_host,
         Err(error) => {
+            finish_managed_agent_provisioning(&store, owner, cx);
+            workspace
+                .dismiss_notification(&managed_agent_notification_id(kind.id, release.version), cx);
             workspace.show_error(&error, cx);
             return;
         }
     };
-    let artifacts = CachedAgentArtifactSource::new(
-        project.read(cx).http_client(),
+    let http_client = project.read(cx).http_client();
+    let artifact_cache = store.update(cx, |store, _| {
+        store
+            .agent_artifact_cache
+            .get_or_insert_with(|| Arc::new(AgentArtifactCache::for_app(http_client)))
+            .clone()
+    });
+    let (progress_reporter, mut progress_receiver) = ManagedAgentProgressReporter::channel();
+    let artifacts = CachedAgentArtifactSource::from_cache_with_progress(
+        artifact_cache.clone(),
         kind.official_source_prefixes(),
+        {
+            let progress_reporter = progress_reporter.clone();
+            move |progress| {
+                progress_reporter.report(ManagedAgentProgressEvent::Download(progress));
+            }
+        },
     );
     let provisioner = ManagedAgentProvisioner::new(artifacts, remote_host);
+    let progress_task = cx.spawn({
+        let notification = notification.clone();
+        async move |_workspace, cx| {
+            while let Some(event) = progress_receiver.next().await {
+                notification.update(cx, |notification, cx| {
+                    notification.apply_event(event, cx);
+                });
+            }
+        }
+    });
     let kind = kind.clone();
     let extra_args = extra_args.to_vec();
+    let notification_id = managed_agent_notification_id(kind.id, release.version);
 
     cx.spawn_in(window, async move |workspace, cx| {
-        match provisioner.install(kind.id, &release).await {
-            Ok(installation) => {
+        let result = async {
+            let release_is_cached = artifact_cache.release_is_cached(&release).await?;
+            if !release_is_cached {
+                notification.update(cx, |notification, cx| {
+                    notification.set_state(
+                        ManagedAgentProgressState::AwaitingConfirmation,
+                        cx,
+                    );
+                });
+                let prompt = cx.prompt(
+                    PromptLevel::Info,
+                    &format!(
+                        "Download the official {} CLI v{}?",
+                        kind.label, release.version
+                    ),
+                    Some("Flint will verify it locally, upload it to this remote host, and launch it by absolute path."),
+                    &["Download and launch", "Cancel"],
+                );
+                if prompt.await? != 0 {
+                    return anyhow::Ok(None);
+                }
+                notification.update(cx, |notification, cx| {
+                    notification.set_state(
+                        ManagedAgentProgressState::Downloading {
+                            downloaded_bytes: 0,
+                            total_bytes: None,
+                        },
+                        cx,
+                    );
+                });
+            } else {
+                notification.update(cx, |notification, cx| {
+                    notification.set_state(ManagedAgentProgressState::Verifying, cx);
+                });
+            }
+
+            let installation = provisioner
+                .install_with_progress(kind.id, &release, {
+                    let progress_reporter = progress_reporter.clone();
+                    move |phase| {
+                        progress_reporter
+                            .report(ManagedAgentProgressEvent::Install(phase));
+                    }
+                })
+                .await?;
+            anyhow::Ok(Some(installation))
+        }
+        .await;
+
+        drop(progress_task);
+        finish_managed_agent_provisioning_async(&store, owner, cx)?;
+
+        match result {
+            Ok(None) => {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.dismiss_notification(&notification_id, cx);
+                })?;
+            }
+            Ok(Some(installation)) => {
+                notification.update(cx, |notification, cx| {
+                    notification.set_state(ManagedAgentProgressState::Launching, cx);
+                });
                 workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.dismiss_notification(&notification_id, cx);
                     let mut command = AgentThreadSettings::get_global(cx)
                         .command_for_kind(kind.id)
                         .clone();
@@ -730,12 +872,98 @@ pub fn launch_managed_thread(
                 })?;
             }
             Err(error) => {
-                workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+                workspace.update(cx, |workspace, cx| {
+                    workspace.dismiss_notification(&notification_id, cx);
+                    workspace.show_error(&error, cx);
+                })?;
             }
         }
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+fn managed_agent_notification_id(kind_id: &str, version: &str) -> NotificationId {
+    NotificationId::composite::<ManagedAgentProgressNotification>(SharedString::from(format!(
+        "{kind_id}-{version}"
+    )))
+}
+
+pub fn managed_agent_launch_label(
+    workspace: &Workspace,
+    kind: &AgentKindDefinition,
+    cx: &App,
+) -> SharedString {
+    let default_label = || SharedString::from(format!("New — Flint-managed {}", kind.label));
+    let Some(remote_client) = workspace.project().read(cx).remote_client() else {
+        return default_label();
+    };
+    let Some((key, _)) = managed_agent_provisioning_target(&remote_client, kind, cx) else {
+        return default_label();
+    };
+    let Some(store) = AgentThreadStore::try_global(cx) else {
+        return default_label();
+    };
+    let Some(notification) = store.read(cx).managed_provisioning.active(&key) else {
+        return default_label();
+    };
+    let status = notification.read(cx).state().menu_status();
+    SharedString::from(format!("New — Flint-managed {} — {status}", kind.label))
+}
+
+fn managed_agent_provisioning_target(
+    remote_client: &Entity<remote::RemoteClient>,
+    kind: &AgentKindDefinition,
+    cx: &App,
+) -> Option<(ManagedAgentProvisioningKey, crate::AgentRelease)> {
+    let remote_client = remote_client.read(cx);
+    let platform = remote_client.platform()?;
+    let release = kind.release_for(platform).copied()?;
+    let remote_connection = remote_client.remote_connection()?;
+    let key = ManagedAgentProvisioningKey {
+        remote_identity: remote::remote_connection_identity(
+            &remote_connection.connection_options(),
+        ),
+        agent_id: kind.id,
+        version: release.version,
+        platform,
+    };
+    Some((key, release))
+}
+
+fn show_managed_agent_progress(
+    workspace: &mut Workspace,
+    kind_id: &str,
+    version: &str,
+    notification: Entity<ManagedAgentProgressNotification>,
+    cx: &mut Context<Workspace>,
+) {
+    workspace.show_notification(managed_agent_notification_id(kind_id, version), cx, |_cx| {
+        notification
+    });
+}
+
+fn finish_managed_agent_provisioning(
+    store: &Entity<AgentThreadStore>,
+    owner: ManagedAgentProvisioningOwner,
+    cx: &mut App,
+) {
+    let finished = store.update(cx, |store, _| store.managed_provisioning.finish(owner));
+    if finished.is_none() {
+        log::warn!("managed agent provisioning owner no longer owns its reservation");
+    }
+}
+
+fn finish_managed_agent_provisioning_async(
+    store: &Entity<AgentThreadStore>,
+    owner: ManagedAgentProvisioningOwner,
+    cx: &mut gpui::AsyncWindowContext,
+) -> Result<()> {
+    let finished = store.update(cx, |store, _| store.managed_provisioning.finish(owner));
+    if finished.is_none() {
+        log::warn!("managed agent provisioning owner no longer owns its reservation");
+    }
+    Ok(())
 }
 
 fn spawn_thread_task(

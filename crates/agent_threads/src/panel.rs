@@ -564,6 +564,10 @@ impl AgentThreadsPanel {
                 .and_then(|client| client.read(cx).platform())
                 .is_some_and(|platform| kind.release_for(platform).is_some())
         });
+        let managed_label = workspace.upgrade().map_or_else(
+            || SharedString::from(format!("New — Flint-managed {}", kind.label)),
+            |workspace| store::managed_agent_launch_label(workspace.read(cx), &kind, cx),
+        );
         let remote_available = workspace.upgrade().is_some_and(|workspace| {
             workspace
                 .read(cx)
@@ -628,19 +632,18 @@ impl AgentThreadsPanel {
             if managed_available {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
-                context_menu = context_menu.separator().entry(
-                    SharedString::from(format!("New — Flint-managed {}", kind.label)),
-                    None,
-                    move |window, cx| {
-                        let Some(workspace) = workspace.upgrade() else {
-                            return;
-                        };
-                        let kind = kind.clone();
-                        workspace.update(cx, |workspace, cx| {
-                            store::launch_managed_thread(workspace, &kind, &[], window, cx);
+                context_menu =
+                    context_menu
+                        .separator()
+                        .entry(managed_label, None, move |window, cx| {
+                            let Some(workspace) = workspace.upgrade() else {
+                                return;
+                            };
+                            let kind = kind.clone();
+                            workspace.update(cx, |workspace, cx| {
+                                store::launch_managed_thread(workspace, &kind, &[], window, cx);
+                            });
                         });
-                    },
-                );
             }
             if remote_available {
                 let credential_policy = kind.credential_policy();

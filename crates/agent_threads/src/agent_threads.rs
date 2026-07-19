@@ -6,6 +6,7 @@ pub mod connect_proxy;
 mod egress;
 mod history;
 pub mod managed_agent;
+mod managed_agent_progress;
 mod panel;
 mod plan_usage;
 mod store;

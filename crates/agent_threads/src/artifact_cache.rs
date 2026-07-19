@@ -8,10 +8,55 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentArtifactDownloadProgress {
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub complete: bool,
+}
+
 pub struct AgentArtifactCache {
     root: PathBuf,
     http_client: Arc<dyn HttpClient>,
     acquisitions: futures::lock::Mutex<HashMap<String, Arc<futures::lock::Mutex<()>>>>,
+}
+
+#[derive(Default)]
+struct DownloadProgressThrottle {
+    last_reported_bytes: Option<u64>,
+    last_reported_percentage: Option<u64>,
+}
+
+impl DownloadProgressThrottle {
+    fn should_report(&mut self, downloaded_bytes: u64, total_bytes: Option<u64>) -> bool {
+        const UNKNOWN_TOTAL_REPORT_INTERVAL: u64 = 1024 * 1024;
+
+        let should_report = if let Some(total_bytes) = total_bytes {
+            let percentage = if total_bytes == 0 {
+                100
+            } else {
+                (((downloaded_bytes as u128 * 100) / total_bytes as u128).min(100)) as u64
+            };
+            self.last_reported_percentage != Some(percentage)
+        } else {
+            self.last_reported_bytes.is_none_or(|last_reported_bytes| {
+                downloaded_bytes.saturating_sub(last_reported_bytes)
+                    >= UNKNOWN_TOTAL_REPORT_INTERVAL
+            })
+        };
+
+        if should_report {
+            self.last_reported_bytes = Some(downloaded_bytes);
+            self.last_reported_percentage = total_bytes.map(|total_bytes| {
+                if total_bytes == 0 {
+                    100
+                } else {
+                    (((downloaded_bytes as u128 * 100) / total_bytes as u128).min(100)) as u64
+                }
+            });
+        }
+        should_report
+    }
 }
 
 impl AgentArtifactCache {
@@ -32,6 +77,16 @@ impl AgentArtifactCache {
         release: &AgentRelease,
         official_source_prefixes: &[&str],
     ) -> Result<PathBuf> {
+        self.acquire_with_progress(release, official_source_prefixes, |_| {})
+            .await
+    }
+
+    pub async fn acquire_with_progress(
+        &self,
+        release: &AgentRelease,
+        official_source_prefixes: &[&str],
+        mut report_progress: impl FnMut(AgentArtifactDownloadProgress),
+    ) -> Result<PathBuf> {
         if !source_is_official(release.source_url, official_source_prefixes) {
             anyhow::bail!("artifact URL is outside the official HTTPS source policy");
         }
@@ -43,14 +98,28 @@ impl AgentArtifactCache {
                 .clone()
         };
         let _acquisition = acquisition.lock().await;
-        self.acquire_exclusive(release, official_source_prefixes)
+        self.acquire_exclusive(release, official_source_prefixes, &mut report_progress)
             .await
+    }
+
+    pub async fn release_is_cached(&self, release: &AgentRelease) -> Result<bool> {
+        let executable = self
+            .root
+            .join("executables")
+            .join(release.executable_sha256)
+            .join(release.executable_name);
+        if file_has_digest(&executable, release.executable_sha256).await? {
+            return Ok(true);
+        }
+        let source = self.root.join("sources").join(release.source_sha256);
+        file_has_digest(&source, release.source_sha256).await
     }
 
     async fn acquire_exclusive(
         &self,
         release: &AgentRelease,
         official_source_prefixes: &[&str],
+        report_progress: &mut impl FnMut(AgentArtifactDownloadProgress),
     ) -> Result<PathBuf> {
         let destination = self
             .root
@@ -75,7 +144,7 @@ impl AgentArtifactCache {
 
         let source = self.root.join("sources").join(release.source_sha256);
         if !file_has_digest(&source, release.source_sha256).await? {
-            self.download(release, official_source_prefixes, &source)
+            self.download(release, official_source_prefixes, &source, report_progress)
                 .await?;
         }
         let parent = destination
@@ -123,6 +192,7 @@ impl AgentArtifactCache {
         release: &AgentRelease,
         official_source_prefixes: &[&str],
         destination: &PathBuf,
+        report_progress: &mut impl FnMut(AgentArtifactDownloadProgress),
     ) -> Result<()> {
         let response = self
             .get_with_official_redirects(release.source_url, official_source_prefixes)
@@ -135,13 +205,12 @@ impl AgentArtifactCache {
                 release.executable_name
             );
         }
-        if response
+        let total_bytes = response
             .headers()
             .get(http_client::http::header::CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .is_some_and(|length| length > MAX_ARTIFACT_BYTES)
-        {
+            .and_then(|value| value.parse::<u64>().ok());
+        if total_bytes.is_some_and(|length| length > MAX_ARTIFACT_BYTES) {
             anyhow::bail!("artifact exceeds the maximum download size");
         }
 
@@ -154,8 +223,14 @@ impl AgentArtifactCache {
             release.source_sha256,
             uuid::Uuid::new_v4()
         ));
-        let result =
-            write_verified_response(response.into_body(), &partial, release.source_sha256).await;
+        let result = write_verified_response(
+            response.into_body(),
+            &partial,
+            release.source_sha256,
+            total_bytes,
+            report_progress,
+        )
+        .await;
         if let Err(error) = result {
             remove_partial(&partial).await;
             return Err(error);
@@ -252,11 +327,14 @@ async fn write_verified_response(
     mut body: AsyncBody,
     partial: &PathBuf,
     expected_digest: &str,
+    total_bytes: Option<u64>,
+    report_progress: &mut impl FnMut(AgentArtifactDownloadProgress),
 ) -> Result<()> {
     let mut file = smol::fs::File::create(partial).await?;
     let mut hasher = Sha256::new();
     let mut total = 0_u64;
     let mut buffer = vec![0; 64 * 1024];
+    let mut progress_throttle = DownloadProgressThrottle::default();
     loop {
         let bytes_read = body.read(&mut buffer).await?;
         if bytes_read == 0 {
@@ -270,7 +348,26 @@ async fn write_verified_response(
         }
         file.write_all(&buffer[..bytes_read]).await?;
         hasher.update(&buffer[..bytes_read]);
+        if progress_throttle.should_report(total, total_bytes) {
+            report_progress(AgentArtifactDownloadProgress {
+                downloaded_bytes: total,
+                total_bytes,
+                complete: false,
+            });
+        }
     }
+    if let Some(expected_bytes) = total_bytes
+        && total != expected_bytes
+    {
+        anyhow::bail!(
+            "artifact Content-Length was {expected_bytes} bytes but the response contained {total} bytes"
+        );
+    }
+    report_progress(AgentArtifactDownloadProgress {
+        downloaded_bytes: total,
+        total_bytes,
+        complete: true,
+    });
     file.flush().await?;
     file.sync_all().await?;
     let actual = format!("{:x}", hasher.finalize());
@@ -411,6 +508,172 @@ mod tests {
                 b"agent-bytes"
             );
         });
+    }
+
+    #[test]
+    fn cache_query_does_not_start_an_http_request() {
+        smol::block_on(async {
+            let request_count = Arc::new(AtomicUsize::new(0));
+            let http_client = FakeHttpClient::create({
+                let request_count = request_count.clone();
+                move |_| {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    async {
+                        Ok(Response::builder()
+                            .status(200)
+                            .body(AsyncBody::from("agent-bytes"))
+                            .expect("fixture response should build"))
+                    }
+                }
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let release = fixture_release("https://downloads.example.test/agent");
+
+            assert!(!cache.release_is_cached(&release).await.unwrap());
+            assert_eq!(request_count.load(Ordering::SeqCst), 0);
+        });
+    }
+
+    #[test]
+    fn cache_query_accepts_a_verified_executable_when_the_source_was_removed() {
+        smol::block_on(async {
+            let request_count = Arc::new(AtomicUsize::new(0));
+            let http_client = FakeHttpClient::create({
+                let request_count = request_count.clone();
+                move |_| {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    async {
+                        Ok(Response::builder()
+                            .status(200)
+                            .body(AsyncBody::from("agent-bytes"))
+                            .expect("fixture response should build"))
+                    }
+                }
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let release = fixture_release("https://downloads.example.test/agent");
+            cache
+                .acquire(&release, &["https://downloads.example.test/"])
+                .await
+                .expect("artifact should be cached");
+            smol::fs::remove_file(directory.path().join("sources").join(release.source_sha256))
+                .await
+                .expect("source fixture should be removed");
+
+            assert!(cache.release_is_cached(&release).await.unwrap());
+            assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn reports_known_download_length_and_exact_final_byte_count() {
+        smol::block_on(async {
+            let http_client = FakeHttpClient::create(|_| async {
+                Ok(Response::builder()
+                    .status(200)
+                    .header(http_client::http::header::CONTENT_LENGTH, "11")
+                    .body(AsyncBody::from("agent-bytes"))
+                    .expect("fixture response should build"))
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let release = fixture_release("https://downloads.example.test/agent");
+            let progress = std::cell::RefCell::new(Vec::new());
+
+            cache
+                .acquire_with_progress(&release, &["https://downloads.example.test/"], |update| {
+                    progress.borrow_mut().push(update)
+                })
+                .await
+                .expect("download should succeed");
+
+            assert_eq!(
+                progress.into_inner().last(),
+                Some(&AgentArtifactDownloadProgress {
+                    downloaded_bytes: 11,
+                    total_bytes: Some(11),
+                    complete: true,
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn rejects_a_response_shorter_than_its_declared_length() {
+        smol::block_on(async {
+            let http_client = FakeHttpClient::create(|_| async {
+                Ok(Response::builder()
+                    .status(200)
+                    .header(http_client::http::header::CONTENT_LENGTH, "12")
+                    .body(AsyncBody::from("agent-bytes"))
+                    .expect("fixture response should build"))
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let release = fixture_release("https://downloads.example.test/agent");
+
+            let error = cache
+                .acquire(&release, &["https://downloads.example.test/"])
+                .await
+                .expect_err("short response should be rejected");
+
+            assert!(error.to_string().contains("Content-Length"));
+            assert!(!cache.release_is_cached(&release).await.unwrap());
+        });
+    }
+
+    #[test]
+    fn reports_transferred_bytes_without_inventing_an_unknown_total() {
+        smol::block_on(async {
+            let http_client = FakeHttpClient::create(|_| async {
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from("agent-bytes"))
+                    .expect("fixture response should build"))
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let release = fixture_release("https://downloads.example.test/agent");
+            let progress = std::cell::RefCell::new(Vec::new());
+
+            cache
+                .acquire_with_progress(&release, &["https://downloads.example.test/"], |update| {
+                    progress.borrow_mut().push(update)
+                })
+                .await
+                .expect("download should succeed");
+
+            assert_eq!(
+                progress.into_inner().last(),
+                Some(&AgentArtifactDownloadProgress {
+                    downloaded_bytes: 11,
+                    total_bytes: None,
+                    complete: true,
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn throttles_known_progress_to_percentage_changes() {
+        let mut throttle = DownloadProgressThrottle::default();
+
+        assert!(throttle.should_report(1, Some(1_000)));
+        assert!(!throttle.should_report(9, Some(1_000)));
+        assert!(throttle.should_report(10, Some(1_000)));
+        assert!(!throttle.should_report(19, Some(1_000)));
+        assert!(throttle.should_report(20, Some(1_000)));
+    }
+
+    #[test]
+    fn throttles_unknown_progress_by_transferred_bytes() {
+        let mut throttle = DownloadProgressThrottle::default();
+
+        assert!(throttle.should_report(64 * 1024, None));
+        assert!(!throttle.should_report(512 * 1024, None));
+        assert!(throttle.should_report(1_088 * 1024, None));
     }
 
     #[test]

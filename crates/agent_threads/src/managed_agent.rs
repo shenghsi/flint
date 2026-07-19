@@ -1,4 +1,7 @@
-use crate::{agent_release::AgentRelease, artifact_cache::AgentArtifactCache};
+use crate::{
+    agent_release::AgentRelease,
+    artifact_cache::{AgentArtifactCache, AgentArtifactDownloadProgress},
+};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use remote::{
@@ -8,6 +11,7 @@ use remote::{
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 use util::paths::{PathStyle, RemotePathBuf};
@@ -24,8 +28,9 @@ pub trait AgentArtifactSource {
 }
 
 pub struct CachedAgentArtifactSource {
-    cache: AgentArtifactCache,
+    cache: Arc<AgentArtifactCache>,
     official_source_prefixes: &'static [&'static str],
+    report_progress: Option<Rc<dyn Fn(AgentArtifactDownloadProgress)>>,
 }
 
 impl CachedAgentArtifactSource {
@@ -34,8 +39,32 @@ impl CachedAgentArtifactSource {
         official_source_prefixes: &'static [&'static str],
     ) -> Self {
         Self {
-            cache: AgentArtifactCache::for_app(http_client),
+            cache: Arc::new(AgentArtifactCache::for_app(http_client)),
             official_source_prefixes,
+            report_progress: None,
+        }
+    }
+
+    pub fn from_cache(
+        cache: Arc<AgentArtifactCache>,
+        official_source_prefixes: &'static [&'static str],
+    ) -> Self {
+        Self {
+            cache,
+            official_source_prefixes,
+            report_progress: None,
+        }
+    }
+
+    pub fn from_cache_with_progress(
+        cache: Arc<AgentArtifactCache>,
+        official_source_prefixes: &'static [&'static str],
+        report_progress: impl Fn(AgentArtifactDownloadProgress) + 'static,
+    ) -> Self {
+        Self {
+            cache,
+            official_source_prefixes,
+            report_progress: Some(Rc::new(report_progress)),
         }
     }
 }
@@ -43,10 +72,20 @@ impl CachedAgentArtifactSource {
 #[async_trait(?Send)]
 impl AgentArtifactSource for CachedAgentArtifactSource {
     async fn acquire(&self, release: &AgentRelease) -> Result<VerifiedAgentArtifact> {
-        let path = self
-            .cache
-            .acquire(release, self.official_source_prefixes)
-            .await?;
+        let path = match self.report_progress.as_ref() {
+            Some(report_progress) => {
+                self.cache
+                    .acquire_with_progress(release, self.official_source_prefixes, |progress| {
+                        report_progress(progress)
+                    })
+                    .await?
+            }
+            None => {
+                self.cache
+                    .acquire(release, self.official_source_prefixes)
+                    .await?
+            }
+        };
         Ok(VerifiedAgentArtifact {
             path,
             executable_sha256: release.executable_sha256.to_string(),
@@ -241,6 +280,13 @@ pub struct ManagedAgentInstallation {
     pub version: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManagedAgentInstallPhase {
+    Uploading,
+    VerifyingRemote,
+    Installing,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct ManagedAgentReceipt {
     agent_id: String,
@@ -274,6 +320,15 @@ where
         &self,
         agent_id: &str,
         release: &AgentRelease,
+    ) -> Result<ManagedAgentInstallation> {
+        self.install_with_progress(agent_id, release, |_| {}).await
+    }
+
+    pub async fn install_with_progress(
+        &self,
+        agent_id: &str,
+        release: &AgentRelease,
+        mut report_progress: impl FnMut(ManagedAgentInstallPhase),
     ) -> Result<ManagedAgentInstallation> {
         validate_path_component(agent_id, "agent id")?;
         validate_path_component(release.version, "agent version")?;
@@ -348,10 +403,12 @@ where
                 .create_private_directory(&staging)
                 .await
                 .context("failed to create remote agent staging directory")?;
+            report_progress(ManagedAgentInstallPhase::Uploading);
             self.remote_host
                 .upload_file(&artifact.path, &staged_executable)
                 .await
                 .context("failed to upload verified agent executable")?;
+            report_progress(ManagedAgentInstallPhase::VerifyingRemote);
             let remote_digest = self
                 .remote_host
                 .file_sha256(&staged_executable)
@@ -372,6 +429,7 @@ where
             if !release.version_matcher.matches(version_output.trim()) {
                 anyhow::bail!("uploaded agent reported an unexpected version");
             }
+            report_progress(ManagedAgentInstallPhase::Installing);
             self.remote_host
                 .write_file(&staged_receipt, &receipt)
                 .await
@@ -499,12 +557,17 @@ fn target_name(target: RemotePlatform) -> Result<String> {
 mod tests {
     use super::*;
     use crate::agent_release::{AgentArtifactFormat, AgentSourceVerification, AgentVersionMatcher};
+    use http_client::{AsyncBody, FakeHttpClient, Response};
     use remote::{RemoteArch, RemoteLibc, RemoteOs, RemotePlatform};
     use sha2::Digest as _;
     use std::{
         cell::{Cell, RefCell},
         collections::{HashMap, HashSet},
         rc::Rc,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -526,6 +589,104 @@ mod tests {
             version_matcher: AgentVersionMatcher::Codex { version: "1.2.3" },
             self_update_environment: &[("DISABLE_UPDATES", "1")],
         }
+    }
+
+    #[test]
+    fn separate_artifact_sources_share_one_cache_download() {
+        smol::block_on(async {
+            let request_count = Arc::new(AtomicUsize::new(0));
+            let (download_started, download_started_receiver) = async_channel::bounded(1);
+            let (release_download, release_download_receiver) = async_channel::bounded(1);
+            let http_client = FakeHttpClient::create({
+                let request_count = request_count.clone();
+                move |_| {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    let download_started = download_started.clone();
+                    let release_download_receiver = release_download_receiver.clone();
+                    async move {
+                        download_started.send(()).await?;
+                        release_download_receiver.recv().await?;
+                        Ok(Response::builder()
+                            .status(200)
+                            .body(AsyncBody::from("agent-bytes"))
+                            .expect("fixture response should build"))
+                    }
+                }
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = Arc::new(AgentArtifactCache::new(
+                directory.path().to_path_buf(),
+                http_client,
+            ));
+            let first = CachedAgentArtifactSource::from_cache(
+                cache.clone(),
+                &["https://official.example/"],
+            );
+            let second =
+                CachedAgentArtifactSource::from_cache(cache, &["https://official.example/"]);
+            let digest: &'static str =
+                Box::leak(format!("{:x}", sha2::Sha256::digest(b"agent-bytes")).into_boxed_str());
+            let mut release = release();
+            release.source_sha256 = digest;
+            release.executable_sha256 = digest;
+            let release_gate = async {
+                download_started_receiver.recv().await?;
+                release_download.send(()).await?;
+                anyhow::Ok(())
+            };
+
+            let (first_result, second_result, released) = futures::join!(
+                first.acquire(&release),
+                second.acquire(&release),
+                release_gate,
+            );
+            released.expect("fixture download should be released");
+
+            assert_eq!(
+                first_result.expect("first source should succeed").path,
+                second_result.expect("second source should succeed").path
+            );
+            assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn cached_artifact_source_forwards_download_progress() {
+        smol::block_on(async {
+            let http_client = FakeHttpClient::create(|_| async {
+                Ok(Response::builder()
+                    .status(200)
+                    .header(http_client::http::header::CONTENT_LENGTH, "11")
+                    .body(AsyncBody::from("agent-bytes"))
+                    .expect("fixture response should build"))
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = Arc::new(AgentArtifactCache::new(
+                directory.path().to_path_buf(),
+                http_client,
+            ));
+            let progress = Rc::new(RefCell::new(Vec::new()));
+            let source = CachedAgentArtifactSource::from_cache_with_progress(
+                cache,
+                &["https://official.example/"],
+                {
+                    let progress = progress.clone();
+                    move |update| progress.borrow_mut().push(update)
+                },
+            );
+            let digest: &'static str =
+                Box::leak(format!("{:x}", sha2::Sha256::digest(b"agent-bytes")).into_boxed_str());
+            let mut release = release();
+            release.source_sha256 = digest;
+            release.executable_sha256 = digest;
+
+            source.acquire(&release).await.unwrap();
+
+            assert_eq!(
+                progress.borrow().last().map(|update| update.complete),
+                Some(true)
+            );
+        });
     }
 
     #[derive(Clone)]
@@ -698,6 +859,42 @@ mod tests {
                 .unwrap();
             assert!(acquire < upload && upload < digest && digest < chmod);
             assert!(chmod < version && version < commit);
+        });
+    }
+
+    #[test]
+    fn reports_remote_installation_phases_in_order() {
+        smol::block_on(async {
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let phases = Rc::new(RefCell::new(Vec::new()));
+            let provisioner = ManagedAgentProvisioner::new(
+                FakeArtifacts {
+                    events: events.clone(),
+                },
+                FakeRemoteHost {
+                    events,
+                    files: Rc::new(RefCell::new(HashMap::new())),
+                    paths: Rc::new(RefCell::new(HashSet::new())),
+                    fail_staging_commit: Rc::new(Cell::new(false)),
+                },
+            );
+
+            provisioner
+                .install_with_progress("codex", &release(), {
+                    let phases = phases.clone();
+                    move |phase| phases.borrow_mut().push(phase)
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(
+                *phases.borrow(),
+                vec![
+                    ManagedAgentInstallPhase::Uploading,
+                    ManagedAgentInstallPhase::VerifyingRemote,
+                    ManagedAgentInstallPhase::Installing,
+                ]
+            );
         });
     }
 
