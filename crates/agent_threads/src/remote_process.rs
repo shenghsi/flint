@@ -246,10 +246,7 @@ mod tests {
         assert_eq!(command.args[4], "resume");
         assert_eq!(command.args[5], "session with spaces");
         assert_eq!(
-            command
-                .env
-                .get("FLINT_AGENT_THREAD_ID")
-                .map(String::as_str),
+            command.env.get("FLINT_AGENT_THREAD_ID").map(String::as_str),
             Some(LIFECYCLE_ID)
         );
         assert!(!command.args[1].contains("/opt/codex path/codex"));

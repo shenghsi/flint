@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -31,7 +31,7 @@ use crate::{
         ManagedAgentProgressState, ManagedAgentProvisioningCoordinator,
         ManagedAgentProvisioningKey, ManagedAgentProvisioningOwner,
     },
-    remote_process::RemoteAgentProcess,
+    remote_process::{RemoteAgentProcess, wait_for_graceful_exit_or_force},
     resolve_default_launch_args,
 };
 
@@ -161,6 +161,86 @@ struct ThreadEntry {
     egress: Option<AgentEgressLease>,
 }
 
+struct ThreadShutdown {
+    terminal: Entity<terminal::Terminal>,
+    remote_process: Option<RemoteAgentProcess>,
+    egress: Option<AgentEgressLease>,
+    workspace: WeakEntity<Workspace>,
+}
+
+const AGENT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
+
+async fn retain_resource_until_shutdown<Resource, Shutdown>(
+    resource: Resource,
+    shutdown: Shutdown,
+) -> Result<()>
+where
+    Shutdown: std::future::Future<Output = Result<()>>,
+{
+    let result = shutdown.await;
+    drop(resource);
+    result
+}
+
+fn take_thread_for_shutdown<Entry>(
+    entries: &mut HashMap<EntityId, Entry>,
+    terminal_item_id: EntityId,
+) -> Option<Entry> {
+    entries.remove(&terminal_item_id)
+}
+
+impl ThreadShutdown {
+    fn run(self, cx: &mut App) -> Task<Result<()>> {
+        let completion = self.terminal.update(cx, |terminal, cx| {
+            let completion = terminal.wait_for_completed_task(cx);
+            terminal.input(vec![0x03]);
+            completion
+        });
+        let timeout = cx.background_executor().timer(AGENT_SHUTDOWN_GRACE_PERIOD);
+        let terminal = self.terminal;
+        let remote_process = self.remote_process;
+        let egress = self.egress;
+        let workspace = self.workspace;
+        cx.spawn(async move |cx| {
+            let result = match remote_process {
+                Some(remote_process) => wait_for_graceful_exit_or_force(
+                    async move {
+                        let _exit_status = completion.await;
+                    },
+                    timeout,
+                    remote_process.force_terminate(),
+                )
+                .await
+                .map(|_| ()),
+                None => {
+                    let force = async {
+                        terminal.update(cx, |terminal, _| terminal.kill_active_task());
+                        Ok(())
+                    };
+                    wait_for_graceful_exit_or_force(
+                        async move {
+                            let _exit_status = completion.await;
+                        },
+                        timeout,
+                        force,
+                    )
+                    .await
+                    .map(|_| ())
+                }
+            };
+            let result = retain_resource_until_shutdown(egress, async move { result }).await;
+            if let Err(error) = &result {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| workspace.show_error(error, cx));
+                } else {
+                    log::error!("Failed to stop remote Agent Thread: {error:#}");
+                }
+            }
+            result
+        })
+    }
+}
+
 struct GlobalAgentThreadStore(Entity<AgentThreadStore>);
 impl Global for GlobalAgentThreadStore {}
 
@@ -275,7 +355,9 @@ impl AgentThreadStore {
 
         cx.spawn(async move |cx| {
             for (workspace, window_handle, terminal_item_id) in entries {
-                let close_task = window_handle.update(cx, |_multi_workspace, window, cx| {
+                let shutdown_task =
+                    store.update(cx, |store, cx| store.begin_shutdown(terminal_item_id, cx));
+                let close_result = window_handle.update(cx, |_multi_workspace, window, cx| {
                     workspace.update(cx, |workspace, cx| {
                         let pane = workspace
                             .pane_for_item_id(terminal_item_id)
@@ -286,8 +368,17 @@ impl AgentThreadStore {
                             })
                         }))
                     })
-                })??;
-                close_task.await?;
+                });
+                let close_result = match close_result {
+                    Ok(Ok(close_task)) => close_task.await,
+                    Ok(Err(error)) | Err(error) => Err(error),
+                };
+                let shutdown_result = match shutdown_task {
+                    Some(shutdown_task) => shutdown_task.await,
+                    None => Ok(()),
+                };
+                close_result?;
+                shutdown_result?;
             }
             anyhow::Ok(())
         })
@@ -401,7 +492,9 @@ impl AgentThreadStore {
 
         let release_subscription =
             cx.observe_release(&terminal_view, move |store, _terminal_view, cx| {
-                store.remove_thread(terminal_item_id, cx);
+                if let Some(shutdown) = store.begin_shutdown(terminal_item_id, cx) {
+                    shutdown.detach_and_log_err(cx);
+                }
             });
         // Claude Code and Codex CLI both ring the terminal bell when a turn
         // finishes or a permission prompt needs an answer, so it's the
@@ -429,14 +522,25 @@ impl AgentThreadStore {
         cx.emit(AgentThreadStoreEvent::ThreadOpened { kind_id });
     }
 
-    fn remove_thread(&mut self, terminal_item_id: EntityId, cx: &mut Context<Self>) {
-        let Some(entry) = self.threads.remove(&terminal_item_id) else {
-            return;
-        };
+    fn begin_shutdown(
+        &mut self,
+        terminal_item_id: EntityId,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let entry = take_thread_for_shutdown(&mut self.threads, terminal_item_id)?;
         self.subscriptions.remove(&terminal_item_id);
         cx.emit(AgentThreadStoreEvent::ThreadClosed {
             kind_id: entry.metadata.kind_id,
         });
+        Some(
+            ThreadShutdown {
+                terminal: entry.terminal,
+                remote_process: entry.remote_process,
+                egress: entry.egress,
+                workspace: entry.workspace,
+            }
+            .run(cx),
+        )
     }
 }
 
@@ -1592,7 +1696,16 @@ pub fn init(cx: &mut App) {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+
+    struct DropProbe(Arc<AtomicBool>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
 
     fn at(seconds: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
@@ -1680,16 +1793,40 @@ mod tests {
         };
         let original = command.clone();
 
-        let process = prepare_remote_thread_process(
-            &mut command,
-            None,
-            false,
-            uuid::Uuid::nil(),
-        )
-        .expect("local launch preparation");
+        let process = prepare_remote_thread_process(&mut command, None, false, uuid::Uuid::nil())
+            .expect("local launch preparation");
 
         assert!(process.is_none());
         assert_eq!(command, original);
+    }
+
+    #[gpui::test]
+    async fn shutdown_resource_is_retained_until_cleanup_finishes(cx: &mut gpui::TestAppContext) {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (release_tx, release_rx) = async_channel::bounded(1);
+        let task = cx.background_executor.spawn(retain_resource_until_shutdown(
+            DropProbe(dropped.clone()),
+            async move {
+                release_rx.recv().await?;
+                anyhow::Ok(())
+            },
+        ));
+
+        cx.run_until_parked();
+        assert!(!dropped.load(Ordering::SeqCst));
+        release_tx.send(()).await.expect("release shutdown");
+        task.await.expect("shutdown result");
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn repeated_shutdown_cannot_take_the_same_entry() {
+        let id = EntityId::from(7);
+        let mut entries = HashMap::default();
+        entries.insert(id, "thread");
+
+        assert_eq!(take_thread_for_shutdown(&mut entries, id), Some("thread"));
+        assert_eq!(take_thread_for_shutdown(&mut entries, id), None);
     }
 
     #[test]
