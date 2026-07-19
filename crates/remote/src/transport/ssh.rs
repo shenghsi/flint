@@ -55,11 +55,16 @@ pub(crate) struct SshRemoteConnection {
 }
 
 fn parse_allocated_remote_forward_port(line: &str) -> Option<u16> {
+    let line = line.trim();
+    if let Ok(port) = line.parse::<u16>() {
+        return (port != 0).then_some(port);
+    }
     let port = line
         .strip_prefix("Allocated port ")?
         .split_once(" for remote forward")?
         .0;
-    port.parse().ok()
+    let port = port.parse::<u16>().ok()?;
+    (port != 0).then_some(port)
 }
 
 fn local_forward_is_ready(line: &str, local_port: u16) -> bool {
@@ -67,6 +72,22 @@ fn local_forward_is_ready(line: &str, local_port: u16) -> bool {
         == format!("Local forwarding listening on 127.0.0.1 port {local_port}.")
 }
 
+#[cfg(not(windows))]
+fn reverse_port_forward_arguments(socket: &SshSocket, local_port: u16) -> Vec<String> {
+    let mut arguments = socket.ssh_command_options(ConnectionSharing::Shared);
+    arguments.extend([
+        "-O".to_string(),
+        "forward".to_string(),
+        "-o".to_string(),
+        "ExitOnForwardFailure=yes".to_string(),
+        "-R".to_string(),
+        format!("127.0.0.1:0:127.0.0.1:{local_port}"),
+        socket.connection_options.ssh_destination(),
+    ]);
+    arguments
+}
+
+#[cfg(windows)]
 fn reverse_port_forward_arguments(socket: &SshSocket, local_port: u16) -> Vec<String> {
     let mut arguments = socket.ssh_command_options(ConnectionSharing::Dedicated);
     arguments.extend([
@@ -75,6 +96,19 @@ fn reverse_port_forward_arguments(socket: &SshSocket, local_port: u16) -> Vec<St
         "-v".to_string(),
         "-o".to_string(),
         "ExitOnForwardFailure=yes".to_string(),
+        "-R".to_string(),
+        format!("127.0.0.1:0:127.0.0.1:{local_port}"),
+        socket.connection_options.ssh_destination(),
+    ]);
+    arguments
+}
+
+#[cfg(not(windows))]
+fn cancel_reverse_port_forward_arguments(socket: &SshSocket, local_port: u16) -> Vec<String> {
+    let mut arguments = socket.ssh_command_options(ConnectionSharing::Shared);
+    arguments.extend([
+        "-O".to_string(),
+        "cancel".to_string(),
         "-R".to_string(),
         format!("127.0.0.1:0:127.0.0.1:{local_port}"),
         socket.connection_options.ssh_destination(),
@@ -2215,6 +2249,7 @@ mod tests {
 
     #[test]
     fn parses_only_the_allocated_reverse_forward_port_message() {
+        assert_eq!(parse_allocated_remote_forward_port("43123\n"), Some(43123));
         assert_eq!(
             parse_allocated_remote_forward_port(
                 "Allocated port 43123 for remote forward to 127.0.0.1:8080"
@@ -2231,6 +2266,8 @@ mod tests {
             ),
             None
         );
+        assert_eq!(parse_allocated_remote_forward_port("not-a-port\n"), None);
+        assert_eq!(parse_allocated_remote_forward_port("0\n"), None);
     }
 
     #[test]
@@ -2376,7 +2413,7 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn reverse_forward_is_dedicated_and_loopback_only() {
+    fn reverse_forward_uses_shared_master_and_is_loopback_only() {
         let socket = SshSocket {
             connection_options: SshConnectionOptions {
                 host: "build.example.com".into(),
@@ -2404,7 +2441,15 @@ mod tests {
         assert!(
             arguments
                 .windows(2)
-                .any(|arguments| { arguments == ["-o", "ControlPath=none"] })
+                .any(|arguments| {
+                    arguments == ["-o", "ControlPath=/tmp/flint-ssh-socket"]
+                })
+        );
+        assert!(!arguments.iter().any(|argument| argument == "ControlPath=none"));
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-O", "forward"] })
         );
         assert!(
             arguments
@@ -2425,6 +2470,46 @@ mod tests {
             arguments
                 .windows(2)
                 .any(|arguments| { arguments == ["-J", "jump.example.com"] })
+        );
+        assert_eq!(
+            arguments.last().map(String::as_str),
+            Some("developer@build.example.com")
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn reverse_forward_cancellation_uses_shared_master_and_original_dynamic_request() {
+        let socket = SshSocket {
+            connection_options: SshConnectionOptions {
+                host: "build.example.com".into(),
+                username: Some("developer".to_string()),
+                port: Some(2222),
+                ..Default::default()
+            },
+            socket_path: std::path::PathBuf::from("/tmp/flint-ssh-socket"),
+            envs: HashMap::default(),
+        };
+
+        let arguments = cancel_reverse_port_forward_arguments(&socket, 43123);
+
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-O", "cancel"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| {
+                    arguments == ["-o", "ControlPath=/tmp/flint-ssh-socket"]
+                })
+        );
+        assert!(!arguments.iter().any(|argument| argument == "ControlPath=none"));
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["-R", "127.0.0.1:0:127.0.0.1:43123"] })
         );
         assert_eq!(
             arguments.last().map(String::as_str),
