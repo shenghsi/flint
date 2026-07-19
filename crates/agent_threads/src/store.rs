@@ -596,21 +596,78 @@ pub fn launch_credential_command(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
     summary: SharedString,
-    arguments: &[&str],
+    arguments: &'static [&'static str],
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let mut command = AgentThreadSettings::get_global(cx)
+    let base = AgentThreadSettings::get_global(cx)
         .command_for_kind(kind.id)
         .clone();
-    command.args = arguments
-        .iter()
-        .map(|argument| (*argument).to_string())
-        .collect();
-    let task = spawn_thread_task(workspace, kind, summary, command, None, window, cx);
+    let route = current_remote_agent_route(workspace, cx);
+    let required_route = route.map(RequiredAgentRoute);
+    if !uses_managed_credential_command(route) {
+        let command = build_credential_command(&base, arguments);
+        let task = spawn_thread_task_for_route(
+            workspace,
+            kind,
+            summary,
+            command,
+            None,
+            required_route,
+            window,
+            cx,
+        );
+        cx.spawn_in(window, async move |workspace, cx| {
+            if let Err(error) = task.await {
+                workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+        return;
+    }
+
+    let preparation = prepare_managed_agent(workspace, kind, window, cx);
+    let kind = kind.clone();
     cx.spawn_in(window, async move |workspace, cx| {
-        if let Err(error) = task.await {
-            workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+        match preparation.await {
+            Ok(ManagedAgentPreparation::Ready(prepared)) => {
+                prepared.notification.update(cx, |notification, cx| {
+                    notification.set_state(ManagedAgentProgressState::Launching, cx);
+                });
+                let task = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.dismiss_notification(
+                        &managed_agent_notification_id(kind.id, &prepared.installation.version),
+                        cx,
+                    );
+                    let command = build_managed_credential_command(
+                        &kind,
+                        &base,
+                        arguments,
+                        &prepared.installation.executable_path,
+                    );
+                    spawn_thread_task_for_route(
+                        workspace,
+                        &kind,
+                        summary,
+                        command,
+                        None,
+                        Some(RequiredAgentRoute(
+                            settings::RemoteAgentRoute::ThroughFlint,
+                        )),
+                        window,
+                        cx,
+                    )
+                })?;
+                if let Err(error) = task.await {
+                    workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+                }
+            }
+            Ok(ManagedAgentPreparation::Cancelled)
+            | Ok(ManagedAgentPreparation::AlreadyInProgress) => {}
+            Err(error) => {
+                workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+            }
         }
         anyhow::Ok(())
     })
@@ -860,11 +917,39 @@ fn build_managed_resume_command(
     Some(command)
 }
 
+fn build_credential_command(
+    base: &AgentLaunchCommand,
+    arguments: &[&str],
+) -> AgentLaunchCommand {
+    let mut command = base.clone();
+    command.args = arguments
+        .iter()
+        .map(|argument| (*argument).to_string())
+        .collect();
+    command
+}
+
+fn build_managed_credential_command(
+    kind: &AgentKindDefinition,
+    base: &AgentLaunchCommand,
+    arguments: &[&str],
+    managed_executable: &std::path::Path,
+) -> AgentLaunchCommand {
+    let mut command = build_credential_command(base, arguments);
+    command.command = Some(managed_executable.to_string_lossy().into_owned());
+    apply_self_update_policy(&mut command, kind);
+    command
+}
+
 fn uses_managed_resume(
     kind: &AgentKindDefinition,
     route: Option<settings::RemoteAgentRoute>,
 ) -> bool {
     kind.id == "codex" && route == Some(settings::RemoteAgentRoute::ThroughFlint)
+}
+
+fn uses_managed_credential_command(route: Option<settings::RemoteAgentRoute>) -> bool {
+    route == Some(settings::RemoteAgentRoute::ThroughFlint)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1782,6 +1867,63 @@ mod tests {
             command.env.get("CODEX_HOME").map(String::as_str),
             Some("/remote/codex-home")
         );
+    }
+
+    #[test]
+    fn configured_credential_command_keeps_the_ambient_executable() {
+        let base = AgentLaunchCommand {
+            command: Some("custom-codex".to_string()),
+            args: vec!["ignored".to_string()],
+            ..AgentLaunchCommand::default()
+        };
+
+        let command = build_credential_command(&base, &["logout"]);
+
+        assert_eq!(command.command.as_deref(), Some("custom-codex"));
+        assert_eq!(command.args, vec!["logout".to_string()]);
+    }
+
+    #[test]
+    fn managed_credential_commands_use_each_pinned_executable_and_update_policy() {
+        for kind in agent_kind_registry() {
+            let mut environment = HashMap::default();
+            environment.insert("EXISTING".to_string(), "value".to_string());
+            let base = AgentLaunchCommand {
+                command: Some(format!("custom-{}", kind.id)),
+                env: environment,
+                ..AgentLaunchCommand::default()
+            };
+            let managed_executable = PathBuf::from(format!("/managed/{}/cli", kind.id));
+            let arguments = kind.credential_policy().logout_arguments;
+
+            let command = build_managed_credential_command(
+                &kind,
+                &base,
+                arguments,
+                &managed_executable,
+            );
+
+            assert_eq!(command.command.as_deref(), managed_executable.to_str());
+            assert_eq!(
+                command.env.get("EXISTING").map(String::as_str),
+                Some("value")
+            );
+            let mut expected = build_credential_command(&base, arguments);
+            expected.command = Some(managed_executable.to_string_lossy().into_owned());
+            apply_self_update_policy(&mut expected, &kind);
+            assert_eq!(command, expected);
+        }
+    }
+
+    #[test]
+    fn only_through_flint_credential_commands_use_managed_provisioning() {
+        assert!(uses_managed_credential_command(Some(
+            settings::RemoteAgentRoute::ThroughFlint
+        )));
+        assert!(!uses_managed_credential_command(Some(
+            settings::RemoteAgentRoute::NotThroughFlint
+        )));
+        assert!(!uses_managed_credential_command(None));
     }
 
     #[test]
