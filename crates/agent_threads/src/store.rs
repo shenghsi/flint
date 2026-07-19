@@ -22,7 +22,10 @@ use crate::{
     RemoteAgentRoutingSettings, agent_kind_registry,
     artifact_cache::AgentArtifactCache,
     egress::{AgentEgressLease, AgentEgressManager},
-    managed_agent::{CachedAgentArtifactSource, ManagedAgentProvisioner, RemoteClientAgentHost},
+    managed_agent::{
+        CachedAgentArtifactSource, ManagedAgentInstallation, ManagedAgentProvisioner,
+        RemoteClientAgentHost,
+    },
     managed_agent_progress::{
         ManagedAgentProgressEvent, ManagedAgentProgressNotification, ManagedAgentProgressReporter,
         ManagedAgentProgressState, ManagedAgentProvisioningCoordinator,
@@ -620,7 +623,13 @@ pub fn resume_thread(
     let Some(task) = resume_thread_task(workspace, kind, thread, extra_args, window, cx) else {
         return;
     };
-    task.detach_and_log_err(cx);
+    cx.spawn_in(window, async move |workspace, cx| {
+        if let Err(error) = task.await {
+            workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+        }
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn resume_thread_task(
@@ -630,20 +639,135 @@ fn resume_thread_task(
     extra_args: &[String],
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> Option<Task<Result<()>>> {
-    let provider = kind.history_provider.as_ref()?;
+) -> Option<Task<Result<ResumeThreadOutcome>>> {
     let settings = AgentThreadSettings::get_global(cx);
     let base = settings.command_for_kind(kind.id).clone();
-    let command = provider.resume_command(&base, thread, extra_args);
-    Some(spawn_thread_task(
-        workspace,
-        kind,
-        thread.title.clone(),
-        command,
-        Some(thread.session_id.clone()),
-        window,
-        cx,
-    ))
+    let route = current_remote_agent_route(workspace, cx);
+    let required_route = route.map(RequiredAgentRoute);
+    if !uses_managed_resume(kind, route) {
+        let command = build_resume_command(kind, &base, thread, extra_args, None)?;
+        let task = spawn_thread_task_for_route(
+            workspace,
+            kind,
+            thread.title.clone(),
+            command,
+            Some(thread.session_id.clone()),
+            required_route,
+            window,
+            cx,
+        );
+        return Some(cx.spawn_in(window, async move |_workspace, _cx| {
+            task.await?;
+            Ok(ResumeThreadOutcome::Launched)
+        }));
+    }
+
+    let preparation = prepare_managed_agent(workspace, kind, window, cx);
+    let kind = kind.clone();
+    let thread = thread.clone();
+    let extra_args = extra_args.to_vec();
+    Some(cx.spawn_in(window, async move |workspace, cx| {
+        let ManagedAgentPreparation::Ready(prepared) = preparation.await? else {
+            return Ok(ResumeThreadOutcome::NotLaunched);
+        };
+        prepared.notification.update(cx, |notification, cx| {
+            notification.set_state(ManagedAgentProgressState::Resuming, cx);
+        });
+        let notification_id =
+            managed_agent_notification_id(kind.id, &prepared.installation.version);
+        let result = async {
+            let task = workspace.update_in(cx, |workspace, window, cx| {
+                let command = build_managed_resume_command(
+                    &kind,
+                    &base,
+                    &thread,
+                    &extra_args,
+                    &prepared.installation.executable_path,
+                )
+                .ok_or_else(|| anyhow!("{} does not support session resume", kind.label))?;
+                anyhow::Ok(spawn_thread_task_for_route(
+                    workspace,
+                    &kind,
+                    thread.title.clone(),
+                    command,
+                    Some(thread.session_id.clone()),
+                    Some(RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint)),
+                    window,
+                    cx,
+                ))
+            })??;
+            task.await
+        }
+        .await;
+        workspace.update(cx, |workspace, cx| {
+            workspace.dismiss_notification(&notification_id, cx);
+        })?;
+        result?;
+        Ok(ResumeThreadOutcome::Launched)
+    }))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResumeThreadOutcome {
+    Launched,
+    NotLaunched,
+}
+
+fn current_remote_agent_route(
+    workspace: &Workspace,
+    cx: &App,
+) -> Option<settings::RemoteAgentRoute> {
+    let remote_client = workspace.project().read(cx).remote_client()?;
+    let connection_options = remote_client.read(cx).connection_options();
+    RemoteAgentRoutingSettings::get_global(cx).route_for(&connection_options)
+}
+
+fn build_resume_command(
+    kind: &AgentKindDefinition,
+    base: &AgentLaunchCommand,
+    thread: &HistoricalThread,
+    extra_args: &[String],
+    managed_executable: Option<&std::path::Path>,
+) -> Option<AgentLaunchCommand> {
+    let provider = kind.history_provider.as_ref()?;
+    let mut command = provider.resume_command(base, thread, extra_args);
+    if let Some(managed_executable) = managed_executable {
+        command.command = Some(managed_executable.to_string_lossy().into_owned());
+    }
+    Some(command)
+}
+
+fn build_managed_resume_command(
+    kind: &AgentKindDefinition,
+    base: &AgentLaunchCommand,
+    thread: &HistoricalThread,
+    extra_args: &[String],
+    managed_executable: &std::path::Path,
+) -> Option<AgentLaunchCommand> {
+    let mut command =
+        build_resume_command(kind, base, thread, extra_args, Some(managed_executable))?;
+    apply_self_update_policy(&mut command, kind);
+    Some(command)
+}
+
+fn uses_managed_resume(
+    kind: &AgentKindDefinition,
+    route: Option<settings::RemoteAgentRoute>,
+) -> bool {
+    kind.id == "codex" && route == Some(settings::RemoteAgentRoute::ThroughFlint)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RequiredAgentRoute(settings::RemoteAgentRoute);
+
+fn ensure_required_route(
+    required_route: Option<RequiredAgentRoute>,
+    actual_route: Option<settings::RemoteAgentRoute>,
+) -> Result<()> {
+    if required_route.is_none_or(|required| Some(required.0) == actual_route) {
+        return Ok(());
+    }
+    anyhow::bail!("the agent route changed while preparing the session; resume it again")
 }
 
 fn spawn_thread(
@@ -667,38 +791,40 @@ fn spawn_thread(
     .detach_and_log_err(cx);
 }
 
-pub fn launch_managed_thread(
+struct PreparedManagedAgent {
+    installation: ManagedAgentInstallation,
+    notification: Entity<ManagedAgentProgressNotification>,
+}
+
+enum ManagedAgentPreparation {
+    Ready(PreparedManagedAgent),
+    Cancelled,
+    AlreadyInProgress,
+}
+
+fn prepare_managed_agent(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
-    extra_args: &[String],
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Task<Result<ManagedAgentPreparation>> {
     let project = workspace.project().clone();
     let Some(remote_client) = project.read(cx).remote_client() else {
-        workspace.show_error(
-            &anyhow!("managed agents are available only for remote projects"),
-            cx,
-        );
-        return;
+        return Task::ready(Err(anyhow!(
+            "managed agents are available only for remote projects"
+        )));
     };
     let Some(platform) = remote_client.read(cx).platform() else {
-        workspace.show_error(&anyhow!("remote agent target could not be detected"), cx);
-        return;
+        return Task::ready(Err(anyhow!("remote agent target could not be detected")));
     };
     let Some(release) = kind.release_for(platform).copied() else {
-        workspace.show_error(
-            &anyhow!(
-                "no pinned {} release supports this remote target",
-                kind.label
-            ),
-            cx,
-        );
-        return;
+        return Task::ready(Err(anyhow!(
+            "no pinned {} release supports this remote target",
+            kind.label
+        )));
     };
     let Some(remote_connection) = remote_client.read(cx).remote_connection() else {
-        workspace.show_error(&anyhow!("remote connection is unavailable"), cx);
-        return;
+        return Task::ready(Err(anyhow!("remote connection is unavailable")));
     };
     let key = ManagedAgentProvisioningKey {
         remote_identity: remote::remote_connection_identity(
@@ -725,7 +851,7 @@ pub fn launch_managed_thread(
                 active_notification,
                 cx,
             );
-            return;
+            return Task::ready(Ok(ManagedAgentPreparation::AlreadyInProgress));
         }
     };
     show_managed_agent_progress(
@@ -741,8 +867,7 @@ pub fn launch_managed_thread(
             finish_managed_agent_provisioning(&store, owner, cx);
             workspace
                 .dismiss_notification(&managed_agent_notification_id(kind.id, release.version), cx);
-            workspace.show_error(&error, cx);
-            return;
+            return Task::ready(Err(error));
         }
     };
     let http_client = project.read(cx).http_client();
@@ -775,11 +900,28 @@ pub fn launch_managed_thread(
         }
     });
     let kind = kind.clone();
-    let extra_args = extra_args.to_vec();
     let notification_id = managed_agent_notification_id(kind.id, release.version);
 
     cx.spawn_in(window, async move |workspace, cx| {
         let result = async {
+            if let Some(installation) = provisioner
+                .find_installed_with_progress(kind.id, &release, {
+                    let progress_reporter = progress_reporter.clone();
+                    move |phase| {
+                        progress_reporter.report(ManagedAgentProgressEvent::Install(phase));
+                    }
+                })
+                .await?
+            {
+                return anyhow::Ok(ManagedAgentPreparation::Ready(PreparedManagedAgent {
+                    installation,
+                    notification: notification.clone(),
+                }));
+            }
+
+            notification.update(cx, |notification, cx| {
+                notification.set_state(ManagedAgentProgressState::CheckingCache, cx);
+            });
             let release_is_cached = artifact_cache.release_is_cached(&release).await?;
             if !release_is_cached {
                 notification.update(cx, |notification, cx| {
@@ -798,7 +940,7 @@ pub fn launch_managed_thread(
                     &["Download and launch", "Cancel"],
                 );
                 if prompt.await? != 0 {
-                    return anyhow::Ok(None);
+                    return anyhow::Ok(ManagedAgentPreparation::Cancelled);
                 }
                 notification.update(cx, |notification, cx| {
                     notification.set_state(
@@ -811,7 +953,7 @@ pub fn launch_managed_thread(
                 });
             } else {
                 notification.update(cx, |notification, cx| {
-                    notification.set_state(ManagedAgentProgressState::Verifying, cx);
+                    notification.set_state(ManagedAgentProgressState::CheckingCache, cx);
                 });
             }
 
@@ -824,42 +966,72 @@ pub fn launch_managed_thread(
                     }
                 })
                 .await?;
-            anyhow::Ok(Some(installation))
+            anyhow::Ok(ManagedAgentPreparation::Ready(PreparedManagedAgent {
+                installation,
+                notification: notification.clone(),
+            }))
         }
         .await;
 
-        drop(progress_task);
+        drop(provisioner);
+        drop(progress_reporter);
+        progress_task.await;
         finish_managed_agent_provisioning_async(&store, owner, cx)?;
 
         match result {
-            Ok(None) => {
+            Ok(ManagedAgentPreparation::Cancelled) => {
                 workspace.update(cx, |workspace, cx| {
                     workspace.dismiss_notification(&notification_id, cx);
                 })?;
+                Ok(ManagedAgentPreparation::Cancelled)
             }
-            Ok(Some(installation)) => {
-                notification.update(cx, |notification, cx| {
+            Ok(ready @ ManagedAgentPreparation::Ready(_)) => Ok(ready),
+            Ok(ManagedAgentPreparation::AlreadyInProgress) => {
+                Ok(ManagedAgentPreparation::AlreadyInProgress)
+            }
+            Err(error) => {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.dismiss_notification(&notification_id, cx);
+                })?;
+                Err(error)
+            }
+        }
+    })
+}
+
+pub fn launch_managed_thread(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    extra_args: &[String],
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let preparation = prepare_managed_agent(workspace, kind, window, cx);
+    let kind = kind.clone();
+    let extra_args = extra_args.to_vec();
+    cx.spawn_in(window, async move |workspace, cx| {
+        match preparation.await {
+            Ok(ManagedAgentPreparation::Ready(prepared)) => {
+                prepared.notification.update(cx, |notification, cx| {
                     notification.set_state(ManagedAgentProgressState::Launching, cx);
                 });
                 workspace.update_in(cx, |workspace, window, cx| {
-                    workspace.dismiss_notification(&notification_id, cx);
+                    workspace.dismiss_notification(
+                        &managed_agent_notification_id(kind.id, &prepared.installation.version),
+                        cx,
+                    );
                     let mut command = AgentThreadSettings::get_global(cx)
                         .command_for_kind(kind.id)
                         .clone();
-                    command.command =
-                        Some(installation.executable_path.to_string_lossy().into_owned());
-                    command.args.extend(
-                        kind.self_update_policy()
-                            .arguments
-                            .iter()
-                            .map(|argument| argument.to_string()),
+                    command.command = Some(
+                        prepared
+                            .installation
+                            .executable_path
+                            .to_string_lossy()
+                            .into_owned(),
                     );
                     command.args.extend(extra_args);
-                    for (name, value) in kind.self_update_policy().environment {
-                        command
-                            .env
-                            .insert((*name).to_string(), (*value).to_string());
-                    }
+                    apply_self_update_policy(&mut command, &kind);
                     spawn_thread(
                         workspace,
                         &kind,
@@ -871,11 +1043,10 @@ pub fn launch_managed_thread(
                     );
                 })?;
             }
+            Ok(ManagedAgentPreparation::Cancelled)
+            | Ok(ManagedAgentPreparation::AlreadyInProgress) => {}
             Err(error) => {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.dismiss_notification(&notification_id, cx);
-                    workspace.show_error(&error, cx);
-                })?;
+                workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
             }
         }
         anyhow::Ok(())
@@ -970,27 +1141,55 @@ fn spawn_thread_task(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
     summary: SharedString,
-    mut command: AgentLaunchCommand,
+    command: AgentLaunchCommand,
     resumed_session_id: Option<SharedString>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<Result<()>> {
+    spawn_thread_task_for_route(
+        workspace,
+        kind,
+        summary,
+        command,
+        resumed_session_id,
+        None,
+        window,
+        cx,
+    )
+}
+
+fn spawn_thread_task_for_route(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    summary: SharedString,
+    mut command: AgentLaunchCommand,
+    resumed_session_id: Option<SharedString>,
+    required_route: Option<RequiredAgentRoute>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<Result<()>> {
     let remote_client = workspace.project().read(cx).remote_client();
+    let connection_options = remote_client
+        .as_ref()
+        .map(|client| client.read(cx).connection_options());
     let remote_connection = remote_client
         .as_ref()
         .and_then(|client| client.read(cx).remote_connection());
-    if let Some(connection) = remote_connection.as_ref()
+    if let Some(connection_options) = connection_options.as_ref()
         && AgentThreadStore::global(cx)
             .read(cx)
-            .route_change_in_progress(&connection.connection_options())
+            .route_change_in_progress(connection_options)
     {
         return Task::ready(Err(anyhow!(
             "the agent route is changing for this remote host"
         )));
     }
-    let route = remote_connection.as_ref().and_then(|connection| {
-        RemoteAgentRoutingSettings::get_global(cx).route_for(&connection.connection_options())
+    let route = connection_options.as_ref().and_then(|connection_options| {
+        RemoteAgentRoutingSettings::get_global(cx).route_for(connection_options)
     });
+    if let Err(error) = ensure_required_route(required_route, route) {
+        return Task::ready(Err(error));
+    }
     if route != Some(settings::RemoteAgentRoute::ThroughFlint) {
         return spawn_thread_task_inner(
             workspace,
@@ -1025,7 +1224,16 @@ fn spawn_thread_task(
         let proxy_url = egress.proxy_url();
         apply_proxy_environment(&mut command, &proxy_url);
         let task = workspace.update_in(cx, |workspace, window, cx| {
-            spawn_thread_task_inner(
+            let actual_route = workspace
+                .project()
+                .read(cx)
+                .remote_client()
+                .and_then(|client| {
+                    let connection_options = client.read(cx).connection_options();
+                    RemoteAgentRoutingSettings::get_global(cx).route_for(&connection_options)
+                });
+            ensure_required_route(required_route, actual_route)?;
+            anyhow::Ok(spawn_thread_task_inner(
                 workspace,
                 &kind,
                 summary,
@@ -1034,8 +1242,8 @@ fn spawn_thread_task(
                 Some(egress),
                 window,
                 cx,
-            )
-        })?;
+            ))
+        })??;
         task.await
     })
 }
@@ -1192,7 +1400,7 @@ pub fn restore_threads_for_workspace(
     let live_threads = store.read(cx).live_threads_for_workspace(workspace_id, cx);
     let records = records_to_restore_for_workspace(workspace_id, &records, &live_threads);
     let settings = AgentThreadSettings::get_global(cx).clone();
-    let mut tasks = Vec::new();
+    let mut restores = Vec::new();
 
     for record in records {
         let Some(kind) = agent_kind_registry()
@@ -1216,21 +1424,52 @@ pub fn restore_threads_for_workspace(
             last_activity_at: system_time_from_millis(record.last_activity_at),
         };
         let extra_args = resolve_thread_launch_args(cx, &kind, &thread.session_id);
-        if let Some(task) = resume_thread_task(workspace, &kind, &thread, &extra_args, window, cx) {
-            tasks.push((kind.id, thread.session_id.to_string(), task));
-        }
+        restores.push((kind, thread, extra_args));
     }
 
-    cx.spawn_in(window, async move |_workspace, _cx| {
-        let mut failure_count = 0;
-        for (kind_id, session_id, task) in tasks {
-            if let Err(error) = task.await {
-                log::error!("Failed to reopen {kind_id} agent session {session_id}: {error:#}");
-                failure_count += 1;
+    cx.spawn_in(window, async move |workspace, cx| {
+        run_thread_restores_sequentially(restores, |(kind, thread, extra_args)| {
+            let kind_id = kind.id;
+            let session_id = thread.session_id.to_string();
+            let task = workspace.update_in(cx, |workspace, window, cx| {
+                resume_thread_task(workspace, &kind, &thread, &extra_args, window, cx)
+            });
+            async move {
+                let result = async {
+                    let Some(task) = task? else {
+                        return anyhow::Ok(ResumeThreadOutcome::NotLaunched);
+                    };
+                    task.await
+                }
+                .await;
+                if let Err(error) = &result {
+                    log::error!("Failed to reopen {kind_id} agent session {session_id}: {error:#}");
+                } else if matches!(&result, Ok(ResumeThreadOutcome::NotLaunched)) {
+                    log::info!("Did not reopen {kind_id} agent session {session_id}");
+                }
+                result
             }
-        }
-        failure_count
+        })
+        .await
     })
+}
+
+async fn run_thread_restores_sequentially<Item, Launch, LaunchFuture>(
+    items: Vec<Item>,
+    mut launch: Launch,
+) -> usize
+where
+    Launch: FnMut(Item) -> LaunchFuture,
+    LaunchFuture: std::future::Future<Output = Result<ResumeThreadOutcome>>,
+{
+    let mut failure_count = 0;
+    for item in items {
+        match launch(item).await {
+            Ok(ResumeThreadOutcome::Launched) => {}
+            Ok(ResumeThreadOutcome::NotLaunched) | Err(_) => failure_count += 1,
+        }
+    }
+    failure_count
 }
 
 fn restore_records_for_session(
@@ -1352,6 +1591,138 @@ mod tests {
             project_root: PathBuf::from("/root"),
             last_activity_at: at(last_activity_at),
         }
+    }
+
+    #[test]
+    fn managed_resume_replaces_only_the_configured_executable() {
+        let kind = agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == "codex")
+            .expect("Codex should be registered");
+        let mut environment = HashMap::default();
+        environment.insert("CODEX_HOME".to_string(), "/remote/codex-home".to_string());
+        let base = AgentLaunchCommand {
+            command: Some("codex".to_string()),
+            env: environment,
+            ..AgentLaunchCommand::default()
+        };
+        let managed_executable =
+            PathBuf::from("/remote/flint/agents/codex/0.144.6/linux-x86_64-glibc/codex");
+
+        let command = build_managed_resume_command(
+            &kind,
+            &base,
+            &historical("session-a", 10),
+            &["--dangerously-bypass-approvals-and-sandbox".to_string()],
+            &managed_executable,
+        )
+        .expect("Codex should support resume");
+
+        assert_eq!(command.command.as_deref(), managed_executable.to_str());
+        assert_eq!(
+            command.args,
+            vec![
+                "resume",
+                "session-a",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--config",
+                "check_for_update_on_startup=false"
+            ]
+        );
+        assert_eq!(
+            command.env.get("CODEX_HOME").map(String::as_str),
+            Some("/remote/codex-home")
+        );
+    }
+
+    #[test]
+    fn only_through_flint_codex_resume_requires_managed_resolution() {
+        let codex = agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == "codex")
+            .expect("Codex should be registered");
+        let claude = agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == "claude")
+            .expect("Claude should be registered");
+
+        assert!(uses_managed_resume(
+            &codex,
+            Some(settings::RemoteAgentRoute::ThroughFlint)
+        ));
+        assert!(!uses_managed_resume(
+            &codex,
+            Some(settings::RemoteAgentRoute::NotThroughFlint)
+        ));
+        assert!(!uses_managed_resume(&codex, None));
+        assert!(!uses_managed_resume(
+            &claude,
+            Some(settings::RemoteAgentRoute::ThroughFlint)
+        ));
+    }
+
+    #[test]
+    fn required_resume_route_rejects_a_route_change() {
+        let required = RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint);
+
+        ensure_required_route(
+            Some(required),
+            Some(settings::RemoteAgentRoute::ThroughFlint),
+        )
+        .expect("unchanged route should be accepted");
+        let error = ensure_required_route(
+            Some(required),
+            Some(settings::RemoteAgentRoute::NotThroughFlint),
+        )
+        .expect_err("changed route should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "the agent route changed while preparing the session; resume it again"
+        );
+    }
+
+    #[gpui::test]
+    async fn restoration_sequence_waits_for_each_resume_before_starting_the_next(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let executor = cx.background_executor.clone();
+
+        let failure_count = run_thread_restores_sequentially(vec![1, 2], {
+            let events = events.clone();
+            move |item| {
+                let events = events.clone();
+                let executor = executor.clone();
+                async move {
+                    events.borrow_mut().push(format!("start {item}"));
+                    executor.timer(Duration::from_millis(1)).await;
+                    events.borrow_mut().push(format!("finish {item}"));
+                    anyhow::Ok(ResumeThreadOutcome::Launched)
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(failure_count, 0);
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["start 1", "finish 1", "start 2", "finish 2"]
+        );
+    }
+
+    #[gpui::test]
+    async fn restoration_sequence_counts_skipped_and_failed_resumes() {
+        let failure_count = run_thread_restores_sequentially(vec![0, 1, 2], |item| async move {
+            match item {
+                0 => Ok(ResumeThreadOutcome::Launched),
+                1 => Ok(ResumeThreadOutcome::NotLaunched),
+                _ => Err(anyhow!("launch failed")),
+            }
+        })
+        .await;
+
+        assert_eq!(failure_count, 2);
     }
 
     fn live_label(id: u64) -> String {

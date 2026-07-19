@@ -282,6 +282,8 @@ pub struct ManagedAgentInstallation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ManagedAgentInstallPhase {
+    CheckingRemote,
+    Reusing,
     Uploading,
     VerifyingRemote,
     Installing,
@@ -295,6 +297,14 @@ struct ManagedAgentReceipt {
     executable_name: String,
     executable_path: PathBuf,
     executable_sha256: String,
+}
+
+struct ManagedAgentPaths {
+    version_root: PathBuf,
+    destination: PathBuf,
+    destination_executable: PathBuf,
+    receipt_path: PathBuf,
+    target_name: String,
 }
 
 pub struct ManagedAgentProvisioner<A, H> {
@@ -316,29 +326,11 @@ where
     A: AgentArtifactSource,
     H: RemoteAgentHost,
 {
-    pub async fn install(
+    async fn installation_paths(
         &self,
         agent_id: &str,
         release: &AgentRelease,
-    ) -> Result<ManagedAgentInstallation> {
-        self.install_with_progress(agent_id, release, |_| {}).await
-    }
-
-    pub async fn install_with_progress(
-        &self,
-        agent_id: &str,
-        release: &AgentRelease,
-        mut report_progress: impl FnMut(ManagedAgentInstallPhase),
-    ) -> Result<ManagedAgentInstallation> {
-        validate_path_component(agent_id, "agent id")?;
-        validate_path_component(release.version, "agent version")?;
-        validate_path_component(release.executable_name, "agent executable name")?;
-
-        let artifact = self.artifacts.acquire(release).await?;
-        if artifact.executable_sha256 != release.executable_sha256 {
-            anyhow::bail!("verified artifact digest does not match the pinned release");
-        }
-
+    ) -> Result<ManagedAgentPaths> {
         let app_data_directory = self.remote_host.app_data_directory().await?;
         let remote_path_style = match release.target.os {
             RemoteOs::Windows => PathStyle::Windows,
@@ -358,31 +350,93 @@ where
         let destination = version_root.join(&target_name);
         let destination_executable = destination.join(release.executable_name);
         let receipt_path = destination.join("receipt.json");
-        if let Some(receipt_content) = self.remote_host.read_file(&receipt_path).await?
+        Ok(ManagedAgentPaths {
+            version_root,
+            destination,
+            destination_executable,
+            receipt_path,
+            target_name,
+        })
+    }
+
+    pub async fn find_installed_with_progress(
+        &self,
+        agent_id: &str,
+        release: &AgentRelease,
+        mut report_progress: impl FnMut(ManagedAgentInstallPhase),
+    ) -> Result<Option<ManagedAgentInstallation>> {
+        validate_path_component(agent_id, "agent id")?;
+        validate_path_component(release.version, "agent version")?;
+        validate_path_component(release.executable_name, "agent executable name")?;
+
+        let paths = self.installation_paths(agent_id, release).await?;
+        report_progress(ManagedAgentInstallPhase::CheckingRemote);
+        if let Some(receipt_content) = self.remote_host.read_file(&paths.receipt_path).await?
             && let Ok(receipt) = serde_json::from_slice::<ManagedAgentReceipt>(&receipt_content)
             && receipt
                 == managed_receipt(
                     agent_id,
                     release,
-                    &target_name,
-                    destination_executable.clone(),
+                    &paths.target_name,
+                    paths.destination_executable.clone(),
                 )
             && self
                 .remote_host
-                .file_sha256(&destination_executable)
+                .file_sha256(&paths.destination_executable)
                 .await
                 .is_ok_and(|digest| digest == release.executable_sha256)
             && self
                 .remote_host
-                .run_version(&destination_executable)
+                .run_version(&paths.destination_executable)
                 .await
                 .is_ok_and(|output| release.version_matcher.matches(output.trim()))
         {
-            return Ok(ManagedAgentInstallation {
-                executable_path: destination_executable,
+            report_progress(ManagedAgentInstallPhase::Reusing);
+            return Ok(Some(ManagedAgentInstallation {
+                executable_path: paths.destination_executable,
                 version: release.version.to_string(),
-            });
+            }));
         }
+        Ok(None)
+    }
+
+    pub async fn install(
+        &self,
+        agent_id: &str,
+        release: &AgentRelease,
+    ) -> Result<ManagedAgentInstallation> {
+        self.install_with_progress(agent_id, release, |_| {}).await
+    }
+
+    pub async fn install_with_progress(
+        &self,
+        agent_id: &str,
+        release: &AgentRelease,
+        mut report_progress: impl FnMut(ManagedAgentInstallPhase),
+    ) -> Result<ManagedAgentInstallation> {
+        validate_path_component(agent_id, "agent id")?;
+        validate_path_component(release.version, "agent version")?;
+        validate_path_component(release.executable_name, "agent executable name")?;
+
+        if let Some(installation) = self
+            .find_installed_with_progress(agent_id, release, &mut report_progress)
+            .await?
+        {
+            return Ok(installation);
+        }
+
+        let artifact = self.artifacts.acquire(release).await?;
+        if artifact.executable_sha256 != release.executable_sha256 {
+            anyhow::bail!("verified artifact digest does not match the pinned release");
+        }
+
+        let ManagedAgentPaths {
+            version_root,
+            destination,
+            destination_executable,
+            target_name,
+            ..
+        } = self.installation_paths(agent_id, release).await?;
 
         let staging = version_root.join(format!(".{target_name}.staging-{}", uuid::Uuid::new_v4()));
         let rollback =
@@ -748,8 +802,12 @@ mod tests {
             Ok(())
         }
 
-        async fn read_file(&self, _path: &Path) -> Result<Option<Vec<u8>>> {
-            Ok(None)
+        async fn read_file(&self, path: &Path) -> Result<Option<Vec<u8>>> {
+            Ok(self
+                .files
+                .borrow()
+                .get(path)
+                .map(|content| content.as_bytes().to_vec()))
         }
 
         async fn path_exists(&self, path: &Path) -> Result<bool> {
@@ -807,6 +865,59 @@ mod tests {
             self.paths.borrow_mut().remove(path);
             Ok(())
         }
+    }
+
+    #[test]
+    fn reuses_valid_remote_installation_before_acquiring_artifact() {
+        smol::block_on(async {
+            let release = release();
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let phases = Rc::new(RefCell::new(Vec::new()));
+            let target = target_name(release.target).unwrap();
+            let destination = PathBuf::from("/remote/flint/agents/codex/1.2.3").join(&target);
+            let executable = destination.join(release.executable_name);
+            let receipt = serde_json::to_string(&managed_receipt(
+                "codex",
+                &release,
+                &target,
+                executable.clone(),
+            ))
+            .unwrap();
+            let files = Rc::new(RefCell::new(HashMap::from([
+                (executable.clone(), DIGEST.to_string()),
+                (destination.join("receipt.json"), receipt),
+            ])));
+            let provisioner = ManagedAgentProvisioner::new(
+                FakeArtifacts {
+                    events: events.clone(),
+                },
+                FakeRemoteHost {
+                    events: events.clone(),
+                    files,
+                    paths: Rc::new(RefCell::new(HashSet::from([destination]))),
+                    fail_staging_commit: Rc::new(Cell::new(false)),
+                },
+            );
+
+            let installation = provisioner
+                .install_with_progress("codex", &release, {
+                    let phases = phases.clone();
+                    move |phase| phases.borrow_mut().push(format!("{phase:?}"))
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(installation.executable_path, executable);
+            assert_eq!(
+                *phases.borrow(),
+                vec!["CheckingRemote".to_string(), "Reusing".to_string()]
+            );
+            assert!(
+                !events.borrow().iter().any(|event| event == "acquire"),
+                "remote reuse must not acquire the local artifact: {:?}",
+                events.borrow()
+            );
+        });
     }
 
     #[test]
@@ -890,6 +1001,7 @@ mod tests {
             assert_eq!(
                 *phases.borrow(),
                 vec![
+                    ManagedAgentInstallPhase::CheckingRemote,
                     ManagedAgentInstallPhase::Uploading,
                     ManagedAgentInstallPhase::VerifyingRemote,
                     ManagedAgentInstallPhase::Installing,

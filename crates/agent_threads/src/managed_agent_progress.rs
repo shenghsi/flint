@@ -78,6 +78,8 @@ impl<T: Clone> ManagedAgentProvisioningCoordinator<T> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ManagedAgentProgressState {
+    CheckingInstalled,
+    Reusing,
     CheckingCache,
     AwaitingConfirmation,
     Downloading {
@@ -85,9 +87,11 @@ pub(crate) enum ManagedAgentProgressState {
         total_bytes: Option<u64>,
     },
     Verifying,
+    VerifyingUploaded,
     Uploading,
     Installing,
     Launching,
+    Resuming,
 }
 
 pub(crate) enum ManagedAgentProgressEvent {
@@ -181,17 +185,23 @@ impl ManagedAgentProgressState {
                 downloaded_bytes,
                 total_bytes: None,
             } => format!("{} downloaded", format_bytes(*downloaded_bytes)),
+            Self::CheckingInstalled => "Checking the installed remote CLI".to_string(),
+            Self::Reusing => "Reusing the installed remote CLI".to_string(),
             Self::CheckingCache => "Checking the local artifact cache".to_string(),
             Self::AwaitingConfirmation => "Waiting for download confirmation".to_string(),
             Self::Verifying => "Verifying the official CLI".to_string(),
+            Self::VerifyingUploaded => "Verifying the uploaded remote CLI".to_string(),
             Self::Uploading => "Uploading the CLI to the remote host".to_string(),
             Self::Installing => "Installing and verifying the remote CLI".to_string(),
             Self::Launching => "Launching the managed Agent Thread".to_string(),
+            Self::Resuming => "Launching the managed CLI for this session".to_string(),
         }
     }
 
     pub fn menu_status(&self) -> String {
         match self {
+            Self::CheckingInstalled => "Checking installed CLI".to_string(),
+            Self::Reusing => "Reusing installed CLI".to_string(),
             Self::CheckingCache => "Checking cache".to_string(),
             Self::AwaitingConfirmation => "Awaiting confirmation".to_string(),
             Self::Downloading { .. } => self.percentage().map_or_else(
@@ -199,9 +209,11 @@ impl ManagedAgentProgressState {
                 |value| format!("Downloading {value}%"),
             ),
             Self::Verifying => "Verifying".to_string(),
+            Self::VerifyingUploaded => "Verifying upload".to_string(),
             Self::Uploading => "Uploading".to_string(),
             Self::Installing => "Installing".to_string(),
             Self::Launching => "Launching".to_string(),
+            Self::Resuming => "Resuming".to_string(),
         }
     }
 }
@@ -239,7 +251,7 @@ impl ManagedAgentProgressNotification {
         Self {
             agent_label: agent_label.into(),
             version: version.into(),
-            state: ManagedAgentProgressState::CheckingCache,
+            state: ManagedAgentProgressState::CheckingInstalled,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -270,11 +282,17 @@ impl ManagedAgentProgressNotification {
                 self.state
                     .update_download(progress.downloaded_bytes, progress.total_bytes);
             }
+            ManagedAgentProgressEvent::Install(ManagedAgentInstallPhase::CheckingRemote) => {
+                self.state = ManagedAgentProgressState::CheckingInstalled;
+            }
+            ManagedAgentProgressEvent::Install(ManagedAgentInstallPhase::Reusing) => {
+                self.state = ManagedAgentProgressState::Reusing;
+            }
             ManagedAgentProgressEvent::Install(ManagedAgentInstallPhase::Uploading) => {
                 self.state = ManagedAgentProgressState::Uploading;
             }
             ManagedAgentProgressEvent::Install(ManagedAgentInstallPhase::VerifyingRemote) => {
-                self.state = ManagedAgentProgressState::Verifying;
+                self.state = ManagedAgentProgressState::VerifyingUploaded;
             }
             ManagedAgentProgressEvent::Install(ManagedAgentInstallPhase::Installing) => {
                 self.state = ManagedAgentProgressState::Installing;
@@ -285,6 +303,12 @@ impl ManagedAgentProgressNotification {
 
     pub fn headline(&self) -> String {
         match self.state {
+            ManagedAgentProgressState::CheckingInstalled => {
+                format!("Checking installed {} CLI", self.agent_label)
+            }
+            ManagedAgentProgressState::Reusing => {
+                format!("Reusing installed {} CLI", self.agent_label)
+            }
             ManagedAgentProgressState::CheckingCache => {
                 format!("Preparing Flint-managed {} CLI", self.agent_label)
             }
@@ -299,6 +323,9 @@ impl ManagedAgentProgressNotification {
             ManagedAgentProgressState::Verifying => {
                 format!("Verifying official {} CLI", self.agent_label)
             }
+            ManagedAgentProgressState::VerifyingUploaded => {
+                format!("Verifying uploaded {} CLI", self.agent_label)
+            }
             ManagedAgentProgressState::Uploading => {
                 format!("Uploading {} CLI to remote", self.agent_label)
             }
@@ -307,6 +334,9 @@ impl ManagedAgentProgressNotification {
             }
             ManagedAgentProgressState::Launching => {
                 format!("Launching Flint-managed {}", self.agent_label)
+            }
+            ManagedAgentProgressState::Resuming => {
+                format!("Resuming {} session", self.agent_label)
             }
         }
     }
@@ -343,12 +373,16 @@ impl Render for ManagedAgentProgressNotification {
                 ManagedAgentProgressState::Downloading {
                     total_bytes: None, ..
                 }
+                | ManagedAgentProgressState::CheckingInstalled
+                | ManagedAgentProgressState::Reusing
                 | ManagedAgentProgressState::CheckingCache
                 | ManagedAgentProgressState::AwaitingConfirmation
                 | ManagedAgentProgressState::Verifying
+                | ManagedAgentProgressState::VerifyingUploaded
                 | ManagedAgentProgressState::Uploading
                 | ManagedAgentProgressState::Installing
-                | ManagedAgentProgressState::Launching => h_flex()
+                | ManagedAgentProgressState::Launching
+                | ManagedAgentProgressState::Resuming => h_flex()
                     .gap_2()
                     .child(SpinnerLabel::new().size(LabelSize::Small))
                     .child(
@@ -512,6 +546,78 @@ mod tests {
         assert_eq!(
             notification.read_with(cx, |notification, _| notification.state().detail()),
             "37% · 18.4 MB / 49.7 MB"
+        );
+    }
+
+    #[gpui::test]
+    fn remote_verification_has_distinct_installed_cli_copy(cx: &mut TestAppContext) {
+        let notification =
+            cx.new(|cx| ManagedAgentProgressNotification::new("Codex", "0.144.6", cx));
+
+        notification.update(cx, |notification, cx| {
+            notification.apply_event(
+                ManagedAgentProgressEvent::Install(ManagedAgentInstallPhase::VerifyingRemote),
+                cx,
+            );
+        });
+
+        assert_eq!(
+            notification.read_with(cx, |notification, _| notification.headline()),
+            "Verifying uploaded Codex CLI"
+        );
+        assert_eq!(
+            notification.read_with(cx, |notification, _| notification.state().detail()),
+            "Verifying the uploaded remote CLI"
+        );
+    }
+
+    #[gpui::test]
+    fn installed_cli_check_and_reuse_have_distinct_copy(cx: &mut TestAppContext) {
+        let notification =
+            cx.new(|cx| ManagedAgentProgressNotification::new("Codex", "0.144.6", cx));
+
+        assert_eq!(
+            notification.read_with(cx, |notification, _| notification.headline()),
+            "Checking installed Codex CLI"
+        );
+        assert_eq!(
+            notification.read_with(cx, |notification, _| notification.state().menu_status()),
+            "Checking installed CLI"
+        );
+
+        notification.update(cx, |notification, cx| {
+            notification.apply_event(
+                ManagedAgentProgressEvent::Install(ManagedAgentInstallPhase::Reusing),
+                cx,
+            );
+        });
+
+        assert_eq!(
+            notification.read_with(cx, |notification, _| notification.headline()),
+            "Reusing installed Codex CLI"
+        );
+        assert_eq!(
+            notification.read_with(cx, |notification, _| notification.state().menu_status()),
+            "Reusing installed CLI"
+        );
+    }
+
+    #[gpui::test]
+    fn resume_has_distinct_session_copy(cx: &mut TestAppContext) {
+        let notification =
+            cx.new(|cx| ManagedAgentProgressNotification::new("Codex", "0.144.6", cx));
+
+        notification.update(cx, |notification, cx| {
+            notification.set_state(ManagedAgentProgressState::Resuming, cx);
+        });
+
+        assert_eq!(
+            notification.read_with(cx, |notification, _| notification.headline()),
+            "Resuming Codex session"
+        );
+        assert_eq!(
+            notification.read_with(cx, |notification, _| notification.state().detail()),
+            "Launching the managed CLI for this session"
         );
     }
 }
