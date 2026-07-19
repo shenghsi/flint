@@ -31,6 +31,7 @@ use crate::{
         ManagedAgentProgressState, ManagedAgentProvisioningCoordinator,
         ManagedAgentProvisioningKey, ManagedAgentProvisioningOwner,
     },
+    remote_process::RemoteAgentProcess,
     resolve_default_launch_args,
 };
 
@@ -154,8 +155,10 @@ struct ThreadEntry {
     metadata: AgentThreadMetadata,
     workspace: WeakEntity<Workspace>,
     terminal_view: WeakEntity<TerminalView>,
+    terminal: Entity<terminal::Terminal>,
     window: Option<WindowHandle<MultiWorkspace>>,
-    _egress: Option<AgentEgressLease>,
+    remote_process: Option<RemoteAgentProcess>,
+    egress: Option<AgentEgressLease>,
 }
 
 struct GlobalAgentThreadStore(Entity<AgentThreadStore>);
@@ -369,10 +372,12 @@ impl AgentThreadStore {
         workspace: Entity<Workspace>,
         terminal_view: Entity<TerminalView>,
         window: Option<WindowHandle<MultiWorkspace>>,
+        remote_process: Option<RemoteAgentProcess>,
         egress: Option<AgentEgressLease>,
         cx: &mut Context<Self>,
     ) {
         let terminal_item_id = terminal_view.entity_id();
+        let terminal = terminal_view.read(cx).terminal().clone();
         let metadata = AgentThreadMetadata {
             terminal_item_id,
             kind_id,
@@ -387,8 +392,10 @@ impl AgentThreadStore {
                 metadata,
                 workspace: workspace.downgrade(),
                 terminal_view: terminal_view.downgrade(),
+                terminal: terminal.clone(),
                 window,
-                _egress: egress,
+                remote_process,
+                egress,
             },
         );
 
@@ -401,7 +408,6 @@ impl AgentThreadStore {
         // signal we have for "this agent thread needs attention" -- the
         // underlying `Terminal` (not `TerminalView`, which only re-emits
         // `Wakeup`/`UpdateTab` for a bell) is what actually re-emits it.
-        let terminal = terminal_view.read(cx).terminal().clone();
         let bell_subscription = cx.subscribe(&terminal, move |_store, _terminal, event, cx| {
             if !matches!(event, terminal::Event::Bell) {
                 return;
@@ -1197,6 +1203,7 @@ fn spawn_thread_task_for_route(
             summary,
             command,
             resumed_session_id,
+            remote_connection,
             None,
             window,
             cx,
@@ -1205,6 +1212,7 @@ fn spawn_thread_task_for_route(
     let Some(remote_connection) = remote_connection else {
         return Task::ready(Err(anyhow!("Through Flint requires an SSH connection")));
     };
+    let process_connection = remote_connection.clone();
     let Some(remote_client_id) = remote_client.map(|client| client.entity_id()) else {
         return Task::ready(Err(anyhow!("Through Flint requires a remote client")));
     };
@@ -1239,6 +1247,7 @@ fn spawn_thread_task_for_route(
                 summary,
                 command,
                 resumed_session_id,
+                Some(process_connection),
                 Some(egress),
                 window,
                 cx,
@@ -1283,12 +1292,28 @@ fn apply_self_update_policy(command: &mut AgentLaunchCommand, kind: &AgentKindDe
     }
 }
 
+fn prepare_remote_thread_process(
+    command: &mut AgentLaunchCommand,
+    remote_connection: Option<Arc<dyn remote::RemoteConnection>>,
+    is_windows: bool,
+    lifecycle_id: uuid::Uuid,
+) -> Result<Option<RemoteAgentProcess>> {
+    if is_windows {
+        return Ok(None);
+    }
+    let Some(remote_connection) = remote_connection else {
+        return Ok(None);
+    };
+    RemoteAgentProcess::prepare(command, remote_connection, lifecycle_id).map(Some)
+}
+
 fn spawn_thread_task_inner(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
     summary: SharedString,
-    command: AgentLaunchCommand,
+    mut command: AgentLaunchCommand,
     resumed_session_id: Option<SharedString>,
+    remote_connection: Option<Arc<dyn remote::RemoteConnection>>,
     egress: Option<AgentEgressLease>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -1307,6 +1332,16 @@ fn spawn_thread_task_inner(
     let title = summary.clone();
     let label = summary.to_string();
     let command_label = command_label(&command, &label);
+    let is_windows = workspace.project().read(cx).path_style(cx).is_windows();
+    let remote_process = match prepare_remote_thread_process(
+        &mut command,
+        remote_connection,
+        is_windows,
+        uuid::Uuid::new_v4(),
+    ) {
+        Ok(remote_process) => remote_process,
+        Err(error) => return Task::ready(Err(error)),
+    };
     let task = SpawnInTerminal {
         full_label: label.clone(),
         label,
@@ -1352,6 +1387,7 @@ fn spawn_thread_task_inner(
                 workspace_entity,
                 terminal_view,
                 window_handle,
+                remote_process,
                 egress,
                 cx,
             );
@@ -1633,6 +1669,27 @@ mod tests {
             command.env.get("CODEX_HOME").map(String::as_str),
             Some("/remote/codex-home")
         );
+    }
+
+    #[test]
+    fn local_agent_launch_is_not_wrapped() {
+        let mut command = AgentLaunchCommand {
+            command: Some("codex".into()),
+            args: vec!["resume".into(), "session-a".into()],
+            ..AgentLaunchCommand::default()
+        };
+        let original = command.clone();
+
+        let process = prepare_remote_thread_process(
+            &mut command,
+            None,
+            false,
+            uuid::Uuid::nil(),
+        )
+        .expect("local launch preparation");
+
+        assert!(process.is_none());
+        assert_eq!(command, original);
     }
 
     #[test]
