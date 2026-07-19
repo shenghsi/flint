@@ -30,7 +30,7 @@
 - Consumes: `settings::RemoteAgentRoute` and `current_remote_agent_route`.
 - Produces: `uses_managed_agent_route(route: Option<settings::RemoteAgentRoute>) -> bool`, shared by new threads, resume/restoration, and credentials; plus `pub(crate) fn workspace_uses_through_flint(workspace: &Workspace, cx: &App) -> bool` for panel visibility.
 
-- [ ] **Step 1: Make the existing resume regression require both agents**
+- [x] **Step 1: Make the existing resume regression require both agents**
 
 Replace the Codex-only assertion with:
 
@@ -51,7 +51,7 @@ fn only_through_flint_resume_uses_managed_resolution_for_both_agents() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -61,7 +61,7 @@ cargo test -p agent_threads only_through_flint_resume_uses_managed_resolution_fo
 
 Expected: FAIL for Claude in Through-Flint mode because `uses_managed_resume` is Codex-only.
 
-- [ ] **Step 3: Introduce the shared route predicate**
+- [x] **Step 3: Introduce the shared route predicate**
 
 Add:
 
@@ -94,7 +94,7 @@ Keep the `kind` parameter on the resume wrapper because resume callers already
 pass it and the signature documents that the policy applies to each registered
 agent.
 
-- [ ] **Step 4: Generalize the route-change error copy**
+- [x] **Step 4: Generalize the route-change error copy**
 
 Change the shared error to cover new and resumed sessions:
 
@@ -104,7 +104,7 @@ anyhow::bail!("the agent route changed while preparing the session; launch it ag
 
 Update `required_resume_route_rejects_a_route_change` to expect that exact text.
 
-- [ ] **Step 5: Run focused resume and route tests and verify GREEN**
+- [x] **Step 5: Run focused resume and route tests and verify GREEN**
 
 Run:
 
@@ -115,7 +115,7 @@ cargo test -p agent_threads required_resume_route_rejects_a_route_change
 
 Expected: both tests pass. The automatic restoration path already calls `resume_thread_task`, so it now shares the same managed selection for Claude without another dispatch branch.
 
-- [ ] **Step 6: Commit the resume policy slice**
+- [x] **Step 6: Commit the resume policy slice**
 
 ```bash
 git add crates/agent_threads/src/store.rs
@@ -135,7 +135,7 @@ git commit -m "Route Claude resume through Flint"
 - Consumes: `AgentKindDefinition::session_id_flag`, `AgentLaunchCommand`, launch-option arguments, managed executable path, and `apply_self_update_policy`.
 - Produces: `NewThreadLaunch { command: AgentLaunchCommand, session_id: Option<SharedString> }` and `build_new_thread_launch(kind, base, extra_args, managed_executable) -> NewThreadLaunch`.
 
-- [ ] **Step 1: Write failing configured/managed command-equivalence tests**
+- [x] **Step 1: Write failing configured/managed command-equivalence tests**
 
 Add:
 
@@ -197,7 +197,7 @@ fn managed_claude_new_thread_keeps_its_generated_session_id() {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -208,7 +208,7 @@ cargo test -p agent_threads managed_claude_new_thread_keeps_its_generated_sessio
 
 Expected: compilation fails because `NewThreadLaunch` and `build_new_thread_launch` do not exist.
 
-- [ ] **Step 3: Implement the pure launch builder**
+- [x] **Step 3: Implement the pure launch builder**
 
 Add near the existing command builders:
 
@@ -243,7 +243,7 @@ fn build_new_thread_launch(
 }
 ```
 
-- [ ] **Step 4: Replace configured and managed command duplication**
+- [x] **Step 4: Replace configured and managed command duplication**
 
 Replace the configured command assembly in `launch_new_thread` with:
 
@@ -290,7 +290,7 @@ spawn_thread(
 Do not alter the explicit managed function's Not-through-Flint routing in this
 task.
 
-- [ ] **Step 5: Run the focused tests and full command-builder tests**
+- [x] **Step 5: Run the focused tests and full command-builder tests**
 
 Run:
 
@@ -302,7 +302,7 @@ cargo test -p agent_threads managed_resume_replaces
 
 Expected: all matching tests pass.
 
-- [ ] **Step 6: Commit the command-construction slice**
+- [x] **Step 6: Commit the command-construction slice**
 
 ```bash
 git add crates/agent_threads/src/store.rs
@@ -323,7 +323,7 @@ git commit -m "Share managed new-thread command construction"
 - Consumes: `uses_managed_agent_route`, `current_remote_agent_route`, `prepare_managed_agent`, `build_new_thread_launch`, `RequiredAgentRoute`, and `spawn_thread_task_for_route`.
 - Produces: ordinary `launch_new_thread` dispatch that selects managed preparation only for Through Flint, plus `launch_managed_thread_for_route(..., required_route: Option<RequiredAgentRoute>)` for shared orchestration.
 
-- [ ] **Step 1: Write the failing new-thread dispatch-policy test**
+- [x] **Step 1: Write the failing new-thread dispatch-policy test**
 
 Add the test against the intended dispatch seam before defining the enum or
 function:
@@ -359,7 +359,7 @@ fn new_thread_launch_route(
 
 Assert `ManagedThroughFlint` only for Through Flint and `Configured` otherwise.
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -370,7 +370,7 @@ cargo test -p agent_threads new_thread_launch_route_is_managed_only_through_flin
 Expected: compilation fails because `NewThreadLaunchRoute` and
 `new_thread_launch_route` do not exist.
 
-- [ ] **Step 3: Implement route dispatch and required-route spawning**
+- [x] **Step 3: Implement route dispatch and required-route spawning**
 
 Implement the enum/helper as:
 
@@ -445,7 +445,7 @@ Await that task in the surrounding async block. On error, call the existing
 `workspace.show_error` path. Preserve `Cancelled` and `AlreadyInProgress` as
 no-launch outcomes.
 
-- [ ] **Step 4: Run focused dispatch, provisioning, and route-guard tests**
+- [x] **Step 4: Run focused dispatch, provisioning, and route-guard tests**
 
 Run:
 
@@ -457,7 +457,7 @@ cargo test -p agent_threads required_resume_route_rejects_a_route_change
 
 Expected: all matching tests pass. Existing `ManagedAgentPreparation::AlreadyInProgress` behavior continues showing the active notification without launching or downloading twice.
 
-- [ ] **Step 5: Commit the route-aware new-thread slice**
+- [x] **Step 5: Commit the route-aware new-thread slice**
 
 ```bash
 git add crates/agent_threads/src/store.rs
@@ -476,7 +476,7 @@ git commit -m "Route new agent threads through Flint"
 - Consumes: `store::workspace_uses_through_flint`, `managed_available`, and the existing popup managed-provisioning notification.
 - Produces: `show_explicit_managed_launch(managed_available: bool, through_flint: bool) -> bool`, used to render the explicit managed row only outside Through-Flint mode.
 
-- [ ] **Step 1: Write the failing menu-visibility test**
+- [x] **Step 1: Write the failing menu-visibility test**
 
 Add:
 
@@ -490,7 +490,7 @@ fn explicit_managed_launch_is_hidden_only_in_through_flint_mode() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -500,7 +500,7 @@ cargo test -p agent_threads explicit_managed_launch_is_hidden_only_in_through_fl
 
 Expected: compilation fails because `show_explicit_managed_launch` does not exist.
 
-- [ ] **Step 3: Implement the menu policy and avoid hidden status reads**
+- [x] **Step 3: Implement the menu policy and avoid hidden status reads**
 
 Add:
 
@@ -536,7 +536,7 @@ let managed_label = show_explicit_managed_launch(managed_available, through_flin
 Replace `if managed_available` with `if let Some(managed_label) = managed_label`
 around the existing entry.
 
-- [ ] **Step 4: Run focused menu and launch-option tests**
+- [x] **Step 4: Run focused menu and launch-option tests**
 
 Run:
 
@@ -548,7 +548,7 @@ cargo test -p agent_threads remote_credential_menus_only_offer_sign_out
 
 Expected: all matching tests pass.
 
-- [ ] **Step 5: Commit the menu slice**
+- [x] **Step 5: Commit the menu slice**
 
 ```bash
 git add crates/agent_threads/src/panel.rs
@@ -567,7 +567,7 @@ git commit -m "Simplify Through-Flint agent menus"
 - Consumes: completed route-aware new/resume behavior and menu policy.
 - Produces: an automated verification record, explicit live-Claude deferral, and a fresh `/tmp/Flint-Local.app` for manual Codex validation.
 
-- [ ] **Step 1: Run complete automated verification**
+- [x] **Step 1: Run complete automated verification**
 
 Run:
 
@@ -580,7 +580,7 @@ git diff --check
 
 Expected: every command exits successfully.
 
-- [ ] **Step 2: Build and verify the local app**
+- [x] **Step 2: Build and verify the local app**
 
 Run:
 
@@ -594,14 +594,14 @@ fresh bundle is created, preserve the old `/tmp/Flint-Local.app`, copy
 the source and copied `Contents/MacOS/flint` SHA-256 digests, and run
 `codesign --verify --deep --strict /tmp/Flint-Local.app`.
 
-- [ ] **Step 3: Record verified scope**
+- [x] **Step 3: Record verified scope**
 
 Set the design status to `Implemented and automatically verified`, record exact
 test/check results, and mark completed plan checkboxes. State that live Claude
 validation remains deferred and that Not-through-Flint was protected by unit
 policy tests rather than changed.
 
-- [ ] **Step 4: Commit the verification record**
+- [x] **Step 4: Commit the verification record**
 
 ```bash
 git add docs/superpowers/specs/2026-07-20-through-flint-agent-launch-menu-design.md docs/superpowers/plans/2026-07-20-through-flint-agent-launch-menu-implementation.md

@@ -1,7 +1,7 @@
 # Through-Flint Agent Launch and Menu Design
 
 **Date:** 2026-07-20  
-**Status:** Approved for implementation
+**Status:** Implemented and automatically verified
 
 ## Scope
 
@@ -153,3 +153,25 @@ launching Claude or contacting Anthropic. Run the focused tests, the complete
 - Repeated launch attempts do not start duplicate provisioning.
 - Not-through-Flint behavior remains unchanged.
 - Live Claude validation is not claimed in this iteration.
+
+## Implementation Verification
+
+Implemented on 2026-07-20. Through-Flint new-thread actions now enter managed
+preparation automatically, and Through-Flint resume and restoration do the same
+for both Codex and Claude. The explicit managed/status row is hidden only in
+Through-Flint menus. Not-through-Flint keeps configured new/resume dispatch and
+the explicit managed row.
+
+Verification completed with:
+
+- focused RED/GREEN tests for resume parity, new-thread command construction,
+  route dispatch, and menu visibility;
+- `cargo test -p agent_threads` — 155 passed;
+- `cargo fmt --all -- --check` — passed;
+- `./script/clippy -p agent_threads` — passed with warnings denied; and
+- a fresh `/tmp/Flint-Local.app` whose main executable SHA-256 matched the
+  signed source bundle.
+
+Automated tests constructed Claude commands without launching Claude or
+contacting Anthropic. Live Claude validation remains deferred to the user's
+separate remote.
