@@ -569,6 +569,30 @@ pub fn launch_new_thread(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    match new_thread_launch_route(current_remote_agent_route(workspace, cx)) {
+        NewThreadLaunchRoute::Configured => {
+            launch_configured_thread(workspace, kind, extra_args, window, cx)
+        }
+        NewThreadLaunchRoute::ManagedThroughFlint => launch_managed_thread_for_route(
+            workspace,
+            kind,
+            extra_args,
+            Some(RequiredAgentRoute(
+                settings::RemoteAgentRoute::ThroughFlint,
+            )),
+            window,
+            cx,
+        ),
+    }
+}
+
+fn launch_configured_thread(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    extra_args: &[String],
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     let settings = AgentThreadSettings::get_global(cx);
     let base = settings.command_for_kind(kind.id);
     let launch = build_new_thread_launch(kind, base, extra_args, None);
@@ -974,6 +998,22 @@ fn uses_managed_agent_route(route: Option<settings::RemoteAgentRoute>) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NewThreadLaunchRoute {
+    Configured,
+    ManagedThroughFlint,
+}
+
+fn new_thread_launch_route(
+    route: Option<settings::RemoteAgentRoute>,
+) -> NewThreadLaunchRoute {
+    if uses_managed_agent_route(route) {
+        NewThreadLaunchRoute::ManagedThroughFlint
+    } else {
+        NewThreadLaunchRoute::Configured
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RequiredAgentRoute(settings::RemoteAgentRoute);
 
 fn ensure_required_route(
@@ -1222,6 +1262,17 @@ pub fn launch_managed_thread(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    launch_managed_thread_for_route(workspace, kind, extra_args, None, window, cx);
+}
+
+fn launch_managed_thread_for_route(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    extra_args: &[String],
+    required_route: Option<RequiredAgentRoute>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     let preparation = prepare_managed_agent(workspace, kind, window, cx);
     let kind = kind.clone();
     let extra_args = extra_args.to_vec();
@@ -1231,7 +1282,7 @@ pub fn launch_managed_thread(
                 prepared.notification.update(cx, |notification, cx| {
                     notification.set_state(ManagedAgentProgressState::Launching, cx);
                 });
-                workspace.update_in(cx, |workspace, window, cx| {
+                let task = workspace.update_in(cx, |workspace, window, cx| {
                     workspace.dismiss_notification(
                         &managed_agent_notification_id(kind.id, &prepared.installation.version),
                         cx,
@@ -1243,16 +1294,20 @@ pub fn launch_managed_thread(
                         &extra_args,
                         Some(&prepared.installation.executable_path),
                     );
-                    spawn_thread(
+                    spawn_thread_task_for_route(
                         workspace,
                         &kind,
                         SharedString::from(format!("New {} thread", kind.label)),
                         launch.command,
                         launch.session_id,
+                        required_route,
                         window,
                         cx,
-                    );
+                    )
                 })?;
+                if let Err(error) = task.await {
+                    workspace.update(cx, |workspace, cx| workspace.show_error(&error, cx))?;
+                }
             }
             Ok(ManagedAgentPreparation::Cancelled)
             | Ok(ManagedAgentPreparation::AlreadyInProgress) => {}
@@ -2056,6 +2111,22 @@ mod tests {
             ));
             assert!(!uses_managed_resume(&kind, None));
         }
+    }
+
+    #[test]
+    fn new_thread_launch_route_is_managed_only_through_flint() {
+        assert_eq!(
+            new_thread_launch_route(Some(settings::RemoteAgentRoute::ThroughFlint)),
+            NewThreadLaunchRoute::ManagedThroughFlint
+        );
+        assert_eq!(
+            new_thread_launch_route(Some(settings::RemoteAgentRoute::NotThroughFlint)),
+            NewThreadLaunchRoute::Configured
+        );
+        assert_eq!(
+            new_thread_launch_route(None),
+            NewThreadLaunchRoute::Configured
+        );
     }
 
     #[test]
