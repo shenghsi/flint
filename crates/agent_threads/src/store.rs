@@ -937,13 +937,17 @@ fn build_managed_credential_command(
 }
 
 fn uses_managed_resume(
-    kind: &AgentKindDefinition,
+    _kind: &AgentKindDefinition,
     route: Option<settings::RemoteAgentRoute>,
 ) -> bool {
-    kind.id == "codex" && route == Some(settings::RemoteAgentRoute::ThroughFlint)
+    uses_managed_agent_route(route)
 }
 
 fn uses_managed_credential_command(route: Option<settings::RemoteAgentRoute>) -> bool {
+    uses_managed_agent_route(route)
+}
+
+fn uses_managed_agent_route(route: Option<settings::RemoteAgentRoute>) -> bool {
     route == Some(settings::RemoteAgentRoute::ThroughFlint)
 }
 
@@ -957,7 +961,7 @@ fn ensure_required_route(
     if required_route.is_none_or(|required| Some(required.0) == actual_route) {
         return Ok(());
     }
-    anyhow::bail!("the agent route changed while preparing the session; resume it again")
+    anyhow::bail!("the agent route changed while preparing the session; launch it again")
 }
 
 fn spawn_thread(
@@ -1963,29 +1967,18 @@ mod tests {
     }
 
     #[test]
-    fn only_through_flint_codex_resume_requires_managed_resolution() {
-        let codex = agent_kind_registry()
-            .into_iter()
-            .find(|kind| kind.id == "codex")
-            .expect("Codex should be registered");
-        let claude = agent_kind_registry()
-            .into_iter()
-            .find(|kind| kind.id == "claude")
-            .expect("Claude should be registered");
-
-        assert!(uses_managed_resume(
-            &codex,
-            Some(settings::RemoteAgentRoute::ThroughFlint)
-        ));
-        assert!(!uses_managed_resume(
-            &codex,
-            Some(settings::RemoteAgentRoute::NotThroughFlint)
-        ));
-        assert!(!uses_managed_resume(&codex, None));
-        assert!(!uses_managed_resume(
-            &claude,
-            Some(settings::RemoteAgentRoute::ThroughFlint)
-        ));
+    fn only_through_flint_resume_uses_managed_resolution_for_both_agents() {
+        for kind in agent_kind_registry() {
+            assert!(uses_managed_resume(
+                &kind,
+                Some(settings::RemoteAgentRoute::ThroughFlint)
+            ));
+            assert!(!uses_managed_resume(
+                &kind,
+                Some(settings::RemoteAgentRoute::NotThroughFlint)
+            ));
+            assert!(!uses_managed_resume(&kind, None));
+        }
     }
 
     #[test]
@@ -2005,7 +1998,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "the agent route changed while preparing the session; resume it again"
+            "the agent route changed while preparing the session; launch it again"
         );
     }
 
