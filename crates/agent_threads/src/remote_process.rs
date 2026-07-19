@@ -190,6 +190,36 @@ impl RemoteAgentProcess {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShutdownOutcome {
+    Graceful,
+    Forced,
+}
+
+pub(crate) async fn wait_for_graceful_exit_or_force<Completion, Timeout, Force>(
+    completion: Completion,
+    timeout: Timeout,
+    force: Force,
+) -> Result<ShutdownOutcome>
+where
+    Completion: std::future::Future<Output = ()>,
+    Timeout: std::future::Future<Output = ()>,
+    Force: std::future::Future<Output = Result<()>>,
+{
+    use futures::FutureExt as _;
+
+    let completion = completion.fuse();
+    let timeout = timeout.fuse();
+    futures::pin_mut!(completion, timeout);
+    futures::select_biased! {
+        () = completion => Ok(ShutdownOutcome::Graceful),
+        () = timeout => {
+            force.await?;
+            Ok(ShutdownOutcome::Forced)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,5 +280,49 @@ mod tests {
             request.connection_sharing,
             remote::ConnectionSharing::Shared
         );
+    }
+
+    #[gpui::test]
+    async fn graceful_completion_skips_force_cleanup(cx: &mut gpui::TestAppContext) {
+        let forced = std::rc::Rc::new(std::cell::Cell::new(false));
+        let outcome = wait_for_graceful_exit_or_force(
+            futures::future::ready(()),
+            cx.background_executor
+                .timer(std::time::Duration::from_secs(60)),
+            {
+                let forced = forced.clone();
+                async move {
+                    forced.set(true);
+                    anyhow::Ok(())
+                }
+            },
+        )
+        .await
+        .expect("graceful shutdown");
+
+        assert_eq!(outcome, ShutdownOutcome::Graceful);
+        assert!(!forced.get());
+    }
+
+    #[gpui::test]
+    async fn timeout_runs_force_cleanup_once(cx: &mut gpui::TestAppContext) {
+        let force_count = std::rc::Rc::new(std::cell::Cell::new(0));
+        let outcome = wait_for_graceful_exit_or_force(
+            futures::future::pending::<()>(),
+            cx.background_executor
+                .timer(std::time::Duration::from_millis(1)),
+            {
+                let force_count = force_count.clone();
+                async move {
+                    force_count.set(force_count.get() + 1);
+                    anyhow::Ok(())
+                }
+            },
+        )
+        .await
+        .expect("forced shutdown");
+
+        assert_eq!(outcome, ShutdownOutcome::Forced);
+        assert_eq!(force_count.get(), 1);
     }
 }
