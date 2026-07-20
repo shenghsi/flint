@@ -422,8 +422,6 @@ impl MasterProcess {
     }
 
     pub async fn wait_connected(&mut self) -> Result<()> {
-        use smol::io::AsyncBufReadExt;
-
         let Some(stdout) = self.process.stdout.take() else {
             anyhow::bail!("ssh process stdout capture failed");
         };
@@ -433,7 +431,7 @@ impl MasterProcess {
         let mut line = String::new();
 
         loop {
-            let n = reader.read_line(&mut line).await?;
+            let n = smol::io::AsyncBufReadExt::read_line(&mut reader, &mut line).await?;
             if n == 0 {
                 anyhow::bail!("ssh process exited before connection established");
             };
