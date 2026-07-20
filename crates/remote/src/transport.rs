@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use crate::{
-    RemoteArch, RemoteOs, RemotePlatform,
+    RemoteArch, RemoteLibc, RemoteOs, RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer, read_message_with_len, write_message},
 };
@@ -20,18 +20,48 @@ pub mod mock;
 pub mod ssh;
 pub mod wsl;
 
-/// Parses the output of `uname -sm` to determine the remote platform.
-/// Takes the last line to skip possible shell initialization output.
+// SSH cannot safely preserve multiline arguments through every supported login shell.
+const POSIX_TARGET_PROBE: &str = concat!(
+    "os=$(uname -s) || exit 1; ",
+    "arch=$(uname -m) || exit 1; ",
+    "libc=none; ",
+    "if [ \"$os\" = Linux ]; then ",
+    "libc=unknown; ",
+    "if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then ",
+    "libc=glibc; ",
+    "else ",
+    "ldd_output=$(ldd --version 2>&1); ",
+    "case \"$ldd_output\" in *musl*) libc=musl ;; esac; ",
+    "fi; ",
+    "fi; ",
+    "printf '__FLINT_REMOTE_TARGET__\\t%s\\t%s\\t%s\\n' \"$os\" \"$arch\" \"$libc\"",
+);
+
+fn posix_target_probe_command() -> (&'static str, [&'static str; 2]) {
+    ("sh", ["-c", POSIX_TARGET_PROBE])
+}
+
 fn parse_platform(output: &str) -> Result<RemotePlatform> {
-    let output = output.trim();
-    let uname = output.rsplit_once('\n').map_or(output, |(_, last)| last);
-    let Some((os, arch)) = uname.split_once(" ") else {
-        anyhow::bail!("unknown uname: {uname:?}")
-    };
+    const TARGET_PREFIX: &str = "__FLINT_REMOTE_TARGET__\t";
+
+    let target = output
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix(TARGET_PREFIX))
+        .context("remote target probe did not produce a tagged result")?;
+    let mut fields = target.split('\t');
+    let os = fields.next().context("remote target is missing its OS")?;
+    let arch = fields
+        .next()
+        .context("remote target is missing its architecture")?;
+    let libc = fields
+        .next()
+        .context("remote target is missing its libc result")?;
 
     let os = match os {
         "Darwin" => RemoteOs::MacOs,
         "Linux" => RemoteOs::Linux,
+        "Windows" => RemoteOs::Windows,
         _ => anyhow::bail!(
             "Prebuilt remote servers are not yet available for {os:?}. See https://github.com/shenghsi/flint/blob/main/docs/src/remote-development.md"
         ),
@@ -44,7 +74,7 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
         || arch.starts_with("aarch64")
     {
         RemoteArch::Aarch64
-    } else if arch.starts_with("x86") {
+    } else if arch.starts_with("x86") || arch == "AMD64" {
         RemoteArch::X86_64
     } else {
         anyhow::bail!(
@@ -52,7 +82,16 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
         )
     };
 
-    Ok(RemotePlatform { os, arch })
+    let libc = match os {
+        RemoteOs::Linux => Some(match libc {
+            "glibc" => RemoteLibc::Glibc,
+            "musl" => RemoteLibc::Musl,
+            _ => RemoteLibc::Unknown,
+        }),
+        RemoteOs::MacOs | RemoteOs::Windows => None,
+    };
+
+    Ok(RemotePlatform { os, arch, libc })
 }
 
 /// Parses the output of `echo $SHELL` to determine the remote shell.
@@ -401,49 +440,99 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_platform() {
-        let result = parse_platform("Linux x86_64\n").unwrap();
+    fn posix_probe_command_arguments_are_single_line() {
+        let (_, arguments) = posix_target_probe_command();
+
+        assert!(
+            arguments
+                .iter()
+                .all(|argument| !argument.contains(['\n', '\r']))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_probe_reports_a_tagged_local_target() {
+        let output = smol::block_on(async {
+            let (program, arguments) = posix_target_probe_command();
+            smol::process::Command::new(program)
+                .args(arguments)
+                .output()
+                .await
+                .expect("POSIX shell should run the target probe")
+        });
+        let stdout = String::from_utf8(output.stdout).expect("probe output should be UTF-8");
+
+        let result = parse_platform(&stdout).expect("probe output should parse");
+
+        assert!(output.status.success());
+        let expected_os = if cfg!(target_os = "macos") {
+            RemoteOs::MacOs
+        } else {
+            RemoteOs::Linux
+        };
+        assert_eq!(result.os, expected_os);
+    }
+
+    #[test]
+    fn parses_tagged_glibc_linux_target() {
+        let result = parse_platform("__FLINT_REMOTE_TARGET__\tLinux\tx86_64\tglibc\n")
+            .expect("tagged target should parse");
+
+        assert_eq!(
+            result,
+            RemotePlatform {
+                os: RemoteOs::Linux,
+                arch: RemoteArch::X86_64,
+                libc: Some(RemoteLibc::Glibc),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_tagged_windows_target_without_libc() {
+        let result = parse_platform("__FLINT_REMOTE_TARGET__\tWindows\tAMD64\tnone\n")
+            .expect("tagged Windows target should parse");
+
+        assert_eq!(
+            result,
+            RemotePlatform {
+                os: RemoteOs::Windows,
+                arch: RemoteArch::X86_64,
+                libc: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_target_after_shell_startup_noise() {
+        let result = parse_platform(
+            "welcome from shell startup\n__FLINT_REMOTE_TARGET__\tLinux\taarch64\tmusl\n",
+        )
+        .expect("tagged target should be found after startup noise");
+
+        assert_eq!(result.arch, RemoteArch::Aarch64);
+        assert_eq!(result.libc, Some(RemoteLibc::Musl));
+    }
+
+    #[test]
+    fn preserves_linux_target_when_libc_is_unknown() {
+        let result = parse_platform("__FLINT_REMOTE_TARGET__\tLinux\tx86_64\tunknown\n")
+            .expect("unknown libc should not hide the base target");
+
         assert_eq!(result.os, RemoteOs::Linux);
         assert_eq!(result.arch, RemoteArch::X86_64);
+        assert_eq!(result.libc, Some(RemoteLibc::Unknown));
+    }
 
-        let result = parse_platform("Darwin arm64\n").unwrap();
+    #[test]
+    fn parses_tagged_macos_target_without_libc() {
+        let result = parse_platform("__FLINT_REMOTE_TARGET__\tDarwin\tarm64\tnone\n")
+            .expect("tagged macOS target should parse");
+
         assert_eq!(result.os, RemoteOs::MacOs);
         assert_eq!(result.arch, RemoteArch::Aarch64);
-
-        let result = parse_platform("Linux x86_64").unwrap();
-        assert_eq!(result.os, RemoteOs::Linux);
-        assert_eq!(result.arch, RemoteArch::X86_64);
-
-        let result = parse_platform("some shell init output\nLinux aarch64\n").unwrap();
-        assert_eq!(result.os, RemoteOs::Linux);
-        assert_eq!(result.arch, RemoteArch::Aarch64);
-
-        let result = parse_platform("some shell init output\nLinux aarch64").unwrap();
-        assert_eq!(result.os, RemoteOs::Linux);
-        assert_eq!(result.arch, RemoteArch::Aarch64);
-
-        assert_eq!(
-            parse_platform("Linux armv8l\n").unwrap().arch,
-            RemoteArch::Aarch64
-        );
-        assert_eq!(
-            parse_platform("Linux aarch64\n").unwrap().arch,
-            RemoteArch::Aarch64
-        );
-        assert_eq!(
-            parse_platform("Linux x86_64\n").unwrap().arch,
-            RemoteArch::X86_64
-        );
-
-        let result = parse_platform(
-            r#"Linux x86_64 - What you're referring to as Linux, is in fact, GNU/Linux...\n"#,
-        )
-        .unwrap();
-        assert_eq!(result.os, RemoteOs::Linux);
-        assert_eq!(result.arch, RemoteArch::X86_64);
-
-        assert!(parse_platform("Windows x86_64\n").is_err());
-        assert!(parse_platform("Linux armv7l\n").is_err());
+        assert_eq!(result.libc, None);
     }
 
     #[test]

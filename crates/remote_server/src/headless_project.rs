@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use collections::HashSet;
+use futures::AsyncReadExt as _;
 use gpui::TasksIncluded;
 use language::File;
 use lsp::LanguageServerId;
@@ -29,6 +30,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
+use sha2::{Digest as _, Sha256};
 use smol::process::Child;
 
 use settings::initial_server_settings_content;
@@ -234,6 +236,15 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
         session.add_request_handler(cx.weak_entity(), Self::handle_read_remote_file);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
+        session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_app_data_directory);
+        session.add_request_handler(cx.weak_entity(), Self::handle_compute_remote_file_sha256);
+        session.add_request_handler(
+            cx.weak_entity(),
+            Self::handle_create_private_remote_directory,
+        );
+        session.add_request_handler(cx.weak_entity(), Self::handle_set_remote_file_executable);
+        session.add_request_handler(cx.weak_entity(), Self::handle_rename_remote_path);
+        session.add_request_handler(cx.weak_entity(), Self::handle_remove_remote_path);
         session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         session.add_request_handler(cx.weak_entity(), Self::handle_ping);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_processes);
@@ -1146,6 +1157,73 @@ impl HeadlessProject {
         })
     }
 
+    async fn handle_get_remote_app_data_directory(
+        _this: Entity<Self>,
+        _envelope: TypedEnvelope<proto::GetRemoteAppDataDirectory>,
+        _cx: AsyncApp,
+    ) -> Result<proto::GetRemoteAppDataDirectoryResponse> {
+        Ok(proto::GetRemoteAppDataDirectoryResponse {
+            path: paths::data_dir().to_string_lossy().into_owned(),
+        })
+    }
+
+    async fn handle_compute_remote_file_sha256(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ComputeRemoteFileSha256>,
+        _cx: AsyncApp,
+    ) -> Result<proto::ComputeRemoteFileSha256Response> {
+        let path = PathBuf::from(shellexpand::tilde(&envelope.payload.path).as_ref());
+        Ok(proto::ComputeRemoteFileSha256Response {
+            sha256: compute_file_sha256(&path).await?,
+        })
+    }
+
+    async fn handle_create_private_remote_directory(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CreatePrivateRemoteDirectory>,
+        _cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let path = PathBuf::from(shellexpand::tilde(&envelope.payload.path).as_ref());
+        create_private_directory(&path).await?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_set_remote_file_executable(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SetRemoteFileExecutable>,
+        _cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let path = PathBuf::from(shellexpand::tilde(&envelope.payload.path).as_ref());
+        set_user_executable_permissions(&path).await?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_rename_remote_path(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RenameRemotePath>,
+        _cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let source = PathBuf::from(shellexpand::tilde(&envelope.payload.source).as_ref());
+        let destination = PathBuf::from(shellexpand::tilde(&envelope.payload.destination).as_ref());
+        commit_staged_file(&source, &destination).await?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_remove_remote_path(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RemoveRemotePath>,
+        _cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let path = PathBuf::from(shellexpand::tilde(&envelope.payload.path).as_ref());
+        remove_remote_path(
+            &path,
+            envelope.payload.recursive,
+            envelope.payload.ignore_if_missing,
+        )
+        .await?;
+        Ok(proto::Ack {})
+    }
+
     async fn handle_shutdown_remote_server(
         _this: Entity<Self>,
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
@@ -1311,4 +1389,439 @@ fn find_venv_python(working_directory: &str) -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+async fn compute_file_sha256(path: &Path) -> Result<String> {
+    let mut file = smol::fs::File::open(path)
+        .await
+        .with_context(|| format!("failed to open {} for hashing", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        let bytes_read = file
+            .read(&mut buffer)
+            .await
+            .with_context(|| format!("failed to read {} while hashing", path.display()))?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+async fn create_private_directory(path: &Path) -> Result<()> {
+    let mut missing = Vec::new();
+    let mut current = path;
+    while !current.exists() {
+        missing.push(current.to_path_buf());
+        current = current
+            .parent()
+            .with_context(|| format!("{} has no existing ancestor", path.display()))?;
+    }
+
+    for directory in missing.into_iter().rev() {
+        match smol::fs::create_dir(&directory).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to create {}", directory.display()));
+            }
+        }
+        set_user_private_directory_permissions(&directory).await?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn set_user_private_directory_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    smol::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .await
+        .with_context(|| format!("failed to set private permissions on {}", path.display()))
+}
+
+#[cfg(unix)]
+async fn set_user_executable_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    smol::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .await
+        .with_context(|| format!("failed to set executable permissions on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+async fn set_user_executable_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn set_user_private_directory_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+async fn commit_staged_file(source: &Path, destination: &Path) -> Result<()> {
+    let source = source.to_path_buf();
+    let destination = destination.to_path_buf();
+    smol::unblock(
+        move || match rename_path_without_overwrite(&source, &destination) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                anyhow::bail!("destination {} already exists", destination.display())
+            }
+            Err(error) => Err(error).with_context(|| {
+                format!(
+                    "failed to commit {} to {}",
+                    source.display(),
+                    destination.display()
+                )
+            }),
+        },
+    )
+    .await
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_path_without_overwrite(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
+
+    let source_cstring = CString::new(source.as_os_str().as_bytes())?;
+    let destination_cstring = CString::new(destination.as_os_str().as_bytes())?;
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            source_cstring.as_ptr(),
+            libc::AT_FDCWD,
+            destination_cstring.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    let result = if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    };
+    finish_no_replace_rename(source, destination, result)
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "android"))]
+fn finish_no_replace_rename(
+    source: &Path,
+    destination: &Path,
+    result: std::io::Result<()>,
+) -> std::io::Result<()> {
+    let error = match result {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    if !matches!(
+        error.raw_os_error(),
+        Some(libc::EINVAL | libc::ENOSYS | libc::EOPNOTSUPP)
+    ) {
+        return Err(error);
+    }
+    if !std::fs::symlink_metadata(source)?.is_dir() {
+        return Err(error);
+    }
+    match std::fs::symlink_metadata(destination) {
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "destination already exists",
+            ));
+        }
+        Err(destination_error) if destination_error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(destination_error) => return Err(destination_error),
+    }
+    std::fs::rename(source, destination)
+}
+
+#[cfg(target_os = "macos")]
+fn rename_path_without_overwrite(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
+
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let destination = CString::new(destination.as_os_str().as_bytes())?;
+    let result =
+        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(any(
+    windows,
+    not(any(target_os = "linux", target_os = "android", target_os = "macos"))
+))]
+fn rename_path_without_overwrite(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if destination.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "destination already exists",
+        ));
+    }
+    std::fs::rename(source, destination)
+}
+
+async fn remove_remote_path(path: &Path, recursive: bool, ignore_if_missing: bool) -> Result<()> {
+    let metadata = match smol::fs::metadata(path).await {
+        Ok(metadata) => metadata,
+        Err(error) if ignore_if_missing && error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to inspect {}", path.display()));
+        }
+    };
+
+    if metadata.is_dir() {
+        if recursive {
+            smol::fs::remove_dir_all(path).await
+        } else {
+            smol::fs::remove_dir(path).await
+        }
+    } else {
+        smol::fs::remove_file(path).await
+    }
+    .with_context(|| format!("failed to remove {}", path.display()))
+}
+
+#[cfg(test)]
+mod remote_management_tests {
+    use super::*;
+
+    fn staged_directory() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let source = directory.path().join("staged");
+        let destination = directory.path().join("installed");
+        std::fs::create_dir(&source).expect("staged directory should be created");
+        (directory, source, destination)
+    }
+
+    #[test]
+    fn computes_sha256_without_a_remote_shell_utility() {
+        smol::block_on(async {
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let path = directory.path().join("agent");
+            smol::fs::write(&path, b"flint-managed-agent")
+                .await
+                .expect("fixture should be written");
+
+            let digest = compute_file_sha256(&path)
+                .await
+                .expect("fixture should be hashed");
+
+            assert_eq!(
+                digest,
+                "5a7ded008e4ba1559ebe297ff7eda9d31d2096f2bb8a80caaacc40f393b2d000"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creates_a_user_private_directory() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        smol::block_on(async {
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let path = directory.path().join("agents").join("codex");
+
+            create_private_directory(&path)
+                .await
+                .expect("private directory should be created");
+
+            let mode = std::fs::metadata(&path)
+                .expect("created directory should have metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o700);
+        });
+    }
+
+    #[test]
+    fn committing_a_staged_file_preserves_an_existing_destination() {
+        smol::block_on(async {
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let source = directory.path().join("staged");
+            let destination = directory.path().join("installed");
+            smol::fs::write(&source, b"new")
+                .await
+                .expect("staged fixture should be written");
+            smol::fs::write(&destination, b"existing")
+                .await
+                .expect("destination fixture should be written");
+
+            let error = commit_staged_file(&source, &destination)
+                .await
+                .expect_err("existing destination should reject commit");
+
+            assert!(error.to_string().contains("already exists"));
+            assert_eq!(
+                smol::fs::read(&destination)
+                    .await
+                    .expect("destination should remain readable"),
+                b"existing"
+            );
+            assert!(source.exists());
+        });
+    }
+
+    #[test]
+    fn commits_a_staged_directory_without_overwriting() {
+        smol::block_on(async {
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let source = directory.path().join("staged");
+            let destination = directory.path().join("installed");
+            smol::fs::create_dir(&source)
+                .await
+                .expect("staged directory should be created");
+            smol::fs::write(source.join("agent"), b"verified")
+                .await
+                .expect("staged executable should be written");
+
+            commit_staged_file(&source, &destination)
+                .await
+                .expect("staged directory should be committed");
+
+            assert!(!source.exists());
+            assert_eq!(
+                smol::fs::read(destination.join("agent"))
+                    .await
+                    .expect("committed executable should remain readable"),
+                b"verified"
+            );
+        });
+    }
+
+    #[test]
+    fn unsupported_no_replace_rename_falls_back_for_a_directory() {
+        let (_directory, source, destination) = staged_directory();
+        std::fs::write(source.join("agent"), b"verified")
+            .expect("staged executable should be written");
+
+        finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        )
+        .expect("unsupported no-replace rename should use the directory fallback");
+
+        assert!(!source.exists());
+        assert_eq!(
+            std::fs::read(destination.join("agent"))
+                .expect("committed executable should remain readable"),
+            b"verified"
+        );
+    }
+
+    #[test]
+    fn unsupported_no_replace_rename_does_not_fall_back_for_a_file() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let source = directory.path().join("staged");
+        let destination = directory.path().join("installed");
+        std::fs::write(&source, b"verified").expect("staged file should be written");
+
+        let error = finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        )
+        .expect_err("file source should retain the no-replace failure");
+
+        assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
+        assert!(source.exists());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn directory_fallback_rejects_an_existing_destination() {
+        let (_directory, source, destination) = staged_directory();
+        std::fs::write(source.join("agent"), b"verified")
+            .expect("staged executable should be written");
+        std::fs::create_dir(&destination).expect("destination directory should be created");
+
+        let error = finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        )
+        .expect_err("existing destination should reject the fallback");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(source.exists());
+        assert!(destination.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_fallback_rejects_a_dangling_destination_symlink() {
+        let (_directory, source, destination) = staged_directory();
+        std::os::unix::fs::symlink("missing-target", &destination)
+            .expect("destination symlink should be created");
+
+        let error = finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        )
+        .expect_err("destination symlink should reject the fallback");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(source.exists());
+        assert!(std::fs::symlink_metadata(&destination).is_ok());
+    }
+
+    #[test]
+    fn unrelated_no_replace_errors_do_not_use_the_fallback() {
+        let (_directory, source, destination) = staged_directory();
+
+        for error_code in [libc::EACCES, libc::EXDEV] {
+            let error = finish_no_replace_rename(
+                &source,
+                &destination,
+                Err(std::io::Error::from_raw_os_error(error_code)),
+            )
+            .expect_err("unrelated error should not use the fallback");
+            assert_eq!(error.raw_os_error(), Some(error_code));
+        }
+        assert!(source.exists());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn missing_no_replace_syscall_falls_back_for_a_directory() {
+        let (_directory, source, destination) = staged_directory();
+
+        finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::ENOSYS)),
+        )
+        .expect("missing no-replace syscall should use the directory fallback");
+
+        assert!(!source.exists());
+        assert!(destination.exists());
+    }
+
+    #[test]
+    fn unsupported_no_replace_filesystem_falls_back_for_a_directory() {
+        let (_directory, source, destination) = staged_directory();
+
+        finish_no_replace_rename(
+            &source,
+            &destination,
+            Err(std::io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
+        )
+        .expect("unsupported no-replace filesystem should use the directory fallback");
+
+        assert!(!source.exists());
+        assert!(destination.exists());
+    }
 }

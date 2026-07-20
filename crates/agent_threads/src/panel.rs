@@ -8,8 +8,8 @@ use futures::StreamExt as _;
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton, MouseDownEvent, ParentElement,
-    Pixels, Point, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, anchored,
-    deferred, div,
+    Pixels, Point, PromptLevel, Render, SharedString, Styled, Subscription, Task, WeakEntity,
+    Window, anchored, deferred, div,
 };
 use settings::{DockSide, Settings, SettingsStore};
 use ui::{
@@ -28,7 +28,10 @@ use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
     merge_threads,
 };
-use crate::{AgentKindDefinition, AgentThreadSettings, HistoricalThread, agent_kind_registry};
+use crate::{
+    AgentKindDefinition, AgentThreadSettings, HistoricalThread, RemoteAgentRoutingSettings,
+    agent_kind_registry,
+};
 
 enum HistoricalState {
     Loading,
@@ -64,6 +67,31 @@ fn apply_visible_cap(
         rows.truncate(cap);
     }
     (rows, truncated)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RemoteCredentialMenuPolicy {
+    sign_in: bool,
+    sign_in_status: bool,
+    sign_out: bool,
+    provider_management: bool,
+}
+
+fn remote_credential_menu_policy(_kind: &AgentKindDefinition) -> RemoteCredentialMenuPolicy {
+    RemoteCredentialMenuPolicy {
+        sign_in: false,
+        sign_in_status: false,
+        sign_out: true,
+        provider_management: false,
+    }
+}
+
+fn remote_credential_menu_label_size(through_flint: bool) -> Option<LabelSize> {
+    through_flint.then_some(LabelSize::Small)
+}
+
+fn show_explicit_managed_launch(managed_available: bool, through_flint: bool) -> bool {
+    managed_available && !through_flint
 }
 
 pub struct AgentThreadsPanel {
@@ -552,6 +580,33 @@ impl AgentThreadsPanel {
         let workspace = self.workspace.clone();
         let resume_options = kind.resume_options.clone();
         let effective_id = effective_new_thread_launch_option_id(cx, &kind);
+        let managed_available = workspace.upgrade().is_some_and(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_client()
+                .and_then(|client| client.read(cx).platform())
+                .is_some_and(|platform| kind.release_for(platform).is_some())
+        });
+        let through_flint = workspace
+            .upgrade()
+            .is_some_and(|workspace| store::workspace_uses_through_flint(workspace.read(cx), cx));
+        let managed_label =
+            show_explicit_managed_launch(managed_available, through_flint).then(|| {
+                workspace.upgrade().map_or_else(
+                    || SharedString::from(format!("New — Flint-managed {}", kind.label)),
+                    |workspace| store::managed_agent_launch_label(workspace.read(cx), &kind, cx),
+                )
+            });
+        let remote_available = workspace.upgrade().is_some_and(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_client()
+                .is_some()
+        });
         let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
             {
                 let workspace = workspace.clone();
@@ -604,6 +659,149 @@ impl AgentThreadsPanel {
                         });
                     },
                 );
+            }
+            if let Some(managed_label) = managed_label {
+                let workspace = workspace.clone();
+                let kind = kind.clone();
+                context_menu =
+                    context_menu
+                        .separator()
+                        .entry(managed_label, None, move |window, cx| {
+                            let Some(workspace) = workspace.upgrade() else {
+                                return;
+                            };
+                            let kind = kind.clone();
+                            workspace.update(cx, |workspace, cx| {
+                                store::launch_managed_thread(workspace, &kind, &[], window, cx);
+                            });
+                        });
+            }
+            if remote_available {
+                let credential_policy = kind.credential_policy();
+                let menu_policy = remote_credential_menu_policy(&kind);
+                context_menu = context_menu.separator();
+                if menu_policy.sign_in {
+                    let workspace = workspace.clone();
+                    let kind = kind.clone();
+                    context_menu = context_menu.entry(
+                        SharedString::from(format!("Sign in to {} on remote", kind.label)),
+                        None,
+                        move |window, cx| {
+                            let Some(workspace) = workspace.upgrade() else {
+                                return;
+                            };
+                            let kind = kind.clone();
+                            workspace.update(cx, |workspace, cx| {
+                                store::launch_credential_command(
+                                    workspace,
+                                    &kind,
+                                    SharedString::from(format!("Sign in to {}", kind.label)),
+                                    credential_policy.login_arguments,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        },
+                    );
+                }
+                if menu_policy.sign_in_status {
+                    let workspace = workspace.clone();
+                    let kind = kind.clone();
+                    context_menu = context_menu.entry(
+                        SharedString::from(format!("Check {} sign-in", kind.label)),
+                        None,
+                        move |window, cx| {
+                            let Some(workspace) = workspace.upgrade() else {
+                                return;
+                            };
+                            let kind = kind.clone();
+                            workspace.update(cx, |workspace, cx| {
+                                store::launch_credential_command(
+                                    workspace,
+                                    &kind,
+                                    SharedString::from(format!("{} sign-in status", kind.label)),
+                                    credential_policy.status_arguments,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        },
+                    );
+                }
+                if menu_policy.sign_out {
+                    let workspace = workspace.clone();
+                    let kind = kind.clone();
+                    let label = SharedString::from(format!("Sign out {} on remote…", kind.label));
+                    let handler = move |window: &mut Window, cx: &mut App| {
+                        let confirmation = window.prompt(
+                            PromptLevel::Warning,
+                            &format!(
+                                "Remove the {} credential from this remote host?",
+                                kind.label
+                            ),
+                            Some("This does not revoke the credential at the provider."),
+                            &["Sign out on remote", "Cancel"],
+                            cx,
+                        );
+                        let workspace = workspace.clone();
+                        let kind = kind.clone();
+                        let window_handle = window
+                            .window_handle()
+                            .downcast::<workspace::MultiWorkspace>();
+                        cx.spawn(async move |cx| {
+                            if confirmation.await.ok() != Some(0) {
+                                return anyhow::Ok(());
+                            }
+                            let window_handle = window_handle
+                                .ok_or_else(|| anyhow::anyhow!("agent window closed"))?;
+                            let workspace = workspace
+                                .upgrade()
+                                .ok_or_else(|| anyhow::anyhow!("agent workspace closed"))?;
+                            window_handle.update(cx, |_multi_workspace, window, cx| {
+                                workspace.update(cx, |workspace, cx| {
+                                    store::launch_credential_command(
+                                        workspace,
+                                        &kind,
+                                        SharedString::from(format!(
+                                            "Sign out {} on remote",
+                                            kind.label
+                                        )),
+                                        credential_policy.logout_arguments,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            })?;
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                    };
+                    context_menu = if let Some(label_size) =
+                        remote_credential_menu_label_size(through_flint)
+                    {
+                        let rendered_label = label;
+                        context_menu.custom_entry(
+                            move |_, _| {
+                                Label::new(rendered_label.clone())
+                                    .size(label_size)
+                                    .into_any_element()
+                            },
+                            handler,
+                        )
+                    } else {
+                        context_menu.entry(label, None, handler)
+                    };
+                }
+                if menu_policy.provider_management {
+                    context_menu = context_menu.entry(
+                        SharedString::from(format!(
+                            "Revoke {} credential at provider…",
+                            kind.label
+                        )),
+                        None,
+                        move |_, cx| cx.open_url(credential_policy.provider_management_url),
+                    );
+                }
             }
             context_menu
         });
@@ -783,6 +981,17 @@ impl AgentThreadsPanel {
         let (rows, truncated) = apply_visible_cap(rows, cap, show_all);
         let new_thread_launch_option_label = new_thread_launch_option_label(cx, kind);
         let new_thread_launch_option_visual = new_thread_launch_option_visual(cx, kind);
+        let agent_route = self.workspace.upgrade().and_then(|workspace| {
+            let connection_options = workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_client()?
+                .read(cx)
+                .remote_connection()?
+                .connection_options();
+            RemoteAgentRoutingSettings::get_global(cx).route_for(&connection_options)
+        });
 
         let kind_id = kind.id;
         let header = h_flex()
@@ -822,6 +1031,13 @@ impl AgentThreadsPanel {
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
                     )
+                    .when_some(agent_route, |header, route| {
+                        header.child(
+                            Label::new(route.label())
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    })
                     .when_some(
                         usage.and_then(|u| u.five_hour_percent.map(|p| (p, u.five_hour_reset_at))),
                         |header, (percent, reset_at)| {
@@ -1253,6 +1469,40 @@ mod tests {
     // before the terminal is ever registered.
     static SPAWNING_TEST_ROOT: LazyLock<String> =
         LazyLock::new(|| std::env::temp_dir().to_string_lossy().into_owned());
+
+    #[test]
+    fn codex_and_claude_remote_credential_menus_only_offer_sign_out() {
+        for kind in agent_kind_registry() {
+            assert_eq!(
+                remote_credential_menu_policy(&kind),
+                RemoteCredentialMenuPolicy {
+                    sign_in: false,
+                    sign_in_status: false,
+                    sign_out: true,
+                    provider_management: false,
+                },
+                "{} remote credential menu policy",
+                kind.id
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_managed_launch_is_hidden_only_in_through_flint_mode() {
+        assert!(!show_explicit_managed_launch(true, true));
+        assert!(show_explicit_managed_launch(true, false));
+        assert!(!show_explicit_managed_launch(false, true));
+        assert!(!show_explicit_managed_launch(false, false));
+    }
+
+    #[test]
+    fn through_flint_credential_entry_uses_small_label_size() {
+        assert_eq!(
+            remote_credential_menu_label_size(true),
+            Some(LabelSize::Small)
+        );
+        assert_eq!(remote_credential_menu_label_size(false), None);
+    }
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {

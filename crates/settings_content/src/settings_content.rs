@@ -1000,6 +1000,84 @@ pub struct SshConnection {
     /// Timeout in seconds for SSH connection and downloading the remote server binary.
     /// Defaults to 10 seconds if not specified.
     pub connection_timeout: Option<u16>,
+    pub agent_route: Option<RemoteAgentRoute>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteAgentRoute {
+    ThroughFlint,
+    #[default]
+    NotThroughFlint,
+}
+
+impl SshConnection {
+    pub fn effective_agent_route(&self) -> RemoteAgentRoute {
+        self.agent_route.unwrap_or_default()
+    }
+}
+
+impl RemoteAgentRoute {
+    pub const ALL: [Self; 2] = [Self::NotThroughFlint, Self::ThroughFlint];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ThroughFlint => "Through Flint",
+            Self::NotThroughFlint => "Not through Flint",
+        }
+    }
+}
+
+#[cfg(test)]
+mod remote_agent_route_tests {
+    use super::*;
+
+    #[test]
+    fn missing_route_defaults_to_not_through_flint_without_persisting_a_choice() {
+        let connection: SshConnection = serde_json::from_str(r#"{"host":"build.example.com"}"#)
+            .expect("SSH connection should deserialize");
+
+        assert_eq!(connection.agent_route, None);
+        assert_eq!(
+            connection.effective_agent_route(),
+            RemoteAgentRoute::NotThroughFlint
+        );
+    }
+
+    #[test]
+    fn explicit_through_flint_route_round_trips() {
+        let connection: SshConnection =
+            serde_json::from_str(r#"{"host":"build.example.com","agent_route":"through_flint"}"#)
+                .expect("SSH connection should deserialize");
+
+        assert_eq!(
+            connection.effective_agent_route(),
+            RemoteAgentRoute::ThroughFlint
+        );
+        assert!(
+            serde_json::to_string(&connection)
+                .expect("SSH connection should serialize")
+                .contains(r#""agent_route":"through_flint""#)
+        );
+    }
+
+    #[test]
+    fn route_selector_has_exactly_the_two_supported_values() {
+        assert_eq!(
+            RemoteAgentRoute::ALL,
+            [
+                RemoteAgentRoute::NotThroughFlint,
+                RemoteAgentRoute::ThroughFlint
+            ]
+        );
+        assert_eq!(
+            RemoteAgentRoute::NotThroughFlint.label(),
+            "Not through Flint"
+        );
+        assert_eq!(RemoteAgentRoute::ThroughFlint.label(), "Through Flint");
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Debug)]

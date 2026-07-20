@@ -41,12 +41,15 @@ messages!(
     (CancelLanguageServerWork, Foreground),
     (CloseBuffer, Foreground),
     (Commit, Background),
+    (ComputeRemoteFileSha256, Background),
+    (ComputeRemoteFileSha256Response, Background),
     (RunGitHook, Background),
     (CopyProjectEntry, Foreground),
     (CreateBufferForPeer, Foreground),
     (CreateImageForPeer, Foreground),
     (CreateFileForPeer, Foreground),
     (CreateProjectEntry, Foreground),
+    (CreatePrivateRemoteDirectory, Background),
     (DeleteProjectEntry, Foreground),
     (DownloadFileByPath, Background),
     (DownloadFileResponse, Background),
@@ -83,6 +86,8 @@ messages!(
     (GetProcessesResponse, Background),
     (GetPermalinkToLineResponse, Foreground),
     (GetProjectSymbols, Background),
+    (GetRemoteAppDataDirectory, Background),
+    (GetRemoteAppDataDirectoryResponse, Background),
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
     (GetReferencesResponse, Background),
@@ -157,6 +162,8 @@ messages!(
     (ReloadBuffers, Foreground),
     (ReloadBuffersResponse, Foreground),
     (RemoveWorktree, Foreground),
+    (RemoveRemotePath, Background),
+    (RenameRemotePath, Background),
     (RenameProjectEntry, Foreground),
     (ResolveCompletionDocumentation, Background),
     (ResolveCompletionDocumentationResponse, Background),
@@ -178,6 +185,7 @@ messages!(
     (RestartLanguageServers, Foreground),
     (StopLanguageServers, Background),
     (SaveBuffer, Foreground),
+    (SetRemoteFileExecutable, Background),
     (ShutdownRemoteServer, Foreground),
     (Stage, Background),
     (StartLanguageServer, Foreground),
@@ -307,8 +315,10 @@ request_messages!(
         ApplyCompletionAdditionalEditsResponse
     ),
     (Commit, Ack),
+    (ComputeRemoteFileSha256, ComputeRemoteFileSha256Response),
     (RunGitHook, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
+    (CreatePrivateRemoteDirectory, Ack),
     (CreateProjectEntry, ProjectEntryResponse),
     (DeleteProjectEntry, ProjectEntryResponse),
     (DownloadFileByPath, DownloadFileResponse),
@@ -330,6 +340,7 @@ request_messages!(
     (OpenUnstagedDiff, OpenUnstagedDiffResponse),
     (OpenUncommittedDiff, OpenUncommittedDiffResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
+    (GetRemoteAppDataDirectory, GetRemoteAppDataDirectoryResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
     (ListRemoteDirectory, ListRemoteDirectoryResponse),
     (ReadRemoteFile, ReadRemoteFileResponse),
@@ -351,6 +362,8 @@ request_messages!(
     (RefreshSemanticTokens, Ack),
     (RefreshCodeLens, Ack),
     (ReloadBuffers, ReloadBuffersResponse),
+    (RemoveRemotePath, Ack),
+    (RenameRemotePath, Ack),
     (RenameProjectEntry, ProjectEntryResponse),
     (
         ResolveCompletionDocumentation,
@@ -363,6 +376,7 @@ request_messages!(
     (GetFoldingRanges, GetFoldingRangesResponse),
     (GetColorPresentation, GetColorPresentationResponse),
     (SaveBuffer, BufferSaved),
+    (SetRemoteFileExecutable, Ack),
     (Stage, Ack),
     (FindSearchCandidates, Ack),
     (ShareAgentThread, Ack),
@@ -681,6 +695,74 @@ impl From<SystemTime> for Timestamp {
             seconds: duration.as_secs(),
             nanos: duration.subsec_nanos(),
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_management_tests {
+    use super::*;
+
+    #[test]
+    fn remote_app_data_directory_request_round_trips() {
+        let request = GetRemoteAppDataDirectory {};
+        let encoded = request.encode_to_vec();
+
+        let decoded = GetRemoteAppDataDirectory::decode(encoded.as_slice())
+            .expect("remote management request should decode");
+
+        assert_eq!(decoded, request);
+
+        let envelope = decoded.into_envelope(1, None, None);
+        assert!(GetRemoteAppDataDirectory::from_envelope(envelope).is_some());
+    }
+
+    #[test]
+    fn remote_file_digest_request_round_trips() {
+        let request = ComputeRemoteFileSha256 {
+            path: "/tmp/agent".to_string(),
+        };
+        let encoded = request.encode_to_vec();
+
+        let decoded = ComputeRemoteFileSha256::decode(encoded.as_slice())
+            .expect("remote digest request should decode");
+
+        assert_eq!(decoded, request);
+        let envelope = decoded.into_envelope(2, None, None);
+        assert!(ComputeRemoteFileSha256::from_envelope(envelope).is_some());
+    }
+
+    #[test]
+    fn remote_mutation_requests_keep_their_safety_flags() {
+        let create = CreatePrivateRemoteDirectory {
+            path: "/tmp/flint/agents".to_string(),
+        };
+        let rename = RenameRemotePath {
+            source: "/tmp/flint/staged".to_string(),
+            destination: "/tmp/flint/agent".to_string(),
+        };
+        let remove = RemoveRemotePath {
+            path: "/tmp/flint/old".to_string(),
+            recursive: true,
+            ignore_if_missing: false,
+        };
+
+        assert_eq!(
+            CreatePrivateRemoteDirectory::decode(create.encode_to_vec().as_slice())
+                .expect("create request should decode"),
+            create
+        );
+        assert_eq!(
+            RenameRemotePath::decode(rename.encode_to_vec().as_slice())
+                .expect("rename request should decode"),
+            rename
+        );
+        assert_eq!(
+            RemoveRemotePath::decode(remove.encode_to_vec().as_slice())
+                .expect("remove request should decode"),
+            remove
+        );
+        let envelope = create.into_envelope(3, None, None);
+        assert!(CreatePrivateRemoteDirectory::from_envelope(envelope).is_some());
     }
 }
 

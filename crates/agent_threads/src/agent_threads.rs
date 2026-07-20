@@ -1,8 +1,15 @@
+pub mod agent_release;
+pub mod artifact_cache;
 mod claude_history;
 mod codex_history;
+pub mod connect_proxy;
+mod egress;
 mod history;
+pub mod managed_agent;
+mod managed_agent_progress;
 mod panel;
 mod plan_usage;
+mod remote_process;
 mod store;
 
 use std::path::PathBuf;
@@ -10,7 +17,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use gpui::{App, Context, SharedString, Window, actions};
-use settings::{RegisterSetting, Settings};
+use settings::{ExtendingVec, RegisterSetting, Settings};
 use ui::IconName;
 use workspace::Workspace;
 
@@ -21,6 +28,9 @@ pub use store::{
     snapshot_live_agent_threads,
 };
 
+use agent_release::{
+    AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy, CLAUDE_RELEASES, CODEX_RELEASES,
+};
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
 use history::AgentHistoryProvider;
@@ -112,6 +122,42 @@ pub struct AgentKindDefinition {
     /// internally that Flint never learns, so fresh threads can't be
     /// resumed or restored across app restarts.
     pub session_id_flag: Option<&'static str>,
+    official_source_prefixes: &'static [&'static str],
+    releases: &'static [AgentRelease],
+    self_update_policy: AgentSelfUpdatePolicy,
+    egress_hosts: &'static [&'static str],
+    credential_policy: AgentCredentialPolicy,
+}
+
+#[derive(Clone, Copy)]
+pub struct AgentCredentialPolicy {
+    pub login_arguments: &'static [&'static str],
+    pub status_arguments: &'static [&'static str],
+    pub logout_arguments: &'static [&'static str],
+    pub provider_management_url: &'static str,
+}
+
+impl AgentKindDefinition {
+    pub fn release_for(&self, target: remote::RemotePlatform) -> Option<&AgentRelease> {
+        AgentReleaseCatalog::new(self.id, self.official_source_prefixes, self.releases)
+            .release_for(target)
+    }
+
+    pub fn self_update_policy(&self) -> AgentSelfUpdatePolicy {
+        self.self_update_policy
+    }
+
+    pub fn official_source_prefixes(&self) -> &'static [&'static str] {
+        self.official_source_prefixes
+    }
+
+    pub fn egress_hosts(&self) -> &'static [&'static str] {
+        self.egress_hosts
+    }
+
+    pub fn credential_policy(&self) -> AgentCredentialPolicy {
+        self.credential_policy
+    }
 }
 
 pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
@@ -132,6 +178,22 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             // Codex CLI has no flag for assigning a session id to a fresh
             // session, so fresh Codex threads stay non-restorable.
             session_id_flag: None,
+            official_source_prefixes: &[
+                "https://github.com/openai/codex/releases/download/",
+                "https://release-assets.githubusercontent.com/",
+            ],
+            releases: CODEX_RELEASES,
+            self_update_policy: AgentSelfUpdatePolicy {
+                environment: &[],
+                arguments: &["--config", "check_for_update_on_startup=false"],
+            },
+            egress_hosts: &["api.openai.com", "auth.openai.com", "chatgpt.com"],
+            credential_policy: AgentCredentialPolicy {
+                login_arguments: &["login", "--device-auth"],
+                status_arguments: &["login", "status"],
+                logout_arguments: &["logout"],
+                provider_management_url: "https://platform.openai.com/api-keys",
+            },
         },
         AgentKindDefinition {
             id: "claude",
@@ -147,6 +209,19 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 args: vec!["--dangerously-skip-permissions".to_string()],
             }],
             session_id_flag: Some("--session-id"),
+            official_source_prefixes: &["https://downloads.claude.ai/claude-code-releases/"],
+            releases: CLAUDE_RELEASES,
+            self_update_policy: AgentSelfUpdatePolicy {
+                environment: &[("DISABLE_UPDATES", "1")],
+                arguments: &[],
+            },
+            egress_hosts: &["api.anthropic.com", "claude.ai", "platform.claude.com"],
+            credential_policy: AgentCredentialPolicy {
+                login_arguments: &["auth", "login"],
+                status_arguments: &["auth", "status"],
+                logout_arguments: &["auth", "logout"],
+                provider_management_url: "https://claude.ai/settings/claude-code",
+            },
         },
     ]
 }
@@ -160,6 +235,52 @@ pub struct AgentThreadSettings {
     pub notify_when_finished: bool,
     pub reopen_sessions_on_startup: settings::AgentThreadReopenSessionsOnStartup,
     pub dock: settings::DockSide,
+}
+
+#[derive(RegisterSetting)]
+pub(crate) struct RemoteAgentRoutingSettings {
+    ssh_connections: ExtendingVec<settings::SshConnection>,
+}
+
+impl Settings for RemoteAgentRoutingSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self {
+            ssh_connections: content
+                .remote
+                .ssh_connections
+                .clone()
+                .unwrap_or_default()
+                .into(),
+        }
+    }
+}
+
+impl RemoteAgentRoutingSettings {
+    pub fn route_for(
+        &self,
+        connection_options: &remote::RemoteConnectionOptions,
+    ) -> Option<settings::RemoteAgentRoute> {
+        let remote::RemoteConnectionIdentity::Ssh {
+            host,
+            username,
+            port,
+        } = remote::remote_connection_identity(connection_options)
+        else {
+            return None;
+        };
+        Some(
+            self.ssh_connections
+                .0
+                .iter()
+                .find(|connection| {
+                    connection.host == host
+                        && connection.username == username
+                        && connection.port == port
+                })
+                .map(settings::SshConnection::effective_agent_route)
+                .unwrap_or_default(),
+        )
+    }
 }
 
 impl AgentThreadSettings {
@@ -204,6 +325,7 @@ fn launch_command_from_content(
 
 pub fn init(cx: &mut App) {
     AgentThreadSettings::register(cx);
+    RemoteAgentRoutingSettings::register(cx);
     store::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
@@ -211,6 +333,49 @@ pub fn init(cx: &mut App) {
         workspace.register_action(new_claude_thread);
     })
     .detach();
+}
+
+pub fn active_remote_agent_thread_count(
+    connection_options: &remote::RemoteConnectionOptions,
+    cx: &App,
+) -> usize {
+    store::AgentThreadStore::try_global(cx)
+        .map(|store| {
+            store
+                .read(cx)
+                .active_thread_count_for_connection(connection_options, cx)
+        })
+        .unwrap_or(0)
+}
+
+pub fn close_remote_agent_threads(
+    connection_options: remote::RemoteConnectionOptions,
+    cx: &mut App,
+) -> gpui::Task<anyhow::Result<()>> {
+    if store::AgentThreadStore::try_global(cx).is_none() {
+        return gpui::Task::ready(Ok(()));
+    }
+    store::AgentThreadStore::close_threads_for_connection(connection_options, cx)
+}
+
+pub fn begin_remote_agent_route_change(
+    connection_options: &remote::RemoteConnectionOptions,
+    cx: &mut App,
+) -> anyhow::Result<()> {
+    store::AgentThreadStore::init_global(cx);
+    store::AgentThreadStore::global(cx)
+        .update(cx, |store, _| store.begin_route_change(connection_options))
+}
+
+pub fn finish_remote_agent_route_change(
+    connection_options: &remote::RemoteConnectionOptions,
+    cx: &mut App,
+) {
+    if let Some(store) = store::AgentThreadStore::try_global(cx) {
+        store.update(cx, |store, _| {
+            store.finish_route_change(connection_options);
+        });
+    }
 }
 
 fn kind_by_id(id: &str) -> Option<AgentKindDefinition> {
@@ -254,6 +419,112 @@ fn new_claude_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
+
+    #[test]
+    fn remote_route_lookup_defaults_direct_and_matches_only_ssh_identity() {
+        let settings = RemoteAgentRoutingSettings {
+            ssh_connections: ExtendingVec(vec![settings::SshConnection {
+                host: "build.example.com".to_string(),
+                username: Some("dev".to_string()),
+                port: Some(2222),
+                nickname: Some("ignored nickname".to_string()),
+                agent_route: Some(settings::RemoteAgentRoute::ThroughFlint),
+                ..Default::default()
+            }]),
+        };
+        let matching = remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "build.example.com".into(),
+            username: Some("dev".to_string()),
+            port: Some(2222),
+            nickname: Some("runtime nickname".to_string()),
+            ..Default::default()
+        });
+        let unknown = remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "new.example.com".into(),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings.route_for(&matching),
+            Some(settings::RemoteAgentRoute::ThroughFlint)
+        );
+        assert_eq!(
+            settings.route_for(&unknown),
+            Some(settings::RemoteAgentRoute::NotThroughFlint)
+        );
+        assert_eq!(
+            settings.route_for(&remote::RemoteConnectionOptions::Wsl(
+                remote::WslConnectionOptions {
+                    distro_name: "Ubuntu".to_string(),
+                    user: None,
+                }
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn destination_policy_contains_only_required_model_and_authentication_hosts() {
+        let codex = kind_by_id("codex").expect("Codex should be registered");
+        let claude = kind_by_id("claude").expect("Claude should be registered");
+
+        assert_eq!(
+            codex.egress_hosts(),
+            ["api.openai.com", "auth.openai.com", "chatgpt.com"]
+        );
+        assert_eq!(
+            claude.egress_hosts(),
+            ["api.anthropic.com", "claude.ai", "platform.claude.com"]
+        );
+    }
+
+    #[test]
+    fn credential_policies_use_pinned_cli_commands_and_provider_surfaces() {
+        let codex = kind_by_id("codex").expect("Codex kind should exist");
+        let codex_policy = codex.credential_policy();
+        assert_eq!(codex_policy.login_arguments, ["login", "--device-auth"]);
+        assert_eq!(codex_policy.status_arguments, ["login", "status"]);
+        assert_eq!(codex_policy.logout_arguments, ["logout"]);
+        assert_eq!(
+            codex_policy.provider_management_url,
+            "https://platform.openai.com/api-keys"
+        );
+
+        let claude = kind_by_id("claude").expect("Claude kind should exist");
+        let claude_policy = claude.credential_policy();
+        assert_eq!(claude_policy.login_arguments, ["auth", "login"]);
+        assert_eq!(claude_policy.status_arguments, ["auth", "status"]);
+        assert_eq!(claude_policy.logout_arguments, ["auth", "logout"]);
+        assert_eq!(
+            claude_policy.provider_management_url,
+            "https://claude.ai/settings/claude-code"
+        );
+    }
+
+    #[gpui::test]
+    fn route_change_guard_is_connection_scoped(cx: &mut TestAppContext) {
+        let first = remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "first.example.com".into(),
+            ..Default::default()
+        });
+        let second = remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "second.example.com".into(),
+            ..Default::default()
+        });
+
+        cx.update(|cx| {
+            begin_remote_agent_route_change(&first, cx).expect("first route change should begin");
+            assert!(begin_remote_agent_route_change(&first, cx).is_err());
+            begin_remote_agent_route_change(&second, cx)
+                .expect("another host should remain independent");
+            finish_remote_agent_route_change(&first, cx);
+            begin_remote_agent_route_change(&first, cx)
+                .expect("finished route change should release the guard");
+            finish_remote_agent_route_change(&first, cx);
+            finish_remote_agent_route_change(&second, cx);
+        });
+    }
 
     fn command_with_default(default_launch_option: Option<&str>) -> AgentLaunchCommand {
         AgentLaunchCommand {

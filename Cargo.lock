@@ -133,7 +133,12 @@ name = "agent_threads"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
+ "async-compression",
+ "async-lock",
+ "async-tar",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "collections",
  "db",
@@ -146,10 +151,12 @@ dependencies = [
  "hmac",
  "http_client",
  "log",
+ "parking_lot",
  "paths",
  "pretty_assertions",
  "project",
  "proto",
+ "remote",
  "rpc",
  "schemars",
  "serde",
@@ -159,12 +166,14 @@ dependencies = [
  "sha2",
  "smol",
  "task",
+ "tempfile",
  "terminal",
  "terminal_view",
  "theme",
  "theme_settings",
  "toml 0.8.23",
  "ui",
+ "url",
  "util",
  "uuid",
  "workspace",
@@ -4219,7 +4228,7 @@ dependencies = [
 
 [[package]]
 name = "flint"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "activity_indicator",
  "agent_threads",
@@ -11224,6 +11233,7 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
+ "agent_threads",
  "anyhow",
  "askpass",
  "chrono",
@@ -11503,6 +11513,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sha2",
  "shellexpand",
  "smol",
  "sysinfo 0.37.2",

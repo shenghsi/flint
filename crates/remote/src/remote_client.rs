@@ -52,7 +52,7 @@ use util::{
     paths::{PathStyle, RemotePathBuf},
 };
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RemoteOs {
     Linux,
     MacOs,
@@ -79,7 +79,7 @@ impl std::fmt::Display for RemoteOs {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RemoteArch {
     X86_64,
     Aarch64,
@@ -100,10 +100,18 @@ impl std::fmt::Display for RemoteArch {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RemoteLibc {
+    Glibc,
+    Musl,
+    Unknown,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RemotePlatform {
     pub os: RemoteOs,
     pub arch: RemoteArch,
+    pub libc: Option<RemoteLibc>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +119,95 @@ pub struct CommandTemplate {
     pub program: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+}
+
+type RemotePortForwardCloser =
+    Box<dyn FnOnce() -> BoxFuture<'static, Result<()>> + Send + Sync + 'static>;
+
+pub struct RemotePortForward {
+    remote_port: u16,
+    closer: Option<RemotePortForwardCloser>,
+    executor: BackgroundExecutor,
+}
+
+impl RemotePortForward {
+    pub fn new(
+        remote_port: u16,
+        process: util::command::Child,
+        executor: BackgroundExecutor,
+    ) -> Self {
+        Self::with_closer(remote_port, executor, move || {
+            async move {
+                let mut process = process;
+                process.kill()?;
+                process.status().await?;
+                Ok(())
+            }
+            .boxed()
+        })
+    }
+
+    pub(crate) fn with_closer(
+        remote_port: u16,
+        executor: BackgroundExecutor,
+        closer: impl FnOnce() -> BoxFuture<'static, Result<()>> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            remote_port,
+            closer: Some(Box::new(closer)),
+            executor,
+        }
+    }
+
+    pub fn remote_port(&self) -> u16 {
+        self.remote_port
+    }
+
+    pub async fn close(mut self) -> Result<()> {
+        let Some(closer) = self.closer.take() else {
+            return Ok(());
+        };
+        closer().await
+    }
+}
+
+impl Drop for RemotePortForward {
+    fn drop(&mut self) {
+        let Some(closer) = self.closer.take() else {
+            return;
+        };
+        self.executor
+            .spawn(async move {
+                if let Err(error) = closer().await {
+                    log::error!("failed to close remote port forward: {error}");
+                }
+            })
+            .detach();
+    }
+}
+
+pub struct LocalPortForward {
+    local_port: u16,
+    process: util::command::Child,
+}
+
+impl LocalPortForward {
+    pub fn new(local_port: u16, process: util::command::Child) -> Self {
+        Self {
+            local_port,
+            process,
+        }
+    }
+
+    pub fn local_port(&self) -> u16 {
+        self.local_port
+    }
+
+    pub async fn close(mut self) -> Result<()> {
+        self.process.kill()?;
+        self.process.status().await?;
+        Ok(())
+    }
 }
 
 /// Whether a command should be run with TTY allocation for interactive use.
@@ -336,6 +433,7 @@ pub struct RemoteClient {
     client: Arc<ChannelClient>,
     unique_identifier: String,
     connection_options: RemoteConnectionOptions,
+    platform: Option<RemotePlatform>,
     path_style: PathStyle,
     state: Option<State>,
 }
@@ -435,10 +533,12 @@ impl RemoteClient {
                 });
 
                 let path_style = remote_connection.path_style();
+                let platform = remote_connection.platform();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
                     connection_options: remote_connection.connection_options(),
+                    platform,
                     path_style,
                     state: Some(State::Connecting),
                 });
@@ -1005,12 +1105,110 @@ impl RemoteClient {
         connection.upload_directory(src_path, dest_path, cx)
     }
 
+    pub fn upload_file(
+        &self,
+        src_path: PathBuf,
+        dest_path: RemotePathBuf,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let Some(connection) = self.remote_connection() else {
+            return Task::ready(Err(anyhow!("no remote connection")));
+        };
+        connection.upload_file(src_path, dest_path, cx)
+    }
+
     pub fn proto_client(&self) -> AnyProtoClient {
         self.client.clone().into()
     }
 
+    pub fn remote_app_data_directory(&self, cx: &App) -> Task<Result<PathBuf>> {
+        let request = self
+            .proto_client()
+            .request(proto::GetRemoteAppDataDirectory {});
+        cx.background_spawn(async move {
+            let response = request.await?;
+            if response.path.is_empty() {
+                anyhow::bail!("remote server returned an empty application data directory");
+            }
+            Ok(PathBuf::from(response.path))
+        })
+    }
+
+    pub fn compute_remote_file_sha256(&self, path: PathBuf, cx: &App) -> Task<Result<String>> {
+        let request = self.proto_client().request(proto::ComputeRemoteFileSha256 {
+            path: path.to_string_lossy().into_owned(),
+        });
+        cx.background_spawn(async move {
+            let response = request.await?;
+            if response.sha256.len() != 64 {
+                anyhow::bail!("remote server returned an invalid SHA-256 digest");
+            }
+            Ok(response.sha256)
+        })
+    }
+
+    pub fn create_private_remote_directory(&self, path: PathBuf, cx: &App) -> Task<Result<()>> {
+        let request = self
+            .proto_client()
+            .request(proto::CreatePrivateRemoteDirectory {
+                path: path.to_string_lossy().into_owned(),
+            });
+        cx.background_spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
+    pub fn set_remote_file_executable(&self, path: PathBuf, cx: &App) -> Task<Result<()>> {
+        let request = self.proto_client().request(proto::SetRemoteFileExecutable {
+            path: path.to_string_lossy().into_owned(),
+        });
+        cx.background_spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
+    pub fn rename_remote_path(
+        &self,
+        source: PathBuf,
+        destination: PathBuf,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let request = self.proto_client().request(proto::RenameRemotePath {
+            source: source.to_string_lossy().into_owned(),
+            destination: destination.to_string_lossy().into_owned(),
+        });
+        cx.background_spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
+    pub fn remove_remote_path(
+        &self,
+        path: PathBuf,
+        recursive: bool,
+        ignore_if_missing: bool,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let request = self.proto_client().request(proto::RemoveRemotePath {
+            path: path.to_string_lossy().into_owned(),
+            recursive,
+            ignore_if_missing,
+        });
+        cx.background_spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
     pub fn connection_options(&self) -> RemoteConnectionOptions {
         self.connection_options.clone()
+    }
+
+    pub fn platform(&self) -> Option<RemotePlatform> {
+        self.platform
     }
 
     pub fn connection(&self) -> Option<Arc<dyn RemoteConnection>> {
@@ -1350,6 +1548,65 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use rpc::{ErrorCodeExt, proto::ErrorCode};
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn remote_port_forward_is_send_and_sync() {
+        fn assert_send_and_sync<T: Send + Sync>() {}
+
+        assert_send_and_sync::<RemotePortForward>();
+    }
+
+    #[gpui::test]
+    async fn remote_port_forward_close_runs_closer_once(cx: &mut TestAppContext) {
+        let close_count = Arc::new(AtomicUsize::new(0));
+        let forward = RemotePortForward::with_closer(43123, cx.background_executor.clone(), {
+            let close_count = close_count.clone();
+            move || {
+                async move {
+                    close_count.fetch_add(1, SeqCst);
+                    Ok(())
+                }
+                .boxed()
+            }
+        });
+
+        forward.close().await.expect("close should succeed");
+        cx.run_until_parked();
+
+        assert_eq!(close_count.load(SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn dropping_remote_port_forward_schedules_closer_once(cx: &mut TestAppContext) {
+        let close_count = Arc::new(AtomicUsize::new(0));
+        let forward = RemotePortForward::with_closer(43123, cx.background_executor.clone(), {
+            let close_count = close_count.clone();
+            move || {
+                async move {
+                    close_count.fetch_add(1, SeqCst);
+                    Ok(())
+                }
+                .boxed()
+            }
+        });
+
+        drop(forward);
+        cx.run_until_parked();
+
+        assert_eq!(close_count.load(SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn remote_port_forward_close_propagates_failure(cx: &mut TestAppContext) {
+        let forward = RemotePortForward::with_closer(43123, cx.background_executor.clone(), || {
+            async { Err(anyhow!("cancel failed")) }.boxed()
+        });
+
+        let error = forward.close().await.expect_err("close should fail");
+
+        assert_eq!(error.to_string(), "cancel failed");
+    }
 
     #[test]
     fn test_ssh_display_name_prefers_nickname() {
@@ -1534,6 +1791,8 @@ pub struct OpenWslPath {
 
 #[async_trait(?Send)]
 pub trait RemoteConnection: Send + Sync {
+    fn platform(&self) -> Option<RemotePlatform>;
+
     fn start_proxy(
         &self,
         unique_identifier: String,
@@ -1550,6 +1809,24 @@ pub trait RemoteConnection: Send + Sync {
         dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>>;
+    fn upload_file(
+        &self,
+        src_path: PathBuf,
+        dest_path: RemotePathBuf,
+        cx: &App,
+    ) -> Task<Result<()>>;
+    async fn upload_file_now(&self, src_path: PathBuf, dest_path: RemotePathBuf) -> Result<()>;
+    async fn open_reverse_port_forward(
+        &self,
+        local_port: u16,
+        executor: &BackgroundExecutor,
+    ) -> Result<RemotePortForward>;
+    async fn open_local_port_forward(
+        &self,
+        local_port: u16,
+        remote_port: u16,
+        executor: &BackgroundExecutor,
+    ) -> Result<LocalPortForward>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn shares_network_interface(&self) -> bool {

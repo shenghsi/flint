@@ -1,0 +1,35 @@
+syntax = "proto3";
+package flint.messages;
+
+message GetRemoteAppDataDirectory {}
+
+message GetRemoteAppDataDirectoryResponse {
+  string path = 1;
+}
+
+message ComputeRemoteFileSha256 {
+  string path = 1;
+}
+
+message ComputeRemoteFileSha256Response {
+  string sha256 = 1;
+}
+
+message CreatePrivateRemoteDirectory {
+  string path = 1;
+}
+
+message SetRemoteFileExecutable {
+  string path = 1;
+}
+
+message RenameRemotePath {
+  string source = 1;
+  string destination = 2;
+}
+
+message RemoveRemotePath {
+  string path = 1;
+  bool recursive = 2;
+  bool ignore_if_missing = 3;
+}

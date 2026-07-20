@@ -1,7 +1,8 @@
 use crate::{
     remote_connections::{
-        Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettings, SshConnection,
-        SshConnectionHeader, connect, determine_paths_with_positions, open_remote_project,
+        Connection, RemoteAgentRoute, RemoteConnectionModal, RemoteConnectionPrompt,
+        RemoteSettings, SshConnection, SshConnectionHeader, connect,
+        determine_paths_with_positions, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -45,9 +46,9 @@ use std::{
 };
 
 use ui::{
-    CommonAnimationExt, HighlightedLabel, IconButtonShape, KeyBinding, List, ListItem,
-    ListSeparator, Modal, ModalFooter, ModalHeader, Navigable, NavigableEntry, ScrollAxes,
-    Scrollbars, Section, Tooltip, WithScrollbar, prelude::*,
+    CommonAnimationExt, ContextMenu, DropdownMenu, DropdownStyle, HighlightedLabel,
+    IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal, ModalFooter, ModalHeader,
+    Navigable, NavigableEntry, ScrollAxes, Scrollbars, Section, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -615,6 +616,28 @@ enum ServerIndex {
     Ssh(SshServerIndex),
     Wsl(WslServerIndex),
 }
+
+#[derive(Clone)]
+enum AgentRouteTarget {
+    Saved {
+        index: SshServerIndex,
+        connection: SshConnection,
+    },
+    SshConfig(SharedString),
+}
+
+impl AgentRouteTarget {
+    fn connection_options(&self) -> remote::RemoteConnectionOptions {
+        let connection = match self {
+            Self::Saved { connection, .. } => connection.clone(),
+            Self::SshConfig(host) => SshConnection {
+                host: host.to_string(),
+                ..Default::default()
+            },
+        };
+        remote::RemoteConnectionOptions::Ssh(connection.into())
+    }
+}
 impl From<SshServerIndex> for ServerIndex {
     fn from(index: SshServerIndex) -> Self {
         Self::Ssh(index)
@@ -799,6 +822,28 @@ impl DefaultState {
             return;
         }
         self.filtered_servers = Some(filter::run_sync(&self.filter_data, query));
+    }
+
+    fn set_saved_agent_route(
+        &mut self,
+        target_index: SshServerIndex,
+        route: RemoteAgentRoute,
+    ) -> bool {
+        for server in &mut self.servers {
+            let RemoteEntry::Project {
+                connection: Connection::Ssh(connection),
+                index: ServerIndex::Ssh(index),
+                ..
+            } = server
+            else {
+                continue;
+            };
+            if *index == target_index {
+                connection.agent_route = Some(route);
+                return true;
+            }
+        }
+        false
     }
 
     /// Resolves [`filtered_servers`] (or the unfiltered source list) into a
@@ -1515,6 +1560,24 @@ impl RemoteServerProjects {
         let connection = remote_server.connection().into_owned();
         let shared_connection = Rc::new(connection.clone());
         let host_positions = visible.host_positions.to_vec();
+        let agent_route = match remote_server {
+            RemoteEntry::Project {
+                connection: Connection::Ssh(connection),
+                index: ServerIndex::Ssh(index),
+                ..
+            } => Some((
+                connection.effective_agent_route(),
+                AgentRouteTarget::Saved {
+                    index: *index,
+                    connection: connection.clone(),
+                },
+            )),
+            RemoteEntry::SshConfig { host, .. } => Some((
+                RemoteAgentRoute::NotThroughFlint,
+                AgentRouteTarget::SshConfig(host.clone()),
+            )),
+            _ => None,
+        };
 
         let (main_label, aux_label, is_wsl) = match &connection {
             Connection::Ssh(connection) => {
@@ -1566,7 +1629,14 @@ impl RemoteServerProjects {
                         aux_label.map(|label| {
                             Label::new(label).size(LabelSize::Small).color(Color::Muted)
                         }),
-                    ),
+                    )
+                    .when_some(agent_route, |this, (route, target)| {
+                        this.child(
+                            div().ml_auto().child(
+                                self.render_agent_route_selector(ix, route, target, window, cx),
+                            ),
+                        )
+                    }),
             )
             .child(match remote_server {
                 RemoteEntry::Project {
@@ -1709,6 +1779,162 @@ impl RemoteServerProjects {
                         ),
                 ),
             })
+    }
+
+    fn render_agent_route_selector(
+        &self,
+        row_index: usize,
+        selected_route: RemoteAgentRoute,
+        target: AgentRouteTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let remote_servers = cx.weak_entity();
+        let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+            for route in RemoteAgentRoute::ALL {
+                let remote_servers = remote_servers.clone();
+                let target = target.clone();
+                menu = menu.toggleable_entry(
+                    route.label(),
+                    route == selected_route,
+                    ui::IconPosition::Start,
+                    None,
+                    move |window, cx| {
+                        remote_servers
+                            .update(cx, |this, cx| {
+                                this.set_agent_route(
+                                    target.clone(),
+                                    selected_route,
+                                    route,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    },
+                );
+            }
+            menu
+        });
+
+        DropdownMenu::new(
+            ("remote-agent-route", row_index),
+            format!("Agent: {}", selected_route.label()),
+            menu,
+        )
+        .style(DropdownStyle::Ghost)
+        .trigger_tooltip(Tooltip::text(
+            "Choose how agents on this server reach their provider",
+        ))
+    }
+
+    fn set_agent_route(
+        &mut self,
+        target: AgentRouteTarget,
+        previous_route: RemoteAgentRoute,
+        route: RemoteAgentRoute,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if route == previous_route {
+            return;
+        }
+
+        let connection_options = target.connection_options();
+        let active_count = agent_threads::active_remote_agent_thread_count(&connection_options, cx);
+        if active_count == 0 {
+            self.apply_and_persist_agent_route(target, route, cx);
+            return;
+        }
+
+        let message = format!(
+            "Changing the agent route will close {active_count} active agent {} on this host.",
+            if active_count == 1 {
+                "terminal"
+            } else {
+                "terminals"
+            }
+        );
+        let confirmation = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            Some("Ordinary remote editing and terminals are not affected."),
+            &["Change route", "Cancel"],
+            cx,
+        );
+        let remote_servers = cx.weak_entity();
+        cx.spawn_in(window, async move |_this, cx| {
+            if confirmation.await.ok() != Some(0) {
+                return anyhow::Ok(());
+            }
+            cx.update(|_, cx| {
+                agent_threads::begin_remote_agent_route_change(&connection_options, cx)
+            })??;
+            let result = async {
+                let close_task = cx.update(|_, cx| {
+                    agent_threads::close_remote_agent_threads(connection_options.clone(), cx)
+                })?;
+                close_task.await?;
+                remote_servers.update(cx, |this, cx| {
+                    this.apply_and_persist_agent_route(target, route, cx);
+                })?;
+                anyhow::Ok(())
+            }
+            .await;
+            cx.update(|_, cx| {
+                agent_threads::finish_remote_agent_route_change(&connection_options, cx);
+            })?;
+            result
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn apply_and_persist_agent_route(
+        &mut self,
+        target: AgentRouteTarget,
+        route: RemoteAgentRoute,
+        cx: &mut Context<Self>,
+    ) {
+        if let AgentRouteTarget::Saved { index, .. } = &target
+            && let Mode::Default(state) = &mut self.mode
+            && state.set_saved_agent_route(*index, route)
+        {
+            cx.notify();
+        }
+        self.persist_agent_route(target, route, cx);
+    }
+
+    fn persist_agent_route(
+        &mut self,
+        target: AgentRouteTarget,
+        route: RemoteAgentRoute,
+        cx: &mut Context<Self>,
+    ) {
+        match target {
+            AgentRouteTarget::Saved { index, .. } => {
+                self.update_settings_file(cx, move |settings, _| {
+                    if let Some(connection) = settings
+                        .ssh_connections
+                        .as_mut()
+                        .and_then(|connections| connections.get_mut(index.0))
+                    {
+                        connection.agent_route = Some(route);
+                    }
+                });
+            }
+            AgentRouteTarget::SshConfig(host) => {
+                self.update_settings_file(cx, move |settings, _| {
+                    settings
+                        .ssh_connections
+                        .get_or_insert_with(Vec::new)
+                        .push(SshConnection {
+                            host: host.to_string(),
+                            agent_route: Some(route),
+                            ..Default::default()
+                        });
+                });
+            }
+        }
     }
 
     fn render_remote_project(
@@ -1951,6 +2177,7 @@ impl RemoteServerProjects {
                     upload_binary_over_ssh: None,
                     port_forwards: connection_options.port_forwards,
                     connection_timeout: connection_options.connection_timeout,
+                    agent_route: None,
                 })
         });
     }
@@ -3220,11 +3447,6 @@ impl Render for RemoteServerProjects {
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window, cx);
             }))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                if matches!(this.mode, Mode::Default(_)) {
-                    cx.emit(DismissEvent)
-                }
-            }))
             .child(match &self.mode {
                 Mode::Default(state) => self
                     .render_default(state.clone(), window, cx)
@@ -3253,6 +3475,7 @@ impl Render for RemoteServerProjects {
 #[cfg(test)]
 mod filter_tests {
     use super::*;
+    use gpui::{Modifiers, point, px};
 
     fn ssh_config_entry(cx: &App, handle: &ScrollHandle, host: &'static str) -> RemoteEntry {
         RemoteEntry::SshConfig {
@@ -3298,5 +3521,86 @@ mod filter_tests {
             state.filter_sync("");
             assert!(state.filtered_servers.is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn remote_projects_content_does_not_own_outside_click_dismissal(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let dismissed = Arc::new(AtomicBool::new(false));
+        let dismissed_for_subscription = dismissed.clone();
+        let (remote_projects, cx) = cx.add_window_view(|window, cx| {
+            RemoteServerProjects::new(
+                false,
+                app_state.fs.clone(),
+                window,
+                WeakEntity::new_invalid(),
+                cx,
+            )
+        });
+        cx.update(|_, cx| {
+            cx.subscribe(&remote_projects, move |_, _: &DismissEvent, _| {
+                dismissed_for_subscription.store(true, atomic::Ordering::Release);
+            })
+            .detach();
+        });
+
+        drop(cx.update(|window, cx| window.draw(cx)));
+        let viewport_size = cx.update(|window, _| window.viewport_size());
+        cx.simulate_click(
+            point(viewport_size.width - px(1.), viewport_size.height - px(1.)),
+            Modifiers::none(),
+        );
+
+        assert!(!dismissed.load(atomic::Ordering::Acquire));
+    }
+
+    #[gpui::test]
+    fn saved_agent_route_updates_cached_row_in_place(cx: &mut App) {
+        let scroll_handle = ScrollHandle::new();
+        let open_folder = NavigableEntry::new(&scroll_handle, cx);
+        let original_focus_handle = open_folder.focus_handle.clone();
+        let servers = vec![RemoteEntry::Project {
+            open_folder,
+            projects: Vec::new(),
+            configure: NavigableEntry::new(&scroll_handle, cx),
+            connection: SshConnection {
+                host: "offline.example.com".to_string(),
+                ..Default::default()
+            }
+            .into(),
+            index: ServerIndex::Ssh(SshServerIndex(0)),
+        }];
+        let mut state = DefaultState {
+            scroll_handle: scroll_handle.clone(),
+            add_new_server: NavigableEntry::new(&scroll_handle, cx),
+            add_new_devcontainer: NavigableEntry::new(&scroll_handle, cx),
+            add_new_wsl: NavigableEntry::new(&scroll_handle, cx),
+            filter_data: Arc::new(FilterData::build(&servers)),
+            servers,
+            filtered_servers: None,
+        };
+
+        assert!(state.set_saved_agent_route(SshServerIndex(0), RemoteAgentRoute::ThroughFlint));
+
+        let RemoteEntry::Project {
+            open_folder,
+            connection: Connection::Ssh(connection),
+            ..
+        } = state.servers.first().expect("missing saved SSH connection")
+        else {
+            panic!("expected saved SSH connection");
+        };
+        assert_eq!(open_folder.focus_handle, original_focus_handle);
+        assert_eq!(
+            connection.effective_agent_route(),
+            RemoteAgentRoute::ThroughFlint
+        );
     }
 }

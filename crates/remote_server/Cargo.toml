@@ -59,6 +59,7 @@ rust-embed = { workspace = true, optional = true, features = ["debug-embed"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true

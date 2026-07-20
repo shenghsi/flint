@@ -13,10 +13,11 @@ use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 use project::trusted_worktrees;
 use remote::{
     ConnectionSharing, DockerConnectionOptions, Interactive, RemoteConnection,
-    RemoteConnectionOptions, SshConnectionOptions,
+    RemoteConnectionIdentity, RemoteConnectionOptions, SshConnectionOptions,
+    remote_connection_identity,
 };
-pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
+pub use settings::{RemoteAgentRoute, SshConnection};
 use util::paths::PathWithPosition;
 use workspace::{
     AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation, Workspace,
@@ -75,6 +76,31 @@ impl RemoteSettings {
         self.fill_connection_options_from_settings(&mut options);
         options
     }
+
+    pub fn agent_route_for(
+        &self,
+        connection_options: &RemoteConnectionOptions,
+    ) -> Option<RemoteAgentRoute> {
+        let RemoteConnectionIdentity::Ssh {
+            host,
+            username,
+            port,
+        } = remote_connection_identity(connection_options)
+        else {
+            return None;
+        };
+
+        Some(
+            self.ssh_connections()
+                .find(|connection| {
+                    connection.host == host
+                        && connection.username == username
+                        && connection.port == port
+                })
+                .map(|connection| connection.effective_agent_route())
+                .unwrap_or_default(),
+        )
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -123,6 +149,71 @@ impl Settings for RemoteSettings {
             wsl_connections: remote.wsl_connections.clone().unwrap_or_default().into(),
             read_ssh_config: remote.read_ssh_config.unwrap(),
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_agent_route_tests {
+    use super::*;
+    use remote::WslConnectionOptions;
+
+    fn ssh_connection(host: &str, username: Option<&str>, port: Option<u16>) -> SshConnection {
+        SshConnection {
+            host: host.to_string(),
+            username: username.map(str::to_string),
+            port,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn route_lookup_uses_only_normalized_ssh_identity() {
+        let mut stored = ssh_connection("build.example.com", Some("dev"), Some(2222));
+        stored.nickname = Some("Build machine".to_string());
+        stored.args = vec!["-v".to_string()];
+        stored.agent_route = Some(RemoteAgentRoute::ThroughFlint);
+        let settings = RemoteSettings {
+            ssh_connections: ExtendingVec(vec![stored]),
+            wsl_connections: ExtendingVec::default(),
+            read_ssh_config: true,
+        };
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "build.example.com".into(),
+            username: Some("dev".to_string()),
+            port: Some(2222),
+            nickname: Some("Different nickname".to_string()),
+            args: Some(vec!["-q".to_string()]),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings.agent_route_for(&options),
+            Some(RemoteAgentRoute::ThroughFlint)
+        );
+    }
+
+    #[test]
+    fn route_lookup_defaults_unknown_ssh_but_ignores_non_ssh_connections() {
+        let settings = RemoteSettings {
+            ssh_connections: ExtendingVec::default(),
+            wsl_connections: ExtendingVec::default(),
+            read_ssh_config: true,
+        };
+
+        assert_eq!(
+            settings.agent_route_for(&RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "new.example.com".into(),
+                ..Default::default()
+            })),
+            Some(RemoteAgentRoute::NotThroughFlint)
+        );
+        assert_eq!(
+            settings.agent_route_for(&RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            })),
+            None
+        );
     }
 }
 

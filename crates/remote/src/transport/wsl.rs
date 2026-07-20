@@ -3,7 +3,7 @@ use crate::{
     remote_client::{
         CommandTemplate, ConnectionSharing, Interactive, RemoteConnection, RemoteConnectionOptions,
     },
-    transport::{parse_platform, parse_shell},
+    transport::{parse_platform, parse_shell, posix_target_probe_command},
 };
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
@@ -78,6 +78,7 @@ impl WslRemoteConnection {
             platform: RemotePlatform {
                 os: RemoteOs::Linux,
                 arch: RemoteArch::X86_64,
+                libc: Some(crate::RemoteLibc::Unknown),
             },
             shell: String::new(),
             shell_kind: ShellKind::Posix,
@@ -116,8 +117,11 @@ impl WslRemoteConnection {
     }
 
     async fn detect_platform(&self) -> Result<RemotePlatform> {
-        let program = self.shell_kind.prepend_command_prefix("uname");
-        let output = self.run_wsl_command_with_output(&program, &["-sm"]).await?;
+        let (program, arguments) = posix_target_probe_command();
+        let program = self.shell_kind.prepend_command_prefix(program);
+        let output = self
+            .run_wsl_command_with_output(&program, &arguments)
+            .await?;
         parse_platform(&output)
     }
 
@@ -337,6 +341,10 @@ impl WslRemoteConnection {
 
 #[async_trait(?Send)]
 impl RemoteConnection for WslRemoteConnection {
+    fn platform(&self) -> Option<RemotePlatform> {
+        Some(self.platform)
+    }
+
     fn start_proxy(
         &self,
         unique_identifier: String,
@@ -420,6 +428,69 @@ impl RemoteConnection for WslRemoteConnection {
                 Ok(())
             }
         })
+    }
+
+    fn upload_file(
+        &self,
+        src_path: PathBuf,
+        dest_path: RemotePathBuf,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        cx.background_spawn({
+            let options = self.connection_options.clone();
+            async move {
+                let wsl_source = windows_path_to_wsl_path_impl(&options, &src_path).await?;
+                let command =
+                    wsl_command_impl(&options, "cp", &[&wsl_source, &dest_path.to_string()], true);
+                run_wsl_command_impl(command).await.map_err(|error| {
+                    anyhow!(
+                        "failed to upload file {} -> {}: {}",
+                        src_path.display(),
+                        dest_path,
+                        error
+                    )
+                })?;
+                Ok(())
+            }
+        })
+    }
+
+    async fn upload_file_now(&self, src_path: PathBuf, dest_path: RemotePathBuf) -> Result<()> {
+        let wsl_source = windows_path_to_wsl_path_impl(&self.connection_options, &src_path).await?;
+        let command = wsl_command_impl(
+            &self.connection_options,
+            "cp",
+            &[&wsl_source, &dest_path.to_string()],
+            true,
+        );
+        run_wsl_command_impl(command)
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                anyhow!(
+                    "failed to upload file {} -> {}: {}",
+                    src_path.display(),
+                    dest_path,
+                    error
+                )
+            })
+    }
+
+    async fn open_reverse_port_forward(
+        &self,
+        _local_port: u16,
+        _executor: &gpui::BackgroundExecutor,
+    ) -> Result<crate::RemotePortForward> {
+        anyhow::bail!("reverse port forwarding is supported only for SSH connections")
+    }
+
+    async fn open_local_port_forward(
+        &self,
+        _local_port: u16,
+        _remote_port: u16,
+        _executor: &gpui::BackgroundExecutor,
+    ) -> Result<crate::LocalPortForward> {
+        anyhow::bail!("local port forwarding is supported only for SSH connections")
     }
 
     async fn kill(&self) -> Result<()> {
