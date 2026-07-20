@@ -28,7 +28,7 @@
 - Consumes: `AgentKindDefinition::egress_hosts()` and the proxy's existing exact-host comparison.
 - Produces: the exact Claude required-host slice `['api.anthropic.com', 'claude.ai', 'platform.claude.com']`.
 
-- [ ] **Step 1: Update the exact-list regression expectation**
+- [x] **Step 1: Update the exact-list regression expectation**
 
 Change only the Claude assertion:
 
@@ -39,7 +39,7 @@ assert_eq!(
 );
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -49,7 +49,7 @@ cargo test -p agent_threads destination_policy_contains_only_required_model_and_
 
 Expected: FAIL showing actual `console.anthropic.com` versus expected `platform.claude.com`.
 
-- [ ] **Step 3: Replace the stale production hostname**
+- [x] **Step 3: Replace the stale production hostname**
 
 Set the Claude registry entry to:
 
@@ -57,7 +57,7 @@ Set the Claude registry entry to:
 egress_hosts: &["api.anthropic.com", "claude.ai", "platform.claude.com"],
 ```
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Run:
 
@@ -67,7 +67,7 @@ cargo test -p agent_threads destination_policy_contains_only_required_model_and_
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the fix**
+- [x] **Step 5: Commit the fix**
 
 ```bash
 git add crates/agent_threads/src/agent_threads.rs
@@ -86,7 +86,7 @@ git commit -m "Fix Claude platform egress policy"
 - Consumes: corrected Claude destination data.
 - Produces: automated verification record and fresh `/tmp/Flint-Local.app` for live Claude validation.
 
-- [ ] **Step 1: Run complete verification**
+- [x] **Step 1: Run complete verification**
 
 Run:
 
@@ -99,7 +99,7 @@ git diff --check
 
 Expected: every command succeeds.
 
-- [ ] **Step 2: Build and verify the local app**
+- [x] **Step 2: Build and verify the local app**
 
 Run `./script/bundle-tmp-app`. If its documented debug-build release-path bug
 stops before the copy, preserve the existing `/tmp/Flint-Local.app`, copy the
@@ -111,13 +111,13 @@ bundle with:
 codesign --verify --deep --strict /tmp/Flint-Local.app
 ```
 
-- [ ] **Step 3: Record completion**
+- [x] **Step 3: Record completion**
 
 Set the design status to `Implemented and automatically verified`, record exact
 test/check results, and state that the user will perform the live Claude remote
 request.
 
-- [ ] **Step 4: Commit the verification record**
+- [x] **Step 4: Commit the verification record**
 
 ```bash
 git add docs/superpowers/specs/2026-07-20-claude-platform-egress-fix-design.md docs/superpowers/plans/2026-07-20-claude-platform-egress-fix-implementation.md

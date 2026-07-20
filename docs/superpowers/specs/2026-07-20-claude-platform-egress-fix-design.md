@@ -1,7 +1,7 @@
 # Claude Platform Through-Flint Egress Fix Design
 
 **Date:** 2026-07-20  
-**Status:** Approved for implementation
+**Status:** Implemented and automatically verified
 
 ## Problem
 
@@ -48,3 +48,21 @@ contact Anthropic.
 - The other required Claude hosts remain unchanged.
 - The destination policy remains exact-host and port-443-only.
 - Codex and Not-through-Flint behavior remain unchanged.
+
+## Implementation Verification
+
+Implemented on 2026-07-20. The Claude required-host list now contains
+`platform.claude.com` and no longer contains `console.anthropic.com`.
+
+Verification completed with:
+
+- the focused destination-policy test observed failing before the production
+  change and passing afterward;
+- `cargo test -p agent_threads` — 155 passed;
+- `cargo fmt --all -- --check` — passed;
+- `./script/clippy -p agent_threads` — passed with warnings denied; and
+- a fresh `/tmp/Flint-Local.app` whose main executable SHA-256 matched the
+  signed source bundle.
+
+Automated verification did not contact Anthropic. The user will perform the
+live Through-Flint Claude request on the remote host.
