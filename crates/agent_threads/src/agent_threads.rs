@@ -215,7 +215,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 environment: &[("DISABLE_UPDATES", "1")],
                 arguments: &[],
             },
-            egress_hosts: &["api.anthropic.com", "claude.ai", "console.anthropic.com"],
+            egress_hosts: &["api.anthropic.com", "claude.ai", "platform.claude.com"],
             credential_policy: AgentCredentialPolicy {
                 login_arguments: &["auth", "login"],
                 status_arguments: &["auth", "status"],
@@ -475,7 +475,7 @@ mod tests {
         );
         assert_eq!(
             claude.egress_hosts(),
-            ["api.anthropic.com", "claude.ai", "console.anthropic.com"]
+            ["api.anthropic.com", "claude.ai", "platform.claude.com"]
         );
     }
 
