@@ -1,6 +1,6 @@
 # Shared SSH Reverse Forward Design
 
-**Date:** 2026-07-19  
+**Date:** 2026-07-19
 **Status:** Implemented and verified
 
 ## Problem

@@ -1,6 +1,6 @@
 # Through-Flint Agent Launch and Menu Design
 
-**Date:** 2026-07-20  
+**Date:** 2026-07-20
 **Status:** Implemented and automatically verified
 
 ## Scope

@@ -1,6 +1,6 @@
 # Claude Platform Through-Flint Egress Fix Design
 
-**Date:** 2026-07-20  
+**Date:** 2026-07-20
 **Status:** Implemented and automatically verified
 
 ## Problem

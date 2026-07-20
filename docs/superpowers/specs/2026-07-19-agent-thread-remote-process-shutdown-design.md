@@ -1,6 +1,6 @@
 # Agent Thread Remote Process Shutdown Design
 
-**Date:** 2026-07-19  
+**Date:** 2026-07-19
 **Status:** Implemented and verified
 
 ## Problem
