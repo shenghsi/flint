@@ -1507,7 +1507,7 @@ fn rename_path_without_overwrite(source: &Path, destination: &Path) -> std::io::
     finish_no_replace_rename(source, destination, result)
 }
 
-#[cfg(any(test, target_os = "linux", target_os = "android"))]
+#[cfg(any(all(test, not(windows)), target_os = "linux", target_os = "android"))]
 fn finish_no_replace_rename(
     source: &Path,
     destination: &Path,
@@ -1595,6 +1595,7 @@ async fn remove_remote_path(path: &Path, recursive: bool, ignore_if_missing: boo
 mod remote_management_tests {
     use super::*;
 
+    #[cfg(not(windows))]
     fn staged_directory() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let source = directory.path().join("staged");
@@ -1700,6 +1701,7 @@ mod remote_management_tests {
         });
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn unsupported_no_replace_rename_falls_back_for_a_directory() {
         let (_directory, source, destination) = staged_directory();
@@ -1721,6 +1723,7 @@ mod remote_management_tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn unsupported_no_replace_rename_does_not_fall_back_for_a_file() {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
@@ -1740,6 +1743,7 @@ mod remote_management_tests {
         assert!(!destination.exists());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn directory_fallback_rejects_an_existing_destination() {
         let (_directory, source, destination) = staged_directory();
@@ -1778,6 +1782,7 @@ mod remote_management_tests {
         assert!(std::fs::symlink_metadata(&destination).is_ok());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn unrelated_no_replace_errors_do_not_use_the_fallback() {
         let (_directory, source, destination) = staged_directory();
@@ -1795,6 +1800,7 @@ mod remote_management_tests {
         assert!(!destination.exists());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn missing_no_replace_syscall_falls_back_for_a_directory() {
         let (_directory, source, destination) = staged_directory();
@@ -1810,6 +1816,7 @@ mod remote_management_tests {
         assert!(destination.exists());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn unsupported_no_replace_filesystem_falls_back_for_a_directory() {
         let (_directory, source, destination) = staged_directory();
