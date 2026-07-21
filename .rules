@@ -189,6 +189,13 @@ code:**
   and collab features); install instructions in `docs/src/migrate/*.md`
   that tell the reader to install "Zed" when the doc means Flint itself.
 
+# Branch and pull request hygiene
+
+- Never commit directly to `main`. Before making a repository change, create
+  or switch to a feature branch.
+- Deliver every repository change through a pull request, including
+  documentation, rules, and other non-functional changes.
+
 # Push hygiene
 
 Before pushing Rust code changes, run `cargo fmt --all -- --check` and fix any
