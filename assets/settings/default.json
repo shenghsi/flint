@@ -2327,7 +2327,7 @@
   //   {
   //     "host": "example-box",
   //     // "port": 22, "username": "test", "args": ["-i", "/home/user/.ssh/id_rsa"],
-  //     // "agent_route": "through_flint"
+  //     // "agent_route": "tunneled"
   //     "projects": [
   //       {
   //         "paths": ["/home/user/code/zed"]

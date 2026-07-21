@@ -166,12 +166,12 @@ fn managed_credential_commands_use_each_pinned_executable_and_update_policy() {
 }
 
 #[test]
-fn only_through_flint_credential_commands_use_managed_provisioning() {
+fn only_tunneled_credential_commands_use_managed_provisioning() {
     assert!(uses_managed_credential_command(Some(
-        settings::RemoteAgentRoute::ThroughFlint
+        settings::RemoteAgentRoute::Tunneled
     )));
     assert!(!uses_managed_credential_command(Some(
-        settings::RemoteAgentRoute::NotThroughFlint
+        settings::RemoteAgentRoute::Direct
     )));
     assert!(!uses_managed_credential_command(None));
 }
@@ -217,7 +217,7 @@ fn build_managed_credential_command(
 }
 
 fn uses_managed_credential_command(route: Option<settings::RemoteAgentRoute>) -> bool {
-    route == Some(settings::RemoteAgentRoute::ThroughFlint)
+    route == Some(settings::RemoteAgentRoute::Tunneled)
 }
 ```
 
@@ -225,7 +225,7 @@ fn uses_managed_credential_command(route: Option<settings::RemoteAgentRoute>) ->
 
 Update `launch_credential_command` to read the selected route before launching. For Not-through-Flint or no remote route, build the configured command and pass the captured route as `RequiredAgentRoute` to `spawn_thread_task_for_route`.
 
-For Through Flint, call `prepare_managed_agent`. On `Ready`, set the existing progress notification to `ManagedAgentProgressState::Launching`, construct the command with `build_managed_credential_command`, dismiss the managed-agent notification, and call `spawn_thread_task_for_route` with `Some(RequiredAgentRoute(RemoteAgentRoute::ThroughFlint))`. Await the returned launch task so transport errors reach `workspace.show_error`. Treat `Cancelled` and `AlreadyInProgress` the same way as `launch_managed_thread`: do not launch another command. Preserve all existing provisioning progress and confirmation behavior.
+For Through Flint, call `prepare_managed_agent`. On `Ready`, set the existing progress notification to `ManagedAgentProgressState::Launching`, construct the command with `build_managed_credential_command`, dismiss the managed-agent notification, and call `spawn_thread_task_for_route` with `Some(RequiredAgentRoute(RemoteAgentRoute::Tunneled))`. Await the returned launch task so transport errors reach `workspace.show_error`. Treat `Cancelled` and `AlreadyInProgress` the same way as `launch_managed_thread`: do not launch another command. Preserve all existing provisioning progress and confirmation behavior.
 
 - [x] **Step 5: Run focused and crate tests and verify GREEN**
 

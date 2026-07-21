@@ -86,12 +86,12 @@ fn remote_credential_menu_policy(_kind: &AgentKindDefinition) -> RemoteCredentia
     }
 }
 
-fn remote_credential_menu_label_size(through_flint: bool) -> Option<LabelSize> {
-    through_flint.then_some(LabelSize::Small)
+fn remote_credential_menu_label_size(tunneled: bool) -> Option<LabelSize> {
+    tunneled.then_some(LabelSize::Small)
 }
 
-fn show_explicit_managed_launch(managed_available: bool, through_flint: bool) -> bool {
-    managed_available && !through_flint
+fn show_explicit_managed_launch(managed_available: bool, tunneled: bool) -> bool {
+    managed_available && !tunneled
 }
 
 pub struct AgentThreadsPanel {
@@ -589,16 +589,15 @@ impl AgentThreadsPanel {
                 .and_then(|client| client.read(cx).platform())
                 .is_some_and(|platform| kind.release_for(platform).is_some())
         });
-        let through_flint = workspace
+        let tunneled = workspace
             .upgrade()
-            .is_some_and(|workspace| store::workspace_uses_through_flint(workspace.read(cx), cx));
-        let managed_label =
-            show_explicit_managed_launch(managed_available, through_flint).then(|| {
-                workspace.upgrade().map_or_else(
-                    || SharedString::from(format!("New — Flint-managed {}", kind.label)),
-                    |workspace| store::managed_agent_launch_label(workspace.read(cx), &kind, cx),
-                )
-            });
+            .is_some_and(|workspace| store::workspace_uses_tunneled(workspace.read(cx), cx));
+        let managed_label = show_explicit_managed_launch(managed_available, tunneled).then(|| {
+            workspace.upgrade().map_or_else(
+                || SharedString::from(format!("New — Flint-managed {}", kind.label)),
+                |workspace| store::managed_agent_launch_label(workspace.read(cx), &kind, cx),
+            )
+        });
         let remote_available = workspace.upgrade().is_some_and(|workspace| {
             workspace
                 .read(cx)
@@ -776,21 +775,20 @@ impl AgentThreadsPanel {
                         })
                         .detach_and_log_err(cx);
                     };
-                    context_menu = if let Some(label_size) =
-                        remote_credential_menu_label_size(through_flint)
-                    {
-                        let rendered_label = label;
-                        context_menu.custom_entry(
-                            move |_, _| {
-                                Label::new(rendered_label.clone())
-                                    .size(label_size)
-                                    .into_any_element()
-                            },
-                            handler,
-                        )
-                    } else {
-                        context_menu.entry(label, None, handler)
-                    };
+                    context_menu =
+                        if let Some(label_size) = remote_credential_menu_label_size(tunneled) {
+                            let rendered_label = label;
+                            context_menu.custom_entry(
+                                move |_, _| {
+                                    Label::new(rendered_label.clone())
+                                        .size(label_size)
+                                        .into_any_element()
+                                },
+                                handler,
+                            )
+                        } else {
+                            context_menu.entry(label, None, handler)
+                        };
                 }
                 if menu_policy.provider_management {
                     context_menu = context_menu.entry(
@@ -1488,7 +1486,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_managed_launch_is_hidden_only_in_through_flint_mode() {
+    fn explicit_managed_launch_is_hidden_only_in_tunneled_mode() {
         assert!(!show_explicit_managed_launch(true, true));
         assert!(show_explicit_managed_launch(true, false));
         assert!(!show_explicit_managed_launch(false, true));
@@ -1496,7 +1494,7 @@ mod tests {
     }
 
     #[test]
-    fn through_flint_credential_entry_uses_small_label_size() {
+    fn tunneled_credential_entry_uses_small_label_size() {
         assert_eq!(
             remote_credential_menu_label_size(true),
             Some(LabelSize::Small)

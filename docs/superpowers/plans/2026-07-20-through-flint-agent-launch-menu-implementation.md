@@ -28,7 +28,7 @@
 
 **Interfaces:**
 - Consumes: `settings::RemoteAgentRoute` and `current_remote_agent_route`.
-- Produces: `uses_managed_agent_route(route: Option<settings::RemoteAgentRoute>) -> bool`, shared by new threads, resume/restoration, and credentials; plus `pub(crate) fn workspace_uses_through_flint(workspace: &Workspace, cx: &App) -> bool` for panel visibility.
+- Produces: `uses_managed_agent_route(route: Option<settings::RemoteAgentRoute>) -> bool`, shared by new threads, resume/restoration, and credentials; plus `pub(crate) fn workspace_uses_tunneled(workspace: &Workspace, cx: &App) -> bool` for panel visibility.
 
 - [x] **Step 1: Make the existing resume regression require both agents**
 
@@ -36,15 +36,15 @@ Replace the Codex-only assertion with:
 
 ```rust
 #[test]
-fn only_through_flint_resume_uses_managed_resolution_for_both_agents() {
+fn only_tunneled_resume_uses_managed_resolution_for_both_agents() {
     for kind in agent_kind_registry() {
         assert!(uses_managed_resume(
             &kind,
-            Some(settings::RemoteAgentRoute::ThroughFlint)
+            Some(settings::RemoteAgentRoute::Tunneled)
         ));
         assert!(!uses_managed_resume(
             &kind,
-            Some(settings::RemoteAgentRoute::NotThroughFlint)
+            Some(settings::RemoteAgentRoute::Direct)
         ));
         assert!(!uses_managed_resume(&kind, None));
     }
@@ -56,7 +56,7 @@ fn only_through_flint_resume_uses_managed_resolution_for_both_agents() {
 Run:
 
 ```bash
-cargo test -p agent_threads only_through_flint_resume_uses_managed_resolution_for_both_agents
+cargo test -p agent_threads only_tunneled_resume_uses_managed_resolution_for_both_agents
 ```
 
 Expected: FAIL for Claude in Through-Flint mode because `uses_managed_resume` is Codex-only.
@@ -67,10 +67,10 @@ Add:
 
 ```rust
 fn uses_managed_agent_route(route: Option<settings::RemoteAgentRoute>) -> bool {
-    route == Some(settings::RemoteAgentRoute::ThroughFlint)
+    route == Some(settings::RemoteAgentRoute::Tunneled)
 }
 
-pub(crate) fn workspace_uses_through_flint(workspace: &Workspace, cx: &App) -> bool {
+pub(crate) fn workspace_uses_tunneled(workspace: &Workspace, cx: &App) -> bool {
     uses_managed_agent_route(current_remote_agent_route(workspace, cx))
 }
 ```
@@ -109,7 +109,7 @@ Update `required_resume_route_rejects_a_route_change` to expect that exact text.
 Run:
 
 ```bash
-cargo test -p agent_threads only_through_flint_resume_uses_managed_resolution_for_both_agents
+cargo test -p agent_threads only_tunneled_resume_uses_managed_resolution_for_both_agents
 cargo test -p agent_threads required_resume_route_rejects_a_route_change
 ```
 
@@ -330,13 +330,13 @@ function:
 
 ```rust
 #[test]
-fn new_thread_launch_route_is_managed_only_through_flint() {
+fn new_thread_launch_route_is_managed_only_tunneled() {
     assert_eq!(
-        new_thread_launch_route(Some(settings::RemoteAgentRoute::ThroughFlint)),
-        NewThreadLaunchRoute::ManagedThroughFlint
+        new_thread_launch_route(Some(settings::RemoteAgentRoute::Tunneled)),
+        NewThreadLaunchRoute::ManagedTunneled
     );
     assert_eq!(
-        new_thread_launch_route(Some(settings::RemoteAgentRoute::NotThroughFlint)),
+        new_thread_launch_route(Some(settings::RemoteAgentRoute::Direct)),
         NewThreadLaunchRoute::Configured
     );
     assert_eq!(new_thread_launch_route(None), NewThreadLaunchRoute::Configured);
@@ -349,7 +349,7 @@ The production seam introduced after RED is:
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewThreadLaunchRoute {
     Configured,
-    ManagedThroughFlint,
+    ManagedTunneled,
 }
 
 fn new_thread_launch_route(
@@ -357,14 +357,14 @@ fn new_thread_launch_route(
 ) -> NewThreadLaunchRoute;
 ```
 
-Assert `ManagedThroughFlint` only for Through Flint and `Configured` otherwise.
+Assert `ManagedTunneled` only for Through Flint and `Configured` otherwise.
 
 - [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
 ```bash
-cargo test -p agent_threads new_thread_launch_route_is_managed_only_through_flint
+cargo test -p agent_threads new_thread_launch_route_is_managed_only_tunneled
 ```
 
 Expected: compilation fails because `NewThreadLaunchRoute` and
@@ -378,14 +378,14 @@ Implement the enum/helper as:
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewThreadLaunchRoute {
     Configured,
-    ManagedThroughFlint,
+    ManagedTunneled,
 }
 
 fn new_thread_launch_route(
     route: Option<settings::RemoteAgentRoute>,
 ) -> NewThreadLaunchRoute {
     if uses_managed_agent_route(route) {
-        NewThreadLaunchRoute::ManagedThroughFlint
+        NewThreadLaunchRoute::ManagedTunneled
     } else {
         NewThreadLaunchRoute::Configured
     }
@@ -400,11 +400,11 @@ match new_thread_launch_route(current_remote_agent_route(workspace, cx)) {
     NewThreadLaunchRoute::Configured => {
         launch_configured_thread(workspace, kind, extra_args, window, cx)
     }
-    NewThreadLaunchRoute::ManagedThroughFlint => launch_managed_thread_for_route(
+    NewThreadLaunchRoute::ManagedTunneled => launch_managed_thread_for_route(
         workspace,
         kind,
         extra_args,
-        Some(RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint)),
+        Some(RequiredAgentRoute(settings::RemoteAgentRoute::Tunneled)),
         window,
         cx,
     ),
@@ -450,7 +450,7 @@ no-launch outcomes.
 Run:
 
 ```bash
-cargo test -p agent_threads new_thread_launch_route_is_managed_only_through_flint
+cargo test -p agent_threads new_thread_launch_route_is_managed_only_tunneled
 cargo test -p agent_threads managed_agent
 cargo test -p agent_threads required_resume_route_rejects_a_route_change
 ```
@@ -473,8 +473,8 @@ git commit -m "Route new agent threads through Flint"
 - Test: `crates/agent_threads/src/panel.rs` test module
 
 **Interfaces:**
-- Consumes: `store::workspace_uses_through_flint`, `managed_available`, and the existing popup managed-provisioning notification.
-- Produces: `show_explicit_managed_launch(managed_available: bool, through_flint: bool) -> bool`, used to render the explicit managed row only outside Through-Flint mode.
+- Consumes: `store::workspace_uses_tunneled`, `managed_available`, and the existing popup managed-provisioning notification.
+- Produces: `show_explicit_managed_launch(managed_available: bool, tunneled: bool) -> bool`, used to render the explicit managed row only outside Through-Flint mode.
 
 - [x] **Step 1: Write the failing menu-visibility test**
 
@@ -482,7 +482,7 @@ Add:
 
 ```rust
 #[test]
-fn explicit_managed_launch_is_hidden_only_in_through_flint_mode() {
+fn explicit_managed_launch_is_hidden_only_in_tunneled_mode() {
     assert!(!show_explicit_managed_launch(true, true));
     assert!(show_explicit_managed_launch(true, false));
     assert!(!show_explicit_managed_launch(false, true));
@@ -495,7 +495,7 @@ fn explicit_managed_launch_is_hidden_only_in_through_flint_mode() {
 Run:
 
 ```bash
-cargo test -p agent_threads explicit_managed_launch_is_hidden_only_in_through_flint_mode
+cargo test -p agent_threads explicit_managed_launch_is_hidden_only_in_tunneled_mode
 ```
 
 Expected: compilation fails because `show_explicit_managed_launch` does not exist.
@@ -505,12 +505,12 @@ Expected: compilation fails because `show_explicit_managed_launch` does not exis
 Add:
 
 ```rust
-fn show_explicit_managed_launch(managed_available: bool, through_flint: bool) -> bool {
-    managed_available && !through_flint
+fn show_explicit_managed_launch(managed_available: bool, tunneled: bool) -> bool {
+    managed_available && !tunneled
 }
 ```
 
-Compute `through_flint` by calling `store::workspace_uses_through_flint` on the
+Compute `tunneled` by calling `store::workspace_uses_tunneled` on the
 upgraded workspace. Construct
 `managed_label` only when `show_explicit_managed_launch` is true, so an active
 provisioning state is never appended to a hidden row. Render the existing
@@ -521,10 +521,10 @@ reach the centralized route-aware store dispatch.
 Use this shape before building the menu closure:
 
 ```rust
-let through_flint = workspace.upgrade().is_some_and(|workspace| {
-    store::workspace_uses_through_flint(workspace.read(cx), cx)
+let tunneled = workspace.upgrade().is_some_and(|workspace| {
+    store::workspace_uses_tunneled(workspace.read(cx), cx)
 });
-let managed_label = show_explicit_managed_launch(managed_available, through_flint)
+let managed_label = show_explicit_managed_launch(managed_available, tunneled)
     .then(|| {
         workspace.upgrade().map_or_else(
             || SharedString::from(format!("New — Flint-managed {}", kind.label)),
@@ -541,7 +541,7 @@ around the existing entry.
 Run:
 
 ```bash
-cargo test -p agent_threads explicit_managed_launch_is_hidden_only_in_through_flint_mode
+cargo test -p agent_threads explicit_managed_launch_is_hidden_only_in_tunneled_mode
 cargo test -p agent_threads launch_option
 cargo test -p agent_threads remote_credential_menus_only_offer_sign_out
 ```

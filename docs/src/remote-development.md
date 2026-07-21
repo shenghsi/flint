@@ -86,8 +86,8 @@ There are three additional Flint-specific options per connection: `upload_binary
       "upload_binary_over_ssh": true,
       // Shown in the Flint UI to help distinguish multiple hosts.
       "nickname": "lil-linux",
-      // Route agent provider traffic through Flint. If omitted, agents connect directly.
-      "agent_route": "through_flint"
+      // Use tunneled routing for agent provider traffic. If omitted, agents connect directly.
+      "agent_route": "tunneled"
     }
   ]
 }

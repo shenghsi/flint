@@ -19,7 +19,7 @@ The network route is a separate concern. A remote project opened with
 **Through Flint** must launch official Codex with Flint-provided egress even if
 the remote host has direct internet. Flint must never probe connectivity,
 silently choose direct networking, or fall back to direct networking after a
-tunnel failure. A project opened with **Not through Flint** must launch without
+tunnel failure. A project opened with **Direct** must launch without
 a Flint egress lease or Flint proxy environment.
 
 Selecting **New — Flint-managed Codex** again can also look like a second
@@ -55,7 +55,7 @@ active SSH connection identity.
   Flint launches nothing until both are available. Provisioning failure,
   tunnel failure, route change, or proxy setup failure produces an error and no
   process. There is no ambient-executable or direct-network fallback.
-- **Not through Flint** uses the configured or ambient Codex command. Flint does
+- **Direct** uses the configured or ambient Codex command. Flint does
   not resolve or provision a managed executable, acquire an egress lease, or
   inject Flint proxy variables.
 
@@ -96,7 +96,7 @@ Resume command construction is split into two responsibilities:
 2. Launch that executable under the same route, after verifying the route has
    not changed during asynchronous preparation.
 
-For **Not through Flint**, the history provider continues to build its resume
+For **Direct**, the history provider continues to build its resume
 arguments from the configured `AgentLaunchCommand`. The resulting command is
 launched without egress.
 
@@ -174,7 +174,7 @@ managed resume path.
 If the route changed, Flint drops any acquired egress lease, creates no
 terminal, and reports that the route changed while the session was being
 prepared. The user can resume again under the new route. Flint does not carry a
-managed command prepared for **Through Flint** into a **Not through Flint**
+managed command prepared for **Through Flint** into a **Direct**
 launch, or vice versa.
 
 The `AgentEgressLease` is stored in the live Agent Thread entry and remains
@@ -199,7 +199,7 @@ or executable fallback.
   process; retain the last valid installation through existing rollback rules.
 - Egress or reverse-forward failure: no process; do not attempt direct network.
 - Route changed during preparation: no process; request a new resume action.
-- Configured or ambient command missing under **Not through Flint**: preserve
+- Configured or ambient command missing under **Direct**: preserve
   current command failure behavior; do not switch to managed Codex.
 
 Locale and environment-module diagnostics emitted by the remote login shell are
@@ -217,7 +217,7 @@ Regression tests must cover the real resume and restoration seams.
   acquires egress, injects the Flint proxy environment, and retains the lease.
 - Automatic **Through Flint** restoration uses the same managed and routed
   launch path.
-- **Not through Flint** resume uses the configured or ambient command and has
+- **Direct** resume uses the configured or ambient command and has
   no managed resolution, egress lease, or Flint proxy variables.
 - A route change during managed preparation creates no terminal.
 - Managed-resolution or egress failure creates no terminal and does not retry
@@ -255,7 +255,7 @@ open the existing offline SSH project.
 5. Confirm the process receives Flint's proxy environment and is owned by a
    live egress lease.
 6. Confirm an egress-start failure creates no Codex process.
-7. Set the host to **Not through Flint** and confirm resume uses the configured
+7. Set the host to **Direct** and confirm resume uses the configured
    command without Flint proxy variables or a reverse-forward lease.
 
 ## Alternatives Rejected

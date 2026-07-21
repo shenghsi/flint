@@ -9,7 +9,7 @@ end.
 On 2026-07-18, the product owner expanded the accepted scope: Flint must support
 remote hosts with or without direct internet, install pinned official agent
 releases through a Flint-managed upload when needed, and present exactly two
-agent-routing choices: `Through Flint` and `Not through Flint`. The routing
+agent-routing choices: `Tunneled` and `Direct`. The routing
 choice is independent of the remote host's actual connectivity. Codex
 incorporated that revision into the active design. Claude approved the two-route
 revision and supplied three follow-up notes. Codex incorporated those notes;
@@ -40,10 +40,10 @@ artifact locally, upload it through SSH, and install it into a per-user
 Flint-managed directory.
 
 The project opener shows how agent traffic should leave the remote host. A new
-SSH connection identity defaults to `Not through Flint`, so opening a project
+SSH connection identity defaults to `Direct`, so opening a project
 never requires answering an agent-routing question. That route preserves
 today's behavior: the remote agent uses whatever network the host has, and Flint
-supplies no proxy. `Through Flint` supplies the agent's outbound model-service
+supplies no proxy. `Tunneled` supplies the agent's outbound model-service
 connectivity through an SSH reverse forward and a restricted local HTTP CONNECT
 proxy. Flint never infers or changes this choice from a connectivity probe or
 request failure.
@@ -63,7 +63,7 @@ agent executable
   -> local verified download -> SSH upload -> atomic remote install
 
 agent traffic
-  -> Not through Flint -> remote host's own network
+  -> Direct -> remote host's own network
   OR
   -> Through Flint -> remote loopback proxy -> SSH reverse forward
                    -> authenticated local CONNECT proxy
@@ -94,9 +94,9 @@ or a virtual filesystem.
 - Native Codex and Claude Code terminal interfaces must remain available.
 - Flint may use the existing authenticated SSH connection to provide narrowly
   scoped agent-service egress.
-- The user explicitly chooses `Through Flint` or `Not through Flint` for agent
+- The user explicitly chooses `Tunneled` or `Direct` for agent
   traffic when they want to depart from the default. A new SSH connection
-  identity defaults to `Not through Flint`; opening a project is never blocked
+  identity defaults to `Direct`; opening a project is never blocked
   on this choice. Flint does not probe connectivity to choose, suggest,
   override, or fail over between routes.
 
@@ -120,7 +120,7 @@ or a virtual filesystem.
   provider.
 - Surface setup, authentication, policy, and connection failures in Agent
   Threads before or during launch.
-- Let the user choose visible `Through Flint` or `Not through Flint` agent
+- Let the user choose visible `Tunneled` or `Direct` agent
   routing while opening a remote project, independent of actual remote
   connectivity.
 - Support local macOS, Linux, and Windows SSH clients and POSIX and Windows SSH
@@ -332,7 +332,7 @@ ambient agent commands keep today's precedence. If no usable agent command is
 found, the first launch or login offers to provision the selected agent; an
 explicit install action can also select the managed installation. Concurrent
 requests for the same agent, version, and target share one installation task.
-Both `Through Flint` and `Not through Flint` can launch either an existing agent
+Both `Tunneled` and `Direct` can launch either an existing agent
 command or the absolute managed path. Flint's pinned-artifact guarantees apply
 only to installations it manages; Flint never copies or claims provenance for
 an ambient executable.
@@ -362,7 +362,7 @@ One `AgentEgressSession` belongs to one live SSH `RemoteClient`. It owns:
 - one random proxy capability per egress lease;
 - a lease count and connection state.
 
-Starting an agent thread under `Through Flint` acquires an `AgentEgressLease`.
+Starting an agent thread under `Tunneled` acquires an `AgentEgressLease`.
 The first lease starts the proxy and reverse forward. Later leases reuse them
 while receiving distinct proxy capabilities. Releasing a lease immediately
 invalidates its capability. Releasing the last lease closes the forward, stops
@@ -423,7 +423,7 @@ handle binds the required local loopback port and forwards it to the remote
 CLI's loopback listener through the authenticated SSH connection.
 
 This handle is independent of `AgentEgressSession`: it requires no
-`AgentEgressLease`, proxy capability, CONNECT proxy, or `Through Flint` route.
+`AgentEgressLease`, proxy capability, CONNECT proxy, or `Tunneled` route.
 It is available under either route and carries only the browser's callback to
 the remote loopback listener; provider API traffic still follows the selected
 agent route.
@@ -468,7 +468,7 @@ part of the accepted trust boundary.
 
 ### Destination policies
 
-When the user selects `Through Flint`, Codex and Claude destination policies are
+When the user selects `Tunneled`, Codex and Claude destination policies are
 methods on the existing agent-kind definition rather than a second provider
 registry. They distinguish:
 
@@ -498,7 +498,7 @@ decision rather than a generic network failure.
 
 This policy does not make `curl`, package managers, shell commands, WebFetch,
 or arbitrary remote MCP servers generally online. Features requiring other
-destinations remain unavailable through Flint. Under `Not through Flint`, Flint
+destinations remain unavailable through Flint. Under `Direct`, Flint
 does not intercept or restrict the remote host's own network path.
 
 ## Launch and Runtime Flow
@@ -508,19 +508,19 @@ does not intercept or restrict the remote host's own network path.
 The remote project opener shows a route control with exactly two values for the
 SSH connection identity:
 
-- `Not through Flint` (`not_through_flint` internally): preserve today's Agent
+- `Direct` (`direct` internally): preserve today's Agent
   Threads behavior. Flint injects no proxy environment, acquires no egress
   lease, and the agent uses whatever connectivity the remote host provides.
-- `Through Flint` (`through_flint` internally): inject the restricted proxy
+- `Tunneled` (`tunneled` internally): inject the restricted proxy
   environment and acquire Flint-managed egress when an agent or credential
   action needs it.
 
 Neither choice claims whether the remote host is online. On a disconnected host,
-`Not through Flint` requests fail normally; on a connected host, `Through Flint`
+`Direct` requests fail normally; on a connected host, `Tunneled`
 remains a valid explicit policy choice. Flint never probes connectivity to
 choose, suggest, override, or fail over between routes.
 
-An identity with no stored route defaults to `Not through Flint`, matching
+An identity with no stored route defaults to `Direct`, matching
 today's behavior. The opener shows that default but does not require a modal,
 confirmation, or other answer before opening the project. The route is stored
 only when the user changes it. Agent launch and credential surfaces display the
@@ -528,7 +528,7 @@ effective route read-only so the active path is unambiguous.
 
 Changing the route of an active connection requires confirmation and closes its
 agent terminals because an existing process cannot safely exchange its launch
-environment. Moving away from `Through Flint` also releases every egress lease
+environment. Moving away from `Tunneled` also releases every egress lease
 and closes the reverse forward when the last lease ends. Managed binaries remain
 installed and can be removed separately.
 
@@ -553,12 +553,12 @@ provisioning and optional egress preparation:
 2. Resolve the existing configured or ambient agent command using today's
    behavior. If none is usable, reuse a valid managed installation or offer to
    install the pinned release and use its absolute path.
-3. Under `Not through Flint`, call the existing
+3. Under `Direct`, call the existing
    `project.create_terminal_task` path with the resolved command and real remote
    project directory. Inject no proxy or `NO_PROXY` environment and acquire no
    egress lease. If the command is Flint-managed, still apply its self-update
    suppression environment.
-4. Under `Through Flint`, acquire an `AgentEgressLease` for that connection and
+4. Under `Tunneled`, acquire an `AgentEgressLease` for that connection and
    agent kind.
 5. Wait for the local proxy and reverse forward to report ready.
 6. Use a bounded `remote_server` TCP-exchange RPC to send an authenticated
@@ -581,7 +581,7 @@ project path, so existing remote history discovery continues to work.
 
 ### Environment
 
-Under `Through Flint`, agent adapters set the proxy variables the selected CLI
+Under `Tunneled`, agent adapters set the proxy variables the selected CLI
 supports, including `HTTPS_PROXY` and the corresponding lowercase form when
 required. `HTTP_PROXY` is set only if the proxy supports every request type the
 agent sends through that variable. They also set both `NO_PROXY` and `no_proxy`
@@ -590,12 +590,12 @@ inherit arbitrary remote bypass entries because an external hostname in
 `NO_PROXY` would evade the destination policy.
 
 Adapters set the vendor-supported environment that disables self-update
-behavior for every `Through Flint` launch, including ambient executables. This
+behavior for every `Tunneled` launch, including ambient executables. This
 environment is scoped to the launched process and does not modify the ambient
 installation or its persistent configuration. It prevents expected update
 checks from repeatedly hitting the policy-blocked update category.
 
-Under `Not through Flint`, ambient commands receive neither proxy variables nor
+Under `Direct`, ambient commands receive neither proxy variables nor
 self-update suppression, preserving today's behavior. A Flint-managed command
 still receives self-update suppression because its updates remain owned by the
 managed provisioning lifecycle. Flint trusts only the managed receipt, digest,
@@ -630,8 +630,8 @@ not add a second process-persistence mechanism.
 
 Flint does not copy `auth.json`, `.credentials.json`, keychain entries, or
 credential directories from the local machine. A credential-management
-terminal follows the selected route. With `Through Flint`, it acquires its own
-egress lease. With `Not through Flint`, it uses the remote host's network
+terminal follows the selected route. With `Tunneled`, it acquires its own
+egress lease. With `Direct`, it uses the remote host's network
 without a Flint proxy. The user authenticates through an agent-supported remote
 or headless flow, or provisions a dedicated provider token using the provider's
 supported method. Flint can show a URL or device code, but it does not assume a
@@ -697,7 +697,7 @@ Failures are represented by stage so the user knows what to fix:
 
 | Stage          | Example                                             | Result                                                                      |
 | -------------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| Route          | `Not through Flint` host cannot reach provider      | Preserve the chosen route; surface the CLI's network error without failover |
+| Route          | `Direct` host cannot reach provider      | Preserve the chosen route; surface the CLI's network error without failover |
 | Catalogue      | remote target has no pinned official artifact       | Do not download or launch; report the unsupported target                    |
 | Download       | local Flint cannot reach the official artifact      | Preserve any valid installed version; offer retry                           |
 | Verification   | source, signature, digest, or version is invalid    | Delete the staged artifact and do not upload or launch                      |
@@ -751,13 +751,13 @@ Security invariants:
 - Proxy capabilities and proxy URLs are redacted from logs and errors.
 - Closing the last lease removes the egress path.
 - Local logout and provider revocation are presented as separate actions.
-- `Not through Flint` opens no proxy or reverse forward and injects no proxy
+- `Direct` opens no proxy or reverse forward and injects no proxy
   environment.
-- `Through Flint` gives an existing configured or ambient agent the same
+- `Tunneled` gives an existing configured or ambient agent the same
   restricted capability as a managed agent. The explicit route choice accepts
   that Flint has not established the ambient executable's provenance.
 
-`Through Flint` configures a supported agent to use Flint's proxy; it is not a
+`Tunneled` configures a supported agent to use Flint's proxy; it is not a
 host firewall. If the remote host also has direct internet, a compromised agent
 or another same-user process can bypass the proxy. Enforced denial of the host's
 own network requires an external sandbox or administrator policy and is outside
@@ -838,31 +838,31 @@ Implementation follows test-driven development.
 - A failed readiness probe creates no terminal and leaks no task.
 - Connection loss blocks new leases and marks existing ones unavailable.
 - Reconnect restores the same remote port or reports a restart requirement.
-- A `Not through Flint` agent launch never starts the CONNECT proxy or creates a
+- A `Direct` agent launch never starts the CONNECT proxy or creates a
   reverse egress forward; the independent callback-forward path is tested
   separately.
-- `Through Flint` starts egress lazily for either an existing agent command or
+- `Tunneled` starts egress lazily for either an existing agent command or
   a managed executable.
 
 ### Agent launch and credential tests
 
-- `Not through Flint` preserves current configured and ambient command
+- `Direct` preserves current configured and ambient command
   resolution, injects no proxy or self-update environment into ambient agents,
   and acquires no egress lease.
-- A managed executable under `Not through Flint` receives self-update
+- A managed executable under `Direct` receives self-update
   suppression without receiving a proxy environment.
-- A provider failure under `Not through Flint` never changes the stored route.
-- `Through Flint` injects the proxy environment only into the selected agent,
+- A provider failure under `Direct` never changes the stored route.
+- `Tunneled` injects the proxy environment only into the selected agent,
   whether its executable is ambient or Flint-managed.
-- `Through Flint` injects supported self-update suppression into both ambient
+- `Tunneled` injects supported self-update suppression into both ambient
   and managed agent processes without changing persistent configuration.
-- `Through Flint` injects the controlled loopback `NO_PROXY`/`no_proxy` values,
+- `Tunneled` injects the controlled loopback `NO_PROXY`/`no_proxy` values,
   and an agent-shaped loopback HTTP client bypasses the CONNECT proxy entirely.
 - The remote project opener shows exactly the two connection-scoped route
   choices and requires confirmation before changing an active connection's
   route.
 - A connection identity with no stored route opens without a prompt and uses
-  `Not through Flint`; launch-time surfaces show the effective route read-only.
+  `Direct`; launch-time surfaces show the effective route read-only.
 - When no usable command exists under either route, accepting managed install
   uses the verified absolute path; declining leaves the route unchanged and
   reports that the agent is unavailable.
@@ -884,15 +884,15 @@ Implementation follows test-driven development.
 
 Run local SSH test servers for both routes. Prove that:
 
-- with `Not through Flint`, an ambient agent-shaped client uses a directly
+- with `Direct`, an ambient agent-shaped client uses a directly
   reachable fake provider without a proxy environment or egress lease;
-- with `Not through Flint`, a browser-shaped client completes a callback through
+- with `Direct`, a browser-shaped client completes a callback through
   a temporary local forward without starting the CONNECT proxy or reverse
   forward;
-- a direct provider failure is reported without switching to `Through Flint`;
-- with `Through Flint`, an ambient agent-shaped client receives restricted
+- a direct provider failure is reported without switching to `Tunneled`;
+- with `Tunneled`, an ambient agent-shaped client receives restricted
   egress without a forced reinstall;
-- with `Through Flint` and direct outbound access denied, the remote begins
+- with `Tunneled` and direct outbound access denied, the remote begins
   without an agent executable or artifact-download access;
 - Flint verifies a signed test release locally, uploads it, installs it without
   `sudo`, and launches its absolute managed path;
@@ -929,24 +929,24 @@ Run local SSH test servers for both routes. Prove that:
 13. Run the SSH integration suite and manually validate the pinned Codex and
     Claude Code releases with dedicated test credentials.
 
-Each step keeps ordinary remote projects and `Not through Flint` behavior
+Each step keeps ordinary remote projects and `Direct` behavior
 working and independently testable.
 
 ## Acceptance Criteria
 
 - A new SSH connection identity opens without an agent-routing prompt, defaults
-  to `Not through Flint`, and shows the two-value route control before
+  to `Direct`, and shows the two-value route control before
   connection.
 - The stored route never depends on a connectivity probe and never changes
   automatically after a request failure.
-- `Not through Flint` preserves today's remote Agent Threads command resolution,
+- `Direct` preserves today's remote Agent Threads command resolution,
   injects no proxy environment, and creates no proxy, lease, or reverse forward.
-- `Through Flint` works whether or not the remote host also has direct internet.
-- `Through Flint` routes the launched supported agent through Flint but does not
+- `Tunneled` works whether or not the remote host also has direct internet.
+- `Tunneled` routes the launched supported agent through Flint but does not
   claim to firewall a direct network path available to the remote account.
 - An existing configured or ambient agent can use either route; selecting
-  `Through Flint` does not force a reinstall.
-- An ambient agent launched `Through Flint` receives supported per-process
+  `Tunneled` does not force a reinstall.
+- An ambient agent launched `Tunneled` receives supported per-process
   self-update suppression without changing its installation or persistent
   configuration.
 - On an SSH host with no agent executable and no direct internet, Flint can
@@ -1352,12 +1352,12 @@ user processes cannot be isolated per project):
 - **Agents**: off (`isolated`) or on.
 - **Agent network** (when agents are on): `direct` (the agent uses the
   remote host's own network; no proxy environment, no lease) or
-  `through Flint` (tunneled, policy-restricted egress as designed).
+  `Tunneled` (tunneled, policy-restricted egress as designed).
 
 The agent-network choice is deliberately **independent of the host's actual
 internet status**. It is a statement of how agent traffic should flow, not a
 workaround Flint applies when connectivity is missing: a host with internet
-may still be set to `through Flint` (for auditability or policy), and a host
+may still be set to `Tunneled` (for auditability or policy), and a host
 without internet may be set to `direct` (agent requests then fail at the
 provider exactly as they would in any terminal on that host — Flint reports
 the failure but does not switch modes). Flint never probes connectivity to
@@ -1391,20 +1391,20 @@ project opener alongside the access choice, and surfaced read-only where
 agents launch so the active network path is never ambiguous), changing it
 for an active connection follows the same confirmation-and-teardown rules as
 switching to `isolated`, and Flint still never flips `direct` to
-`through Flint` automatically after a network failure — the existing
+`Tunneled` automatically after a network failure — the existing
 invariant stands in both directions.
 
 ## Routing-choice revision — Codex (2026-07-18)
 
 The product owner accepted the two-route model and clarified that it applies
 regardless of the remote host's internet status. Codex has revised the active
-design around exactly `Through Flint` and `Not through Flint`; Flint neither
+design around exactly `Tunneled` and `Direct`; Flint neither
 probes connectivity to choose between them nor changes the route after failure.
 
 This revision rejects both the earlier `isolated`/`agent_access` model and the
 three-valued `isolated`/`direct`/`managed` correction because both conflate
-routing with agent availability or executable provenance. `Not through Flint`
-now preserves today's remote Agent Threads behavior. `Through Flint` adds only
+routing with agent availability or executable provenance. `Direct`
+now preserves today's remote Agent Threads behavior. `Tunneled` adds only
 the restricted egress path and its launch environment.
 
 Managed provisioning is orthogonal and available on demand under either route.
@@ -1426,13 +1426,13 @@ two-route decision before implementation planning.
 Approved. The two-route revision is consistent throughout — summary,
 constraints, alternatives, launch flow, environment, failure table, security
 invariants, tests, delivery sequence, and acceptance criteria all use the
-same `Through Flint` / `Not through Flint` model with no leftover
+same `Tunneled` / `Direct` model with no leftover
 `isolated`/`agent_access` or three-mode language outside the historical
 record.
 
 Specific confirmations:
 
-- **All three product-owner cases are covered.** Case 2 uses Not through Flint
+- **All three product-owner cases are covered.** Case 2 uses Direct
   (today's behavior, regression-tested); case 3 uses Through Flint with managed
   provisioning. Case 1 (no agents, just viewing and terminals)
   is correctly served _without_ a dedicated mode: everything is lazy and
@@ -1458,17 +1458,17 @@ Three minor notes for the implementation phase, none blocking:
 
 1. **Specify the default route.** The opener "presents exactly two choices,"
    but a case-1 user who never uses agents should not face a mandatory
-   question. Default the stored route to `Not through Flint` (matching
+   question. Default the stored route to `Direct` (matching
    today's behavior), show it in the opener, and let launch-time surfaces
    display it read-only. The route only _matters_ on first agent action.
 2. **Decouple the OAuth browser-callback forward from the egress lease.**
    The credential section offers the temporary local `-L` callback forward
    via "the credential-management lease," but the forward is an SSH-level
-   convenience independent of egress and equally useful under Not through Flint
+   convenience independent of egress and equally useful under Direct
    (headless host with its own internet, browser on the local machine). Make it
    available under either route.
 3. **Consider self-update suppression for ambient executables under
-   `Through Flint`.** Suppression env is per-process and does not modify the
+   `Tunneled`.** Suppression env is per-process and does not modify the
    user's installation; without it, an ambient agent's update checks will
    repeatedly hit the policy-blocked update category. Blocked-as-expected
    reporting makes this tolerable, but setting the env where the CLI
@@ -1484,17 +1484,17 @@ scope, and is ready for product-owner sign-off and implementation planning.
 Codex accepted all three follow-up notes:
 
 - **Default route:** A connection identity with no stored route now defaults to
-  `Not through Flint`. The opener shows the effective route without requiring an
+  `Direct`. The opener shows the effective route without requiring an
   answer, and agent launch and credential surfaces display it read-only.
 - **OAuth callback:** The local forward is now an owned, temporary SSH transport
   handle independent of `AgentEgressSession` and `AgentEgressLease`. It is
   available under either route, has login-attempt scope, and falls back to a
   device, code-copy, or headless flow without changing the route.
-- **Ambient self-update:** Ambient agents launched `Through Flint` now receive
+- **Ambient self-update:** Ambient agents launched `Tunneled` now receive
   vendor-supported self-update suppression in their process environment. This
   avoids repeated policy-blocked update attempts without modifying the ambient
   installation or persistent configuration. Managed agents retain suppression
-  under either route; ambient agents under `Not through Flint` retain today's
+  under either route; ambient agents under `Direct` retain today's
   environment.
 
 Claude: please re-review these clarifications before implementation planning.

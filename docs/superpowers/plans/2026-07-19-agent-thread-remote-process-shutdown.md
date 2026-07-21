@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Apply the wrapper to remote Agent Threads under both `Through Flint` and `Not through Flint`.
+- Apply the wrapper to remote Agent Threads under both `Tunneled` and `Direct`.
 - Leave ordinary terminal-tab behavior unchanged.
 - Use `ConnectionSharing::Shared` for cleanup so load-balanced SSH aliases stay on the project backend.
 - Never signal an unvalidated PID or use process-name-wide cleanup such as `pkill codex`.
@@ -786,7 +786,7 @@ Expected: `/tmp/Flint-Local.app` contains the fresh build. If the documented deb
 
 - [x] **Step 4: Perform the remote acceptance check**
 
-Open a POSIX SSH project, launch two Agent Threads, record their remote lifecycle PIDs without printing environment values, close one thread, and confirm within three seconds that only its PID and process group are gone. Confirm the other thread still answers and retains its proxy route. Repeat once with `Not through Flint`.
+Open a POSIX SSH project, launch two Agent Threads, record their remote lifecycle PIDs without printing environment values, close one thread, and confirm within three seconds that only its PID and process group are gone. Confirm the other thread still answers and retains its proxy route. Repeat once with `Direct`.
 
 - [x] **Step 5: Mark documentation implemented and commit**
 

@@ -10,7 +10,7 @@ active SSH host route:
 
 - **Through Flint** resolves the shared pinned Flint-managed Codex, requires a
   Flint egress lease, and never falls back to ambient Codex or direct routing.
-- **Not through Flint** uses the configured or ambient Codex command without
+- **Direct** uses the configured or ambient Codex command without
   managed resolution, Flint egress, or Flint proxy variables.
 
 Existing valid remote installations must be visibly reused without a local
@@ -141,7 +141,7 @@ ownership in `store.rs` and byte/receipt operations in `managed_agent.rs`.
 
 Add tests proving:
 
-1. **Not through Flint** resume retains the configured command, resume session
+1. **Direct** resume retains the configured command, resume session
    ID, resume options, and environment, and requests no managed resolution;
 2. **Through Flint** resume replaces the command with the managed absolute
    path, retains the resume session ID and options, applies self-update policy,
@@ -168,11 +168,11 @@ cargo test -p agent_threads resume
 Give route-sensitive resume an explicit required-route value. Manual resume
 reads the current SSH route:
 
-- For **Not through Flint**, build the history provider's configured/ambient
-  resume command and launch with required route `NotThroughFlint`.
+- For **Direct**, build the history provider's configured/ambient
+  resume command and launch with required route `Direct`.
 - For **Through Flint**, resolve the shared managed installation, build the
   provider's resume command with its command replaced by the verified absolute
-  path, and launch with required route `ThroughFlint`.
+  path, and launch with required route `Tunneled`.
 
 Extend the route-aware launcher so a required route is checked at preparation
 and immediately before terminal creation. Through-Flint launch must acquire
@@ -303,7 +303,7 @@ On the existing offline SSH project:
 5. Verify the process receives the Through-Flint proxy environment and the SSH
    reverse forward remains present for its terminal lifetime.
 6. Verify a failed egress setup creates no Codex process and no direct retry.
-7. Select **Not through Flint**, resume, and verify the configured/ambient
+7. Select **Direct**, resume, and verify the configured/ambient
    command is used without a Flint proxy or reverse-forward lease.
 
 Record any live-only limitation separately. Do not claim OS-enforced network

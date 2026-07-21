@@ -171,7 +171,7 @@ mod remote_agent_route_tests {
         let mut stored = ssh_connection("build.example.com", Some("dev"), Some(2222));
         stored.nickname = Some("Build machine".to_string());
         stored.args = vec!["-v".to_string()];
-        stored.agent_route = Some(RemoteAgentRoute::ThroughFlint);
+        stored.agent_route = Some(RemoteAgentRoute::Tunneled);
         let settings = RemoteSettings {
             ssh_connections: ExtendingVec(vec![stored]),
             wsl_connections: ExtendingVec::default(),
@@ -188,7 +188,7 @@ mod remote_agent_route_tests {
 
         assert_eq!(
             settings.agent_route_for(&options),
-            Some(RemoteAgentRoute::ThroughFlint)
+            Some(RemoteAgentRoute::Tunneled)
         );
     }
 
@@ -205,7 +205,7 @@ mod remote_agent_route_tests {
                 host: "new.example.com".into(),
                 ..Default::default()
             })),
-            Some(RemoteAgentRoute::NotThroughFlint)
+            Some(RemoteAgentRoute::Direct)
         );
         assert_eq!(
             settings.agent_route_for(&RemoteConnectionOptions::Wsl(WslConnectionOptions {

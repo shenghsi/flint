@@ -573,11 +573,11 @@ pub fn launch_new_thread(
         NewThreadLaunchRoute::Configured => {
             launch_configured_thread(workspace, kind, extra_args, window, cx)
         }
-        NewThreadLaunchRoute::ManagedThroughFlint => launch_managed_thread_for_route(
+        NewThreadLaunchRoute::ManagedTunneled => launch_managed_thread_for_route(
             workspace,
             kind,
             extra_args,
-            Some(RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint)),
+            Some(RequiredAgentRoute(settings::RemoteAgentRoute::Tunneled)),
             window,
             cx,
         ),
@@ -665,7 +665,7 @@ pub fn launch_credential_command(
                         summary,
                         command,
                         None,
-                        Some(RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint)),
+                        Some(RequiredAgentRoute(settings::RemoteAgentRoute::Tunneled)),
                         window,
                         cx,
                     )
@@ -869,7 +869,7 @@ fn resume_thread_task(
                     thread.title.clone(),
                     command,
                     Some(thread.session_id.clone()),
-                    Some(RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint)),
+                    Some(RequiredAgentRoute(settings::RemoteAgentRoute::Tunneled)),
                     window,
                     cx,
                 ))
@@ -900,7 +900,7 @@ fn current_remote_agent_route(
     RemoteAgentRoutingSettings::get_global(cx).route_for(&connection_options)
 }
 
-pub(crate) fn workspace_uses_through_flint(workspace: &Workspace, cx: &App) -> bool {
+pub(crate) fn workspace_uses_tunneled(workspace: &Workspace, cx: &App) -> bool {
     uses_managed_agent_route(current_remote_agent_route(workspace, cx))
 }
 
@@ -996,18 +996,18 @@ fn uses_managed_credential_command(route: Option<settings::RemoteAgentRoute>) ->
 }
 
 fn uses_managed_agent_route(route: Option<settings::RemoteAgentRoute>) -> bool {
-    route == Some(settings::RemoteAgentRoute::ThroughFlint)
+    route == Some(settings::RemoteAgentRoute::Tunneled)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewThreadLaunchRoute {
     Configured,
-    ManagedThroughFlint,
+    ManagedTunneled,
 }
 
 fn new_thread_launch_route(route: Option<settings::RemoteAgentRoute>) -> NewThreadLaunchRoute {
     if uses_managed_agent_route(route) {
-        NewThreadLaunchRoute::ManagedThroughFlint
+        NewThreadLaunchRoute::ManagedTunneled
     } else {
         NewThreadLaunchRoute::Configured
     }
@@ -1456,7 +1456,7 @@ fn spawn_thread_task_for_route(
     if let Err(error) = ensure_required_route(required_route, route) {
         return Task::ready(Err(error));
     }
-    if route != Some(settings::RemoteAgentRoute::ThroughFlint) {
+    if route != Some(settings::RemoteAgentRoute::Tunneled) {
         return spawn_thread_task_inner(
             workspace,
             kind,
@@ -1470,11 +1470,15 @@ fn spawn_thread_task_for_route(
         );
     }
     let Some(remote_connection) = remote_connection else {
-        return Task::ready(Err(anyhow!("Through Flint requires an SSH connection")));
+        return Task::ready(Err(anyhow!(
+            "Tunneled agent routing requires an SSH connection"
+        )));
     };
     let process_connection = remote_connection.clone();
     let Some(remote_client_id) = remote_client.map(|client| client.entity_id()) else {
-        return Task::ready(Err(anyhow!("Through Flint requires a remote client")));
+        return Task::ready(Err(anyhow!(
+            "Tunneled agent routing requires a remote client"
+        )));
     };
     let egress_manager = AgentThreadStore::global(cx).read(cx).egress_manager.clone();
     apply_self_update_policy(&mut command, kind);
@@ -2041,12 +2045,12 @@ mod tests {
     }
 
     #[test]
-    fn only_through_flint_credential_commands_use_managed_provisioning() {
+    fn only_tunneled_credential_commands_use_managed_provisioning() {
         assert!(uses_managed_credential_command(Some(
-            settings::RemoteAgentRoute::ThroughFlint
+            settings::RemoteAgentRoute::Tunneled
         )));
         assert!(!uses_managed_credential_command(Some(
-            settings::RemoteAgentRoute::NotThroughFlint
+            settings::RemoteAgentRoute::Direct
         )));
         assert!(!uses_managed_credential_command(None));
     }
@@ -2097,28 +2101,28 @@ mod tests {
     }
 
     #[test]
-    fn only_through_flint_resume_uses_managed_resolution_for_both_agents() {
+    fn only_tunneled_resume_uses_managed_resolution_for_both_agents() {
         for kind in agent_kind_registry() {
             assert!(uses_managed_resume(
                 &kind,
-                Some(settings::RemoteAgentRoute::ThroughFlint)
+                Some(settings::RemoteAgentRoute::Tunneled)
             ));
             assert!(!uses_managed_resume(
                 &kind,
-                Some(settings::RemoteAgentRoute::NotThroughFlint)
+                Some(settings::RemoteAgentRoute::Direct)
             ));
             assert!(!uses_managed_resume(&kind, None));
         }
     }
 
     #[test]
-    fn new_thread_launch_route_is_managed_only_through_flint() {
+    fn new_thread_launch_route_is_managed_only_tunneled() {
         assert_eq!(
-            new_thread_launch_route(Some(settings::RemoteAgentRoute::ThroughFlint)),
-            NewThreadLaunchRoute::ManagedThroughFlint
+            new_thread_launch_route(Some(settings::RemoteAgentRoute::Tunneled)),
+            NewThreadLaunchRoute::ManagedTunneled
         );
         assert_eq!(
-            new_thread_launch_route(Some(settings::RemoteAgentRoute::NotThroughFlint)),
+            new_thread_launch_route(Some(settings::RemoteAgentRoute::Direct)),
             NewThreadLaunchRoute::Configured
         );
         assert_eq!(
@@ -2129,18 +2133,12 @@ mod tests {
 
     #[test]
     fn required_resume_route_rejects_a_route_change() {
-        let required = RequiredAgentRoute(settings::RemoteAgentRoute::ThroughFlint);
+        let required = RequiredAgentRoute(settings::RemoteAgentRoute::Tunneled);
 
-        ensure_required_route(
-            Some(required),
-            Some(settings::RemoteAgentRoute::ThroughFlint),
-        )
-        .expect("unchanged route should be accepted");
-        let error = ensure_required_route(
-            Some(required),
-            Some(settings::RemoteAgentRoute::NotThroughFlint),
-        )
-        .expect_err("changed route should be rejected");
+        ensure_required_route(Some(required), Some(settings::RemoteAgentRoute::Tunneled))
+            .expect("unchanged route should be accepted");
+        let error = ensure_required_route(Some(required), Some(settings::RemoteAgentRoute::Direct))
+            .expect_err("changed route should be rejected");
 
         assert_eq!(
             error.to_string(),
@@ -2217,7 +2215,7 @@ mod tests {
     }
 
     #[test]
-    fn through_flint_environment_is_scoped_to_https_and_replaces_bypass_rules() {
+    fn tunneled_environment_is_scoped_to_https_and_replaces_bypass_rules() {
         let mut command = AgentLaunchCommand::default();
         command
             .env

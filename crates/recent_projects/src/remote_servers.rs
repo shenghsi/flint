@@ -1573,7 +1573,7 @@ impl RemoteServerProjects {
                 },
             )),
             RemoteEntry::SshConfig { host, .. } => Some((
-                RemoteAgentRoute::NotThroughFlint,
+                RemoteAgentRoute::Direct,
                 AgentRouteTarget::SshConfig(host.clone()),
             )),
             _ => None,
@@ -3587,7 +3587,7 @@ mod filter_tests {
             filtered_servers: None,
         };
 
-        assert!(state.set_saved_agent_route(SshServerIndex(0), RemoteAgentRoute::ThroughFlint));
+        assert!(state.set_saved_agent_route(SshServerIndex(0), RemoteAgentRoute::Tunneled));
 
         let RemoteEntry::Project {
             open_folder,
@@ -3600,7 +3600,7 @@ mod filter_tests {
         assert_eq!(open_folder.focus_handle, original_focus_handle);
         assert_eq!(
             connection.effective_agent_route(),
-            RemoteAgentRoute::ThroughFlint
+            RemoteAgentRoute::Tunneled
         );
     }
 }
