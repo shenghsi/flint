@@ -9,7 +9,7 @@ Design owner: Codex.
 ## Problem
 
 The Open Remote Project dialog contains an agent-route dropdown for SSH hosts.
-Choosing `Through Flint` persists the setting synchronously from the dropdown's
+Choosing `Tunneled` persists the setting synchronously from the dropdown's
 click handler. The cached row still contains the previous route, so the generic
 settings synchronization treats the entire SSH connection as changed and
 rebuilds the remote-server list unnecessarily.
@@ -60,7 +60,7 @@ process can race the transition.
 ## Tests
 
 Add a GPUI regression test at the remote-project modal seam. It will choose
-`Through Flint` for an SSH entry with no active agent terminals and verify that:
+`Tunneled` for an SSH entry with no active agent terminals and verify that:
 
 - the route setting is persisted;
 - the route popover closes;

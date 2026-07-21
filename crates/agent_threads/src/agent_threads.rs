@@ -434,7 +434,7 @@ mod tests {
                 username: Some("dev".to_string()),
                 port: Some(2222),
                 nickname: Some("ignored nickname".to_string()),
-                agent_route: Some(settings::RemoteAgentRoute::ThroughFlint),
+                agent_route: Some(settings::RemoteAgentRoute::Tunneled),
                 ..Default::default()
             }]),
         };
@@ -452,11 +452,11 @@ mod tests {
 
         assert_eq!(
             settings.route_for(&matching),
-            Some(settings::RemoteAgentRoute::ThroughFlint)
+            Some(settings::RemoteAgentRoute::Tunneled)
         );
         assert_eq!(
             settings.route_for(&unknown),
-            Some(settings::RemoteAgentRoute::NotThroughFlint)
+            Some(settings::RemoteAgentRoute::Direct)
         );
         assert_eq!(
             settings.route_for(&remote::RemoteConnectionOptions::Wsl(

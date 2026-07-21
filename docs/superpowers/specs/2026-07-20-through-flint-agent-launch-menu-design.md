@@ -6,7 +6,7 @@
 ## Scope
 
 This change applies only when a remote SSH project is configured as
-**Through Flint**. **Not through Flint** retains its current menu, configured
+**Through Flint**. **Direct** retains its current menu, configured
 command launches, explicit Flint-managed launch row, and resume behavior.
 
 The behavior applies equally to Codex and Claude. Live Claude validation is
@@ -73,7 +73,7 @@ selection. It reads the project route once:
 
 - Through Flint delegates to managed preparation and launches the prepared
   executable with Through Flint as the required route.
-- Not through Flint and route-less workspaces retain the current configured
+- Direct and route-less workspaces retain the current configured
   command path.
 
 All UI and action entry points already converge on the store launch function,
@@ -104,7 +104,7 @@ per process and idempotent.
 
 The panel determines whether the selected project route is Through Flint. It
 always renders the ordinary new-thread choices. It renders the explicit
-Flint-managed row only when the route is not Through Flint and the remote target
+Flint-managed row only when the route is Direct and the remote target
 has a pinned release for the selected agent.
 
 The panel does not read or append managed provisioning status when the row is

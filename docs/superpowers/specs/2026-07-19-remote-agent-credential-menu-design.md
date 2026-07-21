@@ -29,7 +29,7 @@ credential actions is therefore misleading.
 - When the project route is **Through Flint**, sign-out must use the pinned
   Flint-managed executable for that agent and retain the Through-Flint route
   guarantee.
-- When the project route is **Not through Flint**, sign-out continues to use
+- When the project route is **Direct**, sign-out continues to use
   the configured command for that agent.
 - Do not change authentication storage.
 
@@ -49,7 +49,7 @@ pinned official CLI, build the logout command with that executable, apply the
 self-update suppression policy, and launch it with Through Flint as the
 required route. Existing managed-agent progress, confirmation, and duplicate
 provisioning behavior remain in effect if the executable is not ready. Under
-Not through Flint, preserve the current configured-command behavior.
+Direct, preserve the current configured-command behavior.
 
 If the route changes while a managed agent is being prepared, abort sign-out
 with the existing route-change error instead of launching under a different

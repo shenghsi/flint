@@ -25,6 +25,7 @@ Flint is for developers who want the project awareness and visual review tools o
 - **First-class terminals:** New terminals open as tabs in the center workspace by default, alongside files and diffs.
 - **Codex and Claude Code threads:** Launch either CLI directly in a terminal-backed thread using its existing authentication, configuration, and subscription.
 - **Agent Threads panel:** Organize Codex and Claude Code sessions, reopen recent threads, and resume work using titles discovered from each agent's local history.
+- **Remote agent threads:** Run Codex and Claude Code on SSH remotes through Flint-managed agent binaries, with optional tunneled routing for provider traffic.
 - **Configurable agent workflows:** Set commands, arguments, environment variables, working directories, visibility, panel location, and default resume options.
 - **Faster change review:** Open project changes directly from the editor toolbar and review agent-generated work with Zed's Git and diff views.
 
@@ -55,6 +56,14 @@ curl -f https://raw.githubusercontent.com/shenghsi/flint/main/script/install.sh 
 If `~/.local/bin` isn't already on your `PATH`, add it so you can launch Flint with `flint`.
 
 The `.deb` and `.rpm` packages install Flint system-wide under `/usr/lib/flint`. Those builds are managed by your package manager, so in-app auto-update is disabled — update them with `apt`, `dnf`, etc.
+
+### Remote Development
+
+Flint supports SSH and WSL remote development while keeping the editor UI local. Files, terminals, tasks, language servers, and agent threads run on the remote host.
+
+Remote agent threads can use either the remote host's own network (`Direct`) or a Flint-managed route (`Tunneled`). With `Tunneled`, Flint can provision pinned Codex and Claude Code binaries on the remote host and route supported provider traffic back through the local Flint connection, which helps when a remote machine has restricted internet access.
+
+See [Remote Development](./docs/src/remote-development.md) for setup, SSH connection settings, port forwarding, and the `agent_route` option.
 
 ### Developing Flint
 

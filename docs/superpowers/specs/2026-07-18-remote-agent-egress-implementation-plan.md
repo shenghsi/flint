@@ -8,16 +8,16 @@ without replacing Flint's terminal-first Agent Threads model. Supported Codex
 and Claude Code processes continue to run on the SSH host in the real remote
 project. Flint may provision a pinned official executable through a verified
 local download and SSH upload, and the user may independently choose whether
-that agent's provider traffic goes `Through Flint` or `Not through Flint`.
+that agent's provider traffic goes `Tunneled` or `Direct`.
 
 The work is dependency-ordered and test-first. Each stage must leave ordinary
-remote editing and the default `Not through Flint` route usable. Do not start a
+remote editing and the default `Direct` route usable. Do not start a
 later stage while a focused test from an earlier stage is failing.
 
 ## Non-Negotiable Boundaries
 
 - A new SSH connection identity has no stored route and therefore opens as
-  `Not through Flint` without a prompt. Connectivity probes and request errors
+  `Direct` without a prompt. Connectivity probes and request errors
   never select or change the route.
 - Provisioning and routing are independent. An ambient or explicitly
   configured agent can use either route, and a Flint-managed agent can use
@@ -35,11 +35,11 @@ later stage while a focused test from an earlier stage is failing.
   committing the installation.
 - Managed installations are per-user, require no `sudo`, do not modify a shell
   profile or general `PATH`, and are launched by absolute path.
-- `Not through Flint` preserves today's ambient launch behavior. It creates no
+- `Direct` preserves today's ambient launch behavior. It creates no
   CONNECT proxy, reverse forward, or egress lease and injects no proxy
   environment. Only a managed executable receives self-update suppression on
   this route.
-- `Through Flint` injects a process-scoped restricted proxy and self-update
+- `Tunneled` injects a process-scoped restricted proxy and self-update
   suppression into both ambient and managed agents. It is not represented as
   a host firewall.
 - The OAuth browser-callback `-L` forward is independent of the egress session
@@ -412,9 +412,9 @@ Files:
 
 Write tests first:
 
-- Add serde/schema tests for exactly `not_through_flint` and
-  `through_flint`. A missing value must deserialize to no stored override and
-  resolve to `Not through Flint`.
+- Add serde/schema tests for exactly `direct` and
+  `tunneled`. A missing value must deserialize to no stored override and
+  resolve to `Direct`.
 - Add `RemoteSettings` tests that match the existing normalized SSH identity
   fields `(host, username, port)`, ignore nickname/runtime SSH fields, and do
   not apply an SSH route to WSL or Docker.
@@ -441,7 +441,7 @@ Implement:
 
 - Add a shared serializable `RemoteAgentRoute` enum and an optional
   `agent_route` field to `settings::SshConnection`. Keep `None` distinct from an
-  explicit `not_through_flint` so an untouched identity causes no settings
+  explicit `direct` so an untouched identity causes no settings
   write.
 - Add a small identity-matching helper based on the same host/username/port
   semantics as `RemoteConnectionIdentity`. Do not include the route in SSH
@@ -455,7 +455,7 @@ Implement:
   project's SSH connection identity. Local, WSL, Docker, and mock projects keep
   their existing launch behavior and do not acquire egress.
 - Document the optional setting in the SSH connection example without changing
-  the default settings value to `Through Flint`.
+  the default settings value to `Tunneled`.
 
 Validation:
 
@@ -706,12 +706,12 @@ Write tests first:
 
   | Executable | Route             | Proxy env | Self-update suppression |
   | ---------- | ----------------- | --------- | ----------------------- |
-  | Ambient    | Not through Flint | No        | No                      |
-  | Managed    | Not through Flint | No        | Yes                     |
+  | Ambient    | Direct | No        | No                      |
+  | Managed    | Direct | No        | Yes                     |
   | Ambient    | Through Flint     | Yes       | Yes                     |
   | Managed    | Through Flint     | Yes       | Yes                     |
 
-- Under `Through Flint`, assert supported proxy variables plus controlled
+- Under `Tunneled`, assert supported proxy variables plus controlled
   `NO_PROXY` and `no_proxy` exactly equal
   `localhost,127.0.0.1,::1`. Do not merge an ambient bypass list.
 - Assert `HTTP_PROXY`/`http_proxy` are omitted unless the pinned adapter proves
@@ -753,7 +753,7 @@ Implement:
 - If the ambient default is absent, reuse a valid managed receipt or prompt to
   provision. Persist an explicit managed selection per connection identity and
   agent kind in non-secret state; clearing/removing it restores ambient lookup.
-- Acquire egress only for `Through Flint`, wait for readiness, and inject the
+- Acquire egress only for `Tunneled`, wait for readiness, and inject the
   proxy URL only into the selected agent process. The proxy URL must never be
   added to `ProjectEnvironment`, project settings, command labels, or logs.
 - Apply catalogue self-update suppression to every through-Flint process and
@@ -804,7 +804,7 @@ Write tests first:
   then persist the new route. Cancelling must change nothing.
 - Once a route change is confirmed, reject new agent/credential launches for
   that identity until terminal cleanup and the settings write complete.
-- Moving away from `Through Flint` must close the reverse forward after the
+- Moving away from `Tunneled` must close the reverse forward after the
   final affected lease; moving to it must remain lazy until the next agent or
   credential action.
 - Removing a managed version closes only terminals using that managed version
@@ -865,8 +865,8 @@ Write tests first:
 - Assert fixtures contain no live token, key, cookie, authorization header, or
   home-directory credential file.
 - Under each route, build a credential-management terminal with the same
-  executable resolution as a normal thread. `Through Flint` gets its own
-  egress lease; `Not through Flint` gets none.
+  executable resolution as a normal thread. `Tunneled` gets its own
+  egress lease; `Direct` gets none.
 - For a pinned login with a fixed or safely discoverable callback port, start
   the independent temporary local forward under both routes. Assert it carries
   no CONNECT capability and survives release of an unrelated egress lease.
@@ -1088,7 +1088,7 @@ install and restricted egress path without live services.
 ## Acceptance Checklist
 
 - [ ] An untouched SSH identity opens without a question and uses
-      `Not through Flint`.
+      `Direct`.
 - [ ] The opener contains exactly the two route values and persists only an
       explicit change.
 - [ ] A connectivity probe or provider failure never changes the stored route.
