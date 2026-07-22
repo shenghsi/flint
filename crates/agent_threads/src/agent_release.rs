@@ -1,10 +1,20 @@
 use remote::RemotePlatform;
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentArtifactFormat {
     Raw,
-    TarGz { executable_path: &'static str },
+    TarGz {
+        executable_path: &'static str,
+    },
+    TarGzBundle {
+        root_path: &'static str,
+        executable_path: &'static str,
+    },
+    ZipBundle {
+        root_path: &'static str,
+        executable_path: &'static str,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +26,7 @@ pub enum AgentSourceVerification {
 pub enum AgentVersionMatcher {
     Codex { version: &'static str },
     Claude { version: &'static str },
+    Pi { version: &'static str },
 }
 
 impl AgentVersionMatcher {
@@ -37,6 +48,7 @@ impl AgentVersionMatcher {
                     ["Claude", "Code", found_version] if *found_version == version
                 )
             }
+            Self::Pi { version } => output.trim() == version,
         }
     }
 }
@@ -273,6 +285,107 @@ pub const CODEX_RELEASES: &[AgentRelease] = &[
     ),
 ];
 
+macro_rules! pi_tar_release {
+    ($os:expr, $arch:expr, $libc:expr, $asset:literal, $source_digest:literal, $executable_digest:literal) => {
+        AgentRelease {
+            version: "0.81.1",
+            target: RemotePlatform {
+                os: $os,
+                arch: $arch,
+                libc: $libc,
+            },
+            source_url: concat!(
+                "https://github.com/earendil-works/pi/releases/download/v0.81.1/",
+                $asset
+            ),
+            source_sha256: $source_digest,
+            source_verification: AgentSourceVerification::Sha256,
+            executable_sha256: $executable_digest,
+            artifact: AgentArtifactFormat::TarGzBundle {
+                root_path: "pi",
+                executable_path: "pi/pi",
+            },
+            executable_name: "pi",
+            version_matcher: AgentVersionMatcher::Pi { version: "0.81.1" },
+            self_update_environment: &[("PI_SKIP_VERSION_CHECK", "1"), ("PI_TELEMETRY", "0")],
+        }
+    };
+}
+
+macro_rules! pi_windows_release {
+    ($arch:expr, $asset:literal, $source_digest:literal, $executable_digest:literal) => {
+        AgentRelease {
+            version: "0.81.1",
+            target: RemotePlatform {
+                os: remote::RemoteOs::Windows,
+                arch: $arch,
+                libc: None,
+            },
+            source_url: concat!(
+                "https://github.com/earendil-works/pi/releases/download/v0.81.1/",
+                $asset
+            ),
+            source_sha256: $source_digest,
+            source_verification: AgentSourceVerification::Sha256,
+            executable_sha256: $executable_digest,
+            artifact: AgentArtifactFormat::ZipBundle {
+                root_path: "",
+                executable_path: "pi.exe",
+            },
+            executable_name: "pi.exe",
+            version_matcher: AgentVersionMatcher::Pi { version: "0.81.1" },
+            self_update_environment: &[("PI_SKIP_VERSION_CHECK", "1"), ("PI_TELEMETRY", "0")],
+        }
+    };
+}
+
+pub const PI_RELEASES: &[AgentRelease] = &[
+    pi_tar_release!(
+        remote::RemoteOs::MacOs,
+        remote::RemoteArch::Aarch64,
+        None,
+        "pi-darwin-arm64.tar.gz",
+        "a24834019ec02ee5a475ff1c5a5e9f838974191ba6adc4348f6e6475a7c7667b",
+        "271b7a506398e4ece04c664c7723705d4fa874c98e7a62d7b289e1fa582cf3c9"
+    ),
+    pi_tar_release!(
+        remote::RemoteOs::MacOs,
+        remote::RemoteArch::X86_64,
+        None,
+        "pi-darwin-x64.tar.gz",
+        "ecaed0ef0fcaeff2e475294fc34b2d7de4700434ab9df23cdb0fffd9cfadf5b8",
+        "330434ba869a9582557be97ce5423afbdcc8553e16a9301cfdd9740ddc87c69b"
+    ),
+    pi_tar_release!(
+        remote::RemoteOs::Linux,
+        remote::RemoteArch::Aarch64,
+        Some(remote::RemoteLibc::Glibc),
+        "pi-linux-arm64.tar.gz",
+        "c049e132c85466224d57d19f7924909b0c0fdbc9bed8e091ddc361830704b392",
+        "5d098361cdcbb3abad53988d692bcc6c2619bfd8875e8256903f448c54e82a5c"
+    ),
+    pi_tar_release!(
+        remote::RemoteOs::Linux,
+        remote::RemoteArch::X86_64,
+        Some(remote::RemoteLibc::Glibc),
+        "pi-linux-x64.tar.gz",
+        "1f6e23d9ec0668a13cea9c786e3d54c1fc679b8e22e7f6bfade0349f4807cbf2",
+        "e69d579772ed139458a144f165e2e0f05d50a1a86bf7557bf02eef1f75691505"
+    ),
+    pi_windows_release!(
+        remote::RemoteArch::Aarch64,
+        "pi-windows-arm64.zip",
+        "875dfb42e2ad20e81430365cce48c5ddcab560c3b9ee474d2d5c7ff6345269eb",
+        "7d3fbae1d56b5f95607b0162f65c1e6793333d4ff2df01a7a89ef30ea44c9611"
+    ),
+    pi_windows_release!(
+        remote::RemoteArch::X86_64,
+        "pi-windows-x64.zip",
+        "6c46cca1fa94234982e56dc60a453d4bc57dc45efc2e16f97bbc6eace7a7de60",
+        "1421d967cc6497c0585f057414a9a7da8a69b339fc001dc49461c419acec9d85"
+    ),
+];
+
 impl<'a> AgentReleaseCatalog<'a> {
     pub fn new(
         agent_id: &'static str,
@@ -318,6 +431,29 @@ impl<'a> AgentReleaseCatalog<'a> {
                     release.version
                 );
             }
+            if let AgentArtifactFormat::TarGzBundle {
+                root_path,
+                executable_path,
+            }
+            | AgentArtifactFormat::ZipBundle {
+                root_path,
+                executable_path,
+            } = release.artifact
+            {
+                if (!root_path.is_empty() && !is_safe_archive_path(root_path))
+                    || Path::new(executable_path)
+                        .strip_prefix(root_path)
+                        .ok()
+                        .filter(|path| *path == Path::new(release.executable_name))
+                        .is_none()
+                {
+                    anyhow::bail!(
+                        "{} {} has an invalid bundle layout",
+                        self.agent_id,
+                        release.version
+                    );
+                }
+            }
             if !source_is_official(release.source_url, self.official_source_prefixes) {
                 anyhow::bail!(
                     "{} {} does not use an official HTTPS source",
@@ -354,7 +490,13 @@ impl AgentArtifactFormat {
     pub(crate) fn executable_path(self) -> Option<&'static str> {
         match self {
             Self::Raw => None,
-            Self::TarGz { executable_path } => Some(executable_path),
+            Self::TarGz { executable_path }
+            | Self::TarGzBundle {
+                executable_path, ..
+            }
+            | Self::ZipBundle {
+                executable_path, ..
+            } => Some(executable_path),
         }
     }
 }
@@ -565,6 +707,15 @@ mod tests {
     }
 
     #[test]
+    fn pi_version_matcher_accepts_exact_version_only() {
+        let matcher = AgentVersionMatcher::Pi { version: "0.81.1" };
+
+        assert!(matcher.matches("0.81.1\n"));
+        assert!(!matcher.matches("0.81.0"));
+        assert!(!matcher.matches("pi 0.81.1"));
+    }
+
+    #[test]
     fn every_registered_agent_suppresses_self_updates_per_process() {
         for kind in agent_kind_registry() {
             let policy = kind.self_update_policy();
@@ -607,5 +758,32 @@ mod tests {
             .expect("pinned Codex release catalog should be valid");
         assert_eq!(CODEX_RELEASES.len(), 8);
         assert!(catalog.release_for(linux_glibc_target()).is_some());
+    }
+
+    #[test]
+    fn pinned_pi_release_catalog_is_valid_and_covers_published_targets() {
+        let catalog = AgentReleaseCatalog::new(
+            "pi",
+            &[
+                "https://github.com/earendil-works/pi/releases/download/",
+                "https://release-assets.githubusercontent.com/",
+            ],
+            PI_RELEASES,
+        );
+
+        catalog
+            .validate()
+            .expect("pinned Pi release catalog should be valid");
+        assert_eq!(PI_RELEASES.len(), 6);
+        assert!(catalog.release_for(linux_glibc_target()).is_some());
+        assert!(
+            catalog
+                .release_for(RemotePlatform {
+                    os: RemoteOs::Linux,
+                    arch: RemoteArch::X86_64,
+                    libc: Some(RemoteLibc::Musl),
+                })
+                .is_none()
+        );
     }
 }
