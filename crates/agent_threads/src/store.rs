@@ -1956,7 +1956,11 @@ mod tests {
                 ..AgentLaunchCommand::default()
             };
             let managed_executable = PathBuf::from(format!("/managed/{}/cli", kind.id));
-            let option_arguments = kind.resume_options[0].args.clone();
+            let option_arguments = kind
+                .resume_options
+                .first()
+                .map(|option| option.args.clone())
+                .unwrap_or_default();
 
             let launch =
                 build_new_thread_launch(&kind, &base, &option_arguments, Some(&managed_executable));
@@ -1979,27 +1983,29 @@ mod tests {
     }
 
     #[test]
-    fn managed_claude_new_thread_keeps_its_generated_session_id() {
-        let kind = agent_kind_registry()
-            .into_iter()
-            .find(|kind| kind.id == "claude")
-            .expect("Claude should be registered");
-        let launch = build_new_thread_launch(
-            &kind,
-            &AgentLaunchCommand::default(),
-            &[],
-            Some(std::path::Path::new("/managed/claude")),
-        );
+    fn managed_agents_keep_their_generated_session_ids() {
+        for kind_id in ["claude", "pi"] {
+            let kind = agent_kind_registry()
+                .into_iter()
+                .find(|kind| kind.id == kind_id)
+                .expect("agent should be registered");
+            let launch = build_new_thread_launch(
+                &kind,
+                &AgentLaunchCommand::default(),
+                &[],
+                Some(std::path::Path::new("/managed/agent")),
+            );
 
-        let session_id = launch
-            .session_id
-            .expect("Claude launch should have a session id");
-        assert!(
-            launch
-                .command
-                .args
-                .ends_with(&["--session-id".to_string(), session_id.to_string(),])
-        );
+            let session_id = launch
+                .session_id
+                .expect("managed launch should have a session id");
+            assert!(
+                launch
+                    .command
+                    .args
+                    .ends_with(&["--session-id".to_string(), session_id.to_string(),])
+            );
+        }
     }
 
     #[test]
@@ -2027,7 +2033,10 @@ mod tests {
                 ..AgentLaunchCommand::default()
             };
             let managed_executable = PathBuf::from(format!("/managed/{}/cli", kind.id));
-            let arguments = kind.credential_policy().logout_arguments;
+            let Some(credential_policy) = kind.credential_policy() else {
+                continue;
+            };
+            let arguments = credential_policy.logout_arguments;
 
             let command =
                 build_managed_credential_command(&kind, &base, arguments, &managed_executable);

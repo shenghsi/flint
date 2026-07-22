@@ -2,7 +2,7 @@
 
 ## Summary
 
-Add Pi as a third first-class terminal coding agent beside Codex and Claude in Flint's Agent Threads panel. The integration uses Pi's interactive terminal interface, preserves Pi's provider-neutral model, supports Pi's persisted sessions, and provisions pinned standalone Pi binaries for managed tunneled remote projects.
+Add Pi as a third first-class terminal coding agent beside Codex and Claude in Flint's Agent Threads panel. The integration uses Pi's interactive terminal interface, preserves Pi's provider-neutral model, supports Pi's persisted sessions, and provisions pinned standalone Pi release bundles for managed tunneled remote projects.
 
 Pi continues to own provider selection, model selection, and authentication. Flint owns process launch, project-scoped thread discovery, session restoration, remote binary provisioning, and tunneled network policy.
 
@@ -42,7 +42,7 @@ Register an `AgentKindDefinition` with these values:
 | ID | `pi` |
 | Label | `Pi` |
 | Default command | `pi` |
-| Home environment variable | none |
+| Home environment variable | `PI_CODING_AGENT_DIR` |
 | Home directory | `.pi/agent` |
 | Session ID flag | `--session-id` |
 | Resume command | `--session <id>` |
@@ -51,7 +51,7 @@ Register an `AgentKindDefinition` with these values:
 | Credential policy | none |
 | Plan usage provider | none |
 
-The absence of a home environment variable must be represented explicitly rather than with a fabricated environment variable. History resolution falls back to `$HOME/.pi/agent` locally and on remote hosts.
+History resolution honors `PI_CODING_AGENT_DIR` and falls back to `$HOME/.pi/agent` locally and on remote hosts.
 
 Provider-specific registry capabilities become optional. Codex and Claude retain their existing credential and plan-usage behavior. Pi is omitted from credential menus and plan-usage requests, avoiding dummy commands and recurring unsupported-provider errors.
 
@@ -153,15 +153,17 @@ Map upstream standalone assets to supported remote platforms:
 
 Only Linux libc targets verified to run the published standalone binaries are registered. Unsupported targets fail before download with the existing `no pinned Pi release supports this remote target` error.
 
-Each release entry pins:
+Pi's compiled executable requires adjacent release metadata and assets. Flint therefore installs the complete verified release bundle rather than extracting only the executable. Each release entry pins:
 
 - The official GitHub release URL.
 - The archive SHA-256 from the upstream `SHA256SUMS` file.
 - The SHA-256 of the extracted executable bytes.
-- The executable's archive path and installed name.
+- The bundle root and executable's relative archive path.
 - The exact accepted `pi --version` output for v0.81.1.
 
-Add a ZIP artifact variant to the existing artifact cache. ZIP extraction must select one exact configured entry, reject absolute paths and parent traversal, enforce the existing artifact size limit, and write only to the unique partial destination. TAR extraction retains its current behavior. Both formats verify the archive before extraction and the executable after extraction.
+Add verified TAR and ZIP bundle variants to the artifact cache. Bundle extraction rejects absolute paths, parent traversal, links, duplicate paths, and entries outside the configured bundle root. It enforces the existing total artifact size limit and writes only into a unique partial directory before an atomic cache commit. Both formats verify the archive before extraction and the executable after extraction.
+
+The cached artifact exposes a manifest of regular files containing each relative path and SHA-256 digest. Managed provisioning recreates parent directories, uploads every manifest entry into a private staging directory, and verifies every remote digest before making the executable runnable. The receipt records the source archive digest and installed file manifest. Reuse verifies the complete installed manifest and version before launch. Codex and Claude continue to produce one-file manifests, preserving their current installation behavior through the same interface.
 
 Flint-managed Pi commands set:
 
@@ -230,9 +232,10 @@ Implementation proceeds in test-first slices.
 
 - Match every supported Pi release to the correct remote platform.
 - Accept the pinned `pi --version` format and reject other versions.
-- Extract the configured executable from TAR and ZIP fixtures.
-- Reject ZIP traversal, wrong entries, oversize content, and checksum mismatches.
+- Extract complete configured bundles from TAR and ZIP fixtures.
+- Reject archive traversal, links, duplicate paths, entries outside the bundle root, oversize content, and checksum mismatches.
 - Reuse verified cached executables.
+- Upload and verify every bundle file before committing a remote installation.
 - Apply Pi's managed environment without changing configured direct launches.
 - Pin the complete built-in-provider egress host set.
 - Surface unsupported targets and provisioning failures.

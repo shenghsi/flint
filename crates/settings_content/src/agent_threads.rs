@@ -12,6 +12,8 @@ pub struct AgentThreadSettingsContent {
     pub codex: Option<AgentThreadCommandContent>,
     /// Command used for new Claude agent threads.
     pub claude: Option<AgentThreadCommandContent>,
+    /// Command used for new Pi agent threads.
+    pub pi: Option<AgentThreadCommandContent>,
     /// Maximum number of threads shown per agent section before a "Show
     /// more" control is offered.
     ///

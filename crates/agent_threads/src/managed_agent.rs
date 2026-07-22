@@ -4,11 +4,13 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use futures::AsyncReadExt as _;
 use remote::{
     ConnectionSharing, Interactive, RemoteArch, RemoteConnection, RemoteLibc, RemoteOs,
     RemotePlatform,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
@@ -19,6 +21,7 @@ use util::paths::{PathStyle, RemotePathBuf};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedAgentArtifact {
     pub path: PathBuf,
+    pub bundle_root: Option<PathBuf>,
     pub executable_sha256: String,
 }
 
@@ -87,6 +90,13 @@ impl AgentArtifactSource for CachedAgentArtifactSource {
             }
         };
         Ok(VerifiedAgentArtifact {
+            bundle_root: match release.artifact {
+                crate::agent_release::AgentArtifactFormat::TarGzBundle { .. }
+                | crate::agent_release::AgentArtifactFormat::ZipBundle { .. } => {
+                    path.parent().map(Path::to_path_buf)
+                }
+                _ => None,
+            },
             path,
             executable_sha256: release.executable_sha256.to_string(),
         })
@@ -297,6 +307,14 @@ struct ManagedAgentReceipt {
     executable_name: String,
     executable_path: PathBuf,
     executable_sha256: String,
+    source_sha256: String,
+    files: Vec<ManagedAgentReceiptFile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ManagedAgentReceiptFile {
+    relative_path: PathBuf,
+    sha256: String,
 }
 
 struct ManagedAgentPaths {
@@ -373,18 +391,16 @@ where
         report_progress(ManagedAgentInstallPhase::CheckingRemote);
         if let Some(receipt_content) = self.remote_host.read_file(&paths.receipt_path).await?
             && let Ok(receipt) = serde_json::from_slice::<ManagedAgentReceipt>(&receipt_content)
-            && receipt
-                == managed_receipt(
-                    agent_id,
-                    release,
-                    &paths.target_name,
-                    paths.destination_executable.clone(),
-                )
+            && receipt_matches_release(
+                &receipt,
+                agent_id,
+                release,
+                &paths.target_name,
+                &paths.destination_executable,
+            )
             && self
-                .remote_host
-                .file_sha256(&paths.destination_executable)
+                .receipt_files_are_valid(&paths.destination, &receipt)
                 .await
-                .is_ok_and(|digest| digest == release.executable_sha256)
             && self
                 .remote_host
                 .run_version(&paths.destination_executable)
@@ -398,6 +414,31 @@ where
             }));
         }
         Ok(None)
+    }
+
+    async fn receipt_files_are_valid(
+        &self,
+        destination: &Path,
+        receipt: &ManagedAgentReceipt,
+    ) -> bool {
+        let mut relative_paths = std::collections::HashSet::new();
+        for file in &receipt.files {
+            if !is_safe_relative_path(&file.relative_path)
+                || !relative_paths.insert(file.relative_path.clone())
+            {
+                return false;
+            }
+            let path = destination.join(&file.relative_path);
+            if !self
+                .remote_host
+                .file_sha256(&path)
+                .await
+                .is_ok_and(|digest| digest == file.sha256)
+            {
+                return false;
+            }
+        }
+        !receipt.files.is_empty()
     }
 
     pub async fn install(
@@ -443,14 +484,21 @@ where
             version_root.join(format!(".{target_name}.rollback-{}", uuid::Uuid::new_v4()));
         let staged_executable = staging.join(release.executable_name);
         let staged_receipt = staging.join("receipt.json");
+        let mut rollback_created = false;
+        let artifact_files = artifact_files(&artifact).await?;
         let receipt = serde_json::to_vec(&managed_receipt(
             agent_id,
             release,
             &target_name,
             destination_executable.clone(),
+            artifact_files
+                .iter()
+                .map(|file| ManagedAgentReceiptFile {
+                    relative_path: file.relative_path.clone(),
+                    sha256: file.sha256.clone(),
+                })
+                .collect(),
         ))?;
-
-        let mut rollback_created = false;
 
         let result = async {
             self.remote_host
@@ -458,18 +506,37 @@ where
                 .await
                 .context("failed to create remote agent staging directory")?;
             report_progress(ManagedAgentInstallPhase::Uploading);
-            self.remote_host
-                .upload_file(&artifact.path, &staged_executable)
-                .await
-                .context("failed to upload verified agent executable")?;
+            for file in &artifact_files {
+                let destination = staging.join(&file.relative_path);
+                if let Some(parent) = destination.parent() {
+                    self.remote_host.create_private_directory(parent).await?;
+                }
+                self.remote_host
+                    .upload_file(&file.source_path, &destination)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to upload verified agent file {}",
+                            file.relative_path.display()
+                        )
+                    })?;
+            }
             report_progress(ManagedAgentInstallPhase::VerifyingRemote);
-            let remote_digest = self
-                .remote_host
-                .file_sha256(&staged_executable)
-                .await
-                .context("failed to verify uploaded agent executable")?;
-            if remote_digest != release.executable_sha256 {
-                anyhow::bail!("uploaded agent executable failed remote digest verification");
+            for file in &artifact_files {
+                let destination = staging.join(&file.relative_path);
+                let remote_digest = self
+                    .remote_host
+                    .file_sha256(&destination)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to verify uploaded agent file {}",
+                            file.relative_path.display()
+                        )
+                    })?;
+                if remote_digest != file.sha256 {
+                    anyhow::bail!("uploaded agent file failed remote digest verification");
+                }
             }
             self.remote_host
                 .set_file_executable(&staged_executable)
@@ -557,11 +624,77 @@ where
     }
 }
 
+struct ArtifactFile {
+    source_path: PathBuf,
+    relative_path: PathBuf,
+    sha256: String,
+}
+
+async fn artifact_files(artifact: &VerifiedAgentArtifact) -> Result<Vec<ArtifactFile>> {
+    let Some(bundle_root) = artifact.bundle_root.as_ref() else {
+        let relative_path = artifact
+            .path
+            .file_name()
+            .context("verified agent executable has no file name")?;
+        return Ok(vec![ArtifactFile {
+            source_path: artifact.path.clone(),
+            relative_path: PathBuf::from(relative_path),
+            sha256: artifact.executable_sha256.clone(),
+        }]);
+    };
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(bundle_root).follow_links(false) {
+        let entry = entry?;
+        if entry.file_type().is_symlink() {
+            anyhow::bail!("verified agent bundle contains a symbolic link");
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative_path = entry.path().strip_prefix(bundle_root)?;
+        if relative_path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            anyhow::bail!("verified agent bundle contains an unsafe path");
+        }
+        files.push(ArtifactFile {
+            source_path: entry.path().to_path_buf(),
+            relative_path: relative_path.to_path_buf(),
+            sha256: file_sha256(entry.path()).await?,
+        });
+    }
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    let executable = files
+        .iter()
+        .find(|file| file.source_path == artifact.path)
+        .context("verified agent bundle does not contain its executable")?;
+    if executable.sha256 != artifact.executable_sha256 {
+        anyhow::bail!("verified agent bundle executable digest changed before upload");
+    }
+    Ok(files)
+}
+
+async fn file_sha256(path: &Path) -> Result<String> {
+    let mut file = smol::fs::File::open(path).await?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        let bytes_read = file.read(&mut buffer).await?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 fn managed_receipt(
     agent_id: &str,
     release: &AgentRelease,
     target: &str,
     executable_path: PathBuf,
+    files: Vec<ManagedAgentReceiptFile>,
 ) -> ManagedAgentReceipt {
     ManagedAgentReceipt {
         agent_id: agent_id.to_string(),
@@ -570,7 +703,36 @@ fn managed_receipt(
         executable_name: release.executable_name.to_string(),
         executable_path,
         executable_sha256: release.executable_sha256.to_string(),
+        source_sha256: release.source_sha256.to_string(),
+        files,
     }
+}
+
+fn receipt_matches_release(
+    receipt: &ManagedAgentReceipt,
+    agent_id: &str,
+    release: &AgentRelease,
+    target: &str,
+    executable_path: &Path,
+) -> bool {
+    receipt.agent_id == agent_id
+        && receipt.version == release.version
+        && receipt.target == target
+        && receipt.executable_name == release.executable_name
+        && receipt.executable_path == executable_path
+        && receipt.executable_sha256 == release.executable_sha256
+        && receipt.source_sha256 == release.source_sha256
+        && receipt.files.iter().any(|file| {
+            file.relative_path == Path::new(release.executable_name)
+                && file.sha256 == release.executable_sha256
+        })
+}
+
+fn is_safe_relative_path(path: &Path) -> bool {
+    path.components().next().is_some()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
 fn validate_path_component(component: &str, name: &str) -> Result<()> {
@@ -613,7 +775,6 @@ mod tests {
     use crate::agent_release::{AgentArtifactFormat, AgentSourceVerification, AgentVersionMatcher};
     use http_client::{AsyncBody, FakeHttpClient, Response};
     use remote::{RemoteArch, RemoteLibc, RemoteOs, RemotePlatform};
-    use sha2::Digest as _;
     use std::{
         cell::{Cell, RefCell},
         collections::{HashMap, HashSet},
@@ -754,7 +915,24 @@ mod tests {
             self.events.borrow_mut().push("acquire".to_string());
             Ok(VerifiedAgentArtifact {
                 path: PathBuf::from("/local/verified-agent"),
+                bundle_root: None,
                 executable_sha256: DIGEST.to_string(),
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct FakeBundleArtifacts {
+        root: PathBuf,
+    }
+
+    #[async_trait(?Send)]
+    impl AgentArtifactSource for FakeBundleArtifacts {
+        async fn acquire(&self, release: &AgentRelease) -> Result<VerifiedAgentArtifact> {
+            Ok(VerifiedAgentArtifact {
+                path: self.root.join("agent"),
+                bundle_root: Some(self.root.clone()),
+                executable_sha256: release.executable_sha256.to_string(),
             })
         }
     }
@@ -781,13 +959,16 @@ mod tests {
             Ok(())
         }
 
-        async fn upload_file(&self, _source: &Path, destination: &Path) -> Result<()> {
+        async fn upload_file(&self, source: &Path, destination: &Path) -> Result<()> {
             self.events
                 .borrow_mut()
                 .push(format!("upload:{}", destination.display()));
+            let digest = std::fs::read(source)
+                .map(|content| hex::encode(sha2::Sha256::digest(content)))
+                .unwrap_or_else(|_| DIGEST.to_string());
             self.files
                 .borrow_mut()
-                .insert(destination.to_path_buf(), DIGEST.to_string());
+                .insert(destination.to_path_buf(), digest);
             Ok(())
         }
 
@@ -881,6 +1062,10 @@ mod tests {
                 &release,
                 &target,
                 executable.clone(),
+                vec![ManagedAgentReceiptFile {
+                    relative_path: PathBuf::from(release.executable_name),
+                    sha256: release.executable_sha256.to_string(),
+                }],
             ))
             .unwrap();
             let files = Rc::new(RefCell::new(HashMap::from([
@@ -917,6 +1102,50 @@ mod tests {
                 "remote reuse must not acquire the local artifact: {:?}",
                 events.borrow()
             );
+        });
+    }
+
+    #[test]
+    fn does_not_reuse_bundle_when_a_manifest_file_is_missing() {
+        smol::block_on(async {
+            let release = release();
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let target = target_name(release.target).unwrap();
+            let destination = PathBuf::from("/remote/flint/agents/pi/1.2.3").join(&target);
+            let executable = destination.join(release.executable_name);
+            let receipt = serde_json::json!({
+                "agent_id": "pi",
+                "version": release.version,
+                "target": target,
+                "executable_name": release.executable_name,
+                "executable_path": executable,
+                "executable_sha256": release.executable_sha256,
+                "source_sha256": release.source_sha256,
+                "files": [
+                    { "relative_path": "agent", "sha256": DIGEST },
+                    { "relative_path": "package.json", "sha256": DIGEST },
+                ],
+            })
+            .to_string();
+            let files = Rc::new(RefCell::new(HashMap::from([
+                (executable, DIGEST.to_string()),
+                (destination.join("receipt.json"), receipt),
+            ])));
+            let provisioner = ManagedAgentProvisioner::new(
+                FakeArtifacts {
+                    events: events.clone(),
+                },
+                FakeRemoteHost {
+                    events: events.clone(),
+                    files,
+                    paths: Rc::new(RefCell::new(HashSet::from([destination]))),
+                    fail_staging_commit: Rc::new(Cell::new(false)),
+                },
+            );
+
+            provisioner.install("pi", &release).await.unwrap();
+
+            assert!(events.borrow().iter().any(|event| event == "acquire"));
         });
     }
 
@@ -970,6 +1199,77 @@ mod tests {
                 .unwrap();
             assert!(acquire < upload && upload < digest && digest < chmod);
             assert!(chmod < version && version < commit);
+        });
+    }
+
+    #[test]
+    fn bundle_install_uploads_adjacent_files_before_version_check() {
+        smol::block_on(async {
+            let bundle = tempfile::tempdir().expect("bundle fixture directory");
+            std::fs::write(bundle.path().join("agent"), b"agent-bytes")
+                .expect("write executable fixture");
+            std::fs::write(bundle.path().join("package.json"), b"{}")
+                .expect("write package fixture");
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let provisioner = ManagedAgentProvisioner::new(
+                FakeBundleArtifacts {
+                    root: bundle.path().to_path_buf(),
+                },
+                FakeRemoteHost {
+                    events: events.clone(),
+                    files: Rc::new(RefCell::new(HashMap::new())),
+                    paths: Rc::new(RefCell::new(HashSet::new())),
+                    fail_staging_commit: Rc::new(Cell::new(false)),
+                },
+            );
+            let mut release = release();
+            release.executable_sha256 =
+                Box::leak(hex::encode(sha2::Sha256::digest(b"agent-bytes")).into_boxed_str());
+
+            provisioner
+                .install("codex", &release)
+                .await
+                .expect("bundle installation should succeed");
+
+            let events = events.borrow();
+            assert!(events.iter().any(|event| event.ends_with("/agent")));
+            assert!(events.iter().any(|event| event.ends_with("/package.json")));
+            let last_upload = events
+                .iter()
+                .rposition(|event| event.starts_with("upload:"))
+                .expect("bundle files should upload");
+            let version = events
+                .iter()
+                .position(|event| event.starts_with("version:"))
+                .expect("version check should run");
+            assert!(last_upload < version);
+        });
+    }
+
+    #[test]
+    fn bundle_install_rejects_an_executable_changed_after_verification() {
+        smol::block_on(async {
+            let bundle = tempfile::tempdir().expect("bundle fixture directory");
+            std::fs::write(bundle.path().join("agent"), b"changed-agent")
+                .expect("write executable fixture");
+            let provisioner = ManagedAgentProvisioner::new(
+                FakeBundleArtifacts {
+                    root: bundle.path().to_path_buf(),
+                },
+                FakeRemoteHost {
+                    events: Rc::new(RefCell::new(Vec::new())),
+                    files: Rc::new(RefCell::new(HashMap::new())),
+                    paths: Rc::new(RefCell::new(HashSet::new())),
+                    fail_staging_commit: Rc::new(Cell::new(false)),
+                },
+            );
+
+            let error = provisioner
+                .install("codex", &release())
+                .await
+                .expect_err("changed executable should be rejected");
+
+            assert!(error.to_string().contains("executable digest"));
         });
     }
 

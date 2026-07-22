@@ -138,6 +138,7 @@ dependencies = [
  "async-lock",
  "async-tar",
  "async-trait",
+ "async_zip",
  "base64 0.22.1",
  "chrono",
  "collections",
@@ -176,6 +177,7 @@ dependencies = [
  "url",
  "util",
  "uuid",
+ "walkdir",
  "workspace",
 ]
 

@@ -336,6 +336,7 @@ impl AgentThreadsPanel {
         let queries = self
             .visible_registry(cx)
             .into_iter()
+            .filter(|kind| kind.supports_plan_usage())
             .map(|kind| (kind.id, settings.command_for_kind(kind.id).clone()))
             .collect::<Vec<_>>();
         let http_client = self.http_client.clone();
@@ -675,8 +676,7 @@ impl AgentThreadsPanel {
                             });
                         });
             }
-            if remote_available {
-                let credential_policy = kind.credential_policy();
+            if remote_available && let Some(credential_policy) = kind.credential_policy() {
                 let menu_policy = remote_credential_menu_policy(&kind);
                 context_menu = context_menu.separator();
                 if menu_policy.sign_in {
@@ -1528,6 +1528,7 @@ mod tests {
                 settings.agent_threads = Some(AgentThreadSettingsContent {
                     codex: Some(echo_command("codex", root_path)),
                     claude: Some(echo_command("claude", root_path)),
+                    pi: Some(echo_command("pi", root_path)),
                     max_visible_threads_per_agent: Some(max_visible_threads_per_agent),
                     show_plan_usage: None,
                     ..Default::default()
@@ -1611,6 +1612,7 @@ mod tests {
                 let command = match kind_id {
                     "codex" => content.codex.get_or_insert_default(),
                     "claude" => content.claude.get_or_insert_default(),
+                    "pi" => content.pi.get_or_insert_default(),
                     _ => panic!("unknown kind_id {kind_id}"),
                 };
                 command.default_launch_option = option;
@@ -1625,6 +1627,7 @@ mod tests {
                 let command = match kind_id {
                     "codex" => content.codex.get_or_insert_default(),
                     "claude" => content.claude.get_or_insert_default(),
+                    "pi" => content.pi.get_or_insert_default(),
                     _ => panic!("unknown kind_id {kind_id}"),
                 };
                 command.hidden = Some(hidden);
@@ -1801,13 +1804,13 @@ mod tests {
             })
         }
 
-        assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude"]);
+        assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude", "pi"]);
 
         set_agent_hidden(cx, "codex", true);
-        assert_eq!(visible_ids(&panel, cx), vec!["claude"]);
+        assert_eq!(visible_ids(&panel, cx), vec!["claude", "pi"]);
 
         set_agent_hidden(cx, "codex", false);
-        assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude"]);
+        assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude", "pi"]);
     }
 
     #[gpui::test]

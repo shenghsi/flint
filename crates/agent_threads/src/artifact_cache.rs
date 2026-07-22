@@ -4,7 +4,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use futures::{AsyncReadExt as _, AsyncWriteExt as _};
 use http_client::{AsyncBody, HttpClient};
 use sha2::{Digest as _, Sha256};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
 
@@ -103,11 +107,14 @@ impl AgentArtifactCache {
     }
 
     pub async fn release_is_cached(&self, release: &AgentRelease) -> Result<bool> {
-        let executable = self
-            .root
-            .join("executables")
-            .join(release.executable_sha256)
-            .join(release.executable_name);
+        if matches!(
+            release.artifact,
+            AgentArtifactFormat::TarGzBundle { .. } | AgentArtifactFormat::ZipBundle { .. }
+        ) {
+            let source = self.root.join("sources").join(release.source_sha256);
+            return file_has_digest(&source, release.source_sha256).await;
+        }
+        let executable = self.executable_destination(release)?;
         if file_has_digest(&executable, release.executable_sha256).await? {
             return Ok(true);
         }
@@ -121,31 +128,80 @@ impl AgentArtifactCache {
         official_source_prefixes: &[&str],
         report_progress: &mut impl FnMut(AgentArtifactDownloadProgress),
     ) -> Result<PathBuf> {
-        let destination = self
-            .root
-            .join("executables")
-            .join(release.executable_sha256)
-            .join(release.executable_name);
-        if file_has_digest(&destination, release.executable_sha256).await? {
+        let destination = self.executable_destination(release)?;
+        let is_bundle = matches!(
+            release.artifact,
+            AgentArtifactFormat::TarGzBundle { .. } | AgentArtifactFormat::ZipBundle { .. }
+        );
+        if !is_bundle && file_has_digest(&destination, release.executable_sha256).await? {
             return Ok(destination);
         }
-        match smol::fs::remove_file(&destination).await {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "failed to remove corrupt cache entry {}",
-                        destination.display()
-                    )
-                });
-            }
+        if let AgentArtifactFormat::TarGzBundle { root_path, .. }
+        | AgentArtifactFormat::ZipBundle { root_path, .. } = release.artifact
+        {
+            let bundle_root = self.bundle_destination(release, root_path)?;
+            remove_directory_if_exists(&bundle_root).await?;
+        } else {
+            remove_file_if_exists(&destination).await?;
         }
 
         let source = self.root.join("sources").join(release.source_sha256);
         if !file_has_digest(&source, release.source_sha256).await? {
             self.download(release, official_source_prefixes, &source, report_progress)
                 .await?;
+        }
+        if let AgentArtifactFormat::TarGzBundle {
+            root_path,
+            executable_path,
+        }
+        | AgentArtifactFormat::ZipBundle {
+            root_path,
+            executable_path,
+        } = release.artifact
+        {
+            let bundle_root = self.bundle_destination(release, root_path)?;
+            let bundle_parent = bundle_root
+                .parent()
+                .context("bundle cache destination has no parent")?;
+            smol::fs::create_dir_all(bundle_parent).await?;
+            let partial_bundle = bundle_parent.join(format!(
+                ".{}.{}.partial",
+                release.executable_name,
+                uuid::Uuid::new_v4()
+            ));
+            let result = match release.artifact {
+                AgentArtifactFormat::TarGzBundle { .. } => {
+                    extract_verified_tar_bundle(
+                        &source,
+                        &partial_bundle,
+                        root_path,
+                        executable_path,
+                        release.executable_sha256,
+                    )
+                    .await
+                }
+                AgentArtifactFormat::ZipBundle { .. } => {
+                    extract_verified_zip_bundle(
+                        &source,
+                        &partial_bundle,
+                        root_path,
+                        executable_path,
+                        release.executable_sha256,
+                    )
+                    .await
+                }
+                _ => Err(anyhow::anyhow!(
+                    "non-bundle artifact reached bundle extraction"
+                )),
+            };
+            if let Err(error) = result {
+                remove_directory_if_exists(&partial_bundle).await?;
+                return Err(error);
+            }
+            smol::fs::rename(&partial_bundle, &bundle_root)
+                .await
+                .context("failed to commit cached agent bundle")?;
+            return Ok(destination);
         }
         let parent = destination
             .parent()
@@ -172,6 +228,9 @@ impl AgentArtifactCache {
             AgentArtifactFormat::TarGz { executable_path } => {
                 extract_verified_tar_executable(&source, &partial, executable_path).await
             }
+            AgentArtifactFormat::TarGzBundle { .. } | AgentArtifactFormat::ZipBundle { .. } => Err(
+                anyhow::anyhow!("bundle artifact reached executable normalization"),
+            ),
         };
         if let Err(error) = normalization_result {
             remove_partial(&partial).await;
@@ -185,6 +244,44 @@ impl AgentArtifactCache {
             .await
             .context("failed to commit cached executable")?;
         Ok(destination)
+    }
+
+    fn executable_destination(&self, release: &AgentRelease) -> Result<PathBuf> {
+        match release.artifact {
+            AgentArtifactFormat::TarGzBundle {
+                root_path,
+                executable_path,
+            }
+            | AgentArtifactFormat::ZipBundle {
+                root_path,
+                executable_path,
+            } => {
+                let relative_executable = strip_bundle_root(executable_path, root_path)?;
+                Ok(self
+                    .bundle_destination(release, root_path)?
+                    .join(relative_executable))
+            }
+            AgentArtifactFormat::Raw | AgentArtifactFormat::TarGz { .. } => Ok(self
+                .root
+                .join("executables")
+                .join(release.executable_sha256)
+                .join(release.executable_name)),
+        }
+    }
+
+    fn bundle_destination(&self, release: &AgentRelease, root_path: &str) -> Result<PathBuf> {
+        if !root_path.is_empty() {
+            validate_archive_path(Path::new(root_path))?;
+        }
+        Ok(self
+            .root
+            .join("bundles")
+            .join(release.source_sha256)
+            .join(if root_path.is_empty() {
+                "root"
+            } else {
+                root_path
+            }))
     }
 
     async fn download(
@@ -323,6 +420,170 @@ async fn extract_verified_tar_executable(
     Ok(())
 }
 
+async fn extract_verified_tar_bundle(
+    source: &PathBuf,
+    destination: &Path,
+    root_path: &str,
+    executable_path: &str,
+    executable_sha256: &str,
+) -> Result<()> {
+    use futures::TryStreamExt as _;
+
+    validate_archive_path(Path::new(root_path))?;
+    validate_archive_path(Path::new(executable_path))?;
+    smol::fs::create_dir_all(destination).await?;
+    let source = smol::fs::File::open(source).await?;
+    let decompressed = GzipDecoder::new(futures::io::BufReader::new(source));
+    let mut entries = async_tar::Archive::new(decompressed).entries()?;
+    let mut seen = HashSet::new();
+    let mut extracted_bytes = 0_u64;
+    while let Some(entry) = entries.try_next().await? {
+        let archive_path = entry.path()?;
+        let path = PathBuf::from(
+            archive_path
+                .to_str()
+                .context("agent bundle contains a non-UTF-8 path")?,
+        );
+        validate_archive_path(&path)?;
+        let relative_path = path
+            .strip_prefix(root_path)
+            .context("agent bundle contains an entry outside its root")?;
+        if relative_path.as_os_str().is_empty() {
+            continue;
+        }
+        if !seen.insert(relative_path.to_path_buf()) {
+            anyhow::bail!("agent bundle contains duplicate entries");
+        }
+        let output_path = destination.join(relative_path);
+        if entry.header().entry_type().is_dir() {
+            smol::fs::create_dir_all(&output_path).await?;
+            continue;
+        }
+        if !entry.header().entry_type().is_file() {
+            anyhow::bail!("agent bundle contains a non-regular file");
+        }
+        let parent = output_path
+            .parent()
+            .context("agent bundle entry has no parent")?;
+        smol::fs::create_dir_all(parent).await?;
+        let mut output = smol::fs::File::create(&output_path).await?;
+        let remaining = MAX_ARTIFACT_BYTES
+            .checked_sub(extracted_bytes)
+            .context("agent bundle exceeds the maximum size")?;
+        let mut bounded_entry = entry.take(remaining + 1);
+        let copied = futures::io::copy(&mut bounded_entry, &mut output).await?;
+        extracted_bytes = extracted_bytes
+            .checked_add(copied)
+            .context("agent bundle size overflowed")?;
+        if extracted_bytes > MAX_ARTIFACT_BYTES {
+            anyhow::bail!("agent bundle exceeds the maximum size");
+        }
+        output.flush().await?;
+        output.sync_all().await?;
+    }
+    let relative_executable = Path::new(executable_path)
+        .strip_prefix(root_path)
+        .context("bundle executable is outside its root")?;
+    if !file_has_digest(&destination.join(relative_executable), executable_sha256).await? {
+        anyhow::bail!("normalized executable failed installed-byte verification");
+    }
+    Ok(())
+}
+
+async fn extract_verified_zip_bundle(
+    source: &PathBuf,
+    destination: &Path,
+    root_path: &str,
+    executable_path: &str,
+    executable_sha256: &str,
+) -> Result<()> {
+    use async_zip::base::read::seek::ZipFileReader;
+
+    validate_archive_path(Path::new(executable_path))?;
+    if !root_path.is_empty() {
+        validate_archive_path(Path::new(root_path))?;
+    }
+    let source_file = smol::fs::File::open(source).await?;
+    let reader = ZipFileReader::new(futures::io::BufReader::new(source_file)).await?;
+    let mut seen = HashSet::new();
+    let mut total_bytes = 0_u64;
+    for entry in reader.file().entries() {
+        let filename = entry.filename().as_str()?;
+        let path = Path::new(filename);
+        validate_archive_path(path)?;
+        let relative_path = if root_path.is_empty() {
+            path
+        } else {
+            path.strip_prefix(root_path)
+                .context("agent bundle contains an entry outside its root")?
+        };
+        if relative_path.as_os_str().is_empty() {
+            continue;
+        }
+        if !seen.insert(relative_path.to_path_buf()) {
+            anyhow::bail!("agent bundle contains duplicate entries");
+        }
+        total_bytes = total_bytes
+            .checked_add(entry.uncompressed_size())
+            .context("agent bundle size overflowed")?;
+        if total_bytes > MAX_ARTIFACT_BYTES {
+            anyhow::bail!("agent bundle exceeds the maximum size");
+        }
+        if entry
+            .unix_permissions()
+            .is_some_and(|permissions| permissions & 0o170000 == 0o120000)
+        {
+            anyhow::bail!("agent bundle contains a symbolic link");
+        }
+    }
+    smol::fs::create_dir_all(destination).await?;
+    let source_file = smol::fs::File::open(source).await?;
+    util::archive::extract_zip(destination, source_file).await?;
+    let relative_executable = strip_bundle_root(executable_path, root_path)?;
+    if !file_has_digest(&destination.join(relative_executable), executable_sha256).await? {
+        anyhow::bail!("normalized executable failed installed-byte verification");
+    }
+    Ok(())
+}
+
+fn strip_bundle_root<'a>(path: &'a str, root_path: &str) -> Result<&'a Path> {
+    let path = Path::new(path);
+    if root_path.is_empty() {
+        return Ok(path);
+    }
+    path.strip_prefix(root_path)
+        .context("bundle executable is outside its root")
+}
+
+fn validate_archive_path(path: &Path) -> Result<()> {
+    if path.as_os_str().is_empty()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        anyhow::bail!("agent archive contains an unsafe path");
+    }
+    Ok(())
+}
+
+async fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match smol::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to remove corrupt cache entry {}", path.display())),
+    }
+}
+
+async fn remove_directory_if_exists(path: &Path) -> Result<()> {
+    match smol::fs::remove_dir_all(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to remove corrupt cache entry {}", path.display())),
+    }
+}
+
 async fn write_verified_response(
     mut body: AsyncBody,
     partial: &PathBuf,
@@ -451,6 +712,53 @@ mod tests {
         encoder.into_inner().into_inner()
     }
 
+    async fn tar_gz_entries(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use async_compression::futures::write::GzipEncoder;
+        use futures::io::Cursor;
+
+        let mut archive = async_tar::Builder::new(Cursor::new(Vec::new()));
+        for (path, content) in entries {
+            let mut header = async_tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, path, Cursor::new(*content))
+                .await
+                .expect("tar fixture entry should be appended");
+        }
+        archive.finish().await.expect("tar fixture should finish");
+        let tar_bytes = archive
+            .into_inner()
+            .await
+            .expect("tar fixture should return its buffer")
+            .into_inner();
+        let mut encoder = GzipEncoder::new(Cursor::new(Vec::new()));
+        encoder
+            .write_all(&tar_bytes)
+            .await
+            .expect("tar fixture should compress");
+        encoder.close().await.expect("gzip fixture should finish");
+        encoder.into_inner().into_inner()
+    }
+
+    async fn zip_entries(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use async_zip::{Compression, ZipEntryBuilder, base::write::ZipFileWriter};
+        use futures::io::Cursor;
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = ZipFileWriter::new(&mut buffer);
+        for (path, content) in entries {
+            let entry = ZipEntryBuilder::new((*path).into(), Compression::Stored);
+            writer
+                .write_entry_whole(entry, content)
+                .await
+                .expect("zip fixture entry should be written");
+        }
+        writer.close().await.expect("zip fixture should finish");
+        buffer.into_inner()
+    }
+
     fn fixture_release(source_url: &'static str) -> AgentRelease {
         AgentRelease {
             version: "1.2.3",
@@ -506,6 +814,155 @@ mod tests {
                     .await
                     .expect("cached artifact should be readable"),
                 b"agent-bytes"
+            );
+        });
+    }
+
+    #[test]
+    fn tar_bundle_keeps_files_adjacent_to_the_executable() {
+        smol::block_on(async {
+            let archive = tar_gz_entries(&[
+                ("pi/pi", b"agent-bytes"),
+                ("pi/package.json", br#"{"version":"1.2.3"}"#),
+            ])
+            .await;
+            let source_digest = format!("{:x}", sha2::Sha256::digest(&archive));
+            let executable_digest = format!("{:x}", sha2::Sha256::digest(b"agent-bytes"));
+            let http_client = FakeHttpClient::create(move |_| {
+                let archive = archive.clone();
+                async move {
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(archive))
+                        .expect("fixture response should build"))
+                }
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let mut release = fixture_release("https://downloads.example.test/pi.tar.gz");
+            release.source_sha256 = Box::leak(source_digest.into_boxed_str());
+            release.executable_sha256 = Box::leak(executable_digest.into_boxed_str());
+            release.executable_name = "pi";
+            release.artifact = AgentArtifactFormat::TarGzBundle {
+                root_path: "pi",
+                executable_path: "pi/pi",
+            };
+
+            let executable = cache
+                .acquire(&release, &["https://downloads.example.test/"])
+                .await
+                .expect("bundle acquisition should succeed");
+
+            assert_eq!(
+                smol::fs::read(
+                    executable
+                        .parent()
+                        .expect("bundle root")
+                        .join("package.json")
+                )
+                .await
+                .expect("package metadata should be cached"),
+                br#"{"version":"1.2.3"}"#
+            );
+        });
+    }
+
+    #[test]
+    fn bundle_acquisition_restores_missing_adjacent_files_from_the_verified_source() {
+        smol::block_on(async {
+            let archive = tar_gz_entries(&[
+                ("pi/pi", b"agent-bytes"),
+                ("pi/package.json", br#"{"version":"1.2.3"}"#),
+            ])
+            .await;
+            let source_digest = format!("{:x}", sha2::Sha256::digest(&archive));
+            let executable_digest = format!("{:x}", sha2::Sha256::digest(b"agent-bytes"));
+            let http_client = FakeHttpClient::create(move |_| {
+                let archive = archive.clone();
+                async move {
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(archive))
+                        .expect("fixture response should build"))
+                }
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let mut release = fixture_release("https://downloads.example.test/pi.tar.gz");
+            release.source_sha256 = Box::leak(source_digest.into_boxed_str());
+            release.executable_sha256 = Box::leak(executable_digest.into_boxed_str());
+            release.executable_name = "pi";
+            release.artifact = AgentArtifactFormat::TarGzBundle {
+                root_path: "pi",
+                executable_path: "pi/pi",
+            };
+
+            let executable = cache
+                .acquire(&release, &["https://downloads.example.test/"])
+                .await
+                .expect("first bundle acquisition should succeed");
+            let package = executable
+                .parent()
+                .expect("bundle root")
+                .join("package.json");
+            smol::fs::remove_file(&package)
+                .await
+                .expect("fixture package should be removed");
+
+            cache
+                .acquire(&release, &["https://downloads.example.test/"])
+                .await
+                .expect("second bundle acquisition should restore the bundle");
+
+            assert!(package.exists());
+        });
+    }
+
+    #[test]
+    fn zip_bundle_keeps_files_adjacent_to_the_executable() {
+        smol::block_on(async {
+            let archive = zip_entries(&[
+                ("pi.exe", b"agent-bytes"),
+                ("package.json", br#"{"version":"1.2.3"}"#),
+            ])
+            .await;
+            let source_digest = format!("{:x}", sha2::Sha256::digest(&archive));
+            let executable_digest = format!("{:x}", sha2::Sha256::digest(b"agent-bytes"));
+            let http_client = FakeHttpClient::create(move |_| {
+                let archive = archive.clone();
+                async move {
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(archive))
+                        .expect("fixture response should build"))
+                }
+            });
+            let directory = tempfile::tempdir().expect("temporary directory should be created");
+            let cache = AgentArtifactCache::new(directory.path().to_path_buf(), http_client);
+            let mut release = fixture_release("https://downloads.example.test/pi.zip");
+            release.source_sha256 = Box::leak(source_digest.into_boxed_str());
+            release.executable_sha256 = Box::leak(executable_digest.into_boxed_str());
+            release.executable_name = "pi.exe";
+            release.artifact = AgentArtifactFormat::ZipBundle {
+                root_path: "",
+                executable_path: "pi.exe",
+            };
+
+            let executable = cache
+                .acquire(&release, &["https://downloads.example.test/"])
+                .await
+                .expect("bundle acquisition should succeed");
+
+            assert_eq!(
+                smol::fs::read(
+                    executable
+                        .parent()
+                        .expect("bundle root")
+                        .join("package.json")
+                )
+                .await
+                .expect("package metadata should be cached"),
+                br#"{"version":"1.2.3"}"#
             );
         });
     }

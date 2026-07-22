@@ -311,10 +311,22 @@ fn authorize_request(
     let policy = capabilities
         .get(&request.authorization)
         .context("proxy authorization was rejected")?;
-    if !policy.allowed_hosts.contains(&request.host.as_str()) {
+    if !policy
+        .allowed_hosts
+        .iter()
+        .any(|rule| host_rule_matches(rule, &request.host))
+    {
         anyhow::bail!("CONNECT host is not permitted");
     }
     Ok(policy.shutdown.clone())
+}
+
+fn host_rule_matches(rule: &str, host: &str) -> bool {
+    let Some(suffix) = rule.strip_prefix("*.") else {
+        return rule == host;
+    };
+    host.strip_suffix(suffix)
+        .is_some_and(|prefix| prefix.len() > 1 && prefix.ends_with('.'))
 }
 
 #[cfg(test)]
@@ -358,6 +370,36 @@ mod tests {
             "CONNECT api.example.com:443 HTTP/1.1\r\nProxy-Authorization: Basic wrong\r\n\r\n",
         ] {
             assert!(parse_and_authorize(denied).is_err(), "accepted {denied:?}");
+        }
+    }
+
+    #[test]
+    fn suffix_rule_accepts_only_subdomains_on_label_boundaries() {
+        let (_, shutdown) = async_channel::bounded(1);
+        let capabilities = Arc::new(Mutex::new(HashMap::from_iter([(
+            "Basic expected".to_string(),
+            CapabilityPolicy {
+                allowed_hosts: &["*.amazonaws.com"],
+                shutdown,
+            },
+        )])));
+
+        let approved = parse_request(
+            "CONNECT bedrock-runtime.us-east-1.amazonaws.com:443 HTTP/1.1\r\nProxy-Authorization: Basic expected\r\n\r\n",
+        )
+        .expect("valid CONNECT request");
+        authorize_request(&approved, &capabilities).expect("provider subdomain should be allowed");
+
+        for host in [
+            "amazonaws.com",
+            "notamazonaws.com",
+            "amazonaws.com.attacker.test",
+        ] {
+            let request = parse_request(&format!(
+                "CONNECT {host}:443 HTTP/1.1\r\nProxy-Authorization: Basic expected\r\n\r\n"
+            ))
+            .expect("valid denied CONNECT request");
+            assert!(authorize_request(&request, &capabilities).is_err());
         }
     }
 

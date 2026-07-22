@@ -8,6 +8,7 @@ mod history;
 pub mod managed_agent;
 mod managed_agent_progress;
 mod panel;
+mod pi_history;
 mod plan_usage;
 mod remote_process;
 mod store;
@@ -30,10 +31,12 @@ pub use store::{
 
 use agent_release::{
     AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy, CLAUDE_RELEASES, CODEX_RELEASES,
+    PI_RELEASES,
 };
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
 use history::AgentHistoryProvider;
+use pi_history::PiHistoryProvider;
 
 actions!(
     agent_threads,
@@ -42,6 +45,8 @@ actions!(
         NewCodexThread,
         /// Starts a new Claude agent thread.
         NewClaudeThread,
+        /// Starts a new Pi agent thread.
+        NewPiThread,
     ]
 );
 
@@ -126,7 +131,8 @@ pub struct AgentKindDefinition {
     releases: &'static [AgentRelease],
     self_update_policy: AgentSelfUpdatePolicy,
     egress_hosts: &'static [&'static str],
-    credential_policy: AgentCredentialPolicy,
+    credential_policy: Option<AgentCredentialPolicy>,
+    supports_plan_usage: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -155,8 +161,12 @@ impl AgentKindDefinition {
         self.egress_hosts
     }
 
-    pub fn credential_policy(&self) -> AgentCredentialPolicy {
+    pub fn credential_policy(&self) -> Option<AgentCredentialPolicy> {
         self.credential_policy
+    }
+
+    pub fn supports_plan_usage(&self) -> bool {
+        self.supports_plan_usage
     }
 }
 
@@ -193,12 +203,13 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 arguments: &["--config", "check_for_update_on_startup=false"],
             },
             egress_hosts: &["api.openai.com", "auth.openai.com", "chatgpt.com"],
-            credential_policy: AgentCredentialPolicy {
+            credential_policy: Some(AgentCredentialPolicy {
                 login_arguments: &["login", "--device-auth"],
                 status_arguments: &["login", "status"],
                 logout_arguments: &["logout"],
                 provider_management_url: "https://platform.openai.com/api-keys",
-            },
+            }),
+            supports_plan_usage: true,
         },
         AgentKindDefinition {
             id: "claude",
@@ -221,12 +232,84 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 arguments: &[],
             },
             egress_hosts: &["api.anthropic.com", "claude.ai", "platform.claude.com"],
-            credential_policy: AgentCredentialPolicy {
+            credential_policy: Some(AgentCredentialPolicy {
                 login_arguments: &["auth", "login"],
                 status_arguments: &["auth", "status"],
                 logout_arguments: &["auth", "logout"],
                 provider_management_url: "https://claude.ai/settings/claude-code",
+            }),
+            supports_plan_usage: true,
+        },
+        AgentKindDefinition {
+            id: "pi",
+            label: SharedString::new_static("Pi"),
+            icon: IconName::AiPi,
+            default_command: "pi",
+            home_env_var: "PI_CODING_AGENT_DIR",
+            home_dir_name: ".pi/agent",
+            history_provider: Some(Arc::new(PiHistoryProvider)),
+            resume_options: Vec::new(),
+            session_id_flag: Some("--session-id"),
+            official_source_prefixes: &[
+                "https://github.com/earendil-works/pi/releases/download/",
+                "https://release-assets.githubusercontent.com/",
+            ],
+            releases: PI_RELEASES,
+            self_update_policy: AgentSelfUpdatePolicy {
+                environment: &[("PI_SKIP_VERSION_CHECK", "1"), ("PI_TELEMETRY", "0")],
+                arguments: &[],
             },
+            egress_hosts: &[
+                "ai-gateway.vercel.sh",
+                "api.ant-ling.com",
+                "api.anthropic.com",
+                "api.cerebras.ai",
+                "api.cloudflare.com",
+                "api.deepseek.com",
+                "api.fireworks.ai",
+                "api.github.com",
+                "api.groq.com",
+                "api.individual.githubcopilot.com",
+                "api.kimi.com",
+                "api.minimax.io",
+                "api.minimaxi.com",
+                "api.mistral.ai",
+                "api.moonshot.ai",
+                "api.moonshot.cn",
+                "api.openai.com",
+                "api.together.ai",
+                "api.x.ai",
+                "api.xiaomimimo.com",
+                "api.z.ai",
+                "auth.openai.com",
+                "auth.x.ai",
+                "chatgpt.com",
+                "claude.ai",
+                "gateway.ai.cloudflare.com",
+                "generativelanguage.googleapis.com",
+                "github.com",
+                "huggingface.co",
+                "integrate.api.nvidia.com",
+                "open.bigmodel.cn",
+                "openrouter.ai",
+                "pi.dev",
+                "platform.claude.com",
+                "radius.pi.dev",
+                "router.huggingface.co",
+                "token-plan-ams.xiaomimimo.com",
+                "token-plan-cn.xiaomimimo.com",
+                "token-plan-sgp.xiaomimimo.com",
+                "token-plan.ap-southeast-1.maas.aliyuncs.com",
+                "token-plan.cn-beijing.maas.aliyuncs.com",
+                "*.amazonaws.com",
+                "*.amazonaws.com.cn",
+                "*.githubcopilot.com",
+                "*.googleapis.com",
+                "*.openai.azure.com",
+                "*.services.ai.azure.com",
+            ],
+            credential_policy: None,
+            supports_plan_usage: false,
         },
     ]
 }
@@ -235,6 +318,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
 pub struct AgentThreadSettings {
     pub codex: AgentLaunchCommand,
     pub claude: AgentLaunchCommand,
+    pub pi: AgentLaunchCommand,
     pub max_visible_threads_per_agent: usize,
     pub show_plan_usage: bool,
     pub notify_when_finished: bool,
@@ -293,6 +377,7 @@ impl AgentThreadSettings {
         match kind_id {
             "codex" => &self.codex,
             "claude" => &self.claude,
+            "pi" => &self.pi,
             _ => &self.claude,
         }
     }
@@ -304,6 +389,7 @@ impl Settings for AgentThreadSettings {
         Self {
             codex: launch_command_from_content(content.codex, "codex"),
             claude: launch_command_from_content(content.claude, "claude"),
+            pi: launch_command_from_content(content.pi, "pi"),
             max_visible_threads_per_agent: content.max_visible_threads_per_agent.unwrap_or(5),
             show_plan_usage: content.show_plan_usage.unwrap_or(true),
             notify_when_finished: content.notify_when_finished.unwrap_or(true),
@@ -336,6 +422,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(new_codex_thread);
         workspace.register_action(new_claude_thread);
+        workspace.register_action(new_pi_thread);
     })
     .detach();
 }
@@ -421,10 +508,41 @@ fn new_claude_thread(
     }
 }
 
+fn new_pi_thread(
+    workspace: &mut Workspace,
+    _: &NewPiThread,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if let Some(kind) = kind_by_id("pi") {
+        launch_new_thread_with_default(workspace, &kind, window, cx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+
+    #[test]
+    fn registry_orders_pi_after_codex_and_claude() {
+        assert_eq!(
+            agent_kind_registry()
+                .into_iter()
+                .map(|kind| kind.id)
+                .collect::<Vec<_>>(),
+            ["codex", "claude", "pi"]
+        );
+    }
+
+    #[test]
+    fn pi_registers_history_without_provider_specific_controls() {
+        let pi = kind_by_id("pi").expect("Pi should be registered");
+
+        assert!(pi.history_provider.is_some());
+        assert!(pi.credential_policy().is_none());
+        assert!(!pi.supports_plan_usage());
+    }
 
     #[test]
     fn remote_route_lookup_defaults_direct_and_matches_only_ssh_identity() {
@@ -482,12 +600,20 @@ mod tests {
             claude.egress_hosts(),
             ["api.anthropic.com", "claude.ai", "platform.claude.com"]
         );
+        let pi = kind_by_id("pi").expect("Pi should be registered");
+        assert!(pi.egress_hosts().contains(&"api.anthropic.com"));
+        assert!(pi.egress_hosts().contains(&"api.openai.com"));
+        assert!(pi.egress_hosts().contains(&"*.amazonaws.com"));
+        assert!(pi.egress_hosts().contains(&"*.googleapis.com"));
+        assert!(pi.egress_hosts().contains(&"pi.dev"));
     }
 
     #[test]
     fn credential_policies_use_pinned_cli_commands_and_provider_surfaces() {
         let codex = kind_by_id("codex").expect("Codex kind should exist");
-        let codex_policy = codex.credential_policy();
+        let codex_policy = codex
+            .credential_policy()
+            .expect("Codex should have a credential policy");
         assert_eq!(codex_policy.login_arguments, ["login", "--device-auth"]);
         assert_eq!(codex_policy.status_arguments, ["login", "status"]);
         assert_eq!(codex_policy.logout_arguments, ["logout"]);
@@ -497,7 +623,9 @@ mod tests {
         );
 
         let claude = kind_by_id("claude").expect("Claude kind should exist");
-        let claude_policy = claude.credential_policy();
+        let claude_policy = claude
+            .credential_policy()
+            .expect("Claude should have a credential policy");
         assert_eq!(claude_policy.login_arguments, ["auth", "login"]);
         assert_eq!(claude_policy.status_arguments, ["auth", "status"]);
         assert_eq!(claude_policy.logout_arguments, ["auth", "logout"]);
@@ -570,6 +698,16 @@ mod tests {
     fn plan_usage_is_enabled_by_default() {
         let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
         assert!(settings.show_plan_usage);
+    }
+
+    #[test]
+    fn pi_command_defaults_to_pi_when_settings_are_absent() {
+        let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
+
+        assert_eq!(
+            settings.command_for_kind("pi").command.as_deref(),
+            Some("pi")
+        );
     }
 
     #[test]
