@@ -189,6 +189,23 @@ code:**
   and collab features); install instructions in `docs/src/migrate/*.md`
   that tell the reader to install "Zed" when the doc means Flint itself.
 
+# Adding Agent Threads coding agents
+
+- Audit a new agent end-to-end against existing agents: settings and defaults,
+  Settings Editor controls, panel visibility, actions, history and resume, and
+  remote behavior. Represent every intentional omission as an explicit,
+  tested capability.
+- Do not assume that adding a settings schema or default makes the setting
+  user-visible. Add and test every applicable per-agent Settings Editor
+  control and its exact JSON path, especially `hidden`.
+- Preserve the remote route boundary. Direct uses only the configured ambient
+  executable on the remote and exposes no Flint-managed launch or credential
+  controls. Tunneled uses only the pinned Flint-managed executable on the
+  remote and routes its traffic through local Flint. Test both routes for every
+  new agent.
+- Gate provider-specific UI, including credentials and plan usage, on explicit
+  capabilities rather than registry membership.
+
 # Branch and pull request hygiene
 
 - Never commit directly to `main`. Before making a repository change, create
