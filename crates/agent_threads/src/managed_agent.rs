@@ -323,6 +323,7 @@ struct ManagedAgentPaths {
     destination_executable: PathBuf,
     receipt_path: PathBuf,
     target_name: String,
+    path_style: PathStyle,
 }
 
 pub struct ManagedAgentProvisioner<A, H> {
@@ -361,19 +362,21 @@ where
             anyhow::bail!("remote application data directory is not absolute");
         }
         let target_name = target_name(release.target)?;
-        let version_root = app_data_directory
-            .join("agents")
-            .join(agent_id)
-            .join(release.version);
-        let destination = version_root.join(&target_name);
-        let destination_executable = destination.join(release.executable_name);
-        let receipt_path = destination.join("receipt.json");
+        let mut version_root = app_data_directory;
+        for segment in ["agents", agent_id, release.version] {
+            version_root = remote_path_style.join_path(&version_root, segment)?;
+        }
+        let destination = remote_path_style.join_path(&version_root, &target_name)?;
+        let destination_executable =
+            remote_path_style.join_path(&destination, release.executable_name)?;
+        let receipt_path = remote_path_style.join_path(&destination, "receipt.json")?;
         Ok(ManagedAgentPaths {
             version_root,
             destination,
             destination_executable,
             receipt_path,
             target_name,
+            path_style: remote_path_style,
         })
     }
 
@@ -399,7 +402,7 @@ where
                 &paths.destination_executable,
             )
             && self
-                .receipt_files_are_valid(&paths.destination, &receipt)
+                .receipt_files_are_valid(&paths.destination, paths.path_style, &receipt)
                 .await
             && self
                 .remote_host
@@ -419,6 +422,7 @@ where
     async fn receipt_files_are_valid(
         &self,
         destination: &Path,
+        path_style: PathStyle,
         receipt: &ManagedAgentReceipt,
     ) -> bool {
         let mut relative_paths = std::collections::HashSet::new();
@@ -428,7 +432,10 @@ where
             {
                 return false;
             }
-            let path = destination.join(&file.relative_path);
+            let Ok(path) = join_remote_relative(path_style, destination, &file.relative_path)
+            else {
+                return false;
+            };
             if !self
                 .remote_host
                 .file_sha256(&path)
@@ -476,14 +483,20 @@ where
             destination,
             destination_executable,
             target_name,
+            path_style,
             ..
         } = self.installation_paths(agent_id, release).await?;
 
-        let staging = version_root.join(format!(".{target_name}.staging-{}", uuid::Uuid::new_v4()));
-        let rollback =
-            version_root.join(format!(".{target_name}.rollback-{}", uuid::Uuid::new_v4()));
-        let staged_executable = staging.join(release.executable_name);
-        let staged_receipt = staging.join("receipt.json");
+        let staging = path_style.join_path(
+            &version_root,
+            format!(".{target_name}.staging-{}", uuid::Uuid::new_v4()),
+        )?;
+        let rollback = path_style.join_path(
+            &version_root,
+            format!(".{target_name}.rollback-{}", uuid::Uuid::new_v4()),
+        )?;
+        let staged_executable = path_style.join_path(&staging, release.executable_name)?;
+        let staged_receipt = path_style.join_path(&staging, "receipt.json")?;
         let mut rollback_created = false;
         let artifact_files = artifact_files(&artifact).await?;
         let receipt = serde_json::to_vec(&managed_receipt(
@@ -507,7 +520,7 @@ where
                 .context("failed to create remote agent staging directory")?;
             report_progress(ManagedAgentInstallPhase::Uploading);
             for file in &artifact_files {
-                let destination = staging.join(&file.relative_path);
+                let destination = join_remote_relative(path_style, &staging, &file.relative_path)?;
                 if let Some(parent) = destination.parent() {
                     self.remote_host.create_private_directory(parent).await?;
                 }
@@ -523,7 +536,7 @@ where
             }
             report_progress(ManagedAgentInstallPhase::VerifyingRemote);
             for file in &artifact_files {
-                let destination = staging.join(&file.relative_path);
+                let destination = join_remote_relative(path_style, &staging, &file.relative_path)?;
                 let remote_digest = self
                     .remote_host
                     .file_sha256(&destination)
@@ -733,6 +746,17 @@ fn is_safe_relative_path(path: &Path) -> bool {
         && path
             .components()
             .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+/// Joins a relative path onto a remote base path one component at a time,
+/// because the remote's separator convention may differ from the local
+/// host's, so `relative`'s components can't be forwarded as a single string.
+fn join_remote_relative(style: PathStyle, base: &Path, relative: &Path) -> Result<PathBuf> {
+    let mut joined = base.to_path_buf();
+    for component in relative.components() {
+        joined = style.join_path(&joined, component.as_os_str())?;
+    }
+    Ok(joined)
 }
 
 fn validate_path_component(component: &str, name: &str) -> Result<()> {
