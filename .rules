@@ -245,7 +245,11 @@ To cut a release, walk through these steps in order:
    ready. Manually creating the release first makes CI's own creation step
    no-op, leaving a published, asset-less release live on GitHub for the
    ~2-3h the builds take.
-6. Track progress with `gh run list --workflow=release.yml`.
+6. Find the release run with `gh run list --workflow=release.yml`. After
+   pushing the tag, wait 5 minutes before the first status check, then monitor
+   it with `gh run watch <run-id> --interval 3600 --exit-status` so subsequent
+   checks happen every 60 minutes. Do not poll the release more frequently
+   unless the user explicitly asks for a different cadence.
 7. Only tags ending in `-pre` auto-publish (`auto_release_preview` job).
    Stable (non-`-pre`) releases finish as a draft with all assets attached —
    publish with `gh release edit vX.Y.Z --draft=false` once
