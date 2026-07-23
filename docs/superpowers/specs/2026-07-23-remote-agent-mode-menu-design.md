@@ -96,6 +96,7 @@ affected crates before delivery.
 - Tunneled launches and resumes use Flint-managed agents on the remote host and
   route their traffic through local Flint.
 - Tunneled Codex and Claude menus retain remote sign-out without a separate
-  managed launch row.
+  managed launch row. The remote sign-out dropdown option uses the same small
+  font as the other options.
 - The Settings UI shows a working **Hide Pi** toggle beside the existing
   Codex and Claude toggles.

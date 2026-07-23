@@ -5083,7 +5083,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 8] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5232,6 +5232,32 @@ fn panels_page() -> SettingsPage {
                             .agent_threads
                             .get_or_insert_default()
                             .claude
+                            .get_or_insert_default()
+                            .hidden = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hide Pi",
+                description: "Hide the Pi section from the Agent Threads panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.pi.hidden"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .pi
+                            .as_ref()?
+                            .hidden
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .pi
                             .get_or_insert_default()
                             .hidden = value;
                     },
@@ -8747,6 +8773,23 @@ mod tests {
             setting_item.field.json_path(),
             Some("session.trust_all_worktrees")
         );
+    }
+
+    #[test]
+    fn agent_thread_hide_settings_include_all_registered_agents() {
+        let page = panels_page();
+        let pages = [page];
+
+        for (title, json_path) in [
+            ("Hide Codex", "agent_threads.codex.hidden"),
+            ("Hide Claude", "agent_threads.claude.hidden"),
+            ("Hide Pi", "agent_threads.pi.hidden"),
+        ] {
+            assert_eq!(
+                setting_item_by_title(&pages, title).field.json_path(),
+                Some(json_path)
+            );
+        }
     }
 
     #[test]

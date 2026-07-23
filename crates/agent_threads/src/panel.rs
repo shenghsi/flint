@@ -90,8 +90,8 @@ fn remote_credential_menu_label_size(tunneled: bool) -> Option<LabelSize> {
     tunneled.then_some(LabelSize::Small)
 }
 
-fn show_explicit_managed_launch(managed_available: bool, tunneled: bool) -> bool {
-    managed_available && !tunneled
+fn show_remote_credential_menu(remote_available: bool, tunneled: bool) -> bool {
+    remote_available && tunneled
 }
 
 pub struct AgentThreadsPanel {
@@ -581,24 +581,9 @@ impl AgentThreadsPanel {
         let workspace = self.workspace.clone();
         let resume_options = kind.resume_options.clone();
         let effective_id = effective_new_thread_launch_option_id(cx, &kind);
-        let managed_available = workspace.upgrade().is_some_and(|workspace| {
-            workspace
-                .read(cx)
-                .project()
-                .read(cx)
-                .remote_client()
-                .and_then(|client| client.read(cx).platform())
-                .is_some_and(|platform| kind.release_for(platform).is_some())
-        });
         let tunneled = workspace
             .upgrade()
             .is_some_and(|workspace| store::workspace_uses_tunneled(workspace.read(cx), cx));
-        let managed_label = show_explicit_managed_launch(managed_available, tunneled).then(|| {
-            workspace.upgrade().map_or_else(
-                || SharedString::from(format!("New — Flint-managed {}", kind.label)),
-                |workspace| store::managed_agent_launch_label(workspace.read(cx), &kind, cx),
-            )
-        });
         let remote_available = workspace.upgrade().is_some_and(|workspace| {
             workspace
                 .read(cx)
@@ -660,23 +645,9 @@ impl AgentThreadsPanel {
                     },
                 );
             }
-            if let Some(managed_label) = managed_label {
-                let workspace = workspace.clone();
-                let kind = kind.clone();
-                context_menu =
-                    context_menu
-                        .separator()
-                        .entry(managed_label, None, move |window, cx| {
-                            let Some(workspace) = workspace.upgrade() else {
-                                return;
-                            };
-                            let kind = kind.clone();
-                            workspace.update(cx, |workspace, cx| {
-                                store::launch_managed_thread(workspace, &kind, &[], window, cx);
-                            });
-                        });
-            }
-            if remote_available && let Some(credential_policy) = kind.credential_policy() {
+            if show_remote_credential_menu(remote_available, tunneled)
+                && let Some(credential_policy) = kind.credential_policy()
+            {
                 let menu_policy = remote_credential_menu_policy(&kind);
                 context_menu = context_menu.separator();
                 if menu_policy.sign_in {
@@ -1486,11 +1457,11 @@ mod tests {
     }
 
     #[test]
-    fn explicit_managed_launch_is_hidden_only_in_tunneled_mode() {
-        assert!(!show_explicit_managed_launch(true, true));
-        assert!(show_explicit_managed_launch(true, false));
-        assert!(!show_explicit_managed_launch(false, true));
-        assert!(!show_explicit_managed_launch(false, false));
+    fn remote_credential_menu_is_visible_only_in_tunneled_mode() {
+        assert!(show_remote_credential_menu(true, true));
+        assert!(!show_remote_credential_menu(true, false));
+        assert!(!show_remote_credential_menu(false, true));
+        assert!(!show_remote_credential_menu(false, false));
     }
 
     #[test]

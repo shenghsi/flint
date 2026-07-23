@@ -1255,16 +1255,6 @@ fn prepare_managed_agent(
     })
 }
 
-pub fn launch_managed_thread(
-    workspace: &mut Workspace,
-    kind: &AgentKindDefinition,
-    extra_args: &[String],
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    launch_managed_thread_for_route(workspace, kind, extra_args, None, window, cx);
-}
-
 fn launch_managed_thread_for_route(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
@@ -1324,48 +1314,6 @@ fn managed_agent_notification_id(kind_id: &str, version: &str) -> NotificationId
     NotificationId::composite::<ManagedAgentProgressNotification>(SharedString::from(format!(
         "{kind_id}-{version}"
     )))
-}
-
-pub fn managed_agent_launch_label(
-    workspace: &Workspace,
-    kind: &AgentKindDefinition,
-    cx: &App,
-) -> SharedString {
-    let default_label = || SharedString::from(format!("New — Flint-managed {}", kind.label));
-    let Some(remote_client) = workspace.project().read(cx).remote_client() else {
-        return default_label();
-    };
-    let Some((key, _)) = managed_agent_provisioning_target(&remote_client, kind, cx) else {
-        return default_label();
-    };
-    let Some(store) = AgentThreadStore::try_global(cx) else {
-        return default_label();
-    };
-    let Some(notification) = store.read(cx).managed_provisioning.active(&key) else {
-        return default_label();
-    };
-    let status = notification.read(cx).state().menu_status();
-    SharedString::from(format!("New — Flint-managed {} — {status}", kind.label))
-}
-
-fn managed_agent_provisioning_target(
-    remote_client: &Entity<remote::RemoteClient>,
-    kind: &AgentKindDefinition,
-    cx: &App,
-) -> Option<(ManagedAgentProvisioningKey, crate::AgentRelease)> {
-    let remote_client = remote_client.read(cx);
-    let platform = remote_client.platform()?;
-    let release = kind.release_for(platform).copied()?;
-    let remote_connection = remote_client.remote_connection()?;
-    let key = ManagedAgentProvisioningKey {
-        remote_identity: remote::remote_connection_identity(
-            &remote_connection.connection_options(),
-        ),
-        agent_id: kind.id,
-        version: release.version,
-        platform,
-    };
-    Some((key, release))
 }
 
 fn show_managed_agent_progress(

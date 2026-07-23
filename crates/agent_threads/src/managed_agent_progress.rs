@@ -58,10 +58,6 @@ impl<T: Clone> ManagedAgentProvisioningCoordinator<T> {
         self.active.contains_key(key)
     }
 
-    pub fn active(&self, key: &ManagedAgentProvisioningKey) -> Option<&T> {
-        self.active.get(key).map(|(_, value)| value)
-    }
-
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.active.len()
@@ -197,25 +193,6 @@ impl ManagedAgentProgressState {
             Self::Resuming => "Launching the managed CLI for this session".to_string(),
         }
     }
-
-    pub fn menu_status(&self) -> String {
-        match self {
-            Self::CheckingInstalled => "Checking installed CLI".to_string(),
-            Self::Reusing => "Reusing installed CLI".to_string(),
-            Self::CheckingCache => "Checking cache".to_string(),
-            Self::AwaitingConfirmation => "Awaiting confirmation".to_string(),
-            Self::Downloading { .. } => self.percentage().map_or_else(
-                || "Downloading".to_string(),
-                |value| format!("Downloading {value}%"),
-            ),
-            Self::Verifying => "Verifying".to_string(),
-            Self::VerifyingUploaded => "Verifying upload".to_string(),
-            Self::Uploading => "Uploading".to_string(),
-            Self::Installing => "Installing".to_string(),
-            Self::Launching => "Launching".to_string(),
-            Self::Resuming => "Resuming".to_string(),
-        }
-    }
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -261,6 +238,7 @@ impl ManagedAgentProgressNotification {
         cx.notify();
     }
 
+    #[cfg(test)]
     pub fn state(&self) -> &ManagedAgentProgressState {
         &self.state
     }
@@ -510,20 +488,6 @@ mod tests {
         assert_eq!(state.detail(), "37% · 18.4 MB / 49.7 MB");
     }
 
-    #[test]
-    fn active_menu_status_includes_known_download_percentage() {
-        let state = ManagedAgentProgressState::Downloading {
-            downloaded_bytes: 18_400_000,
-            total_bytes: Some(49_700_000),
-        };
-
-        assert_eq!(state.menu_status(), "Downloading 37%");
-        assert_eq!(
-            ManagedAgentProgressState::Uploading.menu_status(),
-            "Uploading"
-        );
-    }
-
     #[gpui::test]
     fn progress_notification_exposes_the_current_download(cx: &mut TestAppContext) {
         let notification =
@@ -581,8 +545,8 @@ mod tests {
             "Checking installed Codex CLI"
         );
         assert_eq!(
-            notification.read_with(cx, |notification, _| notification.state().menu_status()),
-            "Checking installed CLI"
+            notification.read_with(cx, |notification, _| notification.state().detail()),
+            "Checking the installed remote CLI"
         );
 
         notification.update(cx, |notification, cx| {
@@ -597,8 +561,8 @@ mod tests {
             "Reusing installed Codex CLI"
         );
         assert_eq!(
-            notification.read_with(cx, |notification, _| notification.state().menu_status()),
-            "Reusing installed CLI"
+            notification.read_with(cx, |notification, _| notification.state().detail()),
+            "Reusing the installed remote CLI"
         );
     }
 
