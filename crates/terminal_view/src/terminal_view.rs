@@ -1871,6 +1871,14 @@ impl SerializableItem for TerminalView {
         self.needs_serialize
     }
 
+    fn should_serialize_in_pane(&self, cx: &App) -> bool {
+        // Task-backed terminals (e.g. agent-thread sessions) are relaunched by
+        // their own restore path. Recording them in the pane layout would
+        // resurrect them here as generic shell terminals on the next startup,
+        // producing extra terminals that don't match the pre-close state.
+        self.terminal().read(cx).task().is_none()
+    }
+
     fn deserialize(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -3034,6 +3042,73 @@ mod tests {
             view.needs_serialize = false;
             view.set_custom_title(Some("new_label".to_string()), cx);
             assert!(view.needs_serialize);
+        });
+    }
+
+    #[gpui::test]
+    async fn task_terminals_are_excluded_from_pane_serialization(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+
+        // A plain shell terminal is a normal, restorable pane item.
+        let shell = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+        let shell_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    shell,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+        shell_view.update(cx, |view, cx| {
+            assert!(
+                view.should_serialize_in_pane(cx),
+                "shell terminals should be recorded in the pane layout"
+            );
+        });
+
+        // A task-backed terminal (e.g. an agent-thread session) is relaunched
+        // by its own restore path, so it must not be recorded in the pane
+        // layout or it resurfaces as a ghost shell terminal on the next start.
+        let task = project
+            .update(cx, |project, cx| {
+                project.create_terminal_task(
+                    task::SpawnInTerminal {
+                        command: Some("true".to_string()),
+                        ..task::SpawnInTerminal::default()
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let task_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    task,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+        task_view.update(cx, |view, cx| {
+            assert!(
+                !view.should_serialize_in_pane(cx),
+                "task terminals must be excluded from the pane layout"
+            );
         });
     }
 

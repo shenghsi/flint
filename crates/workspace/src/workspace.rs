@@ -5806,6 +5806,9 @@ impl Workspace {
                     pane.items()
                         .filter_map(|handle| {
                             let handle = handle.to_serializable_item_handle(cx)?;
+                            if !handle.should_serialize_in_pane(cx) {
+                                return None;
+                            }
 
                             Some(SerializedItem {
                                 kind: Arc::from(handle.serialized_item_kind()),

@@ -422,6 +422,15 @@ pub trait SerializableItem: Item {
     ) -> Option<Task<Result<()>>>;
 
     fn should_serialize(&self, event: &Self::Event) -> bool;
+
+    /// Whether this item should be recorded in its pane's serialized layout.
+    /// Items backed by transient state that isn't restored through this path
+    /// (e.g. task-backed terminals, which are re-launched by their own
+    /// restore mechanism) return `false` so they aren't resurrected as
+    /// generic items on the next startup.
+    fn should_serialize_in_pane(&self, _cx: &App) -> bool {
+        true
+    }
 }
 
 pub trait SerializableItemHandle: ItemHandle {
@@ -434,6 +443,7 @@ pub trait SerializableItemHandle: ItemHandle {
         cx: &mut App,
     ) -> Option<Task<Result<()>>>;
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool;
+    fn should_serialize_in_pane(&self, cx: &App) -> bool;
 }
 
 impl<T> SerializableItemHandle for Entity<T>
@@ -460,6 +470,10 @@ where
         event
             .downcast_ref::<T::Event>()
             .is_some_and(|event| self.read(cx).should_serialize(event))
+    }
+
+    fn should_serialize_in_pane(&self, cx: &App) -> bool {
+        self.read(cx).should_serialize_in_pane(cx)
     }
 }
 
