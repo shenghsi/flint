@@ -162,8 +162,18 @@ impl MockConnection {
     ) -> (AnyProtoClient, ConnectGuard) {
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let server_client = server_cx
-            .update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "mock-server", false));
+        let server_client = server_cx.update(|cx| {
+            ChannelClient::new(
+                incoming_rx,
+                outgoing_tx,
+                cx,
+                "mock-server",
+                false,
+                // Mirror the real server, which advertises this capability in
+                // server.rs, so capability-gated behavior is testable.
+                vec![crate::AGENT_THREAD_HISTORY_INDEX_CAPABILITY.to_string()],
+            )
+        });
 
         let connection = Arc::new(MockRemoteConnection {
             options: opts.clone(),

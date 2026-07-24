@@ -11489,6 +11489,7 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "agent_history",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",

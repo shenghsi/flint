@@ -399,7 +399,9 @@ message Envelope {
     CreatePrivateRemoteDirectory create_private_remote_directory = 463;
     SetRemoteFileExecutable set_remote_file_executable = 464;
     RenameRemotePath rename_remote_path = 465;
-    RemoveRemotePath remove_remote_path = 466; // current max
+    RemoveRemotePath remove_remote_path = 466;
+    StreamAgentThreadHistory stream_agent_thread_history = 467;
+    AgentThreadHistorySnapshot agent_thread_history_snapshot = 468; // current max
   }
 
   reserved 87 to 88;
@@ -475,7 +477,42 @@ message FlushBufferedMessages {}
 
 message FlushBufferedMessagesResponse {}
 
-message RemoteStarted {}
+message RemoteStarted {
+  // Capabilities the sending peer supports, e.g.
+  // "agent-thread-history-index-v1". Absent from older servers, which lets a
+  // new client fall back without sending an unknown request.
+  repeated string capabilities = 1;
+}
+
+// Streaming request: the host-owned agent thread history index. The server
+// discovers, parses, and persists on the host and streams a Cached snapshot
+// (when a valid index exists) followed by a Fresh snapshot.
+message StreamAgentThreadHistory {
+  uint64 project_id = 1;
+  // Agent kind id: "codex", "claude", or "pi".
+  string kind = 2;
+  // The resolved, host-absolute agent history root (honoring CODEX_HOME etc.).
+  string normalized_history_root = 3;
+  // Visible project roots to filter to; empty means no project filter.
+  repeated string project_roots = 4;
+}
+
+message AgentThreadHistorySnapshot {
+  enum Freshness {
+    CACHED = 0;
+    FRESH = 1;
+  }
+  Freshness freshness = 1;
+  uint64 generation = 2;
+  repeated AgentThreadHistoryEntry entries = 3;
+}
+
+message AgentThreadHistoryEntry {
+  string session_id = 1;
+  string title = 2;
+  string project_root = 3;
+  Timestamp last_activity_at = 4;
+}
 
 message SpawnKernel {
   string kernel_name = 1;

@@ -529,6 +529,7 @@ impl RemoteClient {
                         cx,
                         "client",
                         remote_connection.has_wsl_interop(),
+                        Vec::new(),
                     )
                 });
 
@@ -626,8 +627,17 @@ impl RemoteClient {
         cx: &App,
         name: &'static str,
         has_wsl_interop: bool,
+        advertised_capabilities: Vec<String>,
     ) -> AnyProtoClient {
-        ChannelClient::new(incoming_rx, outgoing_tx, cx, name, has_wsl_interop).into()
+        ChannelClient::new(
+            incoming_rx,
+            outgoing_tx,
+            cx,
+            name,
+            has_wsl_interop,
+            advertised_capabilities,
+        )
+        .into()
     }
 
     pub fn shutdown_processes<T: RequestMessage>(
@@ -1119,6 +1129,16 @@ impl RemoteClient {
 
     pub fn proto_client(&self) -> AnyProtoClient {
         self.client.clone().into()
+    }
+
+    /// Whether the connected server advertised `capability` in its
+    /// `RemoteStarted` message. Used to negotiate optional features (e.g. the
+    /// host-owned agent thread history index) with a fallback for older servers.
+    pub fn has_server_capability(&self, capability: &str) -> bool {
+        self.client
+            .peer_capabilities()
+            .iter()
+            .any(|advertised| advertised == capability)
     }
 
     pub fn remote_app_data_directory(&self, cx: &App) -> Task<Result<PathBuf>> {
@@ -1634,8 +1654,16 @@ mod tests {
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
 
-        let client =
-            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+        let client = cx.update(|cx| {
+            ChannelClient::new(
+                incoming_rx,
+                outgoing_tx,
+                cx,
+                "test-client",
+                false,
+                Vec::new(),
+            )
+        });
 
         // The client sends RemoteStarted on startup; drain the outgoing channel
         // so it doesn't block.
@@ -1689,8 +1717,16 @@ mod tests {
         let (_incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
 
-        let client =
-            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+        let client = cx.update(|cx| {
+            ChannelClient::new(
+                incoming_rx,
+                outgoing_tx,
+                cx,
+                "test-client",
+                false,
+                Vec::new(),
+            )
+        });
 
         let _drain_outgoing = cx
             .executor()
@@ -1720,8 +1756,16 @@ mod tests {
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
 
-        let client =
-            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+        let client = cx.update(|cx| {
+            ChannelClient::new(
+                incoming_rx,
+                outgoing_tx,
+                cx,
+                "test-client",
+                false,
+                Vec::new(),
+            )
+        });
 
         let _drain_outgoing = cx
             .executor()
@@ -1904,6 +1948,12 @@ pub(crate) struct ChannelClient {
     remote_started: Signal<()>,
     has_wsl_interop: bool,
     executor: BackgroundExecutor,
+    /// Capabilities this peer advertises in its `RemoteStarted` message. Only
+    /// the server side advertises; the client leaves this empty.
+    advertised_capabilities: Vec<String>,
+    /// Capabilities received in the peer's `RemoteStarted` message. Read by the
+    /// client to negotiate optional features (e.g. the host history index).
+    peer_capabilities: Mutex<Vec<String>>,
 }
 
 impl ChannelClient {
@@ -1913,6 +1963,7 @@ impl ChannelClient {
         cx: &App,
         name: &'static str,
         has_wsl_interop: bool,
+        advertised_capabilities: Vec<String>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             outgoing_tx: Mutex::new(outgoing_tx),
@@ -1931,11 +1982,19 @@ impl ChannelClient {
             )),
             remote_started: Signal::new(cx),
             has_wsl_interop,
+            advertised_capabilities,
+            peer_capabilities: Mutex::new(Vec::new()),
         })
     }
 
     fn wait_for_remote_started(&self) -> Shared<Task<Option<()>>> {
         self.remote_started.wait()
+    }
+
+    /// The capabilities advertised by the peer in its `RemoteStarted` message.
+    /// Empty until `RemoteStarted` has been received.
+    pub(crate) fn peer_capabilities(&self) -> Vec<String> {
+        self.peer_capabilities.lock().clone()
     }
 
     fn start_handling_messages(
@@ -1945,7 +2004,10 @@ impl ChannelClient {
     ) -> Task<Result<()>> {
         cx.spawn(async move |cx| {
             if let Some(this) = this.upgrade() {
-                let envelope = proto::RemoteStarted {}.into_envelope(0, None, None);
+                let envelope = proto::RemoteStarted {
+                    capabilities: this.advertised_capabilities.clone(),
+                }
+                .into_envelope(0, None, None);
                 this.outgoing_tx.lock().unbounded_send(envelope).ok();
             };
 
@@ -1981,7 +2043,10 @@ impl ChannelClient {
                     continue;
                 }
 
-                if let Some(proto::envelope::Payload::RemoteStarted(_)) = &incoming.payload {
+                if let Some(proto::envelope::Payload::RemoteStarted(remote_started)) =
+                    &incoming.payload
+                {
+                    *this.peer_capabilities.lock() = remote_started.capabilities.clone();
                     this.remote_started.set(());
                     let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
                     envelope.id = this.next_message_id.fetch_add(1, SeqCst);
