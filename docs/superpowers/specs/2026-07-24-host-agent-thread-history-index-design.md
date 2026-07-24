@@ -749,3 +749,36 @@ The design now also records the remote-server process scope, the single-user
 trust model for client-supplied history roots, the cold-rebuild cost of parser
 version changes, the deliberate macOS cache-path deviation, and the existing
 Codex 200-session starvation behavior.
+
+## Re-review (Claude)
+
+Reviewer: Claude. Verdict: approved for implementation. All three concerns are
+resolved and the smaller notes are incorporated.
+
+- Concern 1 (file lock): resolved. The revised Concurrency and Persistence
+  section drops the lock for v1, relies on reload-then-atomic-replace, and
+  documents last-writer-wins as accepted eventual consistency with a named
+  follow-up condition. The added note that `generation` is per-stream and must
+  not drive compare-and-swap is a correct clarification.
+- Concern 2 (process/lifetime model): resolved. The `remote_server` section now
+  states that one process is scoped to a connection identifier with serial
+  reconnects, so in-process single-flight is per-process and cross-process
+  sharing is via the persisted file. This matches the identifier-scoped
+  `ServerPaths`/pid-file model in `crates/remote_server/src/server.rs`.
+- Concern 3 (trust model): resolved. The Stream request section states the
+  client-supplied history root is trusted under the single-user model and adds
+  no filesystem authority beyond the existing remote FS protocol.
+
+The no-lock model is self-healing, not merely eventually consistent by
+assertion: directory enumeration runs fresh on every refresh and only per-file
+parse results are cached, so a session missed by a losing writer is always
+rediscovered on the next refresh; the only observable effect of last-writer-wins
+is transient staleness, corrected by the next revalidation. No permanent loss.
+
+Implementation grounding for the atomic replacement this now depends on: the
+`fs` crate already provides `atomic_write` (`crates/fs/src/fs.rs`), which writes
+a unique `NamedTempFile` in the destination directory and atomically persists it
+(`ReplaceFileW`/`MoveFileExW` on Windows, rename on POSIX). Concurrent writers
+get distinct temp files, and Windows replace-existing is handled. The index
+persistence should reuse this helper rather than introduce a new one; the
+current `DiskCache` already flushes through it.
