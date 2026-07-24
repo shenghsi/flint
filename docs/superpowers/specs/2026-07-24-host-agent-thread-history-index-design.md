@@ -161,7 +161,7 @@ It owns:
 - incremental refresh;
 - project-root filtering;
 - in-process single-flight refresh coordination;
-- cross-process cache coordination; and
+- eventually consistent cross-process cache persistence; and
 - atomic, private cache persistence.
 
 It depends on filesystem, serialization, time, and collection primitives. It
@@ -204,6 +204,14 @@ removed.
 The remote handler uses local filesystem operations. It does not call the
 existing `ListRemoteDirectory`, `GetPathMetadata`, or `ReadRemoteFile` handlers.
 
+One `flint-remote-server` process is scoped to a connection identifier. It owns
+one `HeadlessProject`, accepts reconnects for that identifier serially, and
+retains its in-process history service for that process lifetime. Separate
+workspaces, devices, and a local Flint application can run separate processes
+against the same host cache. In-process single-flight therefore coordinates
+requests within one server process; persisted storage provides cross-process
+sharing without cross-process task coordination.
+
 ### `proto`
 
 The protocol owns only the wire contract. The persisted JSON schema remains an
@@ -234,6 +242,9 @@ This path intentionally does not derive from `paths::data_dir()`.
 `flint-remote-server` stores its application data under `~/.flint/remote`,
 while a local Flint process uses its platform application-data directory. A
 dedicated home-relative cache allows both processes to share the same index.
+On macOS, this deliberately places shared cache data under `~/.flint` instead
+of `~/Library/Application Support`; host sharing with `flint-remote-server`
+requires one process-independent location.
 
 Cache directories and files are private to the host user. On POSIX hosts,
 directories use mode `0700` and files use mode `0600`. Windows uses the
@@ -247,6 +258,10 @@ them.
 
 The index uses a versioned JSON envelope. A schema or parser version mismatch
 is a cache miss; there is no migration.
+
+A parser-version bump causes one cold host-local rebuild for every cached
+combination of agent kind and history root. This fleet-wide one-time cost is
+accepted in exchange for deterministic invalidation without migrations.
 
 Conceptually, the envelope contains:
 
@@ -310,6 +325,11 @@ Descending traversal may stop after the 200 newest rollout files have been
 identified. This produces the same selected set as sorting every discovered
 path and truncating it.
 
+The global-before-filtering limit can omit a project whose newest session is
+older than 200 sessions from other projects. This change preserves that
+behavior for parity. Raising or changing the limit after measuring the
+host-owned index is a separate follow-up.
+
 ### Claude
 
 - Merge the global `history.jsonl` source with project history files.
@@ -360,23 +380,34 @@ one refresh task. Each requester receives the result through its own local
 subscription or RPC stream.
 
 Local Flint and `flint-remote-server` can run concurrently for the same host
-user. They coordinate refresh and persistence with an adjacent host file lock.
-Cached reads do not wait for the lock. A refresher:
+user. Version 1 deliberately does not coordinate those processes with a file
+lock. A refresher:
 
-1. acquires the lock;
-2. reloads the latest valid index written by another process;
-3. refreshes from that state;
-4. writes a temporary file in the same directory;
-5. flushes and atomically replaces `index.json`; and
-6. releases the lock.
+1. reloads the latest valid index written by another process;
+2. refreshes from that state;
+3. writes a temporary file in the same directory;
+4. flushes and atomically replaces `index.json`; and
+5. returns its computed `Fresh` snapshot to its own requesters.
 
-If another process holds the lock, a requester continues displaying its cached
-snapshot and joins or waits for the serialized refresh. Cancellation of one
-requester does not delete the persisted cache or cancel work observed by
-another requester.
+Atomic replacement prevents readers from observing partial JSON. Concurrent
+processes may perform redundant refreshes, and an older scan that finishes last
+may transiently replace a newer persisted snapshot. This is accepted
+last-writer-wins behavior for an eventually consistent cache, not a source of
+record. Each process returns its own computed fresh result, and every later
+request revalidates the persisted snapshot against the authoritative agent
+history.
 
-The lock and temporary files contain no session contents. Stale temporary files
+`generation` distinguishes snapshots within a request stream. It is not a
+globally monotonic cross-process sequence and must not be used for compare and
+swap or conflict resolution.
+
+Cancellation of one requester does not delete the persisted cache or cancel
+work observed by another requester in the same process. Stale temporary files
 from a crash are ignored and cleaned during a later successful write.
+
+A cross-process lock can be reconsidered only if measurement shows harmful
+duplicate work or unacceptable convergence behavior. That follow-up must name
+the locking mechanism and define behavior for networked home directories.
 
 ## Remote Protocol
 
@@ -416,6 +447,13 @@ The server validates:
 - project roots are absolute;
 - collection sizes and path lengths are bounded; and
 - the request belongs to the authenticated remote project connection.
+
+The client-supplied history root is trusted under Flint's single-user model.
+The remote client and server run as the same host user, and the existing remote
+filesystem protocol already lets that user list and read arbitrary paths. The
+history endpoint adds no filesystem authority. It still restricts parsing to a
+supported provider kind, bounds request and scan sizes, and writes only derived
+summaries to Flint's private cache.
 
 An empty `project_roots` list means no project filter. Current Agent Threads
 requests always provide the visible worktree roots; the empty form preserves
@@ -540,8 +578,9 @@ identical snapshots and RPC selection.
 - Pi preserves its per-project-directory 200-file limit.
 - A top-level traversal error does not replace a valid index with an empty one.
 - Concurrent in-process requests perform one refresh.
-- Two service instances sharing a cache directory serialize writers and observe
-  the latest complete generation.
+- Two service instances sharing a cache directory never expose partial JSON,
+  each return their own computed fresh snapshot, and a later refresh converges
+  the persisted cache to the authoritative source.
 
 ### Protocol and remote-server tests
 
@@ -616,6 +655,8 @@ outside this design.
 - Direct and Tunneled routing produce identical history retrieval behavior.
 - The performance regression test proves zero per-file remote filesystem
   requests on the indexed path.
+- Concurrent processes may redundantly refresh and use last-writer-wins
+  persistence without exposing partial cache data.
 
 ## Review (Claude)
 
@@ -691,3 +732,20 @@ before implementation (defer the cross-process file lock; see concern 1).
 - Delivery staging is sound, but commit 1 (shared crate + scanners + unit
   tests) is self-contained enough to be its own PR if a smaller review surface
   is wanted. Optional.
+
+## Review Resolution
+
+On 2026-07-24, the product owner and Codex accepted Claude's requested v1
+change:
+
+- Defer the cross-process file lock.
+- Use in-process single-flight and atomic cache replacement.
+- Treat the persisted cache as eventually consistent across local Flint and
+  separate remote-server processes.
+- Accept transient last-writer-wins staleness because each request revalidates
+  against authoritative agent history.
+
+The design now also records the remote-server process scope, the single-user
+trust model for client-supplied history roots, the cold-rebuild cost of parser
+version changes, the deliberate macOS cache-path deviation, and the existing
+Codex 200-session starvation behavior.
