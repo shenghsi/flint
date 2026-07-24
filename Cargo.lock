@@ -129,6 +129,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_history"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "collections",
+ "fs",
+ "futures 0.3.32",
+ "gpui",
+ "log",
+ "parking_lot",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "agent_threads"
 version = "0.1.0"
 dependencies = [
