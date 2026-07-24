@@ -616,3 +616,78 @@ outside this design.
 - Direct and Tunneled routing produce identical history retrieval behavior.
 - The performance regression test proves zero per-file remote filesystem
   requests on the indexed path.
+
+## Review (Claude)
+
+Reviewer: Claude. Verdict: approve the direction, with one change requested
+before implementation (defer the cross-process file lock; see concern 1).
+
+### Verified against the codebase
+
+- Server-streaming RPC already exists (`crates/rpc/src/peer.rs`:
+  `stream_response_channels`, `terminal_stream_response`; `git.proto` uses
+  streaming today). The `Cached`-then-`Fresh` stream rides existing infra, not
+  new plumbing.
+- `RemoteStarted` is real and currently `message RemoteStarted {}`
+  (`crates/proto/proto/flint.proto`, `RemoteStarted -> Ack` in
+  `crates/proto/src/proto.rs`). Adding a `repeated` capability field is
+  proto3-backward-compatible as claimed.
+- No file-locking primitive exists anywhere in the repo (only in-memory
+  `Mutex::lock`). The cross-process lock would be a net-new dependency or
+  bespoke per-platform code. This informs concern 1.
+
+### Strengths
+
+- The problem diagnosis matches the code precisely (per-level `read_dir` plus
+  per-file `metadata` even when warm; per-device cache).
+- Keying the cache by `(kind, normalized history root)` rather than `kind`
+  alone is the key correctness win: `CODEX_HOME` / `CLAUDE_CONFIG_DIR` /
+  `PI_CODING_AGENT_DIR` can resolve differently per project, so a `kind`-only
+  key would cross-contaminate projects. The hash-key plus stored unhashed root
+  with mismatch rejection is the right defensive shape.
+- The `agent_history` crate is the correct dependency boundary: it keeps
+  `remote_server` off the GPUI/workspace-heavy `agent_threads` and gives the
+  host index and the legacy `RemoteHistoryFs` path one scanner.
+- Correct invariants: missing root = valid empty but I/O error != empty (never
+  overwrite a good index); negative-parse caching; corrupt-index rebuild;
+  atomic temp+rename. Backward-compat, route boundary, and legacy fallback are
+  all handled, and the operation-count performance test is the right shape.
+
+### Concerns (ranked)
+
+1. Defer the cross-process file lock. It is the only element with zero
+   precedent in the repo, so it means a new dependency plus lifecycle, and
+   advisory file locks are unreliable on networked home directories (NFS/SMB)
+   which is exactly where one machine is both a local workstation and a remote
+   host. Recommendation for v1: rely on atomic-rename plus "reload the latest
+   valid index before refreshing." Atomic rename already prevents readers from
+   seeing partial files, so the worst case without the lock is redundant
+   refresh work, not corruption. The lock only de-duplicates concurrent
+   refreshes; add it later if measurement shows it matters. If it stays, name
+   the mechanism and specify networked-home fallback behavior.
+2. Pin down the `flint-remote-server` process/lifetime model the coordination
+   assumes. In-process single-flight only spans one server-process lifetime.
+   State whether one server process is shared across all client connections to
+   a host (single-flight has cross-connection reach) or whether cross-connection
+   sharing falls entirely to the persisted file.
+3. State the trust model for the client-supplied `normalized_history_root`. The
+   server validates absolute/path-style but cannot cheaply confirm the root is
+   the agent's real configured home. That is acceptable under Flint's
+   single-user model (the user reads their own files); say so explicitly rather
+   than leave it implicit.
+
+### Smaller notes (non-blocking)
+
+- Preserving the 200-file limit is the safe parity choice, but note the
+  follow-up the index unlocks: "200 newest globally before project filtering"
+  can starve a project whose sessions are older than 200 other-project
+  sessions, and a persisted index makes raising the limit nearly free.
+- A `parser_version` bump is a fleet-wide cold-rebuild event (every
+  host/kind/root re-scans once). Acceptable; worth stating as a conscious cost.
+- Local `~/.flint/cache` on macOS deliberately departs from
+  `~/Library/Application Support`. It is necessary for host-sharing and
+  consistent with `~/.flint/remote`; worth one explicit line acknowledging the
+  deviation.
+- Delivery staging is sound, but commit 1 (shared crate + scanners + unit
+  tests) is self-contained enough to be its own PR if a smaller review surface
+  is wanted. Optional.
