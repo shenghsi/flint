@@ -1151,40 +1151,68 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let key = key.clone();
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
-                        // Try to activate an existing workspace for this project group
-                        // first, so we preserve the actual worktree paths (which may
-                        // differ from the main git worktree paths stored in the key).
-                        if let Some(workspace) = handle
-                            .update(cx, |multi_workspace, _window, cx| {
-                                multi_workspace.last_active_workspace_for_group(&key, cx)
-                            })
-                            .log_err()
-                            .flatten()
-                        {
-                            handle
-                                .update(cx, |multi_workspace, window, cx| {
+                        let requesting_window = handle;
+                        requesting_window
+                            .update(cx, |multi_workspace, window, cx| {
+                                let workspace = multi_workspace
+                                    .last_active_workspace_for_group(&key, cx)
+                                    .or_else(|| {
+                                        multi_workspace
+                                            .workspaces_for_project_group(&key, cx)
+                                            .and_then(|workspaces| workspaces.into_iter().next())
+                                    });
+                                if let Some(workspace) = workspace {
                                     multi_workspace.activate(workspace, None, window, cx);
-                                })
-                                .log_err();
-                        } else {
-                            let path_list = key.path_list().clone();
-                            if let Some(task) = handle
-                                .update(cx, |multi_workspace, window, cx| {
-                                    multi_workspace.find_or_create_local_workspace(
-                                        path_list,
-                                        Some(key.clone()),
-                                        &[],
-                                        None,
-                                        OpenMode::Activate,
-                                        window,
+                                    return;
+                                }
+
+                                let path_list = key.path_list().clone();
+                                let Some(mut connection_options) = key.host() else {
+                                    multi_workspace
+                                        .find_or_create_local_workspace(
+                                            path_list,
+                                            Some(key),
+                                            &[],
+                                            None,
+                                            OpenMode::Activate,
+                                            window,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                    return;
+                                };
+
+                                if let RemoteConnectionOptions::Ssh(connection) =
+                                    &mut connection_options
+                                {
+                                    RemoteSettings::get_global(cx)
+                                        .fill_connection_options_from_settings(connection);
+                                }
+
+                                let paths = path_list.paths().to_vec();
+                                let app_state =
+                                    multi_workspace.workspace().read(cx).app_state().clone();
+                                cx.spawn_in(window, async move |_, cx| {
+                                    open_remote_project(
+                                        connection_options,
+                                        paths,
+                                        app_state,
+                                        OpenOptions {
+                                            requesting_window: Some(requesting_window),
+                                            ..Default::default()
+                                        },
                                         cx,
                                     )
+                                    .await
                                 })
-                                .log_err()
-                            {
-                                task.detach_and_log_err(cx);
-                            }
-                        }
+                                .detach_and_prompt_err(
+                                    "Failed to open project",
+                                    window,
+                                    cx,
+                                    |_, _, _| None,
+                                );
+                            })
+                            .log_err();
                     });
                 }
                 cx.emit(DismissEvent);
@@ -2365,12 +2393,18 @@ impl RecentProjectsDelegate {
 
 #[cfg(test)]
 mod tests {
+    use extension::ExtensionHostProxy;
+    use fs::FakeFs;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use http_client::BlockedHttpClient;
+    use node_runtime::NodeRuntime;
+    use remote::RemoteClient;
+    use remote_server::{HeadlessAppState, HeadlessProject};
 
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::{AppState, open_paths};
+    use workspace::{AppState, SerializedProjectGroupState, open_paths};
 
     use super::*;
 
@@ -2416,6 +2450,42 @@ mod tests {
                 "/this-window/remote-project-{index}"
             ))]),
         )
+    }
+
+    fn select_project_group(
+        multi_workspace: &gpui::WindowHandle<MultiWorkspace>,
+        project_group_key: ProjectGroupKey,
+        cx: &mut TestAppContext,
+    ) {
+        let picker = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().downgrade();
+                let mut delegate = RecentProjectsDelegate::new(
+                    workspace,
+                    false,
+                    cx.focus_handle(),
+                    Vec::new(),
+                    vec![project_group_key],
+                    ProjectPickerStyle::Modal,
+                );
+                delegate.filtered_entries = vec![ProjectPickerEntry::ProjectGroup(StringMatch {
+                    candidate_id: 0,
+                    score: 0.0,
+                    positions: Vec::new(),
+                    string: Default::default(),
+                })];
+                cx.new(|cx| Picker::list(delegate, window, cx))
+            })
+            .expect("multi-workspace window should remain open");
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                picker.update(cx, |picker, cx| {
+                    picker.delegate.confirm(false, window, cx);
+                });
+            })
+            .expect("multi-workspace window should remain open");
+        cx.run_until_parked();
     }
 
     fn recent_workspace(index: usize) -> RecentWorkspace {
@@ -2580,6 +2650,214 @@ mod tests {
             icon_for_project_group(&delegate.window_project_groups[1]),
             IconName::Server
         );
+    }
+
+    #[gpui::test]
+    async fn selecting_restored_remote_project_group_reopens_it_remotely(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let (connection_options, server_session, connect_guard) =
+            RemoteClient::fake_server(cx, server_cx);
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/remote-project"),
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs,
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages,
+                    extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(connect_guard);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/local-project"),
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                }),
+            )
+            .await;
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/local-project"))],
+                app_state,
+                OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .expect("local foreground project should open");
+
+        let multi_workspace = cx.update(|cx| {
+            cx.windows()[0]
+                .downcast::<MultiWorkspace>()
+                .expect("project should open in a multi-workspace window")
+        });
+        let remote_key = ProjectGroupKey::new(
+            Some(connection_options),
+            PathList::new(&[PathBuf::from(path!("/remote-project"))]),
+        );
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.restore_project_groups(
+                    vec![SerializedProjectGroupState {
+                        key: remote_key.clone(),
+                        expanded: true,
+                    }],
+                    cx,
+                );
+            })
+            .expect("multi-workspace window should remain open");
+
+        select_project_group(&multi_workspace, remote_key.clone(), cx);
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let active_workspace = multi_workspace.workspace();
+                assert!(
+                    active_workspace.read(cx).project().read(cx).is_remote(),
+                    "selecting a restored remote group must not open its path locally"
+                );
+                assert_eq!(
+                    active_workspace.read(cx).project_group_key(cx),
+                    remote_key,
+                    "the activated workspace should retain the remote project-group identity"
+                );
+            })
+            .expect("multi-workspace window should remain open");
+    }
+
+    #[gpui::test]
+    async fn selecting_loaded_project_group_activates_its_existing_workspace(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let fs = app_state.fs.clone();
+        fs.as_fake()
+            .insert_tree(
+                path!("/main-project"),
+                json!({
+                    ".git": {
+                        "HEAD": "ref: refs/heads/main",
+                        "worktrees": {
+                            "feature": {
+                                "commondir": "../../",
+                                "HEAD": "ref: refs/heads/feature"
+                            }
+                        }
+                    },
+                    "src": { "main.rs": "" }
+                }),
+            )
+            .await;
+        fs.as_fake()
+            .insert_tree(
+                path!("/feature-worktree"),
+                json!({
+                    ".git": "gitdir: /main-project/.git/worktrees/feature",
+                    "src": { "lib.rs": "" }
+                }),
+            )
+            .await;
+        fs.as_fake()
+            .insert_tree(
+                path!("/foreground-project"),
+                json!({
+                    ".git": { "HEAD": "ref: refs/heads/main" },
+                    "src": { "main.rs": "" }
+                }),
+            )
+            .await;
+
+        let foreground_project =
+            project::Project::test(fs.clone(), [path!("/foreground-project").as_ref()], cx).await;
+        let linked_worktree_project =
+            project::Project::test(fs, [path!("/feature-worktree").as_ref()], cx).await;
+        cx.run_until_parked();
+
+        let linked_worktree_key =
+            linked_worktree_project.read_with(cx, |project, cx| project.project_group_key(cx));
+        assert_eq!(
+            linked_worktree_key.path_list(),
+            &PathList::new(&[PathBuf::from(path!("/main-project"))])
+        );
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(foreground_project, window, cx));
+        let foreground_workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("multi-workspace window should remain open");
+        let foreground_key =
+            foreground_workspace.read_with(cx, |workspace, cx| workspace.project_group_key(cx));
+
+        let linked_worktree_workspace = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.open_sidebar(cx);
+                let linked_worktree_workspace =
+                    multi_workspace.test_add_workspace(linked_worktree_project, window, cx);
+                multi_workspace.activate(foreground_workspace, None, window, cx);
+                multi_workspace.restore_project_groups(
+                    vec![
+                        SerializedProjectGroupState {
+                            key: linked_worktree_key.clone(),
+                            expanded: true,
+                        },
+                        SerializedProjectGroupState {
+                            key: foreground_key,
+                            expanded: true,
+                        },
+                    ],
+                    cx,
+                );
+                linked_worktree_workspace
+            })
+            .expect("multi-workspace window should remain open");
+
+        select_project_group(&multi_workspace, linked_worktree_key, cx);
+
+        multi_workspace
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(
+                    multi_workspace.workspace().entity_id(),
+                    linked_worktree_workspace.entity_id(),
+                    "selecting a loaded group should activate its existing workspace"
+                );
+            })
+            .expect("multi-workspace window should remain open");
     }
 
     #[gpui::test]
