@@ -24,6 +24,14 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    // Keep everything Flint stores on the remote host under `~/.flint/remote`
+    // (managed agent binaries, db, extensions, languages, logs, server_state,
+    // config) instead of the XDG default `~/.local/share/flint`. This must run
+    // before any path is resolved, and before every dispatch branch below so
+    // the crash-handler subprocess and proxy agree with the server on paths.
+    let remote_data_dir = paths::home_dir().join(".flint").join("remote");
+    paths::set_custom_data_dir(&remote_data_dir.to_string_lossy());
+
     if let Some(socket_path) = &cli.askpass {
         askpass::main(socket_path);
         return Ok(());
