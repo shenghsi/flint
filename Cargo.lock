@@ -153,6 +153,7 @@ dependencies = [
 name = "agent_threads"
 version = "0.1.0"
 dependencies = [
+ "agent_history",
  "anyhow",
  "async-channel 2.5.0",
  "async-compression",
