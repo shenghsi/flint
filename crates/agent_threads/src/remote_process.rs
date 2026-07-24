@@ -67,8 +67,6 @@ case $recorded_start in
     posix:*)
         live_start=posix:$(ps -o lstart= -p "$process_id")
         test "$live_start" = "$recorded_start" || exit 67
-        ps eww -p "$process_id" -o command= |
-            grep -Fq "FLINT_AGENT_THREAD_ID=$lifecycle_id" || exit 67
         ;;
     *) exit 66 ;;
 esac
@@ -276,6 +274,88 @@ mod tests {
         assert_eq!(
             request.connection_sharing,
             remote::ConnectionSharing::Shared
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the fixture needs a synchronous Unix process group that cleanup can signal"
+    )]
+    fn cleanup_terminates_matching_macos_process() {
+        use std::os::unix::process::CommandExt as _;
+
+        let home = tempfile::tempdir().expect("temporary home should be created");
+        let record = home
+            .path()
+            .join(".local/state/flint/agent-threads")
+            .join(LIFECYCLE_ID);
+        let mut supervisor = util::command::new_std_command("/bin/sh")
+            .args([
+                "-c",
+                r#""$@" & wait"#,
+                "agent-thread-test-supervisor",
+                "/bin/sh",
+                "-c",
+                LAUNCH_SCRIPT,
+                LIFECYCLE_ID,
+                "/bin/sleep",
+                "60",
+            ])
+            .env("HOME", home.path())
+            .env("PATH", "/usr/bin:/bin")
+            .env(LIFECYCLE_ENVIRONMENT_KEY, LIFECYCLE_ID)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("wrapper supervisor should start");
+        let process_group = supervisor.id();
+        let terminate_fixture = || {
+            let status = util::command::new_std_command("/bin/kill")
+                .args(["-TERM", &format!("-{process_group}")])
+                .status()
+                .expect("fixture process group termination should run");
+            assert!(
+                status.success(),
+                "fixture process group termination failed with {status}"
+            );
+        };
+
+        for _ in 0..100 {
+            if record.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if !record.exists() {
+            terminate_fixture();
+            supervisor.wait().expect("wrapper supervisor should exit");
+            panic!("wrapper should create its lifecycle record");
+        }
+
+        let cleanup = util::command::new_std_command("/bin/sh")
+            .args(["-c", CLEANUP_SCRIPT, LIFECYCLE_ID])
+            .env("HOME", home.path())
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .expect("cleanup script should run");
+
+        if !cleanup.status.success() {
+            terminate_fixture();
+        }
+        supervisor.wait().expect("wrapper supervisor should exit");
+
+        assert!(
+            cleanup.status.success(),
+            "cleanup failed with {}: {}",
+            cleanup.status,
+            String::from_utf8_lossy(&cleanup.stderr)
+        );
+        assert!(
+            !record.exists(),
+            "cleanup should remove the lifecycle record"
         );
     }
 
