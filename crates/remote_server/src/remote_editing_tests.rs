@@ -2650,6 +2650,81 @@ async fn test_remote_restore_unstaged_hunk_clears_diff(
     });
 }
 
+#[gpui::test]
+async fn test_agent_thread_history_stream(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/root/.codex/sessions/2026/07/24",
+        json!({
+            "rollout-2026-07-24T10-00-00-aaa.jsonl":
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"aaa\",\"cwd\":\"/root/project\",\"timestamp\":\"2026-07-24T10:00:00.000Z\"}}\n\
+                 {\"payload\":{\"type\":\"user_message\",\"message\":\"first task\"}}\n",
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let proto_client = cx.read(|cx| {
+        project
+            .read(cx)
+            .remote_client()
+            .unwrap()
+            .read(cx)
+            .proto_client()
+    });
+
+    async fn collect(proto_client: &rpc::AnyProtoClient) -> Vec<proto::AgentThreadHistorySnapshot> {
+        let mut stream = proto_client
+            .request_stream(proto::StreamAgentThreadHistory {
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                kind: "codex".into(),
+                normalized_history_root: "/root/.codex".into(),
+                project_roots: vec!["/root/project".into()],
+            })
+            .await
+            .expect("history stream should start");
+        let mut snapshots = Vec::new();
+        while let Some(response) = futures::StreamExt::next(&mut stream).await {
+            snapshots.push(response.expect("snapshot should succeed"));
+        }
+        snapshots
+    }
+
+    let cached = proto::agent_thread_history_snapshot::Freshness::Cached as i32;
+    let fresh = proto::agent_thread_history_snapshot::Freshness::Fresh as i32;
+
+    // Cold start: no persisted index yet, so only a Fresh snapshot.
+    let cold = collect(&proto_client).await;
+    assert_eq!(cold.len(), 1);
+    assert_eq!(cold[0].freshness, fresh);
+    assert_eq!(cold[0].entries.len(), 1);
+    assert_eq!(cold[0].entries[0].session_id, "aaa");
+    assert_eq!(cold[0].entries[0].title, "first task");
+    assert_eq!(cold[0].entries[0].project_root, "/root/project");
+
+    // Warm: the previous refresh persisted the index, so Cached then Fresh.
+    let warm = collect(&proto_client).await;
+    assert_eq!(warm.len(), 2);
+    assert_eq!(warm[0].freshness, cached);
+    assert_eq!(warm[0].entries.len(), 1);
+    assert_eq!(warm[0].entries[0].session_id, "aaa");
+    assert_eq!(warm[1].freshness, fresh);
+
+    // The server advertises the history-index capability to the client.
+    let has_capability = cx.read(|cx| {
+        project
+            .read(cx)
+            .remote_client()
+            .unwrap()
+            .read(cx)
+            .has_server_capability(remote::AGENT_THREAD_HISTORY_INDEX_CAPABILITY)
+    });
+    assert!(
+        has_capability,
+        "server should advertise the history capability"
+    );
+}
+
 pub async fn init_test(
     server_fs: &Arc<FakeFs>,
     cx: &mut TestAppContext,

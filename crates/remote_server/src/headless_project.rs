@@ -65,6 +65,9 @@ pub struct HeadlessProject {
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
     pub kernels: HashMap<String, Child>,
+    // One host-owned agent thread history index per server process, so
+    // concurrent requests share one refresh and the persisted cache.
+    pub agent_history_index: agent_history::IndexService,
 }
 
 pub struct HeadlessAppState {
@@ -237,6 +240,8 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_read_remote_file);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_app_data_directory);
+        session
+            .add_stream_request_handler(cx.weak_entity(), Self::handle_stream_agent_thread_history);
         session.add_request_handler(cx.weak_entity(), Self::handle_compute_remote_file_sha256);
         session.add_request_handler(
             cx.weak_entity(),
@@ -288,10 +293,14 @@ impl HeadlessProject {
         ToolchainStore::init(&session);
         GitStore::init(&session);
 
+        let agent_history_index =
+            agent_history::IndexService::new(fs.clone(), agent_thread_history_cache_root());
+
         HeadlessProject {
             next_entry_id: Default::default(),
             session,
             settings_observer,
+            agent_history_index,
             fs,
             worktree_store,
             buffer_store,
@@ -1167,6 +1176,81 @@ impl HeadlessProject {
         })
     }
 
+    async fn handle_stream_agent_thread_history(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::StreamAgentThreadHistory>,
+        cx: AsyncApp,
+    ) -> Result<impl futures::Stream<Item = Result<proto::AgentThreadHistorySnapshot>>> {
+        use agent_history::{HistoryHost, HistoryKind, LocalHistoryFs};
+
+        const MAX_PROJECT_ROOTS: usize = 256;
+        const MAX_PATH_LEN: usize = 4096;
+
+        let payload = envelope.payload;
+        let kind = HistoryKind::from_id(&payload.kind).context("unsupported agent history kind")?;
+        let path_style = PathStyle::local();
+        anyhow::ensure!(
+            util::paths::is_absolute(&payload.normalized_history_root, path_style),
+            "history root must be absolute"
+        );
+        anyhow::ensure!(
+            payload.normalized_history_root.len() <= MAX_PATH_LEN,
+            "history root path too long"
+        );
+        anyhow::ensure!(
+            payload.project_roots.len() <= MAX_PROJECT_ROOTS,
+            "too many project roots"
+        );
+        for root in &payload.project_roots {
+            anyhow::ensure!(
+                util::paths::is_absolute(root, path_style) && root.len() <= MAX_PATH_LEN,
+                "project root must be an absolute, bounded path"
+            );
+        }
+
+        let (fs, index) = this.read_with(&cx, |this, _| {
+            (this.fs.clone(), this.agent_history_index.clone())
+        });
+        let host = HistoryHost {
+            fs: Arc::new(LocalHistoryFs(fs)),
+            base_dir: PathBuf::from(&payload.normalized_history_root),
+            path_style,
+        };
+        let project_roots = payload
+            .project_roots
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+
+        let (mut response_tx, response_rx) = futures::channel::mpsc::unbounded();
+        cx.background_spawn(async move {
+            use futures::SinkExt as _;
+            if let Some(cached) = index.cached_snapshot(kind, &host, &project_roots).await {
+                if response_tx
+                    .send(Ok(agent_history_snapshot_to_proto(cached)))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            match index.refresh(kind, &host, &project_roots).await {
+                Ok(fresh) => {
+                    response_tx
+                        .send(Ok(agent_history_snapshot_to_proto(fresh)))
+                        .await
+                        .ok();
+                }
+                Err(error) => {
+                    response_tx.send(Err(error)).await.ok();
+                }
+            }
+        })
+        .detach();
+
+        Ok(response_rx)
+    }
+
     async fn handle_compute_remote_file_sha256(
         _this: Entity<Self>,
         envelope: TypedEnvelope<proto::ComputeRemoteFileSha256>,
@@ -1352,6 +1436,39 @@ impl HeadlessProject {
             .into_iter()
             .collect();
         Ok(proto::DirectoryEnvironment { environment })
+    }
+}
+
+/// Where the host-owned agent thread history index persists, shared by a local
+/// Flint and `flint-remote-server` running as the same host user. Intentionally
+/// home-relative rather than under `paths::data_dir()` so both processes agree.
+fn agent_thread_history_cache_root() -> PathBuf {
+    util::paths::home_dir()
+        .join(".flint")
+        .join("cache")
+        .join("agent_threads")
+}
+
+fn agent_history_snapshot_to_proto(
+    snapshot: agent_history::Snapshot,
+) -> proto::AgentThreadHistorySnapshot {
+    let freshness = match snapshot.freshness {
+        agent_history::Freshness::Cached => proto::agent_thread_history_snapshot::Freshness::Cached,
+        agent_history::Freshness::Fresh => proto::agent_thread_history_snapshot::Freshness::Fresh,
+    };
+    proto::AgentThreadHistorySnapshot {
+        freshness: freshness as i32,
+        generation: snapshot.generation,
+        entries: snapshot
+            .entries
+            .into_iter()
+            .map(|entry| proto::AgentThreadHistoryEntry {
+                session_id: entry.session_id,
+                title: entry.title,
+                project_root: entry.project_root.to_string_lossy().into_owned(),
+                last_activity_at: Some(entry.last_activity_at.into()),
+            })
+            .collect(),
     }
 }
 

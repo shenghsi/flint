@@ -454,7 +454,14 @@ fn start_server(
     })
     .detach();
 
-    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server", is_wsl_interop)
+    RemoteClient::proto_client_from_channels(
+        incoming_rx,
+        outgoing_tx,
+        cx,
+        "server",
+        is_wsl_interop,
+        vec![remote::AGENT_THREAD_HISTORY_INDEX_CAPABILITY.to_string()],
+    )
 }
 
 fn init_paths() -> anyhow::Result<()> {

@@ -22,6 +22,7 @@ debug-embed = ["dep:rust-embed"]
 test-support = ["fs/test-support"]
 
 [dependencies]
+agent_history.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 askpass.workspace = true

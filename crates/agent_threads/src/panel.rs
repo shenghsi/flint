@@ -104,6 +104,7 @@ pub struct AgentThreadsPanel {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     _subscriptions: Vec<Subscription>,
     history_tasks: HashMap<&'static str, Task<()>>,
+    history_index: agent_history::IndexService,
     history_caches: HashMap<&'static str, Arc<HistoryParseCache>>,
     /// Filesystem watchers (local projects only) that trigger an incremental
     /// rescan when a kind's history directory changes, instead of re-sweeping
@@ -115,6 +116,10 @@ pub struct AgentThreadsPanel {
     http_client: Arc<dyn http_client::HttpClient>,
     active: bool,
 }
+
+struct GlobalAgentHistoryIndex(agent_history::IndexService);
+
+impl gpui::Global for GlobalAgentHistoryIndex {}
 
 /// Debounce window for history filesystem watch events. Coalesces the burst of
 /// writes an agent makes while a session is active into a single rescan.
@@ -273,6 +278,14 @@ impl AgentThreadsPanel {
     ) -> Entity<Self> {
         let workspace_handle = cx.entity().downgrade();
         let fs = workspace.app_state().fs.clone();
+        let history_index = if let Some(index) = cx.try_global::<GlobalAgentHistoryIndex>() {
+            index.0.clone()
+        } else {
+            let index =
+                agent_history::IndexService::new(fs.clone(), history::history_index_cache_root());
+            cx.set_global(GlobalAgentHistoryIndex(index.clone()));
+            index
+        };
         let http_client = workspace.app_state().http_client.clone();
         cx.new(|cx| {
             let store = AgentThreadStore::global(cx);
@@ -314,6 +327,7 @@ impl AgentThreadsPanel {
                 context_menu: None,
                 _subscriptions: vec![store_subscription, settings_subscription],
                 history_tasks: HashMap::default(),
+                history_index,
                 history_caches: HashMap::default(),
                 history_watchers: HashMap::default(),
                 plan_usage: HashMap::default(),
@@ -439,13 +453,27 @@ impl AgentThreadsPanel {
         }
         let env_var = kind.home_env_var;
         let dir_name = kind.home_dir_name;
+        let indexed_kind = agent_history::HistoryKind::from_id(kind_id);
+        let history_index = self.history_index.clone();
         let fs = self.fs.clone();
+        let (remote_project, remote_index_client, path_style) =
+            project.read_with(cx, |project, cx| {
+                let path_style = project.path_style(cx);
+                let Some(remote_client) = project.remote_client() else {
+                    return (false, None, path_style);
+                };
+                let remote_client = remote_client.read(cx);
+                let index_client = remote_client
+                    .has_server_capability(remote::AGENT_THREAD_HISTORY_INDEX_CAPABILITY)
+                    .then(|| remote_client.proto_client());
+                (true, index_client, path_style)
+            });
         let cache = self
             .history_caches
             .entry(kind_id)
             .or_insert_with(|| {
                 Arc::new(HistoryParseCache::with_disk(
-                    fs,
+                    fs.clone(),
                     history_cache_path(kind_id),
                 ))
             })
@@ -454,33 +482,82 @@ impl AgentThreadsPanel {
             if let Some(delay) = delay {
                 cx.background_executor().timer(delay).await;
             }
-            let scan_result = async {
-                let host =
-                    history::resolve_history_host(&project, env_var, dir_name, cache, cx).await?;
+            let preparation = async {
+                let base_dir =
+                    history::resolve_history_base_dir(&project, env_var, dir_name, cx).await?;
                 let project_roots =
                     project.read_with(cx, |project, cx| project_worktree_roots(project, cx));
-                let threads = provider.scan(&host, &project_roots).await?;
-                host.flush_cache().await.log_err();
-                anyhow::Ok(threads)
+                let legacy_host = history::history_host_for_resolved_base_dir(
+                    &project,
+                    base_dir.clone(),
+                    cache,
+                    cx,
+                );
+                let indexed = match indexed_kind {
+                    Some(indexed_kind) if !remote_project => {
+                        Some(history::local_indexed_history_stream(
+                            history_index,
+                            indexed_kind,
+                            agent_history::HistoryHost {
+                                fs: Arc::new(agent_history::LocalHistoryFs(fs)),
+                                base_dir,
+                                path_style,
+                            },
+                            project_roots.clone(),
+                        ))
+                    }
+                    Some(_) => remote_index_client.map(|proto_client| {
+                        history::remote_indexed_history_stream(
+                            proto_client,
+                            kind_id,
+                            base_dir,
+                            project_roots.clone(),
+                            path_style,
+                        )
+                    }),
+                    None => None,
+                };
+                anyhow::Ok((indexed, legacy_host, project_roots))
             }
             .await;
 
-            match scan_result {
-                Ok(threads) => {
-                    this.update(cx, |this, cx| {
-                        if !this.active {
-                            return;
-                        }
-                        if let Some(section) = this.sections.get_mut(kind_id) {
-                            section.historical = HistoricalState::Loaded(threads.into());
-                        }
-                        cx.notify();
-                    })
-                    .ok();
-                }
-                Err(error) => {
-                    log::warn!("agent_threads: failed to scan {kind_id} history: {error:#}");
-                    this.update(cx, |this, cx| {
+            let scan_result =
+                match preparation {
+                    Ok((indexed, legacy_host, project_roots)) => history::load_history_source(
+                        indexed,
+                        || async {
+                            let threads = provider.scan(&legacy_host, &project_roots).await?;
+                            legacy_host.flush_cache().await.log_err();
+                            anyhow::Ok(threads)
+                        },
+                        |threads| {
+                            if this
+                                .update(cx, |this, cx| {
+                                    if !this.active {
+                                        return;
+                                    }
+                                    if let Some(section) = this.sections.get_mut(kind_id) {
+                                        section.historical =
+                                            HistoricalState::Loaded(threads.into());
+                                    }
+                                    cx.notify();
+                                })
+                                .is_err()
+                            {
+                                log::debug!(
+                                    "agent_threads: panel closed while loading {kind_id} history"
+                                );
+                            }
+                        },
+                    )
+                    .await,
+                    Err(error) => Err(error),
+                };
+
+            if let Err(error) = scan_result {
+                log::warn!("agent_threads: failed to scan {kind_id} history: {error:#}");
+                if this
+                    .update(cx, |this, cx| {
                         if !this.active {
                             return;
                         }
@@ -489,7 +566,9 @@ impl AgentThreadsPanel {
                         }
                         cx.notify();
                     })
-                    .ok();
+                    .is_err()
+                {
+                    log::debug!("agent_threads: panel closed after {kind_id} history scan failed");
                 }
             }
         });

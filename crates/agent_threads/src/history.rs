@@ -1,4 +1,5 @@
 use std::any::{Any, TypeId};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -7,7 +8,8 @@ use std::time::SystemTime;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::StreamExt;
+use futures::stream::BoxStream;
+use futures::{StreamExt, TryStreamExt};
 use gpui::{App, AsyncApp, Entity, SharedString};
 use project::Project;
 use rpc::AnyProtoClient;
@@ -23,6 +25,151 @@ pub struct HistoricalThread {
     pub title: SharedString,
     pub project_root: PathBuf,
     pub last_activity_at: SystemTime,
+}
+
+pub(crate) type HistorySnapshotStream = BoxStream<'static, Result<Vec<HistoricalThread>>>;
+
+pub(crate) async fn load_history_source<Legacy, LegacyFuture, Publish>(
+    indexed: Option<HistorySnapshotStream>,
+    legacy: Legacy,
+    mut publish: Publish,
+) -> Result<()>
+where
+    Legacy: FnOnce() -> LegacyFuture,
+    LegacyFuture: Future<Output = Result<Vec<HistoricalThread>>>,
+    Publish: FnMut(Vec<HistoricalThread>),
+{
+    if let Some(mut indexed) = indexed {
+        let mut published_indexed_snapshot = false;
+        while let Some(snapshot) = indexed.next().await {
+            match snapshot {
+                Ok(snapshot) => {
+                    published_indexed_snapshot = true;
+                    publish(snapshot);
+                }
+                Err(error) if published_indexed_snapshot => {
+                    log::warn!(
+                        "agent_threads: indexed history refresh failed after a snapshot: {error:#}"
+                    );
+                    return Ok(());
+                }
+                Err(error) => {
+                    log::warn!(
+                        "agent_threads: indexed history failed before a snapshot; falling back: {error:#}"
+                    );
+                    break;
+                }
+            }
+        }
+        if published_indexed_snapshot {
+            return Ok(());
+        }
+    }
+
+    publish(legacy().await?);
+    Ok(())
+}
+
+pub(crate) fn local_indexed_history_stream(
+    service: agent_history::IndexService,
+    kind: agent_history::HistoryKind,
+    host: agent_history::HistoryHost,
+    project_roots: Vec<PathBuf>,
+) -> HistorySnapshotStream {
+    let cached_service = service.clone();
+    let cached_host = host.clone();
+    let cached_roots = project_roots.clone();
+    let cached = futures::stream::once(async move {
+        cached_service
+            .cached_snapshot(kind, &cached_host, &cached_roots)
+            .await
+            .map(indexed_snapshot_threads)
+    })
+    .filter_map(futures::future::ready)
+    .map(Ok);
+    let fresh = futures::stream::once(async move {
+        service
+            .refresh(kind, &host, &project_roots)
+            .await
+            .map(indexed_snapshot_threads)
+    });
+    cached.chain(fresh).boxed()
+}
+
+pub(crate) fn remote_indexed_history_stream(
+    proto_client: AnyProtoClient,
+    kind_id: &'static str,
+    history_root: PathBuf,
+    project_roots: Vec<PathBuf>,
+    path_style: PathStyle,
+) -> HistorySnapshotStream {
+    let request: Result<proto::StreamAgentThreadHistory> = (|| {
+        Ok(proto::StreamAgentThreadHistory {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            kind: kind_id.to_string(),
+            normalized_history_root: path_for_style(&history_root, path_style)?,
+            project_roots: project_roots
+                .iter()
+                .map(|root| path_for_style(root, path_style))
+                .collect::<Result<Vec<_>>>()?,
+        })
+    })();
+    futures::stream::once(async move {
+        let request = request?;
+        proto_client.request_stream(request).await
+    })
+    .try_flatten()
+    .map(|snapshot| snapshot.and_then(proto_snapshot_threads))
+    .boxed()
+}
+
+pub(crate) fn history_index_cache_root() -> PathBuf {
+    paths::home_dir()
+        .join(".flint")
+        .join("cache")
+        .join("agent_threads")
+}
+
+fn indexed_snapshot_threads(snapshot: agent_history::Snapshot) -> Vec<HistoricalThread> {
+    snapshot
+        .entries
+        .into_iter()
+        .map(|entry| HistoricalThread {
+            session_id: entry.session_id.into(),
+            title: entry.title.into(),
+            project_root: entry.project_root,
+            last_activity_at: entry.last_activity_at,
+        })
+        .collect()
+}
+
+fn proto_snapshot_threads(
+    snapshot: proto::AgentThreadHistorySnapshot,
+) -> Result<Vec<HistoricalThread>> {
+    let cached = proto::agent_thread_history_snapshot::Freshness::Cached as i32;
+    let fresh = proto::agent_thread_history_snapshot::Freshness::Fresh as i32;
+    anyhow::ensure!(
+        snapshot.freshness == cached || snapshot.freshness == fresh,
+        "remote history snapshot has invalid freshness"
+    );
+    snapshot
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let timestamp = entry
+                .last_activity_at
+                .context("remote history entry has no activity timestamp")?;
+            let last_activity_at = SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::new(timestamp.seconds, timestamp.nanos))
+                .context("remote history activity timestamp is out of range")?;
+            Ok(HistoricalThread {
+                session_id: entry.session_id.into(),
+                title: entry.title.into(),
+                project_root: PathBuf::from(entry.project_root),
+                last_activity_at,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -552,18 +699,12 @@ pub trait AgentHistoryProvider: Send + Sync {
     ) -> AgentLaunchCommand;
 }
 
-/// Resolves the host-appropriate base directory for an agent's config,
-/// honoring `env_var_name` (e.g. `CLAUDE_CONFIG_DIR`) when set, falling
-/// back to `$HOME/<default_dir_name>`. Branches on local vs. remote
-/// transparently via `Project::environment`'s directory environment
-/// resolution, so the same code path is correct for both.
-pub async fn resolve_history_host(
+pub(crate) fn history_host_for_resolved_base_dir(
     project: &Entity<Project>,
-    env_var_name: &str,
-    default_dir_name: &str,
+    base_dir: PathBuf,
     cache: Arc<HistoryParseCache>,
-    cx: &mut AsyncApp,
-) -> Result<AgentHistoryHost> {
+    cx: &AsyncApp,
+) -> AgentHistoryHost {
     let (fs, path_style) = project.read_with(cx, |project, cx| {
         let path_style = project.path_style(cx);
         let fs: Arc<dyn HistoryFs> = match project.remote_client() {
@@ -576,14 +717,12 @@ pub async fn resolve_history_host(
         (fs, path_style)
     });
 
-    let base_dir = resolve_history_base_dir(project, env_var_name, default_dir_name, cx).await?;
-
-    Ok(AgentHistoryHost {
+    AgentHistoryHost {
         fs,
         base_dir,
         cache,
         path_style,
-    })
+    }
 }
 
 /// Resolves just the base config directory (e.g. `~/.claude`) for an agent,
@@ -655,11 +794,15 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use fs::Fs as _;
+    use futures::FutureExt as _;
     use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
     use project::FakeFs;
+    use proto::EnvelopedMessage as _;
+    use rpc::{ProtoClient, ProtoMessageHandlerSet};
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     struct CountingHistoryFs {
         content: String,
@@ -670,6 +813,91 @@ mod tests {
     struct ChangingIdentityHistoryFs {
         identity_seconds: AtomicUsize,
         load_count: AtomicUsize,
+    }
+
+    struct HistoryStreamProtoClient {
+        request: Mutex<Option<proto::StreamAgentThreadHistory>>,
+        stream_request_count: AtomicUsize,
+        unary_request_count: AtomicUsize,
+        handlers: parking_lot::Mutex<ProtoMessageHandlerSet>,
+    }
+
+    impl Default for HistoryStreamProtoClient {
+        fn default() -> Self {
+            Self {
+                request: Mutex::new(None),
+                stream_request_count: AtomicUsize::new(0),
+                unary_request_count: AtomicUsize::new(0),
+                handlers: parking_lot::Mutex::new(ProtoMessageHandlerSet::default()),
+            }
+        }
+    }
+
+    impl ProtoClient for HistoryStreamProtoClient {
+        fn request(
+            &self,
+            _envelope: proto::Envelope,
+            request_type: &'static str,
+        ) -> futures::future::BoxFuture<'static, Result<proto::Envelope>> {
+            self.unary_request_count.fetch_add(1, Ordering::SeqCst);
+            let request_type = request_type.to_string();
+            async move { anyhow::bail!("unexpected unary request: {request_type}") }.boxed()
+        }
+
+        fn request_stream(
+            &self,
+            envelope: proto::Envelope,
+            request_type: &'static str,
+        ) -> futures::future::BoxFuture<
+            'static,
+            Result<futures::stream::BoxStream<'static, Result<proto::Envelope>>>,
+        > {
+            self.stream_request_count.fetch_add(1, Ordering::SeqCst);
+            let request = proto::StreamAgentThreadHistory::from_envelope(envelope);
+            if let Ok(mut recorded) = self.request.lock() {
+                *recorded = request;
+            }
+            let result = if request_type == proto::StreamAgentThreadHistory::NAME {
+                Ok(proto::AgentThreadHistorySnapshot {
+                    freshness: proto::agent_thread_history_snapshot::Freshness::Fresh as i32,
+                    generation: 1,
+                    entries: vec![proto::AgentThreadHistoryEntry {
+                        session_id: "remote-session".to_string(),
+                        title: "Remote thread".to_string(),
+                        project_root: "/work/project".to_string(),
+                        last_activity_at: Some(SystemTime::UNIX_EPOCH.into()),
+                    }],
+                }
+                .into_envelope(0, None, None))
+            } else {
+                Err(anyhow!("unexpected stream request: {request_type}"))
+            };
+            async move { Ok(futures::stream::iter([result]).boxed()) }.boxed()
+        }
+
+        fn send(&self, _envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {
+            Ok(())
+        }
+
+        fn send_response(
+            &self,
+            _envelope: proto::Envelope,
+            _message_type: &'static str,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
+            &self.handlers
+        }
+
+        fn is_via_collab(&self) -> bool {
+            false
+        }
+
+        fn has_wsl_interop(&self) -> bool {
+            false
+        }
     }
 
     #[async_trait]
@@ -841,6 +1069,291 @@ mod tests {
             .unwrap();
 
         assert_eq!(fs.load_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[gpui::test]
+    async fn indexed_snapshot_is_published_without_running_legacy(_cx: &mut TestAppContext) {
+        let indexed_thread = HistoricalThread {
+            session_id: SharedString::from("indexed"),
+            title: SharedString::from("Indexed thread"),
+            project_root: PathBuf::from("/work/project"),
+            last_activity_at: SystemTime::UNIX_EPOCH,
+        };
+        let indexed = futures::stream::iter([Ok(vec![indexed_thread.clone()])]).boxed();
+        let mut published = Vec::new();
+
+        load_history_source(
+            Some(indexed),
+            || async { anyhow::bail!("legacy scan should not run") },
+            |threads| published.push(threads),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(published, vec![vec![indexed_thread]]);
+    }
+
+    #[gpui::test]
+    async fn indexed_error_before_a_snapshot_falls_back_to_legacy(_cx: &mut TestAppContext) {
+        let legacy_thread = HistoricalThread {
+            session_id: SharedString::from("legacy"),
+            title: SharedString::from("Legacy thread"),
+            project_root: PathBuf::from("/work/project"),
+            last_activity_at: SystemTime::UNIX_EPOCH,
+        };
+        let indexed = futures::stream::iter([Err(anyhow!("index unavailable"))]).boxed();
+        let mut published = Vec::new();
+
+        load_history_source(
+            Some(indexed),
+            || {
+                let legacy_thread = legacy_thread.clone();
+                async move { Ok(vec![legacy_thread]) }
+            },
+            |threads| published.push(threads),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(published, vec![vec![legacy_thread]]);
+    }
+
+    #[gpui::test]
+    async fn indexed_error_after_a_cached_snapshot_keeps_cached_data(_cx: &mut TestAppContext) {
+        let cached_thread = HistoricalThread {
+            session_id: SharedString::from("cached"),
+            title: SharedString::from("Cached thread"),
+            project_root: PathBuf::from("/work/project"),
+            last_activity_at: SystemTime::UNIX_EPOCH,
+        };
+        let indexed = futures::stream::iter([
+            Ok(vec![cached_thread.clone()]),
+            Err(anyhow!("refresh failed")),
+        ])
+        .boxed();
+        let mut published = Vec::new();
+
+        load_history_source(
+            Some(indexed),
+            || async { anyhow::bail!("legacy scan should not run after a snapshot") },
+            |threads| published.push(threads),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(published, vec![vec![cached_thread]]);
+    }
+
+    #[gpui::test]
+    async fn cached_then_fresh_snapshots_replace_the_visible_history(_cx: &mut TestAppContext) {
+        let cached_thread = HistoricalThread {
+            session_id: SharedString::from("cached"),
+            title: SharedString::from("Cached title"),
+            project_root: PathBuf::from("/work/project"),
+            last_activity_at: SystemTime::UNIX_EPOCH,
+        };
+        let fresh_thread = HistoricalThread {
+            title: SharedString::from("Fresh title"),
+            ..cached_thread.clone()
+        };
+        let indexed = futures::stream::iter([
+            Ok(vec![cached_thread.clone()]),
+            Ok(vec![fresh_thread.clone()]),
+        ])
+        .boxed();
+        let mut published = Vec::new();
+
+        load_history_source(
+            Some(indexed),
+            || async { anyhow::bail!("legacy scan should not run") },
+            |threads| published.push(threads),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(published, vec![vec![cached_thread], vec![fresh_thread]]);
+    }
+
+    #[gpui::test]
+    async fn absent_index_source_uses_legacy_history(_cx: &mut TestAppContext) {
+        let legacy_thread = HistoricalThread {
+            session_id: SharedString::from("legacy"),
+            title: SharedString::from("Legacy thread"),
+            project_root: PathBuf::from("/work/project"),
+            last_activity_at: SystemTime::UNIX_EPOCH,
+        };
+        let mut published = Vec::new();
+
+        load_history_source(
+            None,
+            || {
+                let legacy_thread = legacy_thread.clone();
+                async move { Ok(vec![legacy_thread]) }
+            },
+            |threads| published.push(threads),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(published, vec![vec![legacy_thread]]);
+    }
+
+    #[gpui::test]
+    async fn local_index_stream_builds_a_fresh_host_owned_snapshot(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/home/user/.codex/sessions/2026/07/24"))
+            .await
+            .unwrap();
+        fs.insert_file(
+            "/home/user/.codex/sessions/2026/07/24/rollout-2026-07-24T10-00-00-aaa.jsonl",
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"aaa\",\"cwd\":\"/work/project\",\"timestamp\":\"2026-07-24T10:00:00.000Z\"}}\n",
+                "{\"payload\":{\"type\":\"user_message\",\"message\":\"first task\"}}\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        )
+        .await;
+        let service = agent_history::IndexService::new(
+            fs.clone(),
+            PathBuf::from("/home/user/.flint/cache/agent_threads"),
+        );
+        let host = agent_history::HistoryHost {
+            fs: Arc::new(agent_history::LocalHistoryFs(fs)),
+            base_dir: PathBuf::from("/home/user/.codex"),
+            path_style: PathStyle::Posix,
+        };
+        let mut snapshots = local_indexed_history_stream(
+            service,
+            agent_history::HistoryKind::Codex,
+            host,
+            vec![PathBuf::from("/work/project")],
+        );
+
+        let fresh = snapshots
+            .next()
+            .await
+            .expect("fresh snapshot")
+            .expect("fresh scan should succeed");
+
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].session_id, "aaa");
+        assert_eq!(fresh[0].title, "first task");
+        assert_eq!(fresh[0].project_root, PathBuf::from("/work/project"));
+        assert!(snapshots.next().await.is_none());
+    }
+
+    #[gpui::test]
+    async fn local_index_stream_emits_cached_then_refreshed_snapshots(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let rollout_dir = Path::new("/home/user/.codex/sessions/2026/07/24");
+        let rollout_path = rollout_dir.join("rollout-2026-07-24T10-00-00-aaa.jsonl");
+        fs.create_dir(rollout_dir).await.unwrap();
+        fs.insert_file(
+            &rollout_path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"aaa\",\"cwd\":\"/work/project\",\"timestamp\":\"2026-07-24T10:00:00.000Z\"}}\n",
+                "{\"payload\":{\"type\":\"user_message\",\"message\":\"cached title\"}}\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        )
+        .await;
+        let service = agent_history::IndexService::new(
+            fs.clone(),
+            PathBuf::from("/home/user/.flint/cache/agent_threads"),
+        );
+        let host = agent_history::HistoryHost {
+            fs: Arc::new(agent_history::LocalHistoryFs(fs.clone())),
+            base_dir: PathBuf::from("/home/user/.codex"),
+            path_style: PathStyle::Posix,
+        };
+        let roots = vec![PathBuf::from("/work/project")];
+        service
+            .refresh(agent_history::HistoryKind::Codex, &host, &roots)
+            .await
+            .unwrap();
+        fs.insert_file(
+            &rollout_path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"aaa\",\"cwd\":\"/work/project\",\"timestamp\":\"2026-07-24T10:00:00.000Z\"}}\n",
+                "{\"payload\":{\"type\":\"user_message\",\"message\":\"fresh title\"}}\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        )
+        .await;
+
+        let mut snapshots =
+            local_indexed_history_stream(service, agent_history::HistoryKind::Codex, host, roots);
+        let cached = snapshots.next().await.unwrap().unwrap();
+        let fresh = snapshots.next().await.unwrap().unwrap();
+
+        assert_eq!(cached[0].title, "cached title");
+        assert_eq!(fresh[0].title, "fresh title");
+        assert!(snapshots.next().await.is_none());
+    }
+
+    #[test]
+    fn remote_index_snapshot_conversion_preserves_host_paths_and_time() {
+        let last_activity_at = SystemTime::UNIX_EPOCH + Duration::from_secs(42);
+        let snapshot = proto::AgentThreadHistorySnapshot {
+            freshness: proto::agent_thread_history_snapshot::Freshness::Fresh as i32,
+            generation: 3,
+            entries: vec![proto::AgentThreadHistoryEntry {
+                session_id: "remote-session".to_string(),
+                title: "Remote thread".to_string(),
+                project_root: r"C:\work\project".to_string(),
+                last_activity_at: Some(last_activity_at.into()),
+            }],
+        };
+
+        let threads = proto_snapshot_threads(snapshot).unwrap();
+
+        assert_eq!(
+            threads,
+            vec![HistoricalThread {
+                session_id: SharedString::from("remote-session"),
+                title: SharedString::from("Remote thread"),
+                project_root: PathBuf::from(r"C:\work\project"),
+                last_activity_at,
+            }]
+        );
+    }
+
+    #[gpui::test]
+    async fn remote_index_fetch_is_one_projection_rpc_with_no_per_file_requests(
+        _cx: &mut TestAppContext,
+    ) {
+        let client = Arc::new(HistoryStreamProtoClient::default());
+        let mut snapshots = remote_indexed_history_stream(
+            AnyProtoClient::new(client.clone()),
+            "codex",
+            PathBuf::from("/home/user/.codex"),
+            vec![PathBuf::from("/work/project")],
+            PathStyle::Posix,
+        );
+
+        let threads = snapshots
+            .next()
+            .await
+            .expect("remote snapshot")
+            .expect("remote index request should succeed");
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].session_id, "remote-session");
+        assert!(snapshots.next().await.is_none());
+        assert_eq!(client.stream_request_count.load(Ordering::SeqCst), 1);
+        assert_eq!(client.unary_request_count.load(Ordering::SeqCst), 0);
+        let request = client
+            .request
+            .lock()
+            .expect("request lock")
+            .clone()
+            .expect("history request");
+        assert_eq!(request.kind, "codex");
+        assert_eq!(request.normalized_history_root, "/home/user/.codex");
+        assert_eq!(request.project_roots, vec!["/work/project"]);
     }
 
     fn fixed_identity(seconds: u64, length: u64) -> Option<HistoryFileIdentity> {
@@ -1019,7 +1532,7 @@ mod tests {
     // dropped remote session) would hit, since both surface as
     // `directory_environment` failing to produce a usable env map.
     #[gpui::test]
-    async fn resolve_history_host_surfaces_unresolvable_environment(cx: &mut TestAppContext) {
+    async fn resolve_history_base_dir_surfaces_unresolvable_environment(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1030,14 +1543,7 @@ mod tests {
         let result = cx
             .update(|cx| {
                 cx.spawn(async move |cx| {
-                    resolve_history_host(
-                        &project,
-                        "CODEX_HOME",
-                        ".codex",
-                        Arc::new(HistoryParseCache::default()),
-                        cx,
-                    )
-                    .await
+                    resolve_history_base_dir(&project, "CODEX_HOME", ".codex", cx).await
                 })
             })
             .await;
