@@ -54,9 +54,14 @@ connections, credential prompts, and failures without user intent.
 
 ## Implementation
 
-The **This Window** confirmation path will first look for the group's last
-active workspace and then any currently loaded workspace belonging to the
-group. If either exists, Flint will activate it.
+The **This Window** confirmation path currently checks only the group's last
+active workspace (`MultiWorkspace::last_active_workspace_for_group`). It will
+be extended to also check any currently loaded workspace belonging to the
+group via the existing but not-yet-called
+`MultiWorkspace::workspaces_for_project_group`, since the last-active
+reference can be stale (dropped) while another workspace for the same group
+is still open. If either lookup finds a workspace, Flint will activate it.
+This broader check is new behavior, not a restatement of today's lookup.
 
 If no workspace is loaded:
 
