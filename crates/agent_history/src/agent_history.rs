@@ -10,7 +10,9 @@
 //!
 //! See `docs/superpowers/specs/2026-07-24-host-agent-thread-history-index-design.md`.
 
+mod claude;
 mod codex;
+mod pi;
 
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::BTreeMap;
@@ -28,7 +30,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use util::paths::PathStyle;
 
+pub use claude::ClaudeHistoryProvider;
 pub use codex::CodexHistoryProvider;
+pub use pi::PiHistoryProvider;
 
 /// Bumped when the persisted envelope layout changes. A mismatch is a cache
 /// miss with no migration.
@@ -42,18 +46,24 @@ const PARSER_VERSION: u32 = 1;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum HistoryKind {
     Codex,
+    Claude,
+    Pi,
 }
 
 impl HistoryKind {
     pub fn id(self) -> &'static str {
         match self {
             HistoryKind::Codex => "codex",
+            HistoryKind::Claude => "claude",
+            HistoryKind::Pi => "pi",
         }
     }
 
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
             "codex" => Some(HistoryKind::Codex),
+            "claude" => Some(HistoryKind::Claude),
+            "pi" => Some(HistoryKind::Pi),
             _ => None,
         }
     }
@@ -61,6 +71,19 @@ impl HistoryKind {
     fn provider(self) -> Arc<dyn HistoryProvider> {
         match self {
             HistoryKind::Codex => Arc::new(CodexHistoryProvider),
+            HistoryKind::Claude => Arc::new(ClaudeHistoryProvider),
+            HistoryKind::Pi => Arc::new(PiHistoryProvider),
+        }
+    }
+
+    /// Whether the projection collapses multiple index rows that share a
+    /// session id to the newest one. Codex shows one entry per rollout file
+    /// (matching the legacy scanner), so it does not dedup; Claude and Pi keep
+    /// the newest record per session.
+    fn dedup_by_session(self) -> bool {
+        match self {
+            HistoryKind::Codex => false,
+            HistoryKind::Claude | HistoryKind::Pi => true,
         }
     }
 }
@@ -149,11 +172,13 @@ impl HistoryHost {
     }
 }
 
-/// A normalized session record persisted in the index. Titles are recomputed
-/// against the current title sources on every refresh (so a changed title
-/// source updates them without reloading rollout files), while `fallback_title`
-/// is retained so that recomputation does not require reloading the session
-/// file.
+/// A normalized index row: one session projected onto one working directory.
+/// Codex and Pi sessions have a single working directory (one row each);
+/// Claude sessions that changed directories produce one row per directory, each
+/// carrying the title and activity time the legacy scanner would compute when
+/// that directory is the requested project root. This uniform per-directory
+/// shape makes query-time filtering an exact directory match and keeps the
+/// public projection identical across providers.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndexedSession {
     pub session_id: String,
@@ -163,9 +188,9 @@ pub struct IndexedSession {
     /// The provider's fallback title derived from the session file itself
     /// (e.g. the first user message), retained for cheap title recomputation.
     pub fallback_title: Option<String>,
-    /// Every working directory recorded for the session. Some providers (Claude)
-    /// change directories within one session; resume matches any of them.
-    pub working_dirs: Vec<String>,
+    /// The working directory this row is projected onto, in the host's path
+    /// style.
+    pub working_dir: String,
     pub last_activity_secs: u64,
     pub last_activity_nanos: u32,
 }
@@ -293,6 +318,7 @@ impl IndexService {
             .await?;
         Some(filter_snapshot(
             &index,
+            kind,
             project_roots,
             host.path_style,
             Freshness::Cached,
@@ -311,6 +337,7 @@ impl IndexService {
         let index = self.refresh_index(kind, host).await?;
         Ok(filter_snapshot(
             &index,
+            kind,
             project_roots,
             host.path_style,
             Freshness::Fresh,
@@ -447,23 +474,22 @@ impl IndexServiceInner {
 
 fn filter_snapshot(
     index: &PersistedIndex,
+    kind: HistoryKind,
     project_roots: &[PathBuf],
     path_style: PathStyle,
     freshness: Freshness,
 ) -> Snapshot {
     let mut entries = Vec::new();
     for session in &index.indexed_sessions {
+        // Each row is projected onto exactly one working directory: with a
+        // filter it must equal a requested root (and that root becomes the
+        // entry's project_root); with no filter the row's own directory is used.
         let project_root = if project_roots.is_empty() {
-            session.working_dirs.first().map(PathBuf::from)
+            Some(PathBuf::from(&session.working_dir))
         } else {
             project_roots
                 .iter()
-                .find(|root| {
-                    session
-                        .working_dirs
-                        .iter()
-                        .any(|working_dir| paths_equal_for_style(working_dir, root, path_style))
-                })
+                .find(|root| paths_equal_for_style(&session.working_dir, root, path_style))
                 .cloned()
         };
         let Some(project_root) = project_root else {
@@ -477,6 +503,13 @@ fn filter_snapshot(
         });
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.last_activity_at));
+    if kind.dedup_by_session() {
+        // Keep the newest entry per session across the matched roots, matching
+        // the legacy scanner's per-session dedup. Entries are already sorted
+        // newest-first, so the first occurrence of each id wins.
+        let mut seen = collections::HashSet::default();
+        entries.retain(|entry| seen.insert(entry.session_id.clone()));
+    }
     Snapshot {
         freshness,
         generation: index.generation,
@@ -781,5 +814,151 @@ mod tests {
         let path_a = service.0.cache_path(HistoryKind::Codex, &normalized_a);
         let path_b = service.0.cache_path(HistoryKind::Codex, &normalized_b);
         assert_ne!(path_a, path_b);
+    }
+
+    fn host_at(fs: Arc<dyn HistoryFs>, base_dir: &str) -> HistoryHost {
+        HistoryHost {
+            fs,
+            base_dir: PathBuf::from(base_dir),
+            path_style: PathStyle::Posix,
+        }
+    }
+
+    fn claude_history_line(
+        session_id: &str,
+        project: &str,
+        display: &str,
+        timestamp: u64,
+    ) -> String {
+        serde_json::json!({
+            "sessionId": session_id,
+            "project": project,
+            "display": display,
+            "timestamp": timestamp,
+        })
+        .to_string()
+    }
+
+    fn claude_project_line(session_id: &str, cwd: &str, content: &str, timestamp: &str) -> String {
+        serde_json::json!({
+            "sessionId": session_id,
+            "cwd": cwd,
+            "timestamp": timestamp,
+            "message": { "role": "user", "content": content },
+        })
+        .to_string()
+    }
+
+    #[gpui::test]
+    async fn claude_merges_history_and_project_files_newest_wins(cx: &mut TestAppContext) {
+        let source = Arc::new(InMemoryHistoryFs::new());
+        // Global history: an older title for s1 under /work/proj.
+        source.insert(
+            "/home/user/.claude/history.jsonl",
+            &format!(
+                "{}\n",
+                claude_history_line("s1", "/work/proj", "history title", 10_000)
+            ),
+            identity(1, 50),
+        );
+        // Project file (newer) should win the title.
+        source.insert(
+            "/home/user/.claude/projects/-work-proj/s1.jsonl",
+            &format!(
+                "{}\n",
+                claude_project_line(
+                    "s1",
+                    "/work/proj",
+                    "project title",
+                    "2026-07-24T10:00:00.000Z"
+                )
+            ),
+            identity(1, 50),
+        );
+
+        let service = service(cx);
+        let host = host_at(source.clone(), "/home/user/.claude");
+        let snapshot = service
+            .refresh(HistoryKind::Claude, &host, &[PathBuf::from("/work/proj")])
+            .await
+            .unwrap();
+        assert_eq!(snapshot.entries.len(), 1, "session deduped to one entry");
+        assert_eq!(snapshot.entries[0].session_id, "s1");
+        assert_eq!(snapshot.entries[0].title, "project title");
+    }
+
+    #[gpui::test]
+    async fn claude_secondary_cwd_does_not_surface_under_nonorigin_root(cx: &mut TestAppContext) {
+        let source = Arc::new(InMemoryHistoryFs::new());
+        // A session that started in /work/proj and later cd'd into /work/other,
+        // recorded under the origin's encoded directory.
+        source.insert(
+            "/home/user/.claude/projects/-work-proj/s2.jsonl",
+            &format!(
+                "{}\n{}\n",
+                claude_project_line("s2", "/work/proj", "task", "2026-07-24T10:00:00.000Z"),
+                claude_project_line("s2", "/work/other", "task", "2026-07-24T11:00:00.000Z"),
+            ),
+            identity(1, 80),
+        );
+
+        let service = service(cx);
+        let host = host_at(source.clone(), "/home/user/.claude");
+
+        // The origin root surfaces the session.
+        let origin = service
+            .refresh(HistoryKind::Claude, &host, &[PathBuf::from("/work/proj")])
+            .await
+            .unwrap();
+        assert_eq!(origin.entries.len(), 1);
+        assert_eq!(origin.entries[0].project_root, PathBuf::from("/work/proj"));
+
+        // The secondary directory must not surface it (matches the legacy
+        // directory-name lookup), even though it appears as a cwd in the file.
+        let secondary = service
+            .refresh(HistoryKind::Claude, &host, &[PathBuf::from("/work/other")])
+            .await
+            .unwrap();
+        assert_eq!(secondary.entries.len(), 0);
+    }
+
+    fn pi_session_file(id: &str, cwd: &str, content: &str, timestamp: &str) -> String {
+        let header = serde_json::json!({
+            "type": "session",
+            "id": id,
+            "cwd": cwd,
+            "timestamp": timestamp,
+        });
+        let message = serde_json::json!({
+            "type": "message",
+            "timestamp": timestamp,
+            "message": { "role": "user", "content": content },
+        });
+        format!("{header}\n{message}\n")
+    }
+
+    #[gpui::test]
+    async fn pi_scans_sessions_and_dedups_by_session(cx: &mut TestAppContext) {
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(
+            "/home/user/.pi/agent/sessions/--work-proj--/older.jsonl",
+            &pi_session_file("p1", "/work/proj", "old prompt", "2026-07-24T09:00:00.000Z"),
+            identity(1, 40),
+        );
+        source.insert(
+            "/home/user/.pi/agent/sessions/--work-proj--/newer.jsonl",
+            &pi_session_file("p1", "/work/proj", "new prompt", "2026-07-24T10:00:00.000Z"),
+            identity(1, 40),
+        );
+
+        let service = service(cx);
+        let host = host_at(source.clone(), "/home/user/.pi/agent");
+        let snapshot = service
+            .refresh(HistoryKind::Pi, &host, &[PathBuf::from("/work/proj")])
+            .await
+            .unwrap();
+        assert_eq!(snapshot.entries.len(), 1, "same session deduped to newest");
+        assert_eq!(snapshot.entries[0].session_id, "p1");
+        assert_eq!(snapshot.entries[0].title, "new prompt");
     }
 }

@@ -98,7 +98,7 @@ impl HistoryProvider for CodexHistoryProvider {
                 session_id: summary.id.clone(),
                 resolved_title,
                 fallback_title: summary.fallback_title.clone(),
-                working_dirs: vec![summary.cwd.clone()],
+                working_dir: summary.cwd.clone(),
                 last_activity_secs: summary.timestamp_secs,
                 last_activity_nanos: summary.timestamp_nanos,
             });
