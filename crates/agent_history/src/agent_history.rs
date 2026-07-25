@@ -13,6 +13,7 @@
 mod claude;
 mod codex;
 mod pi;
+mod transcript;
 
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::BTreeMap;
@@ -33,10 +34,11 @@ use util::paths::PathStyle;
 pub use claude::ClaudeHistoryProvider;
 pub use codex::CodexHistoryProvider;
 pub use pi::PiHistoryProvider;
+pub use transcript::{DEFAULT_BUDGET, ExcerptBudget, ExtractionRefusal, TranscriptExcerpt};
 
 /// Bumped when the persisted envelope layout changes. A mismatch is a cache
 /// miss with no migration.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 /// Bumped when any provider's parsing or normalization changes in a way that
 /// would make previously persisted summaries wrong. A mismatch is a cache miss.
 const PARSER_VERSION: u32 = 1;
@@ -73,6 +75,16 @@ impl HistoryKind {
             HistoryKind::Codex => Arc::new(CodexHistoryProvider),
             HistoryKind::Claude => Arc::new(ClaudeHistoryProvider),
             HistoryKind::Pi => Arc::new(PiHistoryProvider),
+        }
+    }
+
+    /// Classifies a raw session transcript into the shared, provider-neutral
+    /// event stream for handoff extraction.
+    fn classify_transcript(self, content: &str) -> transcript::Classified {
+        match self {
+            HistoryKind::Codex => codex::classify_transcript(content),
+            HistoryKind::Claude => claude::classify_transcript(content),
+            HistoryKind::Pi => pi::classify_transcript(content),
         }
     }
 
@@ -193,6 +205,17 @@ pub struct IndexedSession {
     pub working_dir: String,
     pub last_activity_secs: u64,
     pub last_activity_nanos: u32,
+    /// Absolute path (host path style) of this session's source transcript file,
+    /// when a readable one exists. `None` for rows known only from a title index
+    /// with no transcript body (e.g. a Claude session present only in
+    /// `history.jsonl`). Used to issue a [`TranscriptLocator`] for handoff
+    /// extraction; never projected into the public snapshot.
+    #[serde(default)]
+    pub source_path: Option<String>,
+    /// The source file's identity when the row was indexed, used to reject a
+    /// stale locator at extraction time.
+    #[serde(default)]
+    pub source_identity: Option<FileIdentity>,
 }
 
 impl IndexedSession {
@@ -220,6 +243,64 @@ pub trait HistoryProvider: Send + Sync {
         host: &HistoryHost,
         previous: Option<&serde_json::Value>,
     ) -> Result<ProviderRefresh>;
+}
+
+/// Identifies one source transcript to extract for a cross-agent handoff. The
+/// host produces this during a refresh (it knows each session's file), so the
+/// client addresses extraction by an opaque locator rather than handing the host
+/// an arbitrary path to read.
+#[derive(Clone, Debug)]
+pub struct TranscriptLocator {
+    pub kind: HistoryKind,
+    pub source_path: PathBuf,
+    /// The file identity recorded when the locator was issued. Extraction refuses
+    /// if the file no longer matches, guarding against a stale or swapped path.
+    pub expected_identity: Option<FileIdentity>,
+}
+
+/// The outcome of an extraction attempt that reached the source file.
+pub enum Extraction {
+    Excerpt(TranscriptExcerpt),
+    /// The file parsed, but nothing trustworthy survived; the caller must not
+    /// write a handoff.
+    Refused(ExtractionRefusal),
+}
+
+/// Reads and extracts a bounded, redacted handoff excerpt from a source
+/// transcript on the host that owns it. Errors are reserved for I/O and identity
+/// failures; an empty-but-readable transcript returns [`Extraction::Refused`].
+pub async fn extract_transcript(
+    host: &HistoryHost,
+    locator: &TranscriptLocator,
+    budget: &ExcerptBudget,
+) -> Result<Extraction> {
+    let before = host.fs.metadata(&locator.source_path).await?;
+    if let (Some(expected), Some(before)) = (locator.expected_identity, before) {
+        if expected != before {
+            return Err(anyhow!(
+                "transcript file changed since it was indexed: {:?}",
+                locator.source_path
+            ));
+        }
+    }
+
+    let content = host
+        .fs
+        .load(&locator.source_path)
+        .await
+        .with_context(|| format!("loading transcript {:?}", locator.source_path))?;
+
+    // If the file grew or its mtime advanced across the read, the source is
+    // likely still being written; flag the excerpt as possibly truncated rather
+    // than pretend it is complete.
+    let after = host.fs.metadata(&locator.source_path).await?;
+    let possibly_incomplete = before != after;
+
+    let classified = locator.kind.classify_transcript(&content);
+    match transcript::select_and_render(classified, budget, possibly_incomplete) {
+        Ok(excerpt) => Ok(Extraction::Excerpt(excerpt)),
+        Err(refusal) => Ok(Extraction::Refused(refusal)),
+    }
 }
 
 /// Whether a snapshot came from the persisted index (immediately, before
@@ -342,6 +423,46 @@ impl IndexService {
             host.path_style,
             Freshness::Fresh,
         ))
+    }
+
+    /// Resolves a session to its host-issued [`TranscriptLocator`] from a fresh
+    /// index and extracts a bounded handoff excerpt. The client never supplies a
+    /// path; only `(session_id, working_dir)` from a snapshot it already holds.
+    pub async fn extract(
+        &self,
+        kind: HistoryKind,
+        host: &HistoryHost,
+        session_id: &str,
+        working_dir: Option<&str>,
+        budget: &ExcerptBudget,
+    ) -> Result<Extraction> {
+        let index = self.refresh_index(kind, host).await?;
+        let normalized_working_dir =
+            working_dir.map(|dir| normalize_path_for_style(dir, host.path_style));
+        // Prefer an exact working-directory match (disambiguates a session id
+        // that Codex intentionally does not dedup across rollouts), else the
+        // first row for the session id.
+        let session = index
+            .indexed_sessions
+            .iter()
+            .filter(|session| session.session_id == session_id)
+            .max_by_key(|session| {
+                let matches_dir = normalized_working_dir
+                    .as_deref()
+                    .map(|dir| dir == session.working_dir)
+                    .unwrap_or(false);
+                (matches_dir, session.last_activity())
+            })
+            .with_context(|| format!("no indexed session {session_id:?}"))?;
+        let source_path = session.source_path.clone().with_context(|| {
+            format!("session {session_id:?} has no extractable transcript file")
+        })?;
+        let locator = TranscriptLocator {
+            kind,
+            source_path: PathBuf::from(source_path),
+            expected_identity: session.source_identity,
+        };
+        extract_transcript(host, &locator, budget).await
     }
 
     fn refresh_index(
@@ -960,5 +1081,139 @@ mod tests {
         assert_eq!(snapshot.entries.len(), 1, "same session deduped to newest");
         assert_eq!(snapshot.entries[0].session_id, "p1");
         assert_eq!(snapshot.entries[0].title, "new prompt");
+    }
+
+    fn codex_response_item(payload: serde_json::Value) -> String {
+        serde_json::json!({ "type": "response_item", "payload": payload }).to_string()
+    }
+
+    fn locator(path: &str, identity: Option<FileIdentity>) -> TranscriptLocator {
+        TranscriptLocator {
+            kind: HistoryKind::Codex,
+            source_path: PathBuf::from(path),
+            expected_identity: identity,
+        }
+    }
+
+    #[gpui::test]
+    async fn extract_transcript_renders_excerpt_from_source_file(cx: &mut TestAppContext) {
+        let _ = cx;
+        let path = "/home/user/.codex/sessions/2026/07/24/rollout-a.jsonl";
+        let content = [
+            session_meta("a", "/work", "2026-07-24T10:00:00.000Z"),
+            codex_response_item(serde_json::json!({
+                "type": "message", "role": "user",
+                "content": [{ "type": "input_text", "text": "Fix the crash" }]
+            })),
+            codex_response_item(serde_json::json!({
+                "type": "function_call", "name": "shell",
+                "arguments": "{\"command\":[\"cargo\",\"build\"]}", "call_id": "c1"
+            })),
+            codex_response_item(serde_json::json!({
+                "type": "function_call_output", "call_id": "c1",
+                "output": "{\"output\":\"boom\",\"metadata\":{\"exit_code\":1}}"
+            })),
+        ]
+        .join("\n");
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(path, &content, identity(5, content.len() as u64));
+        let host = host(source);
+
+        let extraction = extract_transcript(
+            &host,
+            &locator(path, Some(identity(5, content.len() as u64))),
+            &DEFAULT_BUDGET,
+        )
+        .await
+        .unwrap();
+        let Extraction::Excerpt(excerpt) = extraction else {
+            panic!("expected an excerpt");
+        };
+        assert!(excerpt.markdown.contains("**User:** Fix the crash"));
+        // The non-zero exit code pairs into a single error-marked tool turn.
+        assert!(
+            excerpt
+                .markdown
+                .contains("**Tool `shell` (error):** cargo build")
+        );
+        assert!(excerpt.markdown.contains("**Result:** boom"));
+        assert!(!excerpt.possibly_incomplete);
+        assert!(!excerpt.degraded);
+    }
+
+    #[gpui::test]
+    async fn extract_transcript_refuses_when_no_conversation(cx: &mut TestAppContext) {
+        let _ = cx;
+        let path = "/home/user/.codex/sessions/2026/07/24/rollout-b.jsonl";
+        // Only metadata/noise records, no user or assistant turn.
+        let content = [
+            session_meta("b", "/work", "2026-07-24T10:00:00.000Z"),
+            codex_response_item(serde_json::json!({ "type": "reasoning", "summary": [] })),
+        ]
+        .join("\n");
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(path, &content, identity(1, 1));
+        let host = host(source);
+
+        let extraction = extract_transcript(&host, &locator(path, None), &DEFAULT_BUDGET)
+            .await
+            .unwrap();
+        assert!(matches!(
+            extraction,
+            Extraction::Refused(ExtractionRefusal::NoUsableContent)
+        ));
+    }
+
+    #[gpui::test]
+    async fn index_service_extract_resolves_session_to_locator(cx: &mut TestAppContext) {
+        let path = "/home/user/.codex/sessions/2026/07/24/rollout-2026-07-24T10-00-00-aaa.jsonl";
+        let content = rollout(
+            &session_meta("aaa", "/work/project", "2026-07-24T10:00:00.000Z"),
+            &codex_response_item(serde_json::json!({
+                "type": "message", "role": "user",
+                "content": [{ "type": "input_text", "text": "resume this task" }]
+            })),
+        );
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(path, &content, identity(3, content.len() as u64));
+
+        let service = service(cx);
+        let host = host(source);
+        let extraction = service
+            .extract(
+                HistoryKind::Codex,
+                &host,
+                "aaa",
+                Some("/work/project"),
+                &DEFAULT_BUDGET,
+            )
+            .await
+            .unwrap();
+        let Extraction::Excerpt(excerpt) = extraction else {
+            panic!("expected an excerpt");
+        };
+        assert!(excerpt.markdown.contains("**User:** resume this task"));
+
+        // An unknown session id is an error, not a silent empty excerpt.
+        assert!(
+            service
+                .extract(HistoryKind::Codex, &host, "missing", None, &DEFAULT_BUDGET)
+                .await
+                .is_err()
+        );
+    }
+
+    #[gpui::test]
+    async fn extract_transcript_rejects_identity_mismatch(cx: &mut TestAppContext) {
+        let _ = cx;
+        let path = "/home/user/.codex/sessions/2026/07/24/rollout-c.jsonl";
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(path, "irrelevant", identity(9, 99));
+        let host = host(source);
+
+        // The locator was issued when the file had a different identity.
+        let result =
+            extract_transcript(&host, &locator(path, Some(identity(1, 1))), &DEFAULT_BUDGET).await;
+        assert!(result.is_err(), "stale locator must be rejected");
     }
 }

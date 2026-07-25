@@ -2725,6 +2725,57 @@ async fn test_agent_thread_history_stream(cx: &mut TestAppContext, server_cx: &m
     );
 }
 
+#[gpui::test]
+async fn test_extract_agent_transcript(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/root/.codex/sessions/2026/07/24",
+        json!({
+            "rollout-2026-07-24T10-00-00-aaa.jsonl":
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"aaa\",\"cwd\":\"/root/project\",\"timestamp\":\"2026-07-24T10:00:00.000Z\"}}\n\
+                 {\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"resume this task\"}]}}\n",
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let proto_client = cx.read(|cx| {
+        project
+            .read(cx)
+            .remote_client()
+            .unwrap()
+            .read(cx)
+            .proto_client()
+    });
+
+    // The host resolves the session to its own transcript file and returns a
+    // rendered excerpt; the client sent no path.
+    let excerpt = proto_client
+        .request(proto::ExtractAgentTranscript {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            kind: "codex".into(),
+            normalized_history_root: "/root/.codex".into(),
+            session_id: "aaa".into(),
+            working_dir: Some("/root/project".into()),
+        })
+        .await
+        .expect("extraction request should succeed");
+    assert!(excerpt.found);
+    assert!(excerpt.markdown.contains("**User:** resume this task"));
+
+    // An unknown session id is an RPC error, not a silent empty excerpt.
+    let missing = proto_client
+        .request(proto::ExtractAgentTranscript {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            kind: "codex".into(),
+            normalized_history_root: "/root/.codex".into(),
+            session_id: "does-not-exist".into(),
+            working_dir: None,
+        })
+        .await;
+    assert!(missing.is_err(), "unknown session should error");
+}
+
 pub async fn init_test(
     server_fs: &Arc<FakeFs>,
     cx: &mut TestAppContext,

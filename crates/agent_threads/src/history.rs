@@ -130,7 +130,102 @@ pub(crate) fn history_index_cache_root() -> PathBuf {
         .join("agent_threads")
 }
 
-fn indexed_snapshot_threads(snapshot: agent_history::Snapshot) -> Vec<HistoricalThread> {
+/// A rendered handoff excerpt returned to the client, independent of whether it
+/// was produced locally or on a remote host.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentTranscriptExcerpt {
+    pub markdown: String,
+    pub degraded: bool,
+    pub possibly_incomplete: bool,
+    pub malformed_count: u32,
+    pub unknown_count: u32,
+    pub included_turns: u32,
+    pub omitted_turns: u32,
+}
+
+impl From<agent_history::TranscriptExcerpt> for AgentTranscriptExcerpt {
+    fn from(excerpt: agent_history::TranscriptExcerpt) -> Self {
+        Self {
+            markdown: excerpt.markdown,
+            degraded: excerpt.degraded,
+            possibly_incomplete: excerpt.possibly_incomplete,
+            malformed_count: excerpt.malformed_count as u32,
+            unknown_count: excerpt.unknown_count as u32,
+            included_turns: excerpt.included_turns as u32,
+            omitted_turns: excerpt.omitted_turns as u32,
+        }
+    }
+}
+
+/// Extracts a handoff excerpt for a local project directly through the host
+/// index. `Ok(None)` means the transcript was read but nothing trustworthy
+/// survived (the caller must not write a handoff).
+pub(crate) async fn local_extract_transcript(
+    service: agent_history::IndexService,
+    kind: agent_history::HistoryKind,
+    host: agent_history::HistoryHost,
+    session_id: String,
+    working_dir: Option<String>,
+) -> Result<Option<AgentTranscriptExcerpt>> {
+    match service
+        .extract(
+            kind,
+            &host,
+            &session_id,
+            working_dir.as_deref(),
+            &agent_history::DEFAULT_BUDGET,
+        )
+        .await?
+    {
+        agent_history::Extraction::Excerpt(excerpt) => Ok(Some(excerpt.into())),
+        agent_history::Extraction::Refused(_) => Ok(None),
+    }
+}
+
+/// Extracts a handoff excerpt for a remote project by asking the host to resolve
+/// the session and parse it there; the client never reads the remote transcript
+/// itself. `Ok(None)` mirrors the local refusal case.
+///
+/// Not yet called: the handoff panel action currently gates cross-agent
+/// handoff to local projects, since writing the handoff document also needs to
+/// happen on the target's host and there is no remote write path yet. Kept
+/// landed and tested so remote support is a wiring change, not a new design.
+#[allow(dead_code)]
+pub(crate) async fn remote_extract_transcript(
+    proto_client: AnyProtoClient,
+    kind_id: &'static str,
+    history_root: PathBuf,
+    session_id: String,
+    working_dir: Option<String>,
+    path_style: PathStyle,
+) -> Result<Option<AgentTranscriptExcerpt>> {
+    let working_dir = working_dir
+        .map(|dir| normalize_path_for_style(&dir, path_style))
+        .filter(|dir| !dir.is_empty());
+    let response = proto_client
+        .request(proto::ExtractAgentTranscript {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            kind: kind_id.to_string(),
+            normalized_history_root: path_for_style(&history_root, path_style)?,
+            session_id,
+            working_dir,
+        })
+        .await?;
+    if !response.found {
+        return Ok(None);
+    }
+    Ok(Some(AgentTranscriptExcerpt {
+        markdown: response.markdown,
+        degraded: response.degraded,
+        possibly_incomplete: response.possibly_incomplete,
+        malformed_count: response.malformed_count,
+        unknown_count: response.unknown_count,
+        included_turns: response.included_turns,
+        omitted_turns: response.omitted_turns,
+    }))
+}
+
+pub(crate) fn indexed_snapshot_threads(snapshot: agent_history::Snapshot) -> Vec<HistoricalThread> {
     snapshot
         .entries
         .into_iter()
@@ -1354,6 +1449,177 @@ mod tests {
         assert_eq!(request.kind, "codex");
         assert_eq!(request.normalized_history_root, "/home/user/.codex");
         assert_eq!(request.project_roots, vec!["/work/project"]);
+    }
+
+    struct ExtractProtoClient {
+        request: Mutex<Option<proto::ExtractAgentTranscript>>,
+        response: proto::AgentTranscriptExcerpt,
+        handlers: parking_lot::Mutex<ProtoMessageHandlerSet>,
+    }
+
+    impl ExtractProtoClient {
+        fn new(response: proto::AgentTranscriptExcerpt) -> Self {
+            Self {
+                request: Mutex::new(None),
+                response,
+                handlers: parking_lot::Mutex::new(ProtoMessageHandlerSet::default()),
+            }
+        }
+    }
+
+    impl ProtoClient for ExtractProtoClient {
+        fn request(
+            &self,
+            envelope: proto::Envelope,
+            request_type: &'static str,
+        ) -> futures::future::BoxFuture<'static, Result<proto::Envelope>> {
+            let recorded = proto::ExtractAgentTranscript::from_envelope(envelope);
+            if let Ok(mut request) = self.request.lock() {
+                *request = recorded;
+            }
+            let result = if request_type == proto::ExtractAgentTranscript::NAME {
+                Ok(self.response.clone().into_envelope(0, None, None))
+            } else {
+                Err(anyhow!("unexpected unary request: {request_type}"))
+            };
+            async move { result }.boxed()
+        }
+
+        fn request_stream(
+            &self,
+            _envelope: proto::Envelope,
+            request_type: &'static str,
+        ) -> futures::future::BoxFuture<
+            'static,
+            Result<futures::stream::BoxStream<'static, Result<proto::Envelope>>>,
+        > {
+            let request_type = request_type.to_string();
+            async move { anyhow::bail!("unexpected stream request: {request_type}") }.boxed()
+        }
+
+        fn send(&self, _envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {
+            Ok(())
+        }
+
+        fn send_response(
+            &self,
+            _envelope: proto::Envelope,
+            _message_type: &'static str,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
+            &self.handlers
+        }
+
+        fn is_via_collab(&self) -> bool {
+            false
+        }
+
+        fn has_wsl_interop(&self) -> bool {
+            false
+        }
+    }
+
+    #[gpui::test]
+    async fn local_extract_transcript_returns_rendered_excerpt(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let rollout_dir = Path::new("/home/user/.codex/sessions/2026/07/24");
+        let rollout_path = rollout_dir.join("rollout-2026-07-24T10-00-00-aaa.jsonl");
+        fs.create_dir(rollout_dir).await.unwrap();
+        fs.insert_file(
+            &rollout_path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"aaa\",\"cwd\":\"/work/project\",\"timestamp\":\"2026-07-24T10:00:00.000Z\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"resume this task\"}]}}\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        )
+        .await;
+        let service = agent_history::IndexService::new(
+            fs.clone(),
+            PathBuf::from("/home/user/.flint/cache/agent_threads"),
+        );
+        let host = agent_history::HistoryHost {
+            fs: Arc::new(agent_history::LocalHistoryFs(fs)),
+            base_dir: PathBuf::from("/home/user/.codex"),
+            path_style: PathStyle::Posix,
+        };
+
+        let excerpt = local_extract_transcript(
+            service,
+            agent_history::HistoryKind::Codex,
+            host,
+            "aaa".to_string(),
+            Some("/work/project".to_string()),
+        )
+        .await
+        .expect("extraction should succeed")
+        .expect("expected an excerpt");
+        assert!(excerpt.markdown.contains("**User:** resume this task"));
+    }
+
+    #[gpui::test]
+    async fn remote_extract_transcript_sends_request_and_parses_response(_cx: &mut TestAppContext) {
+        let response = proto::AgentTranscriptExcerpt {
+            found: true,
+            markdown: "**User:** remote task".to_string(),
+            degraded: true,
+            possibly_incomplete: false,
+            malformed_count: 0,
+            unknown_count: 2,
+            included_turns: 3,
+            omitted_turns: 1,
+        };
+        let client = Arc::new(ExtractProtoClient::new(response));
+        let excerpt = remote_extract_transcript(
+            AnyProtoClient::new(client.clone()),
+            "codex",
+            PathBuf::from("/home/user/.codex"),
+            "remote-session".to_string(),
+            Some("/work/project".to_string()),
+            PathStyle::Posix,
+        )
+        .await
+        .expect("request should succeed")
+        .expect("expected an excerpt");
+
+        assert_eq!(excerpt.markdown, "**User:** remote task");
+        assert!(excerpt.degraded);
+        assert_eq!(excerpt.unknown_count, 2);
+
+        let request = client
+            .request
+            .lock()
+            .expect("request lock")
+            .clone()
+            .expect("extract request");
+        assert_eq!(request.kind, "codex");
+        assert_eq!(request.normalized_history_root, "/home/user/.codex");
+        assert_eq!(request.session_id, "remote-session");
+        assert_eq!(request.working_dir.as_deref(), Some("/work/project"));
+    }
+
+    #[gpui::test]
+    async fn remote_extract_transcript_maps_not_found_to_none(_cx: &mut TestAppContext) {
+        let response = proto::AgentTranscriptExcerpt {
+            found: false,
+            ..Default::default()
+        };
+        let client = Arc::new(ExtractProtoClient::new(response));
+        let excerpt = remote_extract_transcript(
+            AnyProtoClient::new(client),
+            "codex",
+            PathBuf::from("/home/user/.codex"),
+            "missing".to_string(),
+            None,
+            PathStyle::Posix,
+        )
+        .await
+        .expect("request should succeed");
+        assert!(excerpt.is_none());
     }
 
     fn fixed_identity(seconds: u64, length: u64) -> Option<HistoryFileIdentity> {

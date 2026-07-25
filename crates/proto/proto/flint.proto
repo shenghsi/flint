@@ -401,7 +401,9 @@ message Envelope {
     RenameRemotePath rename_remote_path = 465;
     RemoveRemotePath remove_remote_path = 466;
     StreamAgentThreadHistory stream_agent_thread_history = 467;
-    AgentThreadHistorySnapshot agent_thread_history_snapshot = 468; // current max
+    AgentThreadHistorySnapshot agent_thread_history_snapshot = 468;
+    ExtractAgentTranscript extract_agent_transcript = 469;
+    AgentTranscriptExcerpt agent_transcript_excerpt = 470; // current max
   }
 
   reserved 87 to 88;
@@ -512,6 +514,35 @@ message AgentThreadHistoryEntry {
   string title = 2;
   string project_root = 3;
   Timestamp last_activity_at = 4;
+}
+
+// Request/response: extract a bounded, redacted handoff excerpt of a session's
+// transcript. The host resolves the session to its own transcript file (the
+// client never supplies a path), parses and bounds it host-side, and returns
+// provider-neutral Markdown.
+message ExtractAgentTranscript {
+  uint64 project_id = 1;
+  // Agent kind id: "codex", "claude", or "pi".
+  string kind = 2;
+  // The resolved, host-absolute agent history root (honoring CODEX_HOME etc.).
+  string normalized_history_root = 3;
+  string session_id = 4;
+  // Disambiguates a session id shared across rollouts (Codex) when set.
+  optional string working_dir = 5;
+}
+
+message AgentTranscriptExcerpt {
+  // False when the transcript was read but no trustworthy content survived
+  // (the caller must not write a handoff). I/O and identity failures are RPC
+  // errors instead.
+  bool found = 1;
+  string markdown = 2;
+  bool degraded = 3;
+  bool possibly_incomplete = 4;
+  uint32 malformed_count = 5;
+  uint32 unknown_count = 6;
+  uint32 included_turns = 7;
+  uint32 omitted_turns = 8;
 }
 
 message SpawnKernel {

@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::transcript::{Classified, RawEvent, summarize_tool_input};
 use crate::{
     FileIdentity, HistoryHost, HistoryKind, HistoryProvider, IndexedSession, ProviderRefresh,
 };
@@ -75,7 +76,7 @@ impl HistoryProvider for PiHistoryProvider {
         }
 
         let mut sessions = Vec::new();
-        for entry in files.values() {
+        for (key, entry) in &files {
             let Some(summary) = &entry.summary else {
                 continue;
             };
@@ -92,6 +93,8 @@ impl HistoryProvider for PiHistoryProvider {
                 working_dir: summary.project_root.clone(),
                 last_activity_secs: summary.last_activity_secs,
                 last_activity_nanos: summary.last_activity_nanos,
+                source_path: Some(key.clone()),
+                source_identity: Some(entry.identity),
             });
         }
 
@@ -198,6 +201,188 @@ fn parse_session_summary(content: &str) -> Option<PiSummary> {
     })
 }
 
+/// Classifies a Pi session into the shared event stream.
+///
+/// Pi's file is an append-only tree keyed by `id`/`parentId`, so the active
+/// conversation is the parent chain from the last valid entry back to the root;
+/// abandoned branches are discarded. Tool calls are `toolCall` blocks on
+/// assistant messages; tool results are separate `role: "toolResult"` messages.
+pub(crate) fn classify_transcript(content: &str) -> Classified {
+    let mut classified = Classified::default();
+
+    // Parse every line, preserving order and indexing by id.
+    let mut entries: Vec<Value> = Vec::new();
+    let mut index_by_id: BTreeMap<String, usize> = BTreeMap::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            classified.malformed_count += 1;
+            continue;
+        };
+        if let Some(id) = value.get("id").and_then(Value::as_str) {
+            index_by_id.insert(id.to_string(), entries.len());
+        }
+        entries.push(value);
+    }
+
+    // Walk the active branch: from the last entry that carries an id, follow
+    // `parentId` to the root, then restore chronological order.
+    let Some(leaf) = entries
+        .iter()
+        .rev()
+        .find(|entry| entry.get("id").and_then(Value::as_str).is_some())
+    else {
+        return classified;
+    };
+    let mut chain: Vec<&Value> = Vec::new();
+    let mut current = Some(leaf);
+    let mut guard = entries.len() + 1;
+    while let Some(entry) = current {
+        chain.push(entry);
+        guard -= 1;
+        if guard == 0 {
+            break;
+        }
+        current = entry
+            .get("parentId")
+            .and_then(Value::as_str)
+            .and_then(|parent| index_by_id.get(parent))
+            .and_then(|index| entries.get(*index));
+    }
+    chain.reverse();
+
+    for entry in chain {
+        classify_entry(entry, &mut classified);
+    }
+    classified
+}
+
+fn classify_entry(entry: &Value, classified: &mut Classified) {
+    match entry.get("type").and_then(Value::as_str) {
+        Some("message") => classify_message(entry, classified),
+        Some("session") | Some("model_change") | Some("thinking_level_change") => {
+            classified.events.push(RawEvent::Noise)
+        }
+        Some("compaction") | Some("summary") | Some("branch_summary") => classified
+            .events
+            .push(RawEvent::Checkpoint("compaction".to_string())),
+        _ => classified.unknown_count += 1,
+    }
+}
+
+fn classify_message(entry: &Value, classified: &mut Classified) {
+    let Some(message) = entry.get("message") else {
+        classified.malformed_count += 1;
+        return;
+    };
+    match message.get("role").and_then(Value::as_str) {
+        Some("user") => {
+            let text = message_text(message);
+            if !text.trim().is_empty() {
+                classified.events.push(RawEvent::User(text));
+            }
+        }
+        Some("assistant") => classify_assistant_blocks(message, classified),
+        Some("toolResult") => classified.events.push(RawEvent::ToolResult {
+            call_id: message
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            output: message_text(message),
+            is_error: message.get("isError").and_then(Value::as_bool) == Some(true),
+        }),
+        _ => classified.unknown_count += 1,
+    }
+}
+
+fn classify_assistant_blocks(message: &Value, classified: &mut Classified) {
+    if let Some(text) = message.get("content").and_then(Value::as_str) {
+        classified
+            .events
+            .push(RawEvent::Assistant(text.to_string()));
+        return;
+    }
+    let Some(blocks) = message.get("content").and_then(Value::as_array) else {
+        // Some assistant messages carry blocks under `blocks`.
+        if let Some(blocks) = message.get("blocks").and_then(Value::as_array) {
+            classify_blocks(blocks, classified);
+        } else {
+            classified.malformed_count += 1;
+        }
+        return;
+    };
+    classify_blocks(blocks, classified);
+}
+
+fn classify_blocks(blocks: &[Value], classified: &mut Classified) {
+    let mut pending_text: Vec<String> = Vec::new();
+    let flush = |pending_text: &mut Vec<String>, classified: &mut Classified| {
+        let joined = pending_text.join("\n");
+        pending_text.clear();
+        if !joined.trim().is_empty() {
+            classified.events.push(RawEvent::Assistant(joined));
+        }
+    };
+    for block in blocks {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(Value::as_str) {
+                    pending_text.push(text.to_string());
+                }
+            }
+            Some("toolCall") => {
+                flush(&mut pending_text, classified);
+                classified.events.push(RawEvent::ToolCall {
+                    call_id: block
+                        .get("toolCallId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    name: block
+                        .get("name")
+                        .or_else(|| block.get("toolName"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("tool")
+                        .to_string(),
+                    detail: summarize_tool_input(block.get("arguments")),
+                });
+            }
+            Some("thinking") | Some("redacted_thinking") => classified.events.push(RawEvent::Noise),
+            _ => classified.unknown_count += 1,
+        }
+    }
+    flush(&mut pending_text, classified);
+}
+
+/// Extracts message text from either a string `content`, a `content` array of
+/// `{type:text}` blocks, or a `blocks` array.
+fn message_text(message: &Value) -> String {
+    if let Some(text) = message.get("content").and_then(Value::as_str) {
+        return text.to_string();
+    }
+    for key in ["content", "blocks"] {
+        if let Some(blocks) = message.get(key).and_then(Value::as_array) {
+            let text = blocks
+                .iter()
+                .filter(|block| {
+                    block
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(|kind| kind == "text")
+                        .unwrap_or(true)
+                })
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.is_empty() {
+                return text;
+            }
+        }
+    }
+    String::new()
+}
+
 fn parse_timestamp(timestamp: &str) -> Option<SystemTime> {
     chrono::DateTime::parse_from_rfc3339(timestamp)
         .ok()
@@ -237,4 +422,111 @@ fn normalize_title(title: &str) -> Option<String> {
         "{}…",
         title.chars().take(MAX_TITLE_CHARS).collect::<String>()
     ))
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+    use crate::transcript::RawEvent;
+
+    fn line(value: Value) -> String {
+        value.to_string()
+    }
+
+    #[test]
+    fn walks_parent_chain_and_discards_abandoned_branch() {
+        // Tree: root user u1 -> assistant a1 (branch A, edited away)
+        //                    -> assistant a2 (branch B, the live leaf)
+        // a2 is last in file order, so its chain (u1 -> a2) is the active one
+        // and a1 must be discarded.
+        let content = [
+            line(serde_json::json!({ "type": "session", "id": "s" })),
+            line(serde_json::json!({
+                "type": "message", "id": "u1", "parentId": "s",
+                "message": { "role": "user", "content": "the real question" }
+            })),
+            line(serde_json::json!({
+                "type": "message", "id": "a1", "parentId": "u1",
+                "message": { "role": "assistant", "content": "abandoned answer" }
+            })),
+            line(serde_json::json!({
+                "type": "message", "id": "a2", "parentId": "u1",
+                "message": { "role": "assistant", "content": "the kept answer" }
+            })),
+        ]
+        .join("\n");
+
+        let classified = classify_transcript(&content);
+        assert_eq!(
+            classified.events,
+            vec![
+                RawEvent::Noise, // session header
+                RawEvent::User("the real question".to_string()),
+                RawEvent::Assistant("the kept answer".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tool_call_block_and_tool_result_message_pair() {
+        let content = [
+            line(serde_json::json!({
+                "type": "message", "id": "u1", "parentId": null,
+                "message": { "role": "user", "content": "build it" }
+            })),
+            line(serde_json::json!({
+                "type": "message", "id": "a1", "parentId": "u1",
+                "message": { "role": "assistant", "blocks": [
+                    { "type": "thinking" },
+                    { "type": "text", "text": "running build" },
+                    { "type": "toolCall", "toolCallId": "t1", "name": "bash", "arguments": { "command": "make" } }
+                ]}
+            })),
+            line(serde_json::json!({
+                "type": "message", "id": "r1", "parentId": "a1",
+                "message": { "role": "toolResult", "toolCallId": "t1", "isError": true, "content": "make: fatal" }
+            })),
+        ]
+        .join("\n");
+
+        let classified = classify_transcript(&content);
+        assert_eq!(
+            classified.events,
+            vec![
+                RawEvent::User("build it".to_string()),
+                RawEvent::Noise, // thinking
+                RawEvent::Assistant("running build".to_string()),
+                RawEvent::ToolCall {
+                    call_id: Some("t1".to_string()),
+                    name: "bash".to_string(),
+                    detail: "make".to_string(),
+                },
+                RawEvent::ToolResult {
+                    call_id: Some("t1".to_string()),
+                    output: "make: fatal".to_string(),
+                    is_error: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn model_change_is_noise_unknown_type_counted() {
+        let content = [
+            line(serde_json::json!({ "type": "model_change", "id": "m1", "parentId": null })),
+            line(serde_json::json!({
+                "type": "message", "id": "u1", "parentId": "m1",
+                "message": { "role": "user", "content": "hi" }
+            })),
+            line(serde_json::json!({ "type": "brand_new", "id": "x1", "parentId": "u1" })),
+        ]
+        .join("\n");
+
+        let classified = classify_transcript(&content);
+        assert_eq!(
+            classified.events,
+            vec![RawEvent::Noise, RawEvent::User("hi".to_string())]
+        );
+        assert_eq!(classified.unknown_count, 1);
+    }
 }

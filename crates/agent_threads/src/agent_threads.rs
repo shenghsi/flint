@@ -4,6 +4,7 @@ mod claude_history;
 mod codex_history;
 pub mod connect_proxy;
 mod egress;
+mod handoff;
 mod history;
 pub mod managed_agent;
 mod managed_agent_progress;
@@ -59,6 +60,42 @@ pub struct AgentLaunchCommand {
     pub cwd: Option<PathBuf>,
     pub hidden: bool,
     pub default_launch_option: Option<String>,
+}
+
+/// Whether a kind's CLI accepts an initial task prompt as a trailing
+/// positional argument when starting a fresh session, used to seed a
+/// cross-agent handoff target's first turn without requiring the user to
+/// paste it manually.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InitialPromptStrategy {
+    /// Append the prompt as the final positional argument, after every other
+    /// flag (including the session-id flag).
+    TrailingPositionalArg,
+    /// No known way to seed a first prompt; the caller must show it to the
+    /// user for manual paste instead.
+    Unsupported,
+}
+
+/// Appends `prompt` to `command`'s args as the CLI's initial task prompt, if
+/// `kind` supports it, after every other flag has already been applied.
+/// Returns `false` (leaving `command` unchanged) when unsupported, or when
+/// `prompt` is empty or looks like a flag (starts with `-`) rather than plain
+/// text -- some CLI argument parsers would consume a leading-dash string as an
+/// option instead of the positional prompt.
+pub(crate) fn seed_launch_command_with_prompt(
+    command: &mut AgentLaunchCommand,
+    kind: &AgentKindDefinition,
+    prompt: &str,
+) -> bool {
+    if kind.initial_prompt_strategy != InitialPromptStrategy::TrailingPositionalArg {
+        return false;
+    }
+    let prompt = prompt.trim();
+    if prompt.is_empty() || prompt.starts_with('-') {
+        return false;
+    }
+    command.args.push(prompt.to_string());
+    true
 }
 
 /// A resume-time flag a user can opt into, e.g. `--dangerously-skip-permissions`.
@@ -127,6 +164,7 @@ pub struct AgentKindDefinition {
     /// internally that Flint never learns, so fresh threads can't be
     /// resumed or restored across app restarts.
     pub session_id_flag: Option<&'static str>,
+    pub initial_prompt_strategy: InitialPromptStrategy,
     official_source_prefixes: &'static [&'static str],
     releases: &'static [AgentRelease],
     self_update_policy: AgentSelfUpdatePolicy,
@@ -193,6 +231,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             // Codex CLI has no flag for assigning a session id to a fresh
             // session, so fresh Codex threads stay non-restorable.
             session_id_flag: None,
+            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
             official_source_prefixes: &[
                 "https://github.com/openai/codex/releases/download/",
                 "https://release-assets.githubusercontent.com/",
@@ -225,6 +264,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 args: vec!["--dangerously-skip-permissions".to_string()],
             }],
             session_id_flag: Some("--session-id"),
+            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
             official_source_prefixes: &["https://downloads.claude.ai/claude-code-releases/"],
             releases: CLAUDE_RELEASES,
             self_update_policy: AgentSelfUpdatePolicy {
@@ -250,6 +290,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             history_provider: Some(Arc::new(PiHistoryProvider)),
             resume_options: Vec::new(),
             session_id_flag: Some("--session-id"),
+            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
             official_source_prefixes: &[
                 "https://github.com/earendil-works/pi/releases/download/",
                 "https://release-assets.githubusercontent.com/",
@@ -533,6 +574,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["codex", "claude", "pi"]
         );
+    }
+
+    #[test]
+    fn seed_launch_command_appends_prompt_after_existing_args() {
+        let codex = kind_by_id("codex").unwrap();
+        let mut command = AgentLaunchCommand {
+            args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
+            ..Default::default()
+        };
+        assert!(seed_launch_command_with_prompt(
+            &mut command,
+            &codex,
+            "read the handoff doc and continue"
+        ));
+        assert_eq!(
+            command.args,
+            vec![
+                "--dangerously-bypass-approvals-and-sandbox".to_string(),
+                "read the handoff doc and continue".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn seed_launch_command_rejects_dash_prefixed_prompt() {
+        let claude = kind_by_id("claude").unwrap();
+        let mut command = AgentLaunchCommand::default();
+        assert!(!seed_launch_command_with_prompt(
+            &mut command,
+            &claude,
+            "--dangerously-skip-permissions looks like a flag"
+        ));
+        assert!(command.args.is_empty());
+    }
+
+    #[test]
+    fn seed_launch_command_rejects_empty_prompt() {
+        let pi = kind_by_id("pi").unwrap();
+        let mut command = AgentLaunchCommand::default();
+        assert!(!seed_launch_command_with_prompt(&mut command, &pi, "   "));
+        assert!(command.args.is_empty());
+    }
+
+    #[test]
+    fn all_registered_kinds_support_trailing_positional_prompt() {
+        for kind in agent_kind_registry() {
+            assert_eq!(
+                kind.initial_prompt_strategy,
+                InitialPromptStrategy::TrailingPositionalArg,
+                "{} should support seeding a handoff prompt",
+                kind.id
+            );
+        }
     }
 
     #[test]

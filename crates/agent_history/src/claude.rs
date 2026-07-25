@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::transcript::{Classified, RawEvent, one_line, summarize_tool_input};
 use crate::{
     FileIdentity, HistoryHost, HistoryKind, HistoryProvider, IndexedSession, ProviderRefresh,
     normalize_path_for_style,
@@ -190,6 +191,9 @@ fn build_sessions(
         working_dir: String,
         title: String,
         activity: SystemTime,
+        /// The per-project transcript file backing this row, when the candidate
+        /// came from one. A history-only candidate has no transcript to extract.
+        source: Option<(String, FileIdentity)>,
     }
     // Keyed by (session id, normalized working directory).
     let mut candidates: BTreeMap<(String, String), Candidate> = BTreeMap::new();
@@ -197,7 +201,8 @@ fn build_sessions(
                         working_dir: &str,
                         title: String,
                         activity: SystemTime,
-                        from_project_file: bool| {
+                        from_project_file: bool,
+                        source: Option<(String, FileIdentity)>| {
         let normalized_dir = normalize_path_for_style(working_dir, host.path_style);
         let key = (session_id.clone(), normalized_dir.clone());
         let replace = match candidates.get(&key) {
@@ -215,6 +220,7 @@ fn build_sessions(
                     working_dir: normalized_dir,
                     title,
                     activity,
+                    source,
                 },
             );
         }
@@ -228,11 +234,12 @@ fn build_sessions(
                 record.title.clone(),
                 UNIX_EPOCH + Duration::from_millis(record.timestamp_ms),
                 false,
+                None,
             );
         }
     }
 
-    for entry in project_files.values() {
+    for (path, entry) in project_files {
         let Some(summary) = &entry.summary else {
             continue;
         };
@@ -254,6 +261,7 @@ fn build_sessions(
                 title.clone(),
                 activity,
                 true,
+                Some((path.clone(), entry.identity)),
             );
         }
     }
@@ -266,6 +274,10 @@ fn build_sessions(
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| (duration.as_secs(), duration.subsec_nanos()))
                 .unwrap_or((0, 0));
+            let (source_path, source_identity) = match candidate.source {
+                Some((path, identity)) => (Some(path), Some(identity)),
+                None => (None, None),
+            };
             IndexedSession {
                 session_id: candidate.session_id,
                 resolved_title: candidate.title,
@@ -273,6 +285,8 @@ fn build_sessions(
                 working_dir: candidate.working_dir,
                 last_activity_secs,
                 last_activity_nanos,
+                source_path,
+                source_identity,
             }
         })
         .collect()
@@ -325,6 +339,185 @@ fn parse_project_summary(content: &str, default_session_id: String) -> Option<St
         last_activity_nanos,
         working_directories,
     })
+}
+
+/// Top-level record `type`s that are known Claude metadata, not conversation.
+/// Whitelisting `user`/`assistant` and mapping these to noise keeps the ~dozen
+/// non-conversational record types from leaking into a handoff while still
+/// flagging genuinely unknown (drifted) types as degraded.
+const CLAUDE_METADATA_TYPES: &[&str] = &[
+    "system",
+    "attachment",
+    "last-prompt",
+    "mode",
+    "ai-title",
+    "permission-mode",
+    "queue-operation",
+    "summary",
+];
+
+/// Classifies a top-level Claude transcript file into the shared event stream.
+///
+/// Only `user`/`assistant` records carry conversation. `user` records that are
+/// solely `tool_result` blocks (the majority in a tool-heavy session) classify
+/// as tool results, not user text; assistant `thinking` blocks are excluded;
+/// `file-history-*` records are preserved as checkpoints. Subagent files are
+/// never opened by the caller, so sidechain records are not expected here.
+pub(crate) fn classify_transcript(content: &str) -> Classified {
+    let mut classified = Classified::default();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<Value>(line) else {
+            classified.malformed_count += 1;
+            continue;
+        };
+        let record_type = record.get("type").and_then(Value::as_str);
+        match record_type {
+            Some("user") => classify_user_record(&record, &mut classified),
+            Some("assistant") => classify_assistant_record(&record, &mut classified),
+            Some("file-history-snapshot") | Some("file-history-delta") => classified
+                .events
+                .push(RawEvent::Checkpoint("file history".to_string())),
+            Some(other) if CLAUDE_METADATA_TYPES.contains(&other) => {
+                classified.events.push(RawEvent::Noise)
+            }
+            _ => classified.unknown_count += 1,
+        }
+    }
+    classified
+}
+
+fn classify_user_record(record: &Value, classified: &mut Classified) {
+    // Synthetic command-driven user records are not real prompts.
+    if record.get("isMeta").and_then(Value::as_bool) == Some(true) {
+        classified.events.push(RawEvent::Noise);
+        return;
+    }
+    let Some(content) = record
+        .get("message")
+        .and_then(|message| message.get("content"))
+    else {
+        classified.malformed_count += 1;
+        return;
+    };
+    if let Some(text) = content.as_str() {
+        if is_excluded_user_text(text) {
+            classified.events.push(RawEvent::Noise);
+        } else {
+            classified.events.push(RawEvent::User(one_line(text)));
+        }
+        return;
+    }
+    let Some(blocks) = content.as_array() else {
+        classified.malformed_count += 1;
+        return;
+    };
+    let mut user_text = Vec::new();
+    for block in blocks {
+        match block.get("type").and_then(Value::as_str) {
+            Some("tool_result") => classified.events.push(RawEvent::ToolResult {
+                call_id: block
+                    .get("tool_use_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                output: tool_result_text(block.get("content")),
+                is_error: block.get("is_error").and_then(Value::as_bool) == Some(true),
+            }),
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(Value::as_str) {
+                    user_text.push(text.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    let joined = user_text.join("\n");
+    if !joined.trim().is_empty() && !is_excluded_user_text(&joined) {
+        classified.events.push(RawEvent::User(joined));
+    }
+}
+
+fn classify_assistant_record(record: &Value, classified: &mut Classified) {
+    let Some(content) = record
+        .get("message")
+        .and_then(|message| message.get("content"))
+    else {
+        classified.malformed_count += 1;
+        return;
+    };
+    if let Some(text) = content.as_str() {
+        classified
+            .events
+            .push(RawEvent::Assistant(text.to_string()));
+        return;
+    }
+    let Some(blocks) = content.as_array() else {
+        classified.malformed_count += 1;
+        return;
+    };
+    // Flush buffered assistant text before each tool call so ordering (text then
+    // the call it introduces) is preserved.
+    let mut pending_text: Vec<String> = Vec::new();
+    let flush = |pending_text: &mut Vec<String>, classified: &mut Classified| {
+        let joined = pending_text.join("\n");
+        pending_text.clear();
+        if !joined.trim().is_empty() {
+            classified.events.push(RawEvent::Assistant(joined));
+        }
+    };
+    for block in blocks {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(Value::as_str) {
+                    pending_text.push(text.to_string());
+                }
+            }
+            Some("tool_use") => {
+                flush(&mut pending_text, classified);
+                classified.events.push(RawEvent::ToolCall {
+                    call_id: block.get("id").and_then(Value::as_str).map(str::to_string),
+                    name: block
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("tool")
+                        .to_string(),
+                    detail: summarize_tool_input(block.get("input")),
+                });
+            }
+            // Thinking/redacted-thinking are known and excluded.
+            Some("thinking") | Some("redacted_thinking") | Some("image") => {
+                classified.events.push(RawEvent::Noise)
+            }
+            _ => classified.unknown_count += 1,
+        }
+    }
+    flush(&mut pending_text, classified);
+}
+
+/// A `tool_result` block's `content` is a string or an array of `{type:text}`
+/// (and other) blocks; join the text.
+fn tool_result_text(content: Option<&Value>) -> String {
+    let Some(content) = content else {
+        return String::new();
+    };
+    if let Some(text) = content.as_str() {
+        return text.to_string();
+    }
+    if let Some(blocks) = content.as_array() {
+        return blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    content.to_string()
+}
+
+fn is_excluded_user_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with('/') || is_local_command_artifact(trimmed)
 }
 
 fn message_content_title(content: &Value) -> Option<String> {
@@ -404,4 +597,114 @@ struct ProjectHistoryLine {
 struct ProjectHistoryMessage {
     role: Option<String>,
     content: Value,
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+    use crate::transcript::RawEvent;
+
+    fn user(content: Value) -> String {
+        serde_json::json!({ "type": "user", "message": { "role": "user", "content": content } })
+            .to_string()
+    }
+    fn assistant(content: Value) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": { "role": "assistant", "content": content }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn tool_result_only_user_row_is_a_result_not_user_text() {
+        let content = user(serde_json::json!([
+            { "type": "tool_result", "tool_use_id": "toolu_1", "content": "command output" }
+        ]));
+        let classified = classify_transcript(&content);
+        assert_eq!(
+            classified.events,
+            vec![RawEvent::ToolResult {
+                call_id: Some("toolu_1".to_string()),
+                output: "command output".to_string(),
+                is_error: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn assistant_thinking_excluded_text_and_tool_use_ordered() {
+        let content = assistant(serde_json::json!([
+            { "type": "thinking", "thinking": "secret reasoning" },
+            { "type": "text", "text": "I'll run the tests" },
+            { "type": "tool_use", "id": "toolu_2", "name": "Bash", "input": { "command": "cargo test" } }
+        ]));
+        let classified = classify_transcript(&content);
+        assert_eq!(
+            classified.events,
+            vec![
+                RawEvent::Noise,
+                RawEvent::Assistant("I'll run the tests".to_string()),
+                RawEvent::ToolCall {
+                    call_id: Some("toolu_2".to_string()),
+                    name: "Bash".to_string(),
+                    detail: "cargo test".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn plain_user_text_and_string_content_classified() {
+        let content = [
+            user(serde_json::json!("switch to main and pull")),
+            user(serde_json::json!([{ "type": "text", "text": "then run tests" }])),
+        ]
+        .join("\n");
+        let classified = classify_transcript(&content);
+        assert_eq!(
+            classified.events,
+            vec![
+                RawEvent::User("switch to main and pull".to_string()),
+                RawEvent::User("then run tests".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn synthetic_and_slash_user_records_are_excluded() {
+        let content = [
+            serde_json::json!({
+                "type": "user", "isMeta": true,
+                "message": { "role": "user", "content": "<local-command-caveat>x</local-command-caveat>" }
+            })
+            .to_string(),
+            user(serde_json::json!("/clear")),
+            user(serde_json::json!("<command-name>/tui</command-name>")),
+        ]
+        .join("\n");
+        let classified = classify_transcript(&content);
+        assert_eq!(classified.events, vec![RawEvent::Noise; 3]);
+    }
+
+    #[test]
+    fn metadata_types_are_noise_and_file_history_is_checkpoint() {
+        let content = [
+            serde_json::json!({ "type": "system" }).to_string(),
+            serde_json::json!({ "type": "ai-title", "title": "x" }).to_string(),
+            serde_json::json!({ "type": "file-history-snapshot" }).to_string(),
+            serde_json::json!({ "type": "brand-new-type" }).to_string(),
+        ]
+        .join("\n");
+        let classified = classify_transcript(&content);
+        assert_eq!(
+            classified.events,
+            vec![
+                RawEvent::Noise,
+                RawEvent::Noise,
+                RawEvent::Checkpoint("file history".to_string()),
+            ]
+        );
+        assert_eq!(classified.unknown_count, 1);
+    }
 }
