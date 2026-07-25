@@ -33,7 +33,7 @@ use picker::{
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
 use project::{Worktree, git_store::Repository};
-pub use remote_connections::RemoteSettings;
+pub use remote_connections::{RemoteAgentRoute, RemoteSettings, SshConnection};
 pub use remote_servers::RemoteServerProjects;
 use settings::{Settings, WorktreeId};
 use ui_input::ErasedEditor;
@@ -1370,6 +1370,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
                 let icon = icon_for_project_group(key);
                 let show_icon = self.filtered_entries_include_remote_project();
+                let is_tunneled = remote_connection_is_tunneled(key.host().as_ref(), cx);
 
                 let mut path_start_offset = 0;
                 let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
@@ -1468,6 +1469,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         highlighted.paths.clear();
                                     }
                                     highlighted.render(window, cx)
+                                })
+                                .when(is_tunneled, |this| {
+                                    this.child(
+                                        div()
+                                            .id("tunneled-route-marker")
+                                            .child(tunneled_route_marker())
+                                            .tooltip(Tooltip::text(TUNNELED_ROUTE_TOOLTIP)),
+                                    )
                                 })
                                 .tooltip(Tooltip::text(tooltip_path)),
                         )
@@ -1593,11 +1602,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                     )
                     .into_any_element();
 
-                let icon = icon_for_remote_connection(match location {
+                let connection_options = match location {
                     SerializedWorkspaceLocation::Local => None,
                     SerializedWorkspaceLocation::Remote(options) => Some(options),
-                });
+                };
+                let icon = icon_for_remote_connection(connection_options);
                 let show_icon = self.filtered_entries_include_remote_project();
+                let is_tunneled = remote_connection_is_tunneled(connection_options, cx);
 
                 Some(
                     ListItem::new(ix)
@@ -1620,6 +1631,15 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         highlighted.paths.clear();
                                     }
                                     highlighted.render(window, cx)
+                                })
+                                .when(is_tunneled, |this| {
+                                    this.child(
+                                        div()
+                                            .id("tunneled-route-marker")
+                                            .flex_shrink_0()
+                                            .child(tunneled_route_marker())
+                                            .tooltip(Tooltip::text(TUNNELED_ROUTE_TOOLTIP)),
+                                    )
                                 })
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
@@ -1950,6 +1970,25 @@ pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOption
             RemoteConnectionOptions::Mock(_) => IconName::Server,
         },
     }
+}
+
+pub const TUNNELED_ROUTE_TOOLTIP: &str = "Tunneled agent route";
+
+/// Whether `options` identifies a remote connection whose Agent Threads route
+/// is `Tunneled`. Returns `false` for local projects, WSL, Docker, and hosts
+/// whose route is `Direct` (the default, including hosts absent from
+/// `remote.ssh_connections`).
+pub fn remote_connection_is_tunneled(options: Option<&RemoteConnectionOptions>, cx: &App) -> bool {
+    let Some(options) = options else {
+        return false;
+    };
+    RemoteSettings::get_global(cx).agent_route_for(options) == Some(RemoteAgentRoute::Tunneled)
+}
+
+pub fn tunneled_route_marker() -> impl IntoElement {
+    Icon::new(IconName::ArrowRightLeft)
+        .size(IconSize::Small)
+        .color(Color::Muted)
 }
 
 // Compute the highlighted text for the name and path
@@ -2650,6 +2689,152 @@ mod tests {
             icon_for_project_group(&delegate.window_project_groups[1]),
             IconName::Server
         );
+    }
+
+    fn set_ssh_connections(cx: &mut TestAppContext, connections: Vec<SshConnection>) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.remote.ssh_connections = Some(connections);
+                });
+            });
+        });
+    }
+
+    fn ssh_options(host: &str) -> RemoteConnectionOptions {
+        RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: host.into(),
+            ..Default::default()
+        })
+    }
+
+    #[gpui::test]
+    fn remote_connection_is_tunneled_reflects_configured_route(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_ssh_connections(
+            cx,
+            vec![
+                SshConnection {
+                    host: "tunneled-host".into(),
+                    agent_route: Some(RemoteAgentRoute::Tunneled),
+                    ..Default::default()
+                },
+                SshConnection {
+                    host: "direct-host".into(),
+                    agent_route: Some(RemoteAgentRoute::Direct),
+                    ..Default::default()
+                },
+            ],
+        );
+
+        cx.update(|cx| {
+            assert!(remote_connection_is_tunneled(
+                Some(&ssh_options("tunneled-host")),
+                cx
+            ));
+            assert!(!remote_connection_is_tunneled(
+                Some(&ssh_options("direct-host")),
+                cx
+            ));
+            assert!(!remote_connection_is_tunneled(
+                Some(&ssh_options("unconfigured-host")),
+                cx
+            ));
+            assert!(!remote_connection_is_tunneled(
+                Some(&RemoteConnectionOptions::Wsl(
+                    remote::WslConnectionOptions {
+                        distro_name: "Ubuntu".into(),
+                        user: None,
+                    }
+                )),
+                cx
+            ));
+            assert!(!remote_connection_is_tunneled(
+                Some(&RemoteConnectionOptions::Docker(
+                    remote::DockerConnectionOptions {
+                        name: "container".into(),
+                        remote_user: "".into(),
+                        container_id: "container-id".into(),
+                        upload_binary_over_docker_exec: false,
+                        use_podman: false,
+                        remote_env: Default::default(),
+                    }
+                )),
+                cx
+            ));
+            assert!(!remote_connection_is_tunneled(None, cx));
+        });
+    }
+
+    #[gpui::test]
+    fn this_window_project_groups_are_marked_independently_by_host(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_ssh_connections(
+            cx,
+            vec![SshConnection {
+                host: "tunneled-host".into(),
+                agent_route: Some(RemoteAgentRoute::Tunneled),
+                ..Default::default()
+            }],
+        );
+
+        let tunneled_group = ProjectGroupKey::new(
+            Some(ssh_options("tunneled-host")),
+            PathList::new(&[PathBuf::from("/this-window/tunneled-project")]),
+        );
+        let direct_group = ProjectGroupKey::new(
+            Some(ssh_options("direct-host")),
+            PathList::new(&[PathBuf::from("/this-window/direct-project")]),
+        );
+
+        cx.update(|cx| {
+            assert!(
+                remote_connection_is_tunneled(tunneled_group.host().as_ref(), cx),
+                "the group on the configured tunneled host should be marked"
+            );
+            assert!(
+                !remote_connection_is_tunneled(direct_group.host().as_ref(), cx),
+                "an unconfigured host in the same window should not be marked \
+                 just because another group in the window is tunneled"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn remote_connection_is_tunneled_reflects_live_settings_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_ssh_connections(
+            cx,
+            vec![SshConnection {
+                host: "build-host".into(),
+                agent_route: Some(RemoteAgentRoute::Direct),
+                ..Default::default()
+            }],
+        );
+        let options = ssh_options("build-host");
+
+        cx.update(|cx| {
+            assert!(
+                !remote_connection_is_tunneled(Some(&options), cx),
+                "should read the initially configured Direct route"
+            );
+        });
+
+        set_ssh_connections(
+            cx,
+            vec![SshConnection {
+                host: "build-host".into(),
+                agent_route: Some(RemoteAgentRoute::Tunneled),
+                ..Default::default()
+            }],
+        );
+
+        cx.update(|cx| {
+            assert!(
+                remote_connection_is_tunneled(Some(&options), cx),
+                "should reflect the route change without recreating any state"
+            );
+        });
     }
 
     #[gpui::test]
