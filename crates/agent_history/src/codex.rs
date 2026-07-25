@@ -102,6 +102,8 @@ impl HistoryProvider for CodexHistoryProvider {
                 working_dir: summary.cwd.clone(),
                 last_activity_secs: summary.timestamp_secs,
                 last_activity_nanos: summary.timestamp_nanos,
+                source_path: Some(key.clone()),
+                source_identity: Some(entry.identity),
             });
         }
 

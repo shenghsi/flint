@@ -191,6 +191,9 @@ fn build_sessions(
         working_dir: String,
         title: String,
         activity: SystemTime,
+        /// The per-project transcript file backing this row, when the candidate
+        /// came from one. A history-only candidate has no transcript to extract.
+        source: Option<(String, FileIdentity)>,
     }
     // Keyed by (session id, normalized working directory).
     let mut candidates: BTreeMap<(String, String), Candidate> = BTreeMap::new();
@@ -198,7 +201,8 @@ fn build_sessions(
                         working_dir: &str,
                         title: String,
                         activity: SystemTime,
-                        from_project_file: bool| {
+                        from_project_file: bool,
+                        source: Option<(String, FileIdentity)>| {
         let normalized_dir = normalize_path_for_style(working_dir, host.path_style);
         let key = (session_id.clone(), normalized_dir.clone());
         let replace = match candidates.get(&key) {
@@ -216,6 +220,7 @@ fn build_sessions(
                     working_dir: normalized_dir,
                     title,
                     activity,
+                    source,
                 },
             );
         }
@@ -229,11 +234,12 @@ fn build_sessions(
                 record.title.clone(),
                 UNIX_EPOCH + Duration::from_millis(record.timestamp_ms),
                 false,
+                None,
             );
         }
     }
 
-    for entry in project_files.values() {
+    for (path, entry) in project_files {
         let Some(summary) = &entry.summary else {
             continue;
         };
@@ -255,6 +261,7 @@ fn build_sessions(
                 title.clone(),
                 activity,
                 true,
+                Some((path.clone(), entry.identity)),
             );
         }
     }
@@ -267,6 +274,10 @@ fn build_sessions(
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| (duration.as_secs(), duration.subsec_nanos()))
                 .unwrap_or((0, 0));
+            let (source_path, source_identity) = match candidate.source {
+                Some((path, identity)) => (Some(path), Some(identity)),
+                None => (None, None),
+            };
             IndexedSession {
                 session_id: candidate.session_id,
                 resolved_title: candidate.title,
@@ -274,6 +285,8 @@ fn build_sessions(
                 working_dir: candidate.working_dir,
                 last_activity_secs,
                 last_activity_nanos,
+                source_path,
+                source_identity,
             }
         })
         .collect()

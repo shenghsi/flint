@@ -76,7 +76,7 @@ impl HistoryProvider for PiHistoryProvider {
         }
 
         let mut sessions = Vec::new();
-        for entry in files.values() {
+        for (key, entry) in &files {
             let Some(summary) = &entry.summary else {
                 continue;
             };
@@ -93,6 +93,8 @@ impl HistoryProvider for PiHistoryProvider {
                 working_dir: summary.project_root.clone(),
                 last_activity_secs: summary.last_activity_secs,
                 last_activity_nanos: summary.last_activity_nanos,
+                source_path: Some(key.clone()),
+                source_identity: Some(entry.identity),
             });
         }
 

@@ -242,6 +242,7 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_app_data_directory);
         session
             .add_stream_request_handler(cx.weak_entity(), Self::handle_stream_agent_thread_history);
+        session.add_request_handler(cx.weak_entity(), Self::handle_extract_agent_transcript);
         session.add_request_handler(cx.weak_entity(), Self::handle_compute_remote_file_sha256);
         session.add_request_handler(
             cx.weak_entity(),
@@ -1251,6 +1252,67 @@ impl HeadlessProject {
         Ok(response_rx)
     }
 
+    async fn handle_extract_agent_transcript(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExtractAgentTranscript>,
+        cx: AsyncApp,
+    ) -> Result<proto::AgentTranscriptExcerpt> {
+        use agent_history::{DEFAULT_BUDGET, Extraction, HistoryHost, HistoryKind, LocalHistoryFs};
+
+        const MAX_PATH_LEN: usize = 4096;
+
+        let payload = envelope.payload;
+        let kind = HistoryKind::from_id(&payload.kind).context("unsupported agent history kind")?;
+        let path_style = PathStyle::local();
+        anyhow::ensure!(
+            util::paths::is_absolute(&payload.normalized_history_root, path_style),
+            "history root must be absolute"
+        );
+        anyhow::ensure!(
+            payload.normalized_history_root.len() <= MAX_PATH_LEN,
+            "history root path too long"
+        );
+        if let Some(working_dir) = &payload.working_dir {
+            anyhow::ensure!(
+                working_dir.len() <= MAX_PATH_LEN,
+                "working dir path too long"
+            );
+        }
+
+        let (fs, index) = this.read_with(&cx, |this, _| {
+            (this.fs.clone(), this.agent_history_index.clone())
+        });
+        let host = HistoryHost {
+            fs: Arc::new(LocalHistoryFs(fs)),
+            base_dir: PathBuf::from(&payload.normalized_history_root),
+            path_style,
+        };
+
+        let extraction = cx
+            .background_spawn(async move {
+                index
+                    .extract(
+                        kind,
+                        &host,
+                        &payload.session_id,
+                        payload.working_dir.as_deref(),
+                        &DEFAULT_BUDGET,
+                    )
+                    .await
+            })
+            .await?;
+
+        Ok(match extraction {
+            Extraction::Excerpt(excerpt) => agent_transcript_excerpt_to_proto(excerpt),
+            // A readable-but-empty transcript is a normal "no content" result,
+            // not an error.
+            Extraction::Refused(_) => proto::AgentTranscriptExcerpt {
+                found: false,
+                ..Default::default()
+            },
+        })
+    }
+
     async fn handle_compute_remote_file_sha256(
         _this: Entity<Self>,
         envelope: TypedEnvelope<proto::ComputeRemoteFileSha256>,
@@ -1469,6 +1531,21 @@ fn agent_history_snapshot_to_proto(
                 last_activity_at: Some(entry.last_activity_at.into()),
             })
             .collect(),
+    }
+}
+
+fn agent_transcript_excerpt_to_proto(
+    excerpt: agent_history::TranscriptExcerpt,
+) -> proto::AgentTranscriptExcerpt {
+    proto::AgentTranscriptExcerpt {
+        found: true,
+        markdown: excerpt.markdown,
+        degraded: excerpt.degraded,
+        possibly_incomplete: excerpt.possibly_incomplete,
+        malformed_count: excerpt.malformed_count as u32,
+        unknown_count: excerpt.unknown_count as u32,
+        included_turns: excerpt.included_turns as u32,
+        omitted_turns: excerpt.omitted_turns as u32,
     }
 }
 

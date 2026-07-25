@@ -38,7 +38,7 @@ pub use transcript::{DEFAULT_BUDGET, ExcerptBudget, ExtractionRefusal, Transcrip
 
 /// Bumped when the persisted envelope layout changes. A mismatch is a cache
 /// miss with no migration.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 /// Bumped when any provider's parsing or normalization changes in a way that
 /// would make previously persisted summaries wrong. A mismatch is a cache miss.
 const PARSER_VERSION: u32 = 1;
@@ -205,6 +205,17 @@ pub struct IndexedSession {
     pub working_dir: String,
     pub last_activity_secs: u64,
     pub last_activity_nanos: u32,
+    /// Absolute path (host path style) of this session's source transcript file,
+    /// when a readable one exists. `None` for rows known only from a title index
+    /// with no transcript body (e.g. a Claude session present only in
+    /// `history.jsonl`). Used to issue a [`TranscriptLocator`] for handoff
+    /// extraction; never projected into the public snapshot.
+    #[serde(default)]
+    pub source_path: Option<String>,
+    /// The source file's identity when the row was indexed, used to reject a
+    /// stale locator at extraction time.
+    #[serde(default)]
+    pub source_identity: Option<FileIdentity>,
 }
 
 impl IndexedSession {
@@ -412,6 +423,46 @@ impl IndexService {
             host.path_style,
             Freshness::Fresh,
         ))
+    }
+
+    /// Resolves a session to its host-issued [`TranscriptLocator`] from a fresh
+    /// index and extracts a bounded handoff excerpt. The client never supplies a
+    /// path; only `(session_id, working_dir)` from a snapshot it already holds.
+    pub async fn extract(
+        &self,
+        kind: HistoryKind,
+        host: &HistoryHost,
+        session_id: &str,
+        working_dir: Option<&str>,
+        budget: &ExcerptBudget,
+    ) -> Result<Extraction> {
+        let index = self.refresh_index(kind, host).await?;
+        let normalized_working_dir =
+            working_dir.map(|dir| normalize_path_for_style(dir, host.path_style));
+        // Prefer an exact working-directory match (disambiguates a session id
+        // that Codex intentionally does not dedup across rollouts), else the
+        // first row for the session id.
+        let session = index
+            .indexed_sessions
+            .iter()
+            .filter(|session| session.session_id == session_id)
+            .max_by_key(|session| {
+                let matches_dir = normalized_working_dir
+                    .as_deref()
+                    .map(|dir| dir == session.working_dir)
+                    .unwrap_or(false);
+                (matches_dir, session.last_activity())
+            })
+            .with_context(|| format!("no indexed session {session_id:?}"))?;
+        let source_path = session.source_path.clone().with_context(|| {
+            format!("session {session_id:?} has no extractable transcript file")
+        })?;
+        let locator = TranscriptLocator {
+            kind,
+            source_path: PathBuf::from(source_path),
+            expected_identity: session.source_identity,
+        };
+        extract_transcript(host, &locator, budget).await
     }
 
     fn refresh_index(
@@ -1111,6 +1162,45 @@ mod tests {
             extraction,
             Extraction::Refused(ExtractionRefusal::NoUsableContent)
         ));
+    }
+
+    #[gpui::test]
+    async fn index_service_extract_resolves_session_to_locator(cx: &mut TestAppContext) {
+        let path = "/home/user/.codex/sessions/2026/07/24/rollout-2026-07-24T10-00-00-aaa.jsonl";
+        let content = rollout(
+            &session_meta("aaa", "/work/project", "2026-07-24T10:00:00.000Z"),
+            &codex_response_item(serde_json::json!({
+                "type": "message", "role": "user",
+                "content": [{ "type": "input_text", "text": "resume this task" }]
+            })),
+        );
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(path, &content, identity(3, content.len() as u64));
+
+        let service = service(cx);
+        let host = host(source);
+        let extraction = service
+            .extract(
+                HistoryKind::Codex,
+                &host,
+                "aaa",
+                Some("/work/project"),
+                &DEFAULT_BUDGET,
+            )
+            .await
+            .unwrap();
+        let Extraction::Excerpt(excerpt) = extraction else {
+            panic!("expected an excerpt");
+        };
+        assert!(excerpt.markdown.contains("**User:** resume this task"));
+
+        // An unknown session id is an error, not a silent empty excerpt.
+        assert!(
+            service
+                .extract(HistoryKind::Codex, &host, "missing", None, &DEFAULT_BUDGET)
+                .await
+                .is_err()
+        );
     }
 
     #[gpui::test]
