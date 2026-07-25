@@ -13,6 +13,7 @@
 mod claude;
 mod codex;
 mod pi;
+mod transcript;
 
 #[cfg(any(test, feature = "test-support"))]
 use std::collections::BTreeMap;
@@ -33,6 +34,7 @@ use util::paths::PathStyle;
 pub use claude::ClaudeHistoryProvider;
 pub use codex::CodexHistoryProvider;
 pub use pi::PiHistoryProvider;
+pub use transcript::{DEFAULT_BUDGET, ExcerptBudget, ExtractionRefusal, TranscriptExcerpt};
 
 /// Bumped when the persisted envelope layout changes. A mismatch is a cache
 /// miss with no migration.
@@ -73,6 +75,16 @@ impl HistoryKind {
             HistoryKind::Codex => Arc::new(CodexHistoryProvider),
             HistoryKind::Claude => Arc::new(ClaudeHistoryProvider),
             HistoryKind::Pi => Arc::new(PiHistoryProvider),
+        }
+    }
+
+    /// Classifies a raw session transcript into the shared, provider-neutral
+    /// event stream for handoff extraction.
+    fn classify_transcript(self, content: &str) -> transcript::Classified {
+        match self {
+            HistoryKind::Codex => codex::classify_transcript(content),
+            HistoryKind::Claude => claude::classify_transcript(content),
+            HistoryKind::Pi => pi::classify_transcript(content),
         }
     }
 
@@ -220,6 +232,64 @@ pub trait HistoryProvider: Send + Sync {
         host: &HistoryHost,
         previous: Option<&serde_json::Value>,
     ) -> Result<ProviderRefresh>;
+}
+
+/// Identifies one source transcript to extract for a cross-agent handoff. The
+/// host produces this during a refresh (it knows each session's file), so the
+/// client addresses extraction by an opaque locator rather than handing the host
+/// an arbitrary path to read.
+#[derive(Clone, Debug)]
+pub struct TranscriptLocator {
+    pub kind: HistoryKind,
+    pub source_path: PathBuf,
+    /// The file identity recorded when the locator was issued. Extraction refuses
+    /// if the file no longer matches, guarding against a stale or swapped path.
+    pub expected_identity: Option<FileIdentity>,
+}
+
+/// The outcome of an extraction attempt that reached the source file.
+pub enum Extraction {
+    Excerpt(TranscriptExcerpt),
+    /// The file parsed, but nothing trustworthy survived; the caller must not
+    /// write a handoff.
+    Refused(ExtractionRefusal),
+}
+
+/// Reads and extracts a bounded, redacted handoff excerpt from a source
+/// transcript on the host that owns it. Errors are reserved for I/O and identity
+/// failures; an empty-but-readable transcript returns [`Extraction::Refused`].
+pub async fn extract_transcript(
+    host: &HistoryHost,
+    locator: &TranscriptLocator,
+    budget: &ExcerptBudget,
+) -> Result<Extraction> {
+    let before = host.fs.metadata(&locator.source_path).await?;
+    if let (Some(expected), Some(before)) = (locator.expected_identity, before) {
+        if expected != before {
+            return Err(anyhow!(
+                "transcript file changed since it was indexed: {:?}",
+                locator.source_path
+            ));
+        }
+    }
+
+    let content = host
+        .fs
+        .load(&locator.source_path)
+        .await
+        .with_context(|| format!("loading transcript {:?}", locator.source_path))?;
+
+    // If the file grew or its mtime advanced across the read, the source is
+    // likely still being written; flag the excerpt as possibly truncated rather
+    // than pretend it is complete.
+    let after = host.fs.metadata(&locator.source_path).await?;
+    let possibly_incomplete = before != after;
+
+    let classified = locator.kind.classify_transcript(&content);
+    match transcript::select_and_render(classified, budget, possibly_incomplete) {
+        Ok(excerpt) => Ok(Extraction::Excerpt(excerpt)),
+        Err(refusal) => Ok(Extraction::Refused(refusal)),
+    }
 }
 
 /// Whether a snapshot came from the persisted index (immediately, before
@@ -960,5 +1030,100 @@ mod tests {
         assert_eq!(snapshot.entries.len(), 1, "same session deduped to newest");
         assert_eq!(snapshot.entries[0].session_id, "p1");
         assert_eq!(snapshot.entries[0].title, "new prompt");
+    }
+
+    fn codex_response_item(payload: serde_json::Value) -> String {
+        serde_json::json!({ "type": "response_item", "payload": payload }).to_string()
+    }
+
+    fn locator(path: &str, identity: Option<FileIdentity>) -> TranscriptLocator {
+        TranscriptLocator {
+            kind: HistoryKind::Codex,
+            source_path: PathBuf::from(path),
+            expected_identity: identity,
+        }
+    }
+
+    #[gpui::test]
+    async fn extract_transcript_renders_excerpt_from_source_file(cx: &mut TestAppContext) {
+        let _ = cx;
+        let path = "/home/user/.codex/sessions/2026/07/24/rollout-a.jsonl";
+        let content = [
+            session_meta("a", "/work", "2026-07-24T10:00:00.000Z"),
+            codex_response_item(serde_json::json!({
+                "type": "message", "role": "user",
+                "content": [{ "type": "input_text", "text": "Fix the crash" }]
+            })),
+            codex_response_item(serde_json::json!({
+                "type": "function_call", "name": "shell",
+                "arguments": "{\"command\":[\"cargo\",\"build\"]}", "call_id": "c1"
+            })),
+            codex_response_item(serde_json::json!({
+                "type": "function_call_output", "call_id": "c1",
+                "output": "{\"output\":\"boom\",\"metadata\":{\"exit_code\":1}}"
+            })),
+        ]
+        .join("\n");
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(path, &content, identity(5, content.len() as u64));
+        let host = host(source);
+
+        let extraction = extract_transcript(
+            &host,
+            &locator(path, Some(identity(5, content.len() as u64))),
+            &DEFAULT_BUDGET,
+        )
+        .await
+        .unwrap();
+        let Extraction::Excerpt(excerpt) = extraction else {
+            panic!("expected an excerpt");
+        };
+        assert!(excerpt.markdown.contains("**User:** Fix the crash"));
+        // The non-zero exit code pairs into a single error-marked tool turn.
+        assert!(
+            excerpt
+                .markdown
+                .contains("**Tool `shell` (error):** cargo build")
+        );
+        assert!(excerpt.markdown.contains("**Result:** boom"));
+        assert!(!excerpt.possibly_incomplete);
+        assert!(!excerpt.degraded);
+    }
+
+    #[gpui::test]
+    async fn extract_transcript_refuses_when_no_conversation(cx: &mut TestAppContext) {
+        let _ = cx;
+        let path = "/home/user/.codex/sessions/2026/07/24/rollout-b.jsonl";
+        // Only metadata/noise records, no user or assistant turn.
+        let content = [
+            session_meta("b", "/work", "2026-07-24T10:00:00.000Z"),
+            codex_response_item(serde_json::json!({ "type": "reasoning", "summary": [] })),
+        ]
+        .join("\n");
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(path, &content, identity(1, 1));
+        let host = host(source);
+
+        let extraction = extract_transcript(&host, &locator(path, None), &DEFAULT_BUDGET)
+            .await
+            .unwrap();
+        assert!(matches!(
+            extraction,
+            Extraction::Refused(ExtractionRefusal::NoUsableContent)
+        ));
+    }
+
+    #[gpui::test]
+    async fn extract_transcript_rejects_identity_mismatch(cx: &mut TestAppContext) {
+        let _ = cx;
+        let path = "/home/user/.codex/sessions/2026/07/24/rollout-c.jsonl";
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(path, "irrelevant", identity(9, 99));
+        let host = host(source);
+
+        // The locator was issued when the file had a different identity.
+        let result =
+            extract_transcript(&host, &locator(path, Some(identity(1, 1))), &DEFAULT_BUDGET).await;
+        assert!(result.is_err(), "stale locator must be rejected");
     }
 }
