@@ -116,9 +116,10 @@ paired tool call+result, and coalesced noise), then applies one shared,
 kind-agnostic selection and rendering pass. The per-kind classifiers are the
 only kind-specific code.
 
-The classifier details below were validated against locally installed Codex
-0.145.0, Claude 2.1.219, and Pi 0.81.1 histories and must be locked with
-versioned fixtures; a classifier change bumps `PARSER_VERSION`.
+The classifier details below were validated against real on-disk Codex
+0.145.0, Claude 2.1.219, and Pi 0.81.1 sessions (record-type distributions and
+block shapes confirmed directly) and must be locked with versioned fixtures; a
+classifier change bumps `PARSER_VERSION`.
 
 ### Codex
 
@@ -133,6 +134,9 @@ versioned fixtures; a classifier change bumps `PARSER_VERSION`.
   user content.
 - Reasoning records may carry encrypted content or summaries and are never
   exported as assistant text.
+- High-volume noise records (`reasoning`, `event_msg / token_count`) commonly
+  outnumber conversation records several to one in a real rollout, which is why
+  selection budgets over normalized turns rather than raw records.
 - Records are deduplicated by record or call id where present.
 
 ### Claude
@@ -141,12 +145,23 @@ versioned fixtures; a classifier change bumps `PARSER_VERSION`.
   under `<session-id>/subagents/agent-*.jsonl` (marked `isSidechain: true`) are
   **never** recursed into; the parent transcript already contains the parent
   Task tool result, which is the correct representation of subagent work.
-- A `message.role == "user"` record may consist solely of `tool_result` blocks;
-  it is classified as a tool result, not as user text.
-- Synthetic records are filtered using the existing broader artifact filter
-  (records flagged `isMeta: true`, and content beginning with
-  `<local-command-`, `<command-`, `<bash-`, or a leading slash), matching the
-  title-extraction filter already in `crates/agent_history`.
+- Conversation is selected by a **whitelist** of top-level `type`: only `user`
+  and `assistant` records carry turns. The current format also emits roughly a
+  dozen non-conversation top-level types (`system`, `attachment`, `last-prompt`,
+  `mode`, `ai-title`, `permission-mode`, `queue-operation`,
+  `file-history-snapshot`, `file-history-delta`). A blacklist of known
+  synthetic prefixes would leak all of these, so extraction whitelists
+  conversation types and coalesces everything else as noise. `file-history-*`
+  records are preserved as checkpoints (Claude's analog to Pi compaction).
+- A `type == "user"` record may consist solely of `tool_result` blocks — in
+  practice this is the *majority* of user records in a tool-heavy session — and
+  is classified as a tool result, not as user text. Only a `user` record
+  containing a `text` block (or a plain-string content) is user text.
+- Assistant records are classified per content block: `text` is assistant text,
+  `tool_use` is a tool call, and `thinking` blocks are excluded.
+- `isMeta: true` user records and the existing synthetic-prefix artifacts
+  (`<local-command-`, `<command-`, `<bash-`, leading slash) remain excluded,
+  matching the title-extraction filter already in `crates/agent_history`.
 
 ### Pi
 
