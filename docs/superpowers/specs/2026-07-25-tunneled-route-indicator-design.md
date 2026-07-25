@@ -140,19 +140,29 @@ harder to follow than the call sites it replaced.
 
 ### Marker glyph
 
-`⇄` (U+21C4), rendered as a `Label` in the UI font.
+`IconName::ArrowRightLeft` (`crates/icons/src/icons.rs:37`, backed by
+`assets/icons/arrow_right_left.svg`), rendered at `IconSize::Small`.
 
-Coverage is confirmed rather than assumed: `.FlintSans`
-(`assets/settings/default.json:57`) maps to IBM Plex Sans
-(`crates/gpui/src/text_system.rs:1185`), and direct cmap inspection of
-`assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf` and `-SemiBold.ttf` finds
-`0x21C4`.
+The visual is the `⇄` form: a rightward arrow above a leftward arrow. An SVG is
+used rather than the U+21C4 text character because `ui_font_family` is
+user-configurable (`assets/settings/default.json:57`). The character is present
+in the bundled IBM Plex Sans — `.FlintSans` maps to it at
+`crates/gpui/src/text_system.rs:1185`, and cmap inspection of
+`IBMPlexSans-Regular.ttf` and `-SemiBold.ttf` finds `0x21C4` — but a user on a
+different UI font would get GPUI's fallback, which can differ in weight or
+optical size from surrounding text. The SVG has no such failure mode and picks
+up `Color` like every other glyph in these surfaces.
 
-`ui_font_family` is user-configurable, so a user on a font lacking the glyph
-gets GPUI's fallback, which may differ in weight or optical size. Accepted; the
-SVG alternative (`assets/icons/link.svg`) remains available if this proves a
-problem. The label must not use `buffer_font`, which would compound the
-mismatch.
+Converting the font glyph to an SVG asset was considered and rejected. Flint's
+icons are stroke-based line art (`fill="none"`, `stroke-width="1.2"`, rounded
+caps); a font glyph converts to filled outlines and would read heavier than its
+neighbors. It would also create a derivative of an SIL OFL 1.1 font with a
+Reserved Font Name inside `assets/icons`, which currently carries a single
+Lucide ISC notice (`assets/icons/LICENSES`). The existing Lucide icon avoids
+both problems.
+
+`ArrowRightLeft` has no other use in the codebase, so it carries no conflicting
+established meaning.
 
 ### Semantic risk
 
@@ -173,7 +183,6 @@ In `crates/recent_projects/src/recent_projects.rs`, beside
 `icon_for_remote_connection`:
 
 ```rust
-pub const TUNNELED_ROUTE_MARKER: &str = "⇄";
 pub const TUNNELED_ROUTE_TOOLTIP: &str = "Tunneled agent route";
 
 pub fn remote_connection_is_tunneled(
@@ -184,10 +193,22 @@ pub fn remote_connection_is_tunneled(
     RemoteSettings::get_global(cx).agent_route_for(options)
         == Some(RemoteAgentRoute::Tunneled)
 }
+
+pub fn tunneled_route_marker() -> impl IntoElement {
+    Icon::new(IconName::ArrowRightLeft)
+        .size(IconSize::Small)
+        .color(Color::Muted)
+}
 ```
 
 Returning `bool` rather than `Option<SharedString>` lets call sites read as
-`.when(is_tunneled, ...)`, and keeps the glyph and hover text defined once.
+`.when(is_tunneled, ...)`.
+
+The marker is built by a constructor rather than exposed as a raw glyph
+constant so that its representation is changeable in one place. Both open
+questions about its appearance — whether `Color::Muted` is legible enough for
+the only signal the feature has, and whether the icon reads correctly at
+`IconSize::Small` — resolve inside this function without touching a call site.
 
 `RemoteSettings::agent_route_for` already exists and is tested
 (`crates/recent_projects/src/remote_connections.rs:80-103`, tests at `169-217`).
@@ -221,14 +242,7 @@ therefore reactive with no explicit subscription.
 
 ### Rendering
 
-All sites use:
-
-```rust
-Label::new(TUNNELED_ROUTE_MARKER)
-    .size(LabelSize::Small)
-    .color(Color::Muted)
-```
-
+All sites render the marker through `tunneled_route_marker()`.
 `Color::Muted` matches the secondary metadata already in these rows.
 
 **Title bar** (`title_bar.rs:502-520`). The `h_flex` currently carries

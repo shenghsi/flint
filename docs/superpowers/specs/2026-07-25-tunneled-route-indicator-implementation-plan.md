@@ -49,7 +49,6 @@ Crate: `crates/recent_projects`, in `recent_projects.rs` beside
 `icon_for_remote_connection` (`:1942`).
 
 ```rust
-pub const TUNNELED_ROUTE_MARKER: &str = "⇄";
 pub const TUNNELED_ROUTE_TOOLTIP: &str = "Tunneled agent route";
 
 pub fn remote_connection_is_tunneled(
@@ -60,7 +59,18 @@ pub fn remote_connection_is_tunneled(
     RemoteSettings::get_global(cx).agent_route_for(options)
         == Some(RemoteAgentRoute::Tunneled)
 }
+
+pub fn tunneled_route_marker() -> impl IntoElement {
+    Icon::new(IconName::ArrowRightLeft)
+        .size(IconSize::Small)
+        .color(Color::Muted)
+}
 ```
+
+`IconName::ArrowRightLeft` already exists (`crates/icons/src/icons.rs:37`,
+backed by `assets/icons/arrow_right_left.svg`) and has no other use in the
+codebase, so no new asset and no conflicting established meaning. It is the
+`⇄` form in Flint's own stroke style.
 
 Add `RemoteAgentRoute` to the `recent_projects.rs` imports (re-exported from
 `remote_connections`, which does `pub use settings::{RemoteAgentRoute, SshConnection}`
@@ -96,11 +106,7 @@ and before the container `.tooltip(...)`:
     this.child(
         div()
             .id("tunneled-route-marker")
-            .child(
-                Label::new(TUNNELED_ROUTE_MARKER)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
+            .child(tunneled_route_marker())
             .tooltip(Tooltip::text(TUNNELED_ROUTE_TOOLTIP)),
     )
 })
@@ -195,10 +201,10 @@ Release Notes:
 
 ## Open items to resolve during implementation
 
-- `Color::Muted` on a glyph rather than on text may read too faintly at
-  `LabelSize::Small`. Check against both light and dark themes during manual
-  verification and adjust to `Color::Accent` if the marker does not register at
-  a glance — it is the entire signal, so being missable defeats it.
-- If the U+21C4 fallback looks wrong under a non-default `ui_font_family`,
-  switch to the SVG alternative (`assets/icons/link.svg`) as the design allows.
-  Worth one spot-check with a common alternative UI font.
+- `Color::Muted` at `IconSize::Small` may read too faintly. Check both light
+  and dark themes during manual verification and adjust to `Color::Accent` if
+  the marker does not register at a glance — it is the entire signal, so being
+  missable defeats it. The change is confined to `tunneled_route_marker()`.
+- Confirm `ArrowRightLeft` is legible at `IconSize::Small`; it carries more
+  internal detail than most icons at that size. `IconSize::XSmall` is likely
+  too small, but compare against the neighbouring server icon in the title bar.
