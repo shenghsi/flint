@@ -164,6 +164,27 @@ both problems.
 `ArrowRightLeft` has no other use in the codebase, so it carries no conflicting
 established meaning.
 
+**Theme adaptation requires no asset change.** `assets/icons/arrow_right_left.svg`
+hardcodes `stroke="black"`, but that value is discarded: GPUI rasterizes icon
+SVGs to an alpha mask, keeping only the alpha channel
+(`crates/gpui/src/svg_renderer.rs:212-216`, `.map(|p| p.alpha())`), then paints
+the mask with the color requested at the call site
+(`crates/gpui/src/elements/svg.rs:118-128`, taken from `style.text.color`).
+Embedded stroke and fill colors across the icon set are inconsistent for this
+reason — `link.svg` uses `#C4CAD4`, `arrow_circle.svg` uses `black` — and none
+of them reach the screen.
+
+`Color::Muted` therefore resolves per theme through
+`cx.theme().colors().text_muted` (`crates/ui/src/styles/color.rs:93`): light
+gray on dark backgrounds, dark gray on light ones (`#a9afbc` in One Dark,
+`#58585a` in One Light). The marker adapts automatically, exactly as the
+neighbouring server icon does.
+
+The one property that *does* survive the mask is alpha: `split.svg`'s
+`fill-opacity="0.25"` renders as a partially transparent region.
+`arrow_right_left.svg` has no such attribute, so it renders as a solid,
+single-color glyph at whatever color is requested.
+
 ### Semantic risk
 
 The route governs agent traffic only — `crates/agent_threads/src/store.rs`

@@ -72,6 +72,13 @@ backed by `assets/icons/arrow_right_left.svg`) and has no other use in the
 codebase, so no new asset and no conflicting established meaning. It is the
 `⇄` form in Flint's own stroke style.
 
+Do **not** edit the SVG's hardcoded `stroke="black"`. GPUI reduces icon SVGs to
+an alpha mask (`crates/gpui/src/svg_renderer.rs:212-216`) and repaints them
+with the call site's color, so that attribute never reaches the screen;
+`Color::Muted` resolves per theme via `text_muted`
+(`crates/ui/src/styles/color.rs:93`). Changing the asset would be a no-op that
+implies the opposite.
+
 Add `RemoteAgentRoute` to the `recent_projects.rs` imports (re-exported from
 `remote_connections`, which does `pub use settings::{RemoteAgentRoute, SshConnection}`
 at `:20`).
@@ -173,8 +180,10 @@ asserting on laid-out geometry would be brittle relative to its value.
 Against a fresh `/tmp/Flint-Local.app` (`./script/bundle-tmp-app`, checking the
 exit code per the repo's build note):
 
-1. A tunneled SSH project shows `⇄` in the title bar; a direct one shows
-   nothing.
+1. A tunneled SSH project shows the marker in the title bar; a direct one shows
+   nothing. Check in both a light and a dark theme — the icon is painted from
+   `text_muted`, so this confirms the theme path end to end rather than only in
+   whichever theme happens to be active.
 2. Hovering the title bar trigger shows the route in the tooltip meta.
 3. The picker marks the tunneled row in both This Window and Recent Projects,
    and hovering the glyph itself shows "Tunneled agent route".
