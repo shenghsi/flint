@@ -118,6 +118,47 @@ pub fn merge_threads(
     rows
 }
 
+/// The outcome of trying to discover which indexed session a fresh, not-yet-
+/// resumable live thread turned into.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DiscoveredCodexSession {
+    /// Exactly one session appeared after launch and isn't bound to another
+    /// live terminal; safe to attach automatically.
+    Resolved(SharedString),
+    /// More than one candidate; the caller must ask rather than guess.
+    Ambiguous(Vec<SharedString>),
+    /// No new session has appeared yet.
+    NotFound,
+}
+
+/// Resolves which (if any) newly indexed Codex session belongs to a fresh live
+/// thread that has no Flint-assigned session id (Codex has no
+/// `session_id_flag`, see `AgentKindDefinition::session_id_flag`). A session is
+/// a candidate when its recorded activity is at or after the thread's
+/// `launched_at` -- the same signal `merge_threads` already uses to suppress
+/// historical rows for a not-yet-resumed live thread -- and its id is not
+/// already bound to another live terminal. Both `indexed_sessions` and
+/// `already_bound` must already be scoped to the thread's kind and project,
+/// matching `merge_threads`'s contract.
+pub fn resolve_discovered_codex_session(
+    launched_at: SystemTime,
+    indexed_sessions: &[HistoricalThread],
+    already_bound: &HashSet<SharedString>,
+) -> DiscoveredCodexSession {
+    let candidates: Vec<SharedString> = indexed_sessions
+        .iter()
+        .filter(|thread| {
+            thread.last_activity_at >= launched_at && !already_bound.contains(&thread.session_id)
+        })
+        .map(|thread| thread.session_id.clone())
+        .collect();
+    match candidates.len() {
+        0 => DiscoveredCodexSession::NotFound,
+        1 => DiscoveredCodexSession::Resolved(candidates[0].clone()),
+        _ => DiscoveredCodexSession::Ambiguous(candidates),
+    }
+}
+
 pub enum AgentThreadStoreEvent {
     ThreadOpened { kind_id: &'static str },
     ThreadClosed { kind_id: &'static str },
@@ -582,6 +623,33 @@ pub fn launch_new_thread(
             cx,
         ),
     }
+}
+
+/// Launches a fresh thread for `kind` seeded with `initial_prompt` as its first
+/// turn, for cross-agent handoff. Only used on the configured (non-managed)
+/// route -- handoff does not support the managed/tunneled route yet, so
+/// callers must not reach this for a project using it.
+pub(crate) fn launch_seeded_thread(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    initial_prompt: &str,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let extra_args = resolve_new_thread_launch_args(cx, kind);
+    let settings = AgentThreadSettings::get_global(cx);
+    let base = settings.command_for_kind(kind.id);
+    let mut launch = build_new_thread_launch(kind, base, &extra_args, None);
+    crate::seed_launch_command_with_prompt(&mut launch.command, kind, initial_prompt);
+    spawn_thread(
+        workspace,
+        kind,
+        kind.label.clone(),
+        launch.command,
+        launch.session_id,
+        window,
+        cx,
+    );
 }
 
 fn launch_configured_thread(
@@ -2314,6 +2382,78 @@ mod tests {
                 live_label(1),
                 "historical:session-oldest".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn discovery_resolves_a_single_post_launch_session() {
+        let result = resolve_discovered_codex_session(
+            at(100),
+            &[
+                historical("session-before", 50),
+                historical("session-after", 150),
+            ],
+            &HashSet::default(),
+        );
+        assert_eq!(
+            result,
+            DiscoveredCodexSession::Resolved(SharedString::from("session-after"))
+        );
+    }
+
+    #[test]
+    fn discovery_is_ambiguous_with_multiple_post_launch_candidates() {
+        let result = resolve_discovered_codex_session(
+            at(100),
+            &[
+                historical("session-a", 150),
+                historical("session-b", 200),
+                historical("session-before", 50),
+            ],
+            &HashSet::default(),
+        );
+        match result {
+            DiscoveredCodexSession::Ambiguous(mut ids) => {
+                ids.sort();
+                assert_eq!(
+                    ids,
+                    vec![
+                        SharedString::from("session-a"),
+                        SharedString::from("session-b")
+                    ]
+                );
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn discovery_finds_nothing_before_launch_or_already_bound_elsewhere() {
+        let not_found = resolve_discovered_codex_session(
+            at(100),
+            &[historical("session-before", 50)],
+            &HashSet::default(),
+        );
+        assert_eq!(not_found, DiscoveredCodexSession::NotFound);
+
+        let mut bound = HashSet::default();
+        bound.insert(SharedString::from("session-after"));
+        let excluded =
+            resolve_discovered_codex_session(at(100), &[historical("session-after", 150)], &bound);
+        assert_eq!(excluded, DiscoveredCodexSession::NotFound);
+    }
+
+    #[test]
+    fn discovery_includes_a_session_exactly_at_launch_time() {
+        // Matches merge_threads's own `>=` boundary for "at or after launch".
+        let result = resolve_discovered_codex_session(
+            at(100),
+            &[historical("session-at-launch", 100)],
+            &HashSet::default(),
+        );
+        assert_eq!(
+            result,
+            DiscoveredCodexSession::Resolved(SharedString::from("session-at-launch"))
         );
     }
 

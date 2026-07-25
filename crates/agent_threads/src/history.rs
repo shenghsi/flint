@@ -132,9 +132,6 @@ pub(crate) fn history_index_cache_root() -> PathBuf {
 
 /// A rendered handoff excerpt returned to the client, independent of whether it
 /// was produced locally or on a remote host.
-// Consumed by the handoff panel action added in a later change; the extraction
-// transport is landed and tested on its own first.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentTranscriptExcerpt {
     pub markdown: String,
@@ -163,7 +160,6 @@ impl From<agent_history::TranscriptExcerpt> for AgentTranscriptExcerpt {
 /// Extracts a handoff excerpt for a local project directly through the host
 /// index. `Ok(None)` means the transcript was read but nothing trustworthy
 /// survived (the caller must not write a handoff).
-#[allow(dead_code)]
 pub(crate) async fn local_extract_transcript(
     service: agent_history::IndexService,
     kind: agent_history::HistoryKind,
@@ -189,6 +185,11 @@ pub(crate) async fn local_extract_transcript(
 /// Extracts a handoff excerpt for a remote project by asking the host to resolve
 /// the session and parse it there; the client never reads the remote transcript
 /// itself. `Ok(None)` mirrors the local refusal case.
+///
+/// Not yet called: the handoff panel action currently gates cross-agent
+/// handoff to local projects, since writing the handoff document also needs to
+/// happen on the target's host and there is no remote write path yet. Kept
+/// landed and tested so remote support is a wiring change, not a new design.
 #[allow(dead_code)]
 pub(crate) async fn remote_extract_transcript(
     proto_client: AnyProtoClient,
@@ -224,7 +225,7 @@ pub(crate) async fn remote_extract_transcript(
     }))
 }
 
-fn indexed_snapshot_threads(snapshot: agent_history::Snapshot) -> Vec<HistoricalThread> {
+pub(crate) fn indexed_snapshot_threads(snapshot: agent_history::Snapshot) -> Vec<HistoricalThread> {
     snapshot
         .entries
         .into_iter()

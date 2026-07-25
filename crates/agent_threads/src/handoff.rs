@@ -4,10 +4,6 @@
 //! thread's extracted transcript excerpt and writes it under
 //! `.flint/handoffs/` on the host where the target agent will run. See
 //! `docs/superpowers/specs/2026-07-25-cross-agent-handoff-design.md`.
-//!
-//! The handoff panel action that drives assembly and writing lands in a later
-//! change; the assembly and writer are landed and tested on their own first.
-#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

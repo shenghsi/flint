@@ -22,6 +22,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 
+use crate::handoff;
 use crate::history::{self, HistoryParseCache, project_worktree_roots};
 use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
 use crate::store::{
@@ -973,6 +974,61 @@ impl AgentThreadsPanel {
         self.set_context_menu(context_menu, position, window, cx);
     }
 
+    /// Deploys the "Hand off to <kind>" menu for a live thread row, offering
+    /// every other registered kind as a target.
+    fn deploy_handoff_menu(
+        &mut self,
+        source_kind: AgentKindDefinition,
+        source_metadata: AgentThreadMetadata,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let fs = self.fs.clone();
+        let history_index = self.history_index.clone();
+        let store = self.store.clone();
+        let targets: Vec<AgentKindDefinition> = self
+            .registry
+            .iter()
+            .filter(|kind| kind.id != source_kind.id)
+            .cloned()
+            .collect();
+        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
+            for target_kind in &targets {
+                let workspace = workspace.clone();
+                let fs = fs.clone();
+                let history_index = history_index.clone();
+                let store = store.clone();
+                let source_kind = source_kind.clone();
+                let source_metadata = source_metadata.clone();
+                let target_kind = target_kind.clone();
+                context_menu = context_menu.entry(
+                    SharedString::from(format!("Hand off to {}", target_kind.label)),
+                    None,
+                    move |window, cx| {
+                        let Some(workspace) = workspace.upgrade() else {
+                            return;
+                        };
+                        start_handoff(
+                            workspace,
+                            fs.clone(),
+                            history_index.clone(),
+                            store.clone(),
+                            source_kind.clone(),
+                            source_metadata.clone(),
+                            target_kind.clone(),
+                            window,
+                            cx,
+                        );
+                    },
+                );
+            }
+            context_menu
+        });
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
     fn set_context_menu(
         &mut self,
         context_menu: Entity<ContextMenu>,
@@ -1232,6 +1288,7 @@ impl AgentThreadsPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let terminal_item_id = metadata.terminal_item_id;
+        let menu_metadata = metadata.clone();
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
             .w_full()
@@ -1243,6 +1300,26 @@ impl AgentThreadsPanel {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.focus_live_thread(terminal_item_id, window, cx);
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    let Some(source_kind) = this
+                        .registry
+                        .iter()
+                        .find(|kind| kind.id == menu_metadata.kind_id)
+                        .cloned()
+                    else {
+                        return;
+                    };
+                    this.deploy_handoff_menu(
+                        source_kind,
+                        menu_metadata.clone(),
+                        event.position,
+                        window,
+                        cx,
+                    );
+                }),
+            )
             .child(
                 Icon::new(IconName::Circle)
                     .size(IconSize::Indicator)
@@ -1374,6 +1451,193 @@ impl AgentThreadsPanel {
             })
             .into_any_element()
     }
+}
+
+/// Cross-agent handoff: resolves `source_metadata`'s session id (discovering
+/// it for a fresh Codex thread when Flint wasn't assigned one), extracts a
+/// bounded transcript excerpt, gathers a changed-file list, writes a
+/// disclosure-minimized handoff document after explicit confirmation, and
+/// launches a fresh `target_kind` thread seeded to read it.
+///
+/// Local projects only: the write must happen on the host the target agent
+/// runs on, and remote handoff would need a remote write path this change
+/// doesn't add yet.
+fn start_handoff(
+    workspace: Entity<Workspace>,
+    fs: Arc<dyn Fs>,
+    history_index: agent_history::IndexService,
+    store: Entity<AgentThreadStore>,
+    source_kind: AgentKindDefinition,
+    source_metadata: AgentThreadMetadata,
+    target_kind: AgentKindDefinition,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let project = workspace.read(cx).project().clone();
+    if project.read(cx).remote_client().is_some() {
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_error(
+                &anyhow::anyhow!("Cross-agent handoff isn't supported yet for remote projects."),
+                cx,
+            );
+        });
+        return;
+    }
+
+    let Some(window_handle) = window
+        .window_handle()
+        .downcast::<workspace::MultiWorkspace>()
+    else {
+        return;
+    };
+
+    let workspace_for_error = workspace.clone();
+    cx.spawn(async move |cx| {
+        let result: anyhow::Result<()> = async {
+            let base_dir = history::resolve_history_base_dir(
+                &project,
+                source_kind.home_env_var,
+                source_kind.home_dir_name,
+                cx,
+            )
+            .await?;
+            let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
+            let host = agent_history::HistoryHost {
+                fs: Arc::new(agent_history::LocalHistoryFs(fs.clone())),
+                base_dir,
+                path_style,
+            };
+            let indexed_kind = agent_history::HistoryKind::from_id(source_kind.id)
+                .ok_or_else(|| anyhow::anyhow!("unsupported agent history kind"))?;
+
+            let session_id = match &source_metadata.resumed_session_id {
+                Some(id) => id.to_string(),
+                None if source_kind.id == "codex" => {
+                    let snapshot = history_index
+                        .refresh(
+                            indexed_kind,
+                            &host,
+                            std::slice::from_ref(&source_metadata.project_root),
+                        )
+                        .await?;
+                    let indexed = history::indexed_snapshot_threads(snapshot);
+                    let already_bound: collections::HashSet<SharedString> = store
+                        .read_with(cx, |store, _| {
+                            store.live_threads_for_project(
+                                "codex",
+                                std::slice::from_ref(&source_metadata.project_root),
+                            )
+                        })
+                        .into_iter()
+                        .filter(|metadata| {
+                            metadata.terminal_item_id != source_metadata.terminal_item_id
+                        })
+                        .filter_map(|metadata| metadata.resumed_session_id)
+                        .collect();
+                    match store::resolve_discovered_codex_session(
+                        source_metadata.launched_at,
+                        &indexed,
+                        &already_bound,
+                    ) {
+                        store::DiscoveredCodexSession::Resolved(id) => id.to_string(),
+                        store::DiscoveredCodexSession::Ambiguous(_) => anyhow::bail!(
+                            "Multiple new Codex sessions started around the same time; \
+                             Flint can't tell which one is this thread yet."
+                        ),
+                        store::DiscoveredCodexSession::NotFound => anyhow::bail!(
+                            "Codex hasn't written a session file for this thread yet. \
+                             Try again in a moment."
+                        ),
+                    }
+                }
+                None => anyhow::bail!("This thread has no resumable session id yet."),
+            };
+
+            let excerpt = history::local_extract_transcript(
+                history_index,
+                indexed_kind,
+                host,
+                session_id,
+                Some(source_metadata.project_root.to_string_lossy().into_owned()),
+            )
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Not enough conversation to hand off yet."))?;
+
+            let changed_files = project.read_with(cx, |project, cx| {
+                project
+                    .git_store()
+                    .read(cx)
+                    .repositories()
+                    .values()
+                    .flat_map(|repository| {
+                        repository
+                            .read(cx)
+                            .status()
+                            .map(|entry| entry.repo_path.display(path_style).into_owned())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            });
+
+            let title = source_metadata.title.to_string();
+            let markdown = handoff::build_handoff_markdown(&handoff::HandoffParams {
+                source_label: &source_kind.label,
+                target_label: &target_kind.label,
+                title: &title,
+                excerpt: &excerpt,
+                changed_files: &changed_files,
+                raw_diff: None,
+            });
+
+            let confirmation = window_handle.update(cx, |_, window, cx| {
+                window.prompt(
+                    PromptLevel::Info,
+                    &format!("Hand off this thread to {}?", target_kind.label),
+                    Some(&format!(
+                        "{} conversation turn(s), {} changed file(s). A new {} thread \
+                         will open, seeded to read the handoff.",
+                        excerpt.included_turns,
+                        changed_files.len(),
+                        target_kind.label,
+                    )),
+                    &["Hand off", "Cancel"],
+                    cx,
+                )
+            })?;
+            if confirmation.await.ok() != Some(0) {
+                return Ok(());
+            }
+
+            let doc_path =
+                handoff::write_handoff_document(&fs, &source_metadata.project_root, &markdown)
+                    .await?;
+            let bootstrap_prompt = format!(
+                "A previous {} session may have run out of usage quota mid-task. Read {} \
+                 and continue from where it left off.",
+                source_kind.label,
+                doc_path.display(),
+            );
+
+            window_handle.update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    store::launch_seeded_thread(
+                        workspace,
+                        &target_kind,
+                        &bootstrap_prompt,
+                        window,
+                        cx,
+                    );
+                });
+            })?;
+            Ok(())
+        }
+        .await;
+
+        if let Err(error) = result {
+            workspace_for_error.update(cx, |workspace, cx| workspace.show_error(&error, cx));
+        }
+    })
+    .detach();
 }
 
 impl Focusable for AgentThreadsPanel {
