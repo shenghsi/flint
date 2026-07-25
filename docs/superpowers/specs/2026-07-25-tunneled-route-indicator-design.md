@@ -332,7 +332,9 @@ asserting on laid-out geometry would be brittle relative to its value.
 - Changing the route from these surfaces. The marker is read-only; the route
   remains editable through the Manage Servers dropdown.
 - Marking `Direct` explicitly. Absence of the marker is the signal.
-- The Welcome page, pending a decision on relocating the predicate.
+- The Welcome page. Decided against: serving it requires relocating the
+  predicate to a crate both `workspace` and `recent_projects` can reach, which
+  is disproportionate to the value of marking a launcher list.
 - Wiring up `SidebarRecentProjects`.
 - De-duplicating `RemoteSettings::agent_route_for` against the parallel
   implementation in `crates/agent_threads/src/agent_threads.rs:388-413`. Two
