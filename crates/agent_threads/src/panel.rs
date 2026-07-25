@@ -1365,9 +1365,30 @@ impl AgentThreadsPanel {
             .rounded_sm()
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .when_some(live_terminal_item_id, |row, terminal_item_id| {
+                let handoff_kind = kind.clone();
+                let handoff_metadata = AgentThreadMetadata {
+                    terminal_item_id,
+                    kind_id: kind.id,
+                    title: thread.title.clone(),
+                    project_root: thread.project_root.clone(),
+                    launched_at: thread.last_activity_at,
+                    resumed_session_id: Some(thread.session_id.clone()),
+                };
                 row.on_click(cx.listener(move |this, _, window, cx| {
                     this.focus_live_thread(terminal_item_id, window, cx);
                 }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.deploy_handoff_menu(
+                            handoff_kind.clone(),
+                            handoff_metadata.clone(),
+                            event.position,
+                            window,
+                            cx,
+                        );
+                    }),
+                )
             })
             .when(!is_live, |row| {
                 row.on_click(cx.listener(move |this, _, window, cx| {
