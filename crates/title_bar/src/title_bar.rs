@@ -443,6 +443,7 @@ impl TitleBar {
 
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
+        let is_tunneled = recent_projects::remote_connection_is_tunneled(Some(&options), cx);
 
         let (nickname, tooltip_title, icon) = match options {
             RemoteConnectionOptions::Ssh(options) => (
@@ -460,7 +461,7 @@ impl TitleBar {
 
         let nickname = nickname.unwrap_or_else(|| host.clone());
 
-        let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
+        let (indicator_color, mut meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
             remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
             remote::ConnectionState::HeartbeatMissed => (
@@ -475,6 +476,9 @@ impl TitleBar {
                 (Color::Error, format!("Disconnected from {host}"))
             }
         };
+        if is_tunneled {
+            meta.push_str(&format!(" · {}", recent_projects::TUNNELED_ROUTE_TOOLTIP));
+        }
 
         let icon_color = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => Color::Info,
@@ -505,18 +509,29 @@ impl TitleBar {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .max_w_32()
                                 .child(
-                                    IconWithIndicator::new(
-                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                        Some(Indicator::dot().color(indicator_color)),
-                                    )
-                                    .indicator_border_color(Some(
-                                        cx.theme().colors().title_bar_background,
-                                    ))
-                                    .into_any_element(),
+                                    h_flex()
+                                        .gap_2()
+                                        .max_w_32()
+                                        .child(
+                                            IconWithIndicator::new(
+                                                Icon::new(icon)
+                                                    .size(IconSize::Small)
+                                                    .color(icon_color),
+                                                Some(Indicator::dot().color(indicator_color)),
+                                            )
+                                            .indicator_border_color(Some(
+                                                cx.theme().colors().title_bar_background,
+                                            ))
+                                            .into_any_element(),
+                                        )
+                                        .child(
+                                            Label::new(nickname).size(LabelSize::Small).truncate(),
+                                        ),
                                 )
-                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                                .when(is_tunneled, |this| {
+                                    this.child(recent_projects::tunneled_route_marker())
+                                }),
                         ),
                     move |_window, cx| {
                         Tooltip::with_meta(

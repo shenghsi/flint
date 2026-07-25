@@ -91,7 +91,9 @@ impl RemoteSettings {
         };
 
         Some(
-            self.ssh_connections()
+            self.ssh_connections
+                .0
+                .iter()
                 .find(|connection| {
                     connection.host == host
                         && connection.username == username
