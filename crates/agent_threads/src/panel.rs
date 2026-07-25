@@ -1633,8 +1633,8 @@ fn start_handoff(
                 handoff::write_handoff_document(&fs, &source_metadata.project_root, &markdown)
                     .await?;
             let bootstrap_prompt = format!(
-                "A previous {} session may have run out of usage quota mid-task. Read {} \
-                 and continue from where it left off.",
+                "A previous {} session left off mid-task. Read {} \
+                 and continue the work.",
                 source_kind.label,
                 doc_path.display(),
             );
