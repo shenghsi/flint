@@ -4,6 +4,7 @@ mod claude_history;
 mod codex_history;
 pub mod connect_proxy;
 mod egress;
+mod handoff;
 mod history;
 pub mod managed_agent;
 mod managed_agent_progress;
