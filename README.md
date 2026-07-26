@@ -33,6 +33,8 @@ Flint is for developers who want the project awareness and visual review tools o
 - **CSV table previews:** Open saved `.csv` files as tables with independently resizable columns and a pinned row-number column.
 - **Faster visual navigation and review:** Distinguish file types with theme-aware colors and agents with recognizable brand icons, then open project changes directly from the editor toolbar for review with Zed's Git and diff views.
 
+![Agent Threads menu with Hand off to Codex and Hand off to Pi actions](assets/screenshots/handoff.png)
+
 ### Removed
 
 Flint does not ship Zed's native agent and chat interface, hosted AI models, model-provider configuration, Copilot or edit predictions, account and billing UI, or real-time collaboration and calls. The result is a smaller, local-first product surface that leaves agent behavior and credentials with the CLI tools you already use.
