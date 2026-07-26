@@ -65,9 +65,7 @@ The `.deb` and `.rpm` packages install Flint system-wide under `/usr/lib/flint`.
 
 Flint supports SSH and WSL remote development while keeping the editor UI local. Files, terminals, tasks, language servers, and agent threads run on the remote host.
 
-Remote agent threads can use either the remote host's own network (`Direct`) or a Flint-managed route (`Tunneled`). With `Tunneled`, Flint can provision pinned Codex, Claude Code, and Pi binaries on the remote host and route supported provider traffic back through the local Flint connection, which helps when a remote machine has restricted internet access. Flint marks tunneled SSH projects in the title bar and project picker.
-
-Remote projects restored under **This Window** reconnect when selected, without opening background SSH connections during startup.
+Remote agent threads can use either the remote host's own network (`Direct`) or a Flint-managed route (`Tunneled`). With `Tunneled`, Flint can provision pinned Codex, Claude Code, and Pi binaries on the remote host and route supported provider traffic back through the local Flint connection, which helps when a remote machine has restricted internet (VPN) access. Flint marks tunneled SSH projects in the title bar and project picker.
 
 See [Remote Development](./docs/src/remote-development.md) for setup, SSH connection settings, port forwarding, and the `agent_route` option.
 
