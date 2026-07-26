@@ -20,7 +20,8 @@ features added in the fork, without turning the document into a release log.
   SSH projects configured to use the tunneled agent route.
 - Add rich Markdown previews, including inline and display LaTeX equations and
   the fork's expanded Mermaid diagram coverage.
-- Add the default CSV table preview, including resizable and pinnable columns.
+- Add the default CSV table preview, including independently resizable columns
+  and its pinned row-number column.
 - Include useful Agent Threads status and continuity features: Codex and Claude
   plan-usage and reset indicators, desktop notifications, and optional session
   reopening.
