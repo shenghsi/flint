@@ -5,9 +5,8 @@
 
 ## Goal
 
-Update the README so its product overview reflects user-facing features added
-since the README's last feature update, without turning the document into a
-release log.
+Update the README so its product overview reflects distinctive user-facing
+features added in the fork, without turning the document into a release log.
 
 ## Changes
 
@@ -19,15 +18,27 @@ release log.
   preview step before a new target thread starts.
 - Mention that restored remote workspaces can be reopened and that Flint marks
   SSH projects configured to use the tunneled agent route.
+- Add rich Markdown previews, including inline and display LaTeX equations and
+  the fork's expanded Mermaid diagram coverage.
+- Add the default CSV table preview, including resizable and pinnable columns.
+- Include useful Agent Threads status and continuity features: Codex and Claude
+  plan-usage and reset indicators, desktop notifications, and optional session
+  reopening.
+- Mention colored file-type and agent-brand icons alongside Flint's visual
+  change-review tools.
 
 ## Exclusions
 
 Do not document version bumps, internal refactors, storage-path changes, tests,
 or implementation details. Do not add a version-specific "What's new" section
-or rewrite the README's overall structure.
+or rewrite the README's overall structure. Keep dedicated remote-terminal SSH
+configuration in the Remote Development documentation rather than expanding
+the top-level feature list.
 
 ## Verification
 
 Review every statement against the merged feature behavior, search for stale
 references that imply only Codex and Claude Code are supported, and inspect the
-final Markdown diff for consistent wording and formatting.
+final Markdown diff for consistent wording and formatting. Verify the Markdown,
+CSV, status, notification, session-reopening, and icon claims against their
+fork-specific commits.
