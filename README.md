@@ -1,6 +1,6 @@
 # Flint
 
-Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed) built for developers who use tools such as Codex and Claude Code from the command line.
+Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed) built for developers who use tools such as Codex, Claude Code, and Pi from the command line.
 
 It keeps Zed's fast, GPU-accelerated editor, language support, Git tooling, and extension ecosystem while replacing the built-in AI product with a focused workspace for terminal-based coding agents.
 
@@ -23,9 +23,10 @@ Flint is for developers who want the project awareness and visual review tools o
 ### Added
 
 - **First-class terminals:** New terminals open as tabs in the center workspace by default, alongside files and diffs.
-- **Codex and Claude Code threads:** Launch either CLI directly in a terminal-backed thread using its existing authentication, configuration, and subscription.
-- **Agent Threads panel:** Organize Codex and Claude Code sessions, reopen recent threads, and resume work using titles discovered from each agent's local history.
-- **Remote agent threads:** Run Codex and Claude Code on SSH remotes through Flint-managed agent binaries, with optional tunneled routing for provider traffic.
+- **Codex, Claude Code, and Pi threads:** Launch any supported CLI directly in a terminal-backed thread using its existing authentication and configuration.
+- **Agent Threads panel:** Organize sessions, discover recent threads on the local machine or connected remote host, and resume work using titles from each agent's history.
+- **Cross-agent handoff:** Preview a bounded handoff document from a live local thread, then continue the work in a fresh thread with another supported agent.
+- **Remote agent threads:** Run supported agents on SSH remotes using either the remote's configured CLI (`Direct`) or pinned Flint-managed binaries whose traffic is routed through local Flint (`Tunneled`).
 - **Configurable agent workflows:** Set commands, arguments, environment variables, working directories, visibility, panel location, and default resume options.
 - **Faster change review:** Open project changes directly from the editor toolbar and review agent-generated work with Zed's Git and diff views.
 
@@ -61,7 +62,9 @@ The `.deb` and `.rpm` packages install Flint system-wide under `/usr/lib/flint`.
 
 Flint supports SSH and WSL remote development while keeping the editor UI local. Files, terminals, tasks, language servers, and agent threads run on the remote host.
 
-Remote agent threads can use either the remote host's own network (`Direct`) or a Flint-managed route (`Tunneled`). With `Tunneled`, Flint can provision pinned Codex and Claude Code binaries on the remote host and route supported provider traffic back through the local Flint connection, which helps when a remote machine has restricted internet access.
+Remote agent threads can use either the remote host's own network (`Direct`) or a Flint-managed route (`Tunneled`). With `Tunneled`, Flint can provision pinned Codex, Claude Code, and Pi binaries on the remote host and route supported provider traffic back through the local Flint connection, which helps when a remote machine has restricted internet access. Flint marks tunneled SSH projects in the title bar and project picker.
+
+Remote projects restored under **This Window** reconnect when selected, without opening background SSH connections during startup.
 
 See [Remote Development](./docs/src/remote-development.md) for setup, SSH connection settings, port forwarding, and the `agent_route` option.
 
