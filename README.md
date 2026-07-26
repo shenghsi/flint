@@ -25,10 +25,13 @@ Flint is for developers who want the project awareness and visual review tools o
 - **First-class terminals:** New terminals open as tabs in the center workspace by default, alongside files and diffs.
 - **Codex, Claude Code, and Pi threads:** Launch any supported CLI directly in a terminal-backed thread using its existing authentication and configuration.
 - **Agent Threads panel:** Organize sessions, discover recent threads on the local machine or connected remote host, and resume work using titles from each agent's history.
+- **Agent status and continuity:** See Codex and Claude Code plan usage and reset countdowns, receive desktop notifications when a thread needs attention, and optionally reopen resumable sessions after restarting Flint.
 - **Cross-agent handoff:** Preview a bounded handoff document from a live local thread, then continue the work in a fresh thread with another supported agent.
 - **Remote agent threads:** Run supported agents on SSH remotes using either the remote's configured CLI (`Direct`) or pinned Flint-managed binaries whose traffic is routed through local Flint (`Tunneled`).
 - **Configurable agent workflows:** Set commands, arguments, environment variables, working directories, visibility, panel location, and default resume options.
-- **Faster change review:** Open project changes directly from the editor toolbar and review agent-generated work with Zed's Git and diff views.
+- **Rich Markdown previews:** Render inline and display LaTeX equations through bundled MathJax when Node.js is available, plus expanded Mermaid diagram types and diagrams with YAML frontmatter.
+- **CSV table previews:** Open saved `.csv` files as tables with independently resizable columns and a pinned row-number column.
+- **Faster visual navigation and review:** Distinguish file types with theme-aware colors and agents with recognizable brand icons, then open project changes directly from the editor toolbar for review with Zed's Git and diff views.
 
 ### Removed
 
