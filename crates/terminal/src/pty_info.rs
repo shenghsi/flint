@@ -5,9 +5,36 @@ use std::{path::PathBuf, sync::Arc};
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
+#[cfg(any(windows, test))]
+use std::collections::HashMap;
+
 use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 use crate::{Event, Terminal};
+
+#[cfg(any(windows, test))]
+fn descendant_process_ids(
+    root_process_id: u32,
+    parent_process_ids: &HashMap<u32, u32>,
+) -> Vec<u32> {
+    parent_process_ids
+        .keys()
+        .copied()
+        .filter(|process_id| {
+            let mut current_process_id = *process_id;
+            for _ in 0..parent_process_ids.len() {
+                let Some(parent_process_id) = parent_process_ids.get(&current_process_id) else {
+                    return false;
+                };
+                if *parent_process_id == root_process_id {
+                    return true;
+                }
+                current_process_id = *parent_process_id;
+            }
+            false
+        })
+        .collect()
+}
 
 #[derive(Clone, Copy)]
 pub struct ProcessIdGetter {
@@ -158,15 +185,60 @@ impl PtyProcessInfo {
 
     #[cfg(windows)]
     pub(crate) fn kill_current_process(&self) -> bool {
-        if let Some(process_job) = &self.process_job {
+        let root_process_id = self.pid_getter.fallback_pid();
+        let mut process_snapshot = System::new();
+        process_snapshot.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().without_tasks(),
+        );
+        let parent_process_ids = process_snapshot
+            .processes()
+            .iter()
+            .filter_map(|(process_id, process)| {
+                Some((process_id.as_u32(), process.parent()?.as_u32()))
+            })
+            .collect();
+        let descendant_process_ids =
+            descendant_process_ids(root_process_id.as_u32(), &parent_process_ids);
+
+        let killed_current_process = if let Some(process_job) = &self.process_job {
             match process_job.terminate() {
-                Ok(()) => return true,
+                Ok(()) => true,
                 Err(error) => {
                     log::error!("failed to terminate terminal process job: {error:#}");
+                    self.refresh().is_some_and(|process| process.kill())
                 }
             }
+        } else {
+            self.refresh().is_some_and(|process| process.kill())
+        };
+
+        let descendant_pids = descendant_process_ids
+            .iter()
+            .copied()
+            .map(Pid::from_u32)
+            .collect::<Vec<_>>();
+        process_snapshot.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&descendant_pids),
+            true,
+            ProcessRefreshKind::nothing().without_tasks(),
+        );
+        let mut killed_descendants = true;
+        for process_id in descendant_pids {
+            let Some(process) = process_snapshot.process(process_id) else {
+                continue;
+            };
+            if !process.kill() {
+                log::error!(
+                    "failed to terminate escaped terminal descendant process {}",
+                    process_id.as_u32()
+                );
+                killed_descendants = false;
+            }
         }
-        self.refresh().is_some_and(|process| process.kill())
+
+        killed_current_process && killed_descendants
     }
 
     #[cfg(all(not(unix), not(windows)))]
@@ -243,6 +315,21 @@ impl PtyProcessInfo {
 
     pub(crate) fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
+    }
+}
+
+#[cfg(test)]
+mod descendant_tests {
+    use super::*;
+
+    #[test]
+    fn finds_nested_descendants_without_following_cycles() {
+        let parent_process_ids = HashMap::from([(2, 1), (3, 2), (4, 3), (5, 9), (6, 7), (7, 6)]);
+
+        let mut descendants = descendant_process_ids(1, &parent_process_ids);
+        descendants.sort_unstable();
+
+        assert_eq!(descendants, vec![2, 3, 4]);
     }
 }
 
