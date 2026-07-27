@@ -4966,6 +4966,167 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
     );
 }
 
+fn remote_test_file(id: u64, path: &str, mtime_seconds: u64) -> proto::Entry {
+    proto::Entry {
+        id,
+        is_dir: false,
+        path: path.to_string(),
+        inode: id,
+        mtime: Some(proto::Timestamp {
+            seconds: mtime_seconds,
+            nanos: 0,
+        }),
+        is_ignored: false,
+        is_hidden: false,
+        is_external: false,
+        is_fifo: false,
+        size: Some(12),
+        canonical_path: None,
+    }
+}
+
+fn remote_test_update(
+    scan_id: u64,
+    updated_entries: Vec<proto::Entry>,
+    removed_entries: Vec<u64>,
+) -> proto::UpdateWorktree {
+    proto::UpdateWorktree {
+        project_id: 1,
+        worktree_id: 1,
+        root_name: "project".to_string(),
+        updated_entries,
+        removed_entries,
+        updated_repositories: Vec::new(),
+        removed_repositories: Vec::new(),
+        scan_id,
+        is_last_update: true,
+        abs_path: "/home/user/project".to_string(),
+        root_repo_common_dir: None,
+    }
+}
+
+#[gpui::test]
+async fn test_remote_worktree_updated_entry_events_carry_paths(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "project".to_string(),
+                visible: true,
+                abs_path: "/home/user/project".to_string(),
+                root_repo_common_dir: None,
+            },
+            AnyProtoClient::new(NoopProtoClient::new()),
+            PathStyle::Posix,
+            cx,
+        )
+    });
+
+    let changes = Arc::new(Mutex::new(Vec::new()));
+    cx.update(|cx| {
+        let changes = changes.clone();
+        cx.subscribe(&worktree, move |_, event, _| {
+            if let Event::UpdatedEntries(updated_entries) = event {
+                changes.lock().extend(
+                    updated_entries
+                        .iter()
+                        .map(|(path, _, change)| (path.clone(), *change)),
+                );
+            }
+        })
+        .detach();
+    });
+
+    worktree.update(cx, |worktree, _| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(remote_test_update(
+                1,
+                vec![remote_test_file(1, "src/main.rs", 1)],
+                Vec::new(),
+            ));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        changes.lock().as_slice(),
+        &[(rel_path("src/main.rs").into(), PathChange::AddedOrUpdated)]
+    );
+
+    changes.lock().clear();
+    worktree.update(cx, |worktree, _| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(remote_test_update(
+                2,
+                vec![remote_test_file(1, "src/main.rs", 2)],
+                Vec::new(),
+            ));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        changes.lock().as_slice(),
+        &[(rel_path("src/main.rs").into(), PathChange::AddedOrUpdated)]
+    );
+
+    changes.lock().clear();
+    worktree.update(cx, |worktree, _| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(remote_test_update(3, Vec::new(), vec![1]));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        changes.lock().as_slice(),
+        &[(rel_path("src/main.rs").into(), PathChange::Removed)]
+    );
+
+    worktree.update(cx, |worktree, _| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(remote_test_update(
+                4,
+                vec![remote_test_file(2, "src/old_name.rs", 2)],
+                Vec::new(),
+            ));
+    });
+    cx.run_until_parked();
+    changes.lock().clear();
+
+    worktree.update(cx, |worktree, _| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(remote_test_update(
+                5,
+                vec![remote_test_file(2, "src/new_name.rs", 2)],
+                Vec::new(),
+            ));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        changes.lock().as_slice(),
+        &[
+            (rel_path("src/old_name.rs").into(), PathChange::Removed),
+            (
+                rel_path("src/new_name.rs").into(),
+                PathChange::AddedOrUpdated,
+            ),
+        ]
+    );
+}
+
 #[gpui::test]
 async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arrives(
     cx: &mut TestAppContext,

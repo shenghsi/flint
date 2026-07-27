@@ -600,21 +600,51 @@ impl Worktree {
                         }
 
                         let old_root_repo_common_dir = this.snapshot.root_repo_common_dir.clone();
-                        let mut entries_changed = false;
+                        let mut changed_entries = Vec::new();
                         {
                             let mut lock = this.background_snapshot.lock();
-                            this.snapshot = lock.0.clone();
+                            // Removed entries carry only IDs, so their paths must be
+                            // resolved against the snapshot from before the update.
+                            let old_snapshot = mem::replace(&mut this.snapshot, lock.0.clone());
                             for update in lock.1.drain(..) {
-                                entries_changed |= !update.updated_entries.is_empty()
-                                    || !update.removed_entries.is_empty();
+                                for entry_id in &update.removed_entries {
+                                    let entry_id = ProjectEntryId::from_proto(*entry_id);
+                                    if let Some(entry) = old_snapshot.entry_for_id(entry_id) {
+                                        changed_entries.push((
+                                            entry.path.clone(),
+                                            entry_id,
+                                            PathChange::Removed,
+                                        ));
+                                    }
+                                }
+                                for entry in &update.updated_entries {
+                                    if let Some(path) = RelPath::from_proto(&entry.path).log_err() {
+                                        let entry_id = ProjectEntryId::from_proto(entry.id);
+                                        // Renames reuse entry IDs and only send the new path.
+                                        if let Some(old_entry) = old_snapshot.entry_for_id(entry_id)
+                                            && old_entry.path != path
+                                        {
+                                            changed_entries.push((
+                                                old_entry.path.clone(),
+                                                entry_id,
+                                                PathChange::Removed,
+                                            ));
+                                        }
+                                        changed_entries.push((
+                                            path,
+                                            entry_id,
+                                            PathChange::AddedOrUpdated,
+                                        ));
+                                    }
+                                }
                                 if let Some(tx) = &this.update_observer {
                                     tx.unbounded_send(update).ok();
                                 }
                             }
                         };
 
-                        if entries_changed {
-                            cx.emit(Event::UpdatedEntries(Arc::default()));
+                        if !changed_entries.is_empty() {
+                            cx.emit(Event::UpdatedEntries(changed_entries.into()));
                         }
                         let is_first_update = !this.received_initial_update;
                         this.received_initial_update = true;
