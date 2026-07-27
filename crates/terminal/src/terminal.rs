@@ -3907,7 +3907,7 @@ mod tests {
                     grandchild_pid = Some(pid);
                     break;
                 }
-                cx.background_executor()
+                cx.background_executor
                     .timer(Duration::from_millis(50))
                     .await;
             }
@@ -3925,7 +3925,7 @@ mod tests {
             if !process_is_alive(grandchild_pid) {
                 return;
             }
-            cx.background_executor()
+            cx.background_executor
                 .timer(Duration::from_millis(50))
                 .await;
         }
