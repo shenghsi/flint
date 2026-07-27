@@ -124,6 +124,11 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: true
     pub keep_selection_on_copy: Option<bool>,
+    /// Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks
+    /// while the terminal application has enabled mouse reporting.
+    ///
+    /// Default: true
+    pub open_links_in_mouse_mode: Option<bool>,
     /// Whether to show the terminal button in the status bar.
     ///
     /// Default: true
