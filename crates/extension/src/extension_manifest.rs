@@ -181,9 +181,27 @@ impl ExtensionManifest {
     }
 
     pub fn allow_remote_load(&self) -> bool {
-        !self.language_servers.is_empty()
+        self.remote_load().is_some()
+    }
+
+    pub fn remote_load(&self) -> Option<RemoteLoad<'_>> {
+        (!self.language_servers.is_empty()
             || !self.debug_adapters.is_empty()
-            || !self.debug_locators.is_empty()
+            || !self.debug_locators.is_empty())
+        .then_some(RemoteLoad { manifest: self })
+    }
+}
+
+pub struct RemoteLoad<'a> {
+    manifest: &'a ExtensionManifest,
+}
+
+impl RemoteLoad<'_> {
+    pub fn language_dependencies(&self) -> impl Iterator<Item = LanguageName> + '_ {
+        self.manifest
+            .language_servers
+            .values()
+            .flat_map(|language_server| language_server.languages())
     }
 }
 

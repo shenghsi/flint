@@ -34,6 +34,163 @@ fn init_logger() {
     zlog::init_test();
 }
 
+fn remote_sync_entry(id: &str, manifest_body: &str) -> ExtensionIndexEntry {
+    let manifest = format!(
+        r#"
+        id = "{id}"
+        name = "{id}"
+        version = "1.0.0"
+        schema_version = 0
+
+        {manifest_body}
+        "#
+    );
+
+    ExtensionIndexEntry {
+        manifest: Arc::new(
+            toml::from_str(&manifest).expect("the remote sync test manifest should be valid"),
+        ),
+        dev: false,
+    }
+}
+
+fn remote_sync_language_entry(extension: &str, path: &str) -> ExtensionIndexLanguageEntry {
+    ExtensionIndexLanguageEntry {
+        extension: extension.into(),
+        path: path.into(),
+        matcher: LanguageMatcher::default(),
+        hidden: false,
+        grammar: None,
+    }
+}
+
+fn remote_sync_extension_ids(index: &ExtensionIndex) -> Vec<String> {
+    let mut extensions = index
+        .extensions_to_sync_to_remote()
+        .into_entries()
+        .map(|(id, _)| id.to_string())
+        .collect::<Vec<_>>();
+    extensions.sort();
+    extensions
+}
+
+#[test]
+fn remote_sync_includes_language_dependencies() {
+    let index = ExtensionIndex {
+        extensions: [
+            (
+                "bar-language".into(),
+                remote_sync_entry("bar-language", r#"languages = ["languages/bar"]"#),
+            ),
+            (
+                "foo-lsp".into(),
+                remote_sync_entry(
+                    "foo-lsp",
+                    r#"
+                    [language_servers.foo]
+                    language = "Foo"
+                    "#,
+                ),
+            ),
+            (
+                "foo-language".into(),
+                remote_sync_entry("foo-language", r#"languages = ["languages/foo"]"#),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        languages: [
+            (
+                "Bar".into(),
+                remote_sync_language_entry("bar-language", "languages/bar"),
+            ),
+            (
+                "Foo".into(),
+                remote_sync_language_entry("foo-language", "languages/foo"),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        themes: BTreeMap::default(),
+        icon_themes: BTreeMap::default(),
+    };
+
+    assert_eq!(
+        remote_sync_extension_ids(&index),
+        ["foo-language", "foo-lsp"]
+    );
+}
+
+#[test]
+fn remote_sync_deduplicates_shared_language_dependencies() {
+    let index = ExtensionIndex {
+        extensions: [
+            (
+                "first-lsp".into(),
+                remote_sync_entry(
+                    "first-lsp",
+                    r#"
+                    [language_servers.first]
+                    language = "Foo"
+                    "#,
+                ),
+            ),
+            (
+                "second-lsp".into(),
+                remote_sync_entry(
+                    "second-lsp",
+                    r#"
+                    [language_servers.second]
+                    language = "Foo"
+                    "#,
+                ),
+            ),
+            (
+                "foo-language".into(),
+                remote_sync_entry("foo-language", r#"languages = ["languages/foo"]"#),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        languages: [(
+            "Foo".into(),
+            remote_sync_language_entry("foo-language", "languages/foo"),
+        )]
+        .into_iter()
+        .collect(),
+        themes: BTreeMap::default(),
+        icon_themes: BTreeMap::default(),
+    };
+
+    assert_eq!(
+        remote_sync_extension_ids(&index),
+        ["first-lsp", "foo-language", "second-lsp"]
+    );
+}
+
+#[test]
+fn remote_sync_keeps_remote_loadable_extension_without_language_provider() {
+    let index = ExtensionIndex {
+        extensions: [(
+            "foo-lsp".into(),
+            remote_sync_entry(
+                "foo-lsp",
+                r#"
+                [language_servers.foo]
+                language = "Foo"
+                "#,
+            ),
+        )]
+        .into_iter()
+        .collect(),
+        languages: BTreeMap::default(),
+        themes: BTreeMap::default(),
+        icon_themes: BTreeMap::default(),
+    };
+
+    assert_eq!(remote_sync_extension_ids(&index), ["foo-lsp"]);
+}
+
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
     init_test(cx);
