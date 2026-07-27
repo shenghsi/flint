@@ -518,6 +518,7 @@ impl AgentThreadStore {
             launched_at,
             resumed_session_id,
         };
+        let attention_window = window.clone();
         self.threads.insert(
             terminal_item_id,
             ThreadEntry {
@@ -554,6 +555,11 @@ impl AgentThreadStore {
                 .find(|kind| kind.id == kind_id)
                 .map(|kind| kind.label.to_string())
                 .unwrap_or_else(|| kind_id.to_string());
+            if let Some(window_handle) = attention_window.as_ref() {
+                window_handle
+                    .update(cx, |_, window, _| window.request_attention())
+                    .log_err();
+            }
             cx.show_desktop_notification(&title, Some(&format!("{kind_label} is waiting for you")));
         });
         self.subscriptions.insert(

@@ -2578,7 +2578,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn bell_shows_a_desktop_notification(cx: &mut TestAppContext) {
+    async fn bell_requests_attention_for_the_inactive_thread_window(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
@@ -2587,6 +2587,12 @@ mod tests {
 
         launch_codex_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let active_window_handle = init_workspace(cx, root).await;
+        active_window_handle
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("failed to activate second workspace");
+        cx.run_until_parked();
 
         let terminal_views = terminal_views(&window_handle, cx);
         assert_eq!(terminal_views.len(), 1);
@@ -2599,6 +2605,81 @@ mod tests {
         assert_eq!(
             notifications[0].1.as_deref(),
             Some("Codex is waiting for you")
+        );
+        assert_eq!(cx.window_attention_request_count(window_handle.into()), 1);
+        assert_eq!(
+            cx.window_attention_request_count(active_window_handle.into()),
+            0
+        );
+    }
+
+    #[gpui::test]
+    async fn bell_does_not_request_attention_for_the_active_window(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+        window_handle
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("failed to activate agent thread window");
+        cx.run_until_parked();
+
+        let terminal_views = terminal_views(&window_handle, cx);
+        assert_eq!(terminal_views.len(), 1);
+        let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        assert_eq!(cx.shown_notifications().len(), 1);
+        assert_eq!(cx.window_attention_request_count(window_handle.into()), 0);
+    }
+
+    #[gpui::test]
+    async fn resumed_thread_bell_requests_attention_for_its_inactive_window(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+        let thread = HistoricalThread {
+            session_id: SharedString::from("session-a"),
+            title: SharedString::from("Fix the bug"),
+            project_root: PathBuf::from(root),
+            last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                });
+            })
+            .expect("failed to resume thread");
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let active_window_handle = init_workspace(cx, root).await;
+        active_window_handle
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("failed to activate second workspace");
+        cx.run_until_parked();
+
+        let terminal_views = terminal_views(&window_handle, cx);
+        assert_eq!(terminal_views.len(), 1);
+        let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        assert_eq!(cx.shown_notifications().len(), 1);
+        assert_eq!(cx.window_attention_request_count(window_handle.into()), 1);
+        assert_eq!(
+            cx.window_attention_request_count(active_window_handle.into()),
+            0
         );
     }
 
@@ -2621,5 +2702,6 @@ mod tests {
         cx.run_until_parked();
 
         assert!(cx.shown_notifications().is_empty());
+        assert_eq!(cx.window_attention_request_count(window_handle.into()), 0);
     }
 }

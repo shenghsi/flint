@@ -34,6 +34,7 @@ pub(crate) struct TestWindowState {
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
+    pub(crate) attention_requests: usize,
 }
 
 #[derive(Clone)]
@@ -86,6 +87,7 @@ impl TestWindow {
             moved_callback: None,
             input_handler: None,
             is_fullscreen: false,
+            attention_requests: 0,
         })))
     }
 
@@ -204,8 +206,21 @@ impl PlatformWindow for TestWindow {
             .set_active_window(Some(self.clone()))
     }
 
+    fn request_attention(&self) {
+        if self.is_active() {
+            return;
+        }
+        self.0.lock().attention_requests += 1;
+    }
+
     fn is_active(&self) -> bool {
-        false
+        let Some(platform) = self.0.lock().platform.upgrade() else {
+            return false;
+        };
+        let active_window = platform.active_window.borrow();
+        active_window
+            .as_ref()
+            .is_some_and(|window| Rc::ptr_eq(&window.0, &self.0))
     }
 
     fn is_hovered(&self) -> bool {
