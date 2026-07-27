@@ -296,5 +296,12 @@ mod tests {
             "foreground churn retained {} procfs descriptors",
             churned_descriptor_count.saturating_sub(baseline_descriptor_count)
         );
+        assert!(
+            std::process::Command::new("true")
+                .status()
+                .expect("spawn process after descriptor stress")
+                .success(),
+            "new process should run after descriptor stress"
+        );
     }
 }
