@@ -2424,6 +2424,18 @@ impl Project {
             .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
     }
 
+    pub fn open_staged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(Entity<BufferDiff>, Entity<Buffer>)>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store
+            .update(cx, |git_store, cx| git_store.open_staged_diff(buffer, cx))
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,

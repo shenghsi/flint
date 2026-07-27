@@ -313,6 +313,10 @@ pub mod git {
             Branch,
             /// Opens the git stash selector.
             ViewStash,
+            /// Shows unstaged changes across the project.
+            ViewUnstagedChanges,
+            /// Shows staged changes across the project.
+            ViewStagedChanges,
             /// Opens the git worktree selector.
             Worktree,
             /// Creates a pull request for the current branch.
