@@ -870,6 +870,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             root_name: message.root_name.clone(),
             abs_path: message.abs_path.clone(),
             root_repo_common_dir: message.root_repo_common_dir.clone(),
+            root_repo_is_linked_worktree: message.root_repo_is_linked_worktree,
             updated_entries,
             removed_entries,
             scan_id: message.scan_id,
@@ -1038,6 +1039,7 @@ mod tests {
             is_last_update: true,
             abs_path: "/srv/project".to_string(),
             root_repo_common_dir: Some("/srv/project/.git".to_string()),
+            root_repo_is_linked_worktree: true,
         };
 
         let decoded = UpdateWorktree::decode(update.encode_to_vec().as_slice())

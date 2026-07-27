@@ -4892,6 +4892,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
             PathStyle::Posix,
@@ -4949,6 +4950,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             });
     });
 
@@ -5002,6 +5004,7 @@ fn remote_test_update(
         is_last_update: true,
         abs_path: "/home/user/project".to_string(),
         root_repo_common_dir: None,
+        root_repo_is_linked_worktree: false,
     }
 }
 
@@ -5019,6 +5022,7 @@ async fn test_remote_worktree_updated_entry_events_carry_paths(cx: &mut TestAppC
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             AnyProtoClient::new(NoopProtoClient::new()),
             PathStyle::Posix,
@@ -5148,6 +5152,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
             PathStyle::Posix,
@@ -5202,6 +5207,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: Some("/home/user/project/.git".to_string()),
+                root_repo_is_linked_worktree: false,
             });
     });
 
@@ -5219,6 +5225,85 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
             .count(),
         1,
         "should fire exactly once, not duplicate"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_worktree_root_repo_metadata_cleared_only_by_completed_scan(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let client = AnyProtoClient::new(NoopProtoClient::new());
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "feature-a".to_string(),
+                visible: true,
+                abs_path: "/home/user/monty/feature-a".to_string(),
+                root_repo_common_dir: Some("/home/user/monty/.bare".to_string()),
+                root_repo_is_linked_worktree: true,
+            },
+            client,
+            PathStyle::Posix,
+            cx,
+        )
+    });
+
+    let root_repo_metadata = |cx: &mut TestAppContext| {
+        worktree.read_with(cx, |worktree, _| {
+            let snapshot = worktree.snapshot();
+            (
+                snapshot.root_repo_common_dir().cloned(),
+                snapshot.root_repo_is_linked_worktree(),
+            )
+        })
+    };
+    let update = |scan_id: u64, is_last_update: bool| proto::UpdateWorktree {
+        project_id: 1,
+        worktree_id: 1,
+        abs_path: "/home/user/monty/feature-a".to_string(),
+        root_name: "feature-a".to_string(),
+        updated_entries: vec![],
+        removed_entries: vec![],
+        scan_id,
+        is_last_update,
+        updated_repositories: vec![],
+        removed_repositories: vec![],
+        root_repo_common_dir: None,
+        root_repo_is_linked_worktree: false,
+    };
+
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(update(2, false));
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        root_repo_metadata(cx),
+        (Some(Arc::from(Path::new("/home/user/monty/.bare"))), true,),
+        "mid-scan update without repo info should not clear seeded metadata"
+    );
+
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(update(3, true));
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        root_repo_metadata(cx),
+        (None, false),
+        "completed scan without repo info should clear root repo metadata"
     );
 }
 
