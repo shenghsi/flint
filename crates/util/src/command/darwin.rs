@@ -3,13 +3,13 @@ use mach2::exception_types::{
 };
 use mach2::port::{MACH_PORT_NULL, mach_port_t};
 use mach2::thread_status::{THREAD_STATE_NONE, thread_state_flavor_t};
-use smol::Unblock;
+use smol::Async;
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
 use std::ptr;
@@ -229,79 +229,30 @@ impl Command {
 
 #[derive(Debug)]
 pub struct Child {
-    pid: libc::pid_t,
-    pub stdin: Option<Unblock<std::fs::File>>,
-    pub stdout: Option<Unblock<std::fs::File>>,
-    pub stderr: Option<Unblock<std::fs::File>>,
-    kill_on_drop: bool,
-    status: Option<ExitStatus>,
-}
-
-impl Drop for Child {
-    fn drop(&mut self) {
-        if self.kill_on_drop && self.status.is_none() {
-            let _ = self.kill();
-        }
-    }
+    inner: smol::process::Child,
+    pub stdin: Option<Async<std::fs::File>>,
+    pub stdout: Option<Async<std::fs::File>>,
+    pub stderr: Option<Async<std::fs::File>>,
 }
 
 impl Child {
     pub fn id(&self) -> u32 {
-        self.pid as u32
+        self.inner.id()
     }
 
     pub fn kill(&mut self) -> io::Result<()> {
-        let result = unsafe { libc::kill(self.pid, libc::SIGKILL) };
-        if result == -1 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        self.inner.kill()
     }
 
     pub fn try_status(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(status) = self.status {
-            return Ok(Some(status));
-        }
-
-        let mut status: libc::c_int = 0;
-        let result = unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) };
-
-        if result == -1 {
-            Err(io::Error::last_os_error())
-        } else if result == 0 {
-            Ok(None)
-        } else {
-            let exit_status = ExitStatus::from_raw(status);
-            self.status = Some(exit_status);
-            Ok(Some(exit_status))
-        }
+        self.inner.try_status()
     }
 
     pub fn status(
         &mut self,
     ) -> impl std::future::Future<Output = io::Result<ExitStatus>> + Send + 'static {
         self.stdin.take();
-
-        let pid = self.pid;
-        let cached_status = self.status;
-
-        async move {
-            if let Some(status) = cached_status {
-                return Ok(status);
-            }
-
-            smol::unblock(move || {
-                let mut status: libc::c_int = 0;
-                let result = unsafe { libc::waitpid(pid, &mut status, 0) };
-                if result == -1 {
-                    Err(io::Error::last_os_error())
-                } else {
-                    Ok(ExitStatus::from_raw(status))
-                }
-            })
-            .await
-        }
+        self.inner.status()
     }
 
     pub async fn output(mut self) -> io::Result<Output> {
@@ -445,10 +396,10 @@ fn spawn_posix_spawn(
             current_dir_cstr.as_ptr(),
         ))?;
 
-        if let Some(fd) = stdin_read {
+        if let Some(fd) = &stdin_read {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDIN_FILENO,
             ))?;
             cvt_nz(posix_spawn_file_actions_addinherit_np(
@@ -457,10 +408,10 @@ fn spawn_posix_spawn(
             ))?;
         }
 
-        if let Some(fd) = stdout_write {
+        if let Some(fd) = &stdout_write {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDOUT_FILENO,
             ))?;
             cvt_nz(posix_spawn_file_actions_addinherit_np(
@@ -469,10 +420,10 @@ fn spawn_posix_spawn(
             ))?;
         }
 
-        if let Some(fd) = stderr_write {
+        if let Some(fd) = &stderr_write {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDERR_FILENO,
             ))?;
             cvt_nz(posix_spawn_file_actions_addinherit_np(
@@ -499,30 +450,20 @@ fn spawn_posix_spawn(
         libc::posix_spawnattr_destroy(&mut attr);
         libc::posix_spawn_file_actions_destroy(&mut file_actions);
 
-        if let Some(fd) = stdin_read {
-            libc::close(fd);
-        }
-        if let Some(fd) = stdout_write {
-            libc::close(fd);
-        }
-        if let Some(fd) = stderr_write {
-            libc::close(fd);
-        }
-
         cvt_nz(spawn_result)?;
 
+        let inner = smol::process::Child::adopt_raw_pid(pid as u32, true, kill_on_drop)?;
+
         Ok(Child {
-            pid,
-            stdin: stdin_write.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
-            stdout: stdout_read.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
-            stderr: stderr_read.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
-            kill_on_drop,
-            status: None,
+            inner,
+            stdin: stdin_write.map(Async::new).transpose()?,
+            stdout: stdout_read.map(Async::new).transpose()?,
+            stderr: stderr_read.map(Async::new).transpose()?,
         })
     }
 }
 
-fn create_pipe() -> io::Result<(libc::c_int, libc::c_int)> {
+fn create_pipe() -> io::Result<(std::fs::File, std::fs::File)> {
     let mut fds: [libc::c_int; 2] = [0; 2];
     unsafe {
         let result = libc::pipe(fds.as_mut_ptr());
@@ -548,11 +489,14 @@ fn create_pipe() -> io::Result<(libc::c_int, libc::c_int)> {
             }
         }
 
-        Ok((fds[0], fds[1]))
+        Ok((
+            std::fs::File::from_raw_fd(fds[0]),
+            std::fs::File::from_raw_fd(fds[1]),
+        ))
     }
 }
 
-fn open_dev_null(flags: libc::c_int) -> io::Result<libc::c_int> {
+fn open_dev_null(flags: libc::c_int) -> io::Result<std::fs::File> {
     // Set close-on-exec for this pipe, for the same reason as in `create_pipe`.
     let fd = unsafe {
         libc::open(
@@ -563,7 +507,7 @@ fn open_dev_null(flags: libc::c_int) -> io::Result<libc::c_int> {
     if fd == -1 {
         return Err(io::Error::last_os_error());
     }
-    Ok(fd)
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
 /// Zero means `Ok()`, all other values are treated as raw OS errors. Does not look at `errno`.
@@ -597,7 +541,9 @@ mod tests {
     // git's stdin write end open and deadlock the git child on `read()`.
     #[test]
     fn test_create_pipe_not_inherited_by_unrelated_spawn() {
-        let (read_fd, write_fd) = create_pipe().expect("create_pipe failed");
+        let (read_file, write_file) = create_pipe().expect("create_pipe failed");
+        let read_fd = read_file.as_raw_fd();
+        let write_fd = write_file.as_raw_fd();
 
         // Probe with the exact fds returned by `create_pipe` (no dup), since
         // duping with `F_DUPFD` would lose CLOEXEC and `F_DUPFD_CLOEXEC` would
@@ -620,15 +566,76 @@ mod tests {
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
 
-        unsafe {
-            libc::close(read_fd);
-            libc::close(write_fd);
-        }
-
         assert_eq!(
             stdout,
             format!("{read_fd} WAS NOT INHERITED\n{write_fd} WAS NOT INHERITED\nDONE\n")
         );
+    }
+
+    #[test]
+    fn failed_spawns_release_their_stdio_descriptors() {
+        fn open_descriptor_count() -> usize {
+            std::fs::read_dir("/dev/fd")
+                .expect("read process descriptors")
+                .count()
+        }
+
+        const ATTEMPTS: usize = 32;
+        const PARALLEL_TEST_SLACK: usize = 32;
+        let before = open_descriptor_count();
+        for _ in 0..ATTEMPTS {
+            Command::new("/bin/flint-process-that-does-not-exist")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect_err("spawn should fail");
+        }
+        let after = open_descriptor_count();
+
+        assert!(
+            after <= before + PARALLEL_TEST_SLACK,
+            "{ATTEMPTS} failed spawns retained {} descriptors",
+            after.saturating_sub(before)
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the test must wait for the OS child reaper"
+    )]
+    fn dropping_short_lived_children_reaps_every_process() {
+        const ATTEMPTS: usize = 32;
+        let mut child_process_ids = Vec::with_capacity(ATTEMPTS);
+
+        for _ in 0..ATTEMPTS {
+            let child = Command::new("/usr/bin/true")
+                .spawn()
+                .expect("spawn short-lived child");
+            child_process_ids.push(child.id());
+            drop(child);
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let remaining_processes = child_process_ids
+                .iter()
+                .copied()
+                .filter(|process_id| {
+                    (unsafe { libc::kill(*process_id as libc::pid_t, 0) }) == 0
+                        || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+                })
+                .collect::<Vec<_>>();
+            if remaining_processes.is_empty() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "dropped children were not reaped: {remaining_processes:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     #[test]
