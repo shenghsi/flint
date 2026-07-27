@@ -666,6 +666,9 @@ message GitRenameWorktree {
   string new_path = 4;
 }
 
+// Deprecated: newer clients let `git commit` run hooks natively instead of
+// requesting them explicitly. Keep this message for compatibility with older
+// remote clients.
 message RunGitHook {
   enum GitHook {
     PRE_COMMIT = 0;
