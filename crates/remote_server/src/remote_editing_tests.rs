@@ -34,10 +34,11 @@ use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use unindent::Unindent as _;
 use util::{path, paths::PathMatcher, rel_path::rel_path};
+use worktree::{Event as WorktreeEvent, PathChange};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -170,6 +171,123 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
             "fn one() -> usize { 100 }"
         );
     });
+}
+
+#[gpui::test]
+async fn test_remote_worktree_events_preserve_changed_paths(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project": {
+                "src": {
+                    "existing.rs": "fn existing() {}"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    cx.executor().run_until_parked();
+
+    let changes = Arc::new(Mutex::new(Vec::new()));
+    let _subscription = cx.update(|cx| {
+        let changes = changes.clone();
+        cx.subscribe(&worktree, move |_, event, _| {
+            if let WorktreeEvent::UpdatedEntries(updated_entries) = event {
+                changes
+                    .lock()
+                    .expect("remote change collector should not be poisoned")
+                    .extend(
+                        updated_entries
+                            .iter()
+                            .map(|(path, _, change)| (path.as_unix_str().to_string(), *change)),
+                    );
+            }
+        })
+    });
+
+    fs.save(
+        path!("/code/project/src/new.rs").as_ref(),
+        &"fn new() {}".into(),
+        Default::default(),
+    )
+    .await
+    .expect("remote file creation should succeed");
+    cx.executor().run_until_parked();
+    {
+        let changes = changes
+            .lock()
+            .expect("remote change collector should not be poisoned");
+        assert!(changes.contains(&("src/new.rs".to_string(), PathChange::AddedOrUpdated)));
+    }
+
+    changes
+        .lock()
+        .expect("remote change collector should not be poisoned")
+        .clear();
+    fs.save(
+        path!("/code/project/src/new.rs").as_ref(),
+        &"fn new() { println!(\"changed\"); }".into(),
+        Default::default(),
+    )
+    .await
+    .expect("remote file modification should succeed");
+    cx.executor().run_until_parked();
+    {
+        let changes = changes
+            .lock()
+            .expect("remote change collector should not be poisoned");
+        assert!(changes.contains(&("src/new.rs".to_string(), PathChange::AddedOrUpdated)));
+    }
+
+    changes
+        .lock()
+        .expect("remote change collector should not be poisoned")
+        .clear();
+    fs.rename(
+        path!("/code/project/src/new.rs").as_ref(),
+        path!("/code/project/src/renamed.rs").as_ref(),
+        Default::default(),
+    )
+    .await
+    .expect("remote file rename should succeed");
+    cx.executor().run_until_parked();
+    {
+        let changes = changes
+            .lock()
+            .expect("remote change collector should not be poisoned");
+        assert!(changes.contains(&("src/new.rs".to_string(), PathChange::Removed)));
+        assert!(changes.contains(&("src/renamed.rs".to_string(), PathChange::AddedOrUpdated)));
+    }
+
+    changes
+        .lock()
+        .expect("remote change collector should not be poisoned")
+        .clear();
+    fs.remove_file(
+        path!("/code/project/src/renamed.rs").as_ref(),
+        Default::default(),
+    )
+    .await
+    .expect("remote file deletion should succeed");
+    cx.executor().run_until_parked();
+    assert!(
+        changes
+            .lock()
+            .expect("remote change collector should not be poisoned")
+            .contains(&("src/renamed.rs".to_string(), PathChange::Removed))
+    );
 }
 
 async fn do_search_and_assert(

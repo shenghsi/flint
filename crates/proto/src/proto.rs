@@ -1004,4 +1004,41 @@ mod tests {
         assert!(!chunks[1].is_last_update);
         assert!(chunks[2].is_last_update);
     }
+
+    #[test]
+    fn remote_worktree_update_round_trip_preserves_changed_entry_identity() {
+        let update = UpdateWorktree {
+            project_id: 9,
+            worktree_id: 4,
+            root_name: "project".to_string(),
+            updated_entries: vec![Entry {
+                id: 7,
+                is_dir: false,
+                path: "src/main.rs".to_string(),
+                inode: 41,
+                mtime: Some(Timestamp {
+                    seconds: 12,
+                    nanos: 34,
+                }),
+                is_ignored: false,
+                is_hidden: false,
+                is_external: false,
+                is_fifo: false,
+                size: Some(128),
+                canonical_path: Some("/srv/project/src/main.rs".to_string()),
+            }],
+            removed_entries: vec![6],
+            updated_repositories: Vec::new(),
+            removed_repositories: Vec::new(),
+            scan_id: 11,
+            is_last_update: true,
+            abs_path: "/srv/project".to_string(),
+            root_repo_common_dir: Some("/srv/project/.git".to_string()),
+        };
+
+        let decoded = UpdateWorktree::decode(update.encode_to_vec().as_slice())
+            .expect("worktree update should decode");
+
+        assert_eq!(decoded, update);
+    }
 }
