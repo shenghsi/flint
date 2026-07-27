@@ -376,6 +376,11 @@ impl TestAppContext {
         self.test_platform.shown_notifications.borrow().clone()
     }
 
+    /// Number of operating-system attention requests made for this window.
+    pub fn window_attention_request_count(&self, window_handle: AnyWindowHandle) -> usize {
+        self.test_window(window_handle).0.lock().attention_requests
+    }
+
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
