@@ -32,7 +32,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::TaskId;
+use task::{ShellKind, TaskId};
 use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, Paste, PasteText, Point, Range,
     ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
@@ -48,7 +48,7 @@ use ui::{
     prelude::*,
     scrollbars::{self, ScrollbarVisibility},
 };
-use util::ResultExt;
+use util::{ResultExt, paths::PathExt};
 use workspace::{
     CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal, Pane,
     ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
@@ -76,6 +76,59 @@ fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize>
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+
+fn format_paths_for_terminal(paths: &[PathBuf], shell_kind: ShellKind) -> String {
+    let mut text = paths
+        .iter()
+        .filter_map(|path| {
+            let formatted = match shell_kind {
+                ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::Cmd => {
+                    path.try_shell_safe(shell_kind)
+                }
+                ShellKind::Posix
+                | ShellKind::Csh
+                | ShellKind::Tcsh
+                | ShellKind::Rc
+                | ShellKind::Fish
+                | ShellKind::Nushell
+                | ShellKind::Xonsh
+                | ShellKind::Elvish => format_bare_posix_path(path, shell_kind),
+            };
+            formatted.map(|path| format!(" {path}")).log_err()
+        })
+        .collect::<String>();
+    text.push(' ');
+    text
+}
+
+fn format_bare_posix_path(path: &Path, shell_kind: ShellKind) -> anyhow::Result<String> {
+    use anyhow::Context as _;
+
+    let path = path.to_str().context("path contains invalid UTF-8")?;
+    if path.contains(['\n', '\r']) {
+        return shell_kind
+            .try_quote(path)
+            .map(Into::into)
+            .context("failed to quote path");
+    }
+
+    // Coding-agent TUIs treat surrounding quotes as prose instead of a file
+    // reference, so keep ordinary paths bare while retaining shell-safe input.
+    let mut escaped = String::with_capacity(path.len());
+    for character in path.chars() {
+        let is_safe = character.is_ascii_alphanumeric()
+            || matches!(
+                character,
+                '_' | '@' | '%' | '+' | '=' | ':' | ',' | '.' | '/' | '-'
+            )
+            || (!character.is_ascii() && !character.is_whitespace());
+        if !is_safe {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    Ok(escaped)
+}
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -943,11 +996,8 @@ impl TerminalView {
     }
 
     pub fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
-        let mut text = paths
-            .iter()
-            .map(|path| format!(" {path:?}"))
-            .collect::<String>();
-        text.push(' ');
+        let shell_kind = self.terminal.read(cx).shell_kind();
+        let text = format_paths_for_terminal(paths, shell_kind);
         window.focus(&self.focus_handle(cx), cx);
         self.terminal.update(cx, |terminal, _| {
             terminal.paste(&text);
@@ -2181,13 +2231,51 @@ mod tests {
     use workspace::{AppState, MultiWorkspace, SelectedEntry};
 
     fn expected_drop_text(paths: &[PathBuf]) -> String {
-        let mut text = String::new();
-        for path in paths {
-            text.push(' ');
-            text.push_str(&format!("{path:?}"));
-        }
-        text.push(' ');
-        text
+        format_paths_for_terminal(paths, ShellKind::system())
+    }
+
+    #[test]
+    fn dropped_posix_paths_remain_bare_shell_arguments() {
+        let paths = [
+            PathBuf::from("/tmp/space name.rs"),
+            PathBuf::from("/tmp/single'quote.rs"),
+            PathBuf::from("/tmp/double\"quote.rs"),
+            PathBuf::from("/tmp/back\\slash.rs"),
+            PathBuf::from("/tmp/你好.rs"),
+        ];
+
+        assert_eq!(
+            format_paths_for_terminal(&paths, task::ShellKind::Posix),
+            " /tmp/space\\ name.rs /tmp/single\\'quote.rs /tmp/double\\\"quote.rs \
+             /tmp/back\\\\slash.rs /tmp/你好.rs "
+        );
+    }
+
+    #[test]
+    fn dropped_paths_preserve_multiple_argument_boundaries() {
+        let paths = [
+            PathBuf::from("/tmp/first file.rs"),
+            PathBuf::from("/tmp/second file.rs"),
+        ];
+
+        assert_eq!(
+            format_paths_for_terminal(&paths, task::ShellKind::Posix),
+            " /tmp/first\\ file.rs /tmp/second\\ file.rs "
+        );
+    }
+
+    #[test]
+    fn dropped_windows_paths_use_the_target_shell_quoting() {
+        let paths = [PathBuf::from(r"C:\Program Files\你好.rs")];
+
+        assert_eq!(
+            format_paths_for_terminal(&paths, task::ShellKind::PowerShell),
+            " 'C:\\Program Files\\你好.rs' "
+        );
+        assert_eq!(
+            format_paths_for_terminal(&paths, task::ShellKind::Cmd),
+            " ^\"C:\\Program Files\\你好.rs^\" "
+        );
     }
 
     fn assert_drop_writes_to_terminal(

@@ -27,7 +27,7 @@ use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{HideStrategy, Shell, SpawnInTerminal};
+use task::{HideStrategy, Shell, ShellKind, SpawnInTerminal};
 use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
@@ -2425,6 +2425,13 @@ impl Terminal {
         }
     }
 
+    pub fn shell_kind(&self) -> ShellKind {
+        match self.template.shell {
+            Shell::System => ShellKind::new("", self.path_style.is_windows()),
+            ref shell => shell.shell_kind(self.path_style.is_windows()),
+        }
+    }
+
     /// Normalizes the command name of the foreground process, if one is known.
     pub fn foreground_process_command_name(&self) -> Option<String> {
         match &self.terminal_type {
@@ -2920,6 +2927,25 @@ mod tests {
         assert_eq!(normalize_path_command_name("zsh"), Some("zsh".into()));
         assert_eq!(normalize_path_command_name("-zsh"), None);
         assert_eq!(normalize_path_command_name("pwsh.exe"), Some("pwsh".into()));
+    }
+
+    #[gpui::test]
+    fn display_only_shell_kind_follows_target_path_style(cx: &mut TestAppContext) {
+        let shell_kind = |path_style| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                &cx.background_executor,
+                path_style,
+            )
+            .terminal
+            .shell_kind()
+        };
+
+        assert_eq!(shell_kind(PathStyle::Posix), ShellKind::Posix);
+        assert_eq!(shell_kind(PathStyle::Windows), ShellKind::PowerShell);
     }
 
     #[test]
