@@ -16,6 +16,33 @@ use serde_json::json;
 use tempfile::TempDir;
 use util::path;
 
+async fn watcher_delivered_equivalent_path(
+    events: &mut (impl futures::Stream<Item = Vec<PathEvent>> + Unpin),
+    executor: &BackgroundExecutor,
+    expected_path: &Path,
+) -> bool {
+    let expected_path = expected_path.to_string_lossy().to_lowercase();
+    let timeout = executor.timer(Duration::from_secs(3)).fuse();
+    futures::pin_mut!(timeout);
+
+    loop {
+        futures::select_biased! {
+            batch = events.next().fuse() => {
+                let Some(batch) = batch else {
+                    return false;
+                };
+                if batch.iter().any(|event| {
+                    event.path.to_string_lossy().to_lowercase() == expected_path
+                        || event.kind == Some(PathEventKind::Rescan)
+                }) {
+                    return true;
+                }
+            }
+            _ = timeout => return false,
+        }
+    }
+}
+
 #[gpui::test]
 async fn test_fake_fs(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
@@ -68,6 +95,75 @@ async fn test_fake_fs(executor: BackgroundExecutor) {
             .unwrap(),
         "D",
     );
+}
+
+#[gpui::test]
+async fn test_realfs_watch_delivers_events_after_case_only_root_rename(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+
+    let fs = RealFs::new(None, executor.clone());
+    let temporary_directory = TempDir::new().expect("create temporary directory");
+    let watched_root = temporary_directory.path().join("WatchedRoot");
+    std::fs::create_dir_all(&watched_root).expect("create watched root");
+
+    let lowercase_root = temporary_directory.path().join("watchedroot");
+    if !lowercase_root.exists() {
+        return;
+    }
+
+    let (mut events, watcher) = fs.watch(&watched_root, Duration::from_millis(10)).await;
+    executor.timer(Duration::from_millis(250)).await;
+
+    let renamed_root = temporary_directory.path().join("WATCHEDROOT");
+    std::fs::rename(&watched_root, &renamed_root).expect("rename watched root by case");
+
+    assert!(
+        watcher_delivered_equivalent_path(&mut events, &executor, &renamed_root).await,
+        "watcher should deliver the case-only root rename"
+    );
+
+    drop(watcher);
+}
+
+#[gpui::test]
+async fn test_realfs_watch_registration_and_removal_complete(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+
+    let temporary_directory = TempDir::new().expect("create temporary directory");
+    let watched_root = temporary_directory.path().to_path_buf();
+    let lifecycle = executor
+        .spawn({
+            let executor = executor.clone();
+            async move {
+                let fs = RealFs::new(None, executor);
+                for _ in 0..16 {
+                    let (events, watcher) =
+                        fs.watch(&watched_root, Duration::from_millis(10)).await;
+                    watcher
+                        .remove(&watched_root)
+                        .expect("remove native watch registration");
+                    watcher
+                        .add(&watched_root)
+                        .expect("restore native watch registration");
+                    drop(watcher);
+                    drop(events);
+                }
+            }
+        })
+        .fuse();
+    let timeout = executor.timer(Duration::from_secs(5)).fuse();
+    futures::pin_mut!(lifecycle, timeout);
+
+    futures::select_biased! {
+        _ = lifecycle => {}
+        _ = timeout => panic!("native watch registration or removal hung"),
+    }
 }
 
 #[gpui::test]
