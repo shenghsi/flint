@@ -3918,6 +3918,23 @@ mod tests {
             process_is_alive(grandchild_pid),
             "grandchild should be alive after spawning"
         );
+        let mut process_snapshot = sysinfo::System::new_all();
+        process_snapshot.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        let grandchild_parent = process_snapshot
+            .process(sysinfo::Pid::from_u32(grandchild_pid))
+            .and_then(|process| process.parent())
+            .map(|process_id| process_id.as_u32());
+        let (terminal_root, terminal_current) =
+            terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => (
+                    info.pid_getter().fallback_pid().as_u32(),
+                    info.pid().map(|process_id| process_id.as_u32()),
+                ),
+                TerminalType::DisplayOnly => (0, None),
+            });
+        eprintln!(
+            "[DEBUG-pr76-conpty] expected grandchild={grandchild_pid} parent={grandchild_parent:?} terminal_root={terminal_root} terminal_current={terminal_current:?}"
+        );
 
         terminal.update(cx, |terminal, _| terminal.kill_active_task());
 

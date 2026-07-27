@@ -201,6 +201,13 @@ impl PtyProcessInfo {
             .collect();
         let descendant_process_ids =
             descendant_process_ids(root_process_id.as_u32(), &parent_process_ids);
+        #[cfg(test)]
+        eprintln!(
+            "[DEBUG-pr76-conpty] root={} current={:?} has_job={} descendants={descendant_process_ids:?}",
+            root_process_id.as_u32(),
+            self.pid_getter.pid().map(|process_id| process_id.as_u32()),
+            self.process_job.is_some()
+        );
 
         let killed_current_process = if let Some(process_job) = &self.process_job {
             match process_job.terminate() {
@@ -224,12 +231,27 @@ impl PtyProcessInfo {
             true,
             ProcessRefreshKind::nothing().without_tasks(),
         );
+        #[cfg(test)]
+        eprintln!(
+            "[DEBUG-pr76-conpty] surviving descendants={:?}",
+            descendant_pids
+                .iter()
+                .filter(|process_id| process_snapshot.process(**process_id).is_some())
+                .map(|process_id| process_id.as_u32())
+                .collect::<Vec<_>>()
+        );
         let mut killed_descendants = true;
         for process_id in descendant_pids {
             let Some(process) = process_snapshot.process(process_id) else {
                 continue;
             };
-            if !process.kill() {
+            let killed = process.kill();
+            #[cfg(test)]
+            eprintln!(
+                "[DEBUG-pr76-conpty] terminate descendant={} result={killed}",
+                process_id.as_u32()
+            );
+            if !killed {
                 log::error!(
                     "failed to terminate escaped terminal descendant process {}",
                     process_id.as_u32()
