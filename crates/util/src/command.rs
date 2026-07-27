@@ -29,15 +29,22 @@ pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
     std::process::Command::new(program)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 pub type Child = smol::process::Child;
+
+#[cfg(target_os = "windows")]
+pub type Child = crate::process::Child;
 
 #[cfg(not(target_os = "macos"))]
 pub use std::process::Stdio;
 
 #[cfg(not(target_os = "macos"))]
 #[derive(Debug)]
-pub struct Command(smol::process::Command);
+pub struct Command {
+    inner: smol::process::Command,
+    #[cfg(target_os = "windows")]
+    kill_process_tree_on_drop: bool,
+}
 
 #[cfg(not(target_os = "macos"))]
 impl Command {
@@ -48,14 +55,19 @@ impl Command {
             use smol::process::windows::CommandExt;
             let mut cmd = smol::process::Command::new(program);
             cmd.creation_flags(CREATE_NO_WINDOW);
-            Self(cmd)
+            Self {
+                inner: cmd,
+                kill_process_tree_on_drop: false,
+            }
         }
         #[cfg(not(target_os = "windows"))]
-        Self(smol::process::Command::new(program))
+        Self {
+            inner: smol::process::Command::new(program),
+        }
     }
 
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
-        self.0.arg(arg);
+        self.inner.arg(arg);
         self
     }
 
@@ -64,16 +76,16 @@ impl Command {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.0.args(args);
+        self.inner.args(args);
         self
     }
 
     pub fn get_args(&self) -> impl Iterator<Item = &OsStr> {
-        self.0.get_args()
+        self.inner.get_args()
     }
 
     pub fn env(&mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> &mut Self {
-        self.0.env(key, val);
+        self.inner.env(key, val);
         self
     }
 
@@ -83,58 +95,73 @@ impl Command {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        self.0.envs(vars);
+        self.inner.envs(vars);
         self
     }
 
     pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
-        self.0.env_remove(key);
+        self.inner.env_remove(key);
         self
     }
 
     pub fn env_clear(&mut self) -> &mut Self {
-        self.0.env_clear();
+        self.inner.env_clear();
         self
     }
 
     pub fn current_dir(&mut self, dir: impl AsRef<Path>) -> &mut Self {
-        self.0.current_dir(dir);
+        self.inner.current_dir(dir);
         self
     }
 
     pub fn stdin(&mut self, cfg: impl Into<Stdio>) -> &mut Self {
-        self.0.stdin(cfg.into());
+        self.inner.stdin(cfg.into());
         self
     }
 
     pub fn stdout(&mut self, cfg: impl Into<Stdio>) -> &mut Self {
-        self.0.stdout(cfg.into());
+        self.inner.stdout(cfg.into());
         self
     }
 
     pub fn stderr(&mut self, cfg: impl Into<Stdio>) -> &mut Self {
-        self.0.stderr(cfg.into());
+        self.inner.stderr(cfg.into());
         self
     }
 
     pub fn kill_on_drop(&mut self, kill_on_drop: bool) -> &mut Self {
-        self.0.kill_on_drop(kill_on_drop);
+        self.inner.kill_on_drop(kill_on_drop);
+        #[cfg(target_os = "windows")]
+        {
+            self.kill_process_tree_on_drop = kill_on_drop;
+        }
         self
     }
 
     pub fn spawn(&mut self) -> std::io::Result<Child> {
-        self.0.spawn()
+        let process = self.inner.spawn()?;
+        #[cfg(target_os = "windows")]
+        {
+            Ok(crate::process::Child::from_process(
+                process,
+                self.kill_process_tree_on_drop,
+            ))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(process)
+        }
     }
 
     pub async fn output(&mut self) -> std::io::Result<std::process::Output> {
-        self.0.output().await
+        self.inner.output().await
     }
 
     pub async fn status(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        self.0.status().await
+        self.inner.status().await
     }
 
     pub fn get_program(&self) -> &OsStr {
-        self.0.get_program()
+        self.inner.get_program()
     }
 }

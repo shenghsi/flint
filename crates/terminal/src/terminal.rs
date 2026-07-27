@@ -3827,6 +3827,113 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[gpui::test]
+    async fn test_kill_active_task_terminates_grandchildren(cx: &mut TestAppContext) {
+        use windows::Win32::{
+            Foundation::{CloseHandle, STILL_ACTIVE},
+            System::Threading::{
+                GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+                PROCESS_TERMINATE, TerminateProcess,
+            },
+        };
+
+        fn process_is_alive(pid: u32) -> bool {
+            unsafe {
+                let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+                    return false;
+                };
+                let mut exit_code = 0u32;
+                let alive = GetExitCodeProcess(handle, &mut exit_code).is_ok()
+                    && exit_code == STILL_ACTIVE.0 as u32;
+                if let Err(error) = CloseHandle(handle) {
+                    eprintln!("failed to close process handle: {error}");
+                }
+                alive
+            }
+        }
+
+        struct ProcessCleanup(u32);
+
+        impl Drop for ProcessCleanup {
+            fn drop(&mut self) {
+                if !process_is_alive(self.0) {
+                    return;
+                }
+                unsafe {
+                    match OpenProcess(PROCESS_TERMINATE, false, self.0) {
+                        Ok(handle) => {
+                            if let Err(error) = TerminateProcess(handle, 1) {
+                                eprintln!("failed to clean up test process {}: {error}", self.0);
+                            }
+                            if let Err(error) = CloseHandle(handle) {
+                                eprintln!("failed to close test process handle: {error}");
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "failed to open test process {} for cleanup: {error}",
+                                self.0
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        cx.executor().allow_parking();
+        let temporary_directory =
+            tempfile::tempdir().expect("failed to create temporary directory");
+        let pid_file = temporary_directory.path().join("grandchild_pid");
+        let escaped_pid_file = pid_file.display().to_string().replace('\'', "''");
+        let script = format!(
+            "$p = Start-Process -FilePath ping.exe -ArgumentList @('-n','60','127.0.0.1') -PassThru -WindowStyle Hidden; \
+             Set-Content -LiteralPath '{escaped_pid_file}' -Value $p.Id; \
+             Wait-Process -Id $p.Id"
+        );
+        let (terminal, _completion_rx) = build_test_terminal_with_arguments(
+            cx,
+            "powershell.exe".to_string(),
+            vec!["-NoProfile".to_string(), "-Command".to_string(), script],
+        )
+        .await;
+
+        let grandchild_pid = {
+            let mut grandchild_pid = None;
+            for _ in 0..100 {
+                if let Ok(contents) = std::fs::read_to_string(&pid_file)
+                    && let Ok(pid) = contents.trim().parse::<u32>()
+                {
+                    grandchild_pid = Some(pid);
+                    break;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+            }
+            grandchild_pid.expect("timed out waiting for grandchild pid file")
+        };
+        let _cleanup = ProcessCleanup(grandchild_pid);
+        assert!(
+            process_is_alive(grandchild_pid),
+            "grandchild should be alive after spawning"
+        );
+
+        terminal.update(cx, |terminal, _| terminal.kill_active_task());
+
+        for _ in 0..40 {
+            if !process_is_alive(grandchild_pid) {
+                return;
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+        }
+        panic!(
+            "grandchild should be terminated after killing the terminal task (pid {grandchild_pid})"
+        );
+    }
+
     /// Test that kill_active_task on a task that's not running is a no-op
     #[gpui::test]
     async fn test_kill_active_task_on_completed_task_is_noop(cx: &mut TestAppContext) {

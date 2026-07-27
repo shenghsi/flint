@@ -77,6 +77,8 @@ pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
     pid_getter: ProcessIdGetter,
+    #[cfg(windows)]
+    process_job: Option<util::process::WindowsProcessJob>,
     last_foreground_pid: Mutex<Option<Pid>>,
     pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
@@ -98,10 +100,20 @@ impl PtyProcessInfo {
             process_refresh_kind,
         );
 
+        #[cfg(windows)]
+        let process_job =
+            util::process::WindowsProcessJob::assign(pid_getter.fallback_pid().as_u32())
+                .map_err(|error| {
+                    log::error!("failed to assign terminal process to a job object: {error:#}");
+                })
+                .ok();
+
         PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
             pid_getter,
+            #[cfg(windows)]
+            process_job,
             last_foreground_pid: Mutex::new(None),
             current: RwLock::new(None),
             task: Mutex::new(None),
@@ -144,7 +156,20 @@ impl PtyProcessInfo {
         unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGKILL) == 0 }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    pub(crate) fn kill_current_process(&self) -> bool {
+        if let Some(process_job) = &self.process_job {
+            match process_job.terminate() {
+                Ok(()) => return true,
+                Err(error) => {
+                    log::error!("failed to terminate terminal process job: {error:#}");
+                }
+            }
+        }
+        self.refresh().is_some_and(|process| process.kill())
+    }
+
+    #[cfg(all(not(unix), not(windows)))]
     pub(crate) fn kill_current_process(&self) -> bool {
         self.refresh().is_some_and(|process| process.kill())
     }
