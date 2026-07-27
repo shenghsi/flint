@@ -2329,6 +2329,20 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     assert_eq!(server_branch.name(), branches[2]);
 
+    let default_branch = repository
+        .update(cx, |repository, _| repository.default_branch(false))
+        .await
+        .expect("requesting the remote default branch should succeed")
+        .expect("the remote default branch request should return a result");
+    assert_eq!(default_branch.as_deref(), Some("main"));
+
+    let default_branch_with_remote = repository
+        .update(cx, |repository, _| repository.default_branch(true))
+        .await
+        .expect("requesting the qualified remote default branch should succeed")
+        .expect("the qualified remote default branch request should return a result");
+    assert_eq!(default_branch_with_remote.as_deref(), Some("origin/main"));
+
     // Also try creating a new branch
     cx.update(|cx| {
         repository.update(cx, |repo, _cx| {
