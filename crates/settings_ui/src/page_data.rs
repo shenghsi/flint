@@ -8863,7 +8863,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_thread_per_agent_settings_include_all_registered_agents() {
+    fn agent_threads_per_agent_settings_include_all_registered_agents() {
         let page = panels_page();
         let pages = [page];
 

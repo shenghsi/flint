@@ -89,3 +89,28 @@ pub struct AgentThreadCommandContent {
     /// arguments.
     pub default_launch_option: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_threads_initialization_command_round_trips() {
+        let content: AgentThreadSettingsContent =
+            serde_json::from_str(r#"{"codex":{"initialization_command":"source ~/.profile"}}"#)
+                .expect("valid agent thread settings");
+
+        assert_eq!(
+            content
+                .codex
+                .as_ref()
+                .and_then(|command| command.initialization_command.as_deref()),
+            Some("source ~/.profile")
+        );
+        let serialized = serde_json::to_value(content).expect("serializable agent thread settings");
+        assert_eq!(
+            serialized["codex"]["initialization_command"],
+            "source ~/.profile"
+        );
+    }
+}
