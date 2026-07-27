@@ -1,7 +1,7 @@
 # Upstream Domain-Wave Integration Design
 
 **Date:** 2026-07-27
-**Status:** Draft for written-spec review
+**Status:** Approved
 
 No implementation is authorized by this design review alone.
 
@@ -140,8 +140,26 @@ Each entry records:
 - follow-up observations for future upstream reviews.
 
 Release tags seed the ledger. Before implementation, the assigned engineer
-checks the upstream PR, its final commit, later changes to the same code, and
-whether the fix exists on both current release branches.
+proves that the final upstream commit is not already an ancestor of Flint's
+fork point, then checks the upstream PR, later changes to the same code, and
+whether the fix exists on both current release branches. Release-note timing is
+not evidence that a change is absent: release notes can include commits merged
+before Flint's fork point.
+
+The initial ancestry audit found these reviewed changes already present at the
+fork point:
+
+- Zed PR #58339: safe symlink trashing;
+- Zed PR #58240: local-only sandbox terminal temporary directories;
+- Zed PR #58533: remote agent-terminal restoration panic;
+- Zed PR #57886: compare with branch;
+- Zed PR #56152: open file diffs from the Git panel;
+- Zed PR #58163: split controls in commit views;
+- Zed PR #58681: structural sharing for large text edits; and
+- Zed PR #58259: removal of extension-managed x86 binary downloads.
+
+These entries are recorded as baseline-present and are not implementation
+tasks. Their behavior may remain in a later compatibility regression suite.
 
 ## Integration Classifications
 
@@ -172,18 +190,20 @@ against Flint's current architecture.
 Every wave uses the same workflow:
 
 1. Refresh release and PR metadata.
-2. Confirm the final upstream implementation and later corrections.
-3. Resolve prerequisites and group only inseparable fixes.
-4. Measure overlap and choose an integration classification.
-5. Write a failing regression or acceptance test.
-6. Implement the smallest complete behavior.
-7. Run focused tests.
-8. Run repository formatting and lint gates.
-9. Build and verify a fresh local application bundle for user-visible or
+2. Prove the final upstream commit is absent from the fork-point ancestry and
+   current Flint behavior.
+3. Confirm the final upstream implementation and later corrections.
+4. Resolve prerequisites and group only inseparable fixes.
+5. Measure overlap and choose an integration classification.
+6. Write a failing regression or acceptance test.
+7. Implement the smallest complete behavior.
+8. Run focused tests.
+9. Run repository formatting and lint gates.
+10. Build and verify a fresh local application bundle for user-visible or
    macOS-sensitive work.
-10. Open a focused pull request with the required release-notes section.
-11. Update the ledger after CI and review establish the result.
-12. Run the wave regression suite before beginning the next wave.
+11. Open a focused pull request with the required release-notes section.
+12. Update the ledger after CI and review establish the result.
+13. Run the wave regression suite before beginning the next wave.
 
 Platform-specific process and resource fixes remain separate unless they share
 one tested abstraction. Broad UI work lands as a foundation only when the same
@@ -199,14 +219,12 @@ not introduced in advance.
 - Ensure commit operations run `commit-msg` hooks and are not terminated by an
   unrelated short network timeout.
 - Prevent agent-thread archival from deleting manually created worktrees.
-- Trash symlinks rather than their targets.
 
 ### Initial upstream set
 
 - Zed PR #60584: staging corruption with repeated lines.
 - Zed PR #61185: commit hooks and long-running Git operations.
 - Zed PR #58275: manual worktree preservation.
-- Zed PR #58339: safe symlink trashing.
 
 ### Required tests
 
@@ -214,7 +232,6 @@ not introduced in advance.
   changing a different hunk or corrupting the index.
 - Protected agent-created worktrees may be removed by their owner flow while
   manually created worktrees survive thread archival.
-- Trashing a symlink removes the link and leaves the target intact.
 - A rejecting `commit-msg` hook prevents the commit and presents its error.
 - A slow Git operation is allowed to complete or fail with its real error.
 
@@ -230,7 +247,6 @@ before any Wave 5 Git UI feature begins.
 - Fix workspace-opening and filesystem-watcher hangs.
 - Preserve filesystem events on case-insensitive filesystems.
 - Bound incoming language-server message queues.
-- Stop agent diagnostics requests from hanging indefinitely.
 - Fix process-tree, file-descriptor, and reaper leaks on Linux, macOS, and
   Windows.
 - Evaluate large-worktree watcher performance changes that share prerequisites
@@ -241,7 +257,6 @@ before any Wave 5 Git UI feature begins.
 - Zed PRs #58994 and #59045: workspace and watcher hangs.
 - Zed PR #59714: missed case-insensitive filesystem events.
 - Zed PR #58867: bounded LSP message queue.
-- Zed PR #61176: bounded agent diagnostics collection.
 - Zed PR #58683: Linux PTY descriptor leak.
 - Zed PRs #59128 and #59156: macOS descriptors and process reaping.
 - Zed PR #58885: Windows process-tree cleanup.
@@ -252,7 +267,6 @@ before any Wave 5 Git UI feature begins.
 - Scheduler-controlled timeout tests for workspace and watcher completion.
 - Case-only and canonical-path event tests on case-insensitive platforms.
 - A synthetic flooding LSP cannot grow the pending queue without bound.
-- An unresponsive diagnostics provider produces a visible, bounded failure.
 - Child process trees terminate when their owning terminal, agent, debugger, or
   application scope ends.
 - Repeated process spawn failure and terminal lifecycle tests do not leak
@@ -268,9 +282,6 @@ deferred only with a recorded reason and must not block unrelated platforms.
 ### Scope
 
 - Include changed paths in remote filesystem events.
-- Keep client temporary-directory variables out of remote terminal
-  environments.
-- Restore remote agent terminals without crashing.
 - Remove ghost projects during local and remote project transitions.
 - Validate trust roots using the remote host's path style.
 - Distinguish local and remote recent projects with identical checkout paths.
@@ -280,8 +291,8 @@ deferred only with a recorded reason and must not block unrelated platforms.
 
 ### Initial upstream set
 
-- Zed PRs #58157, #58240, #58533, #59272, #60139, #53953, #59134, #57049,
-  #59999, #56487, and #52537.
+- Zed PRs #58157, #59272, #60139, #53953, #59134, #57049, #59999, #56487,
+  and #52537.
 
 ### Required tests
 
@@ -411,7 +422,6 @@ without its first end-to-end consumer.
 
 ### Performance scope
 
-- Preserve structural sharing while applying large edits.
 - Integrate editor, anchor, line-shaping, worktree-scanning, startup, and
   project-search improvements whose behavior is measurable and independent of
   removed Zed services.
@@ -424,9 +434,7 @@ Explicitly decide and test:
 - migration from `git_panel.sort_by_path` to `git_panel.sort_by` and
   `git_panel.group_by`;
 - whether Flint adopts Zed's changed format-on-save default;
-- placement of language-model providers, external agents, and MCP servers in
-  the Settings Editor;
-- 32-bit extension-managed binary download support;
+- placement of Flint external-agent controls in the Settings Editor;
 - TypeScript 7 language-server behavior; and
 - npm 12 language-server installation compatibility.
 
