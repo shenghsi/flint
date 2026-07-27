@@ -506,11 +506,16 @@ pub struct GitPanelSettingsContent {
     /// Default: main
     pub fallback_branch_name: Option<String>,
 
-    /// Whether to sort entries in the panel by path
-    /// or by status (the default).
+    /// Whether to sort entries in the panel by path rather than repository
+    /// status order.
     ///
     /// Default: false
     pub sort_by_path: Option<bool>,
+
+    /// How changed files are grouped in the Git panel.
+    ///
+    /// Default: status
+    pub group_by: Option<GitPanelGroupBy>,
 
     /// Whether to collapse untracked files in the diff panel.
     ///
@@ -542,6 +547,28 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 72
     pub commit_title_max_length: Option<usize>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelGroupBy {
+    None,
+    #[default]
+    Status,
+    Staging,
 }
 
 #[derive(

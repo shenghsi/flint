@@ -5564,7 +5564,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 15] {
+    fn git_panel_section() -> [SettingsPageItem; 16] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5653,7 +5653,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Sort By Path",
-                description: "Enable to sort entries in the panel by path, disable to sort by status.",
+                description: "Sort entries in each Git panel group by path.",
                 field: Box::new(SettingField {
                     json_path: Some("git_panel.sort_by_path"),
                     pick: |settings_content| {
@@ -5664,6 +5664,23 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .sort_by_path = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Panel Group By",
+                description: "How changed files are grouped in the Git panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.group_by"),
+                    pick: |settings_content| settings_content.git_panel.as_ref()?.group_by.as_ref(),
+                    write: |settings_content, value, _| {
+                        let git_panel = settings_content.git_panel.get_or_insert_default();
+                        if value == Some(settings::GitPanelGroupBy::Status) {
+                            git_panel.sort_by_path = Some(false);
+                        }
+                        git_panel.group_by = value;
                     },
                 }),
                 metadata: None,
@@ -8923,6 +8940,19 @@ mod tests {
                 .field
                 .json_path(),
             Some("terminal.open_links_in_mouse_mode")
+        );
+    }
+
+    #[test]
+    fn git_panel_group_by_uses_exact_json_path() {
+        let page = panels_page();
+        let pages = [page];
+
+        assert_eq!(
+            setting_item_by_title(&pages, "Git Panel Group By")
+                .field
+                .json_path(),
+            Some("git_panel.group_by")
         );
     }
 
