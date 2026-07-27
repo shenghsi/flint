@@ -77,6 +77,7 @@ impl AgentHistoryProvider for PiHistoryProvider {
             args,
             env: base.env.clone(),
             cwd: Some(thread.project_root.clone()),
+            initialization_command: base.initialization_command.clone(),
             hidden: base.hidden,
             default_launch_option: base.default_launch_option.clone(),
         }
@@ -306,6 +307,7 @@ mod tests {
             env: [("PI_CODING_AGENT_DIR".to_string(), "/pi-home".to_string())]
                 .into_iter()
                 .collect(),
+            initialization_command: Some("source ~/.profile".to_string()),
             hidden: true,
             ..Default::default()
         };
@@ -331,6 +333,10 @@ mod tests {
         assert_eq!(
             command.env.get("PI_CODING_AGENT_DIR").map(String::as_str),
             Some("/pi-home")
+        );
+        assert_eq!(
+            command.initialization_command.as_deref(),
+            Some("source ~/.profile")
         );
         assert!(command.hidden);
     }

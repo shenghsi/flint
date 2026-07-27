@@ -75,6 +75,11 @@ pub struct AgentThreadCommandContent {
     pub env: Option<HashMap<String, String>>,
     /// Working directory override for this agent kind.
     pub cwd: Option<PathBuf>,
+    /// Shell command to run before launching this agent. The agent launches
+    /// only when this command succeeds.
+    ///
+    /// Default: ""
+    pub initialization_command: Option<String>,
     /// Hide this agent's section from the Agent Threads panel.
     ///
     /// Default: false
@@ -83,4 +88,29 @@ pub struct AgentThreadCommandContent {
     /// when starting a new thread. None means launch with no extra
     /// arguments.
     pub default_launch_option: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_threads_initialization_command_round_trips() {
+        let content: AgentThreadSettingsContent =
+            serde_json::from_str(r#"{"codex":{"initialization_command":"source ~/.profile"}}"#)
+                .expect("valid agent thread settings");
+
+        assert_eq!(
+            content
+                .codex
+                .as_ref()
+                .and_then(|command| command.initialization_command.as_deref()),
+            Some("source ~/.profile")
+        );
+        let serialized = serde_json::to_value(content).expect("serializable agent thread settings");
+        assert_eq!(
+            serialized["codex"]["initialization_command"],
+            "source ~/.profile"
+        );
+    }
 }

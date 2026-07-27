@@ -1037,6 +1037,7 @@ fn build_credential_command(base: &AgentLaunchCommand, arguments: &[&str]) -> Ag
         .iter()
         .map(|argument| (*argument).to_string())
         .collect();
+    command.initialization_command = None;
     command
 }
 
@@ -1612,6 +1613,7 @@ fn spawn_thread_task_inner(
     let title = summary.clone();
     let label = summary.to_string();
     let command_label = command_label(&command, &label);
+    let initialization_command = command.initialization_command.take();
     let is_windows = workspace.project().read(cx).path_style(cx).is_windows();
     let remote_process = match prepare_remote_thread_process(
         &mut command,
@@ -1622,7 +1624,7 @@ fn spawn_thread_task_inner(
         Ok(remote_process) => remote_process,
         Err(error) => return Task::ready(Err(error)),
     };
-    let task = SpawnInTerminal {
+    let mut task = SpawnInTerminal {
         full_label: label.clone(),
         label,
         command: command.command,
@@ -1640,6 +1642,25 @@ fn spawn_thread_task_inner(
         show_rerun: false,
         ..SpawnInTerminal::default()
     };
+    if let Some(initialization_command) = initialization_command {
+        let remote_client = workspace.project().read(cx).remote_client();
+        let shell = remote_client
+            .as_ref()
+            .and_then(|remote_client| remote_client.read(cx).shell())
+            .unwrap_or_else(|| {
+                if remote_client.is_some() {
+                    util::shell::get_default_system_shell()
+                } else {
+                    util::shell::get_system_shell()
+                }
+            });
+        task = project::terminals::wrap_task_with_initialization_command(
+            task,
+            &initialization_command,
+            &shell,
+            is_windows,
+        );
+    }
 
     let workspace_entity = cx.entity();
     let window_handle = window.window_handle().downcast::<MultiWorkspace>();
@@ -1930,6 +1951,7 @@ mod tests {
         let base = AgentLaunchCommand {
             command: Some("codex".to_string()),
             env: environment,
+            initialization_command: Some("source ~/.profile".to_string()),
             ..AgentLaunchCommand::default()
         };
         let managed_executable =
@@ -1959,6 +1981,10 @@ mod tests {
             command.env.get("CODEX_HOME").map(String::as_str),
             Some("/remote/codex-home")
         );
+        assert_eq!(
+            command.initialization_command.as_deref(),
+            Some("source ~/.profile")
+        );
     }
 
     #[test]
@@ -1970,6 +1996,7 @@ mod tests {
                 command: Some(format!("ambient-{}", kind.id)),
                 args: vec!["base".to_string()],
                 env: environment,
+                initialization_command: Some("source ~/.profile".to_string()),
                 ..AgentLaunchCommand::default()
             };
             let managed_executable = PathBuf::from(format!("/managed/{}/cli", kind.id));
@@ -1990,6 +2017,10 @@ mod tests {
                 launch.command.env.get("EXISTING").map(String::as_str),
                 Some("value")
             );
+            assert_eq!(
+                launch.command.initialization_command.as_deref(),
+                Some("source ~/.profile")
+            );
             let mut expected_prefix = vec!["base".to_string()];
             expected_prefix.extend(option_arguments);
             assert!(launch.command.args.starts_with(&expected_prefix));
@@ -1997,6 +2028,37 @@ mod tests {
             apply_self_update_policy(&mut expected, &kind);
             assert_eq!(launch.command, expected);
         }
+    }
+
+    #[test]
+    fn initialization_preserves_direct_and_tunneled_executable_selection() {
+        let kind = agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == "codex")
+            .expect("Codex should be registered");
+        let base = AgentLaunchCommand {
+            command: Some("ambient-codex".to_string()),
+            initialization_command: Some("source ~/.profile".to_string()),
+            ..AgentLaunchCommand::default()
+        };
+
+        let direct = build_new_thread_launch(&kind, &base, &[], None);
+        assert_eq!(direct.command.command.as_deref(), Some("ambient-codex"));
+        assert_eq!(
+            direct.command.initialization_command.as_deref(),
+            Some("source ~/.profile")
+        );
+
+        let managed_executable = std::path::Path::new("/managed/codex");
+        let tunneled = build_new_thread_launch(&kind, &base, &[], Some(managed_executable));
+        assert_eq!(
+            tunneled.command.command.as_deref(),
+            managed_executable.to_str()
+        );
+        assert_eq!(
+            tunneled.command.initialization_command.as_deref(),
+            Some("source ~/.profile")
+        );
     }
 
     #[test]
@@ -2030,6 +2092,7 @@ mod tests {
         let base = AgentLaunchCommand {
             command: Some("custom-codex".to_string()),
             args: vec!["ignored".to_string()],
+            initialization_command: Some("source ~/.profile".to_string()),
             ..AgentLaunchCommand::default()
         };
 
@@ -2037,6 +2100,7 @@ mod tests {
 
         assert_eq!(command.command.as_deref(), Some("custom-codex"));
         assert_eq!(command.args, vec!["logout".to_string()]);
+        assert!(command.initialization_command.is_none());
     }
 
     #[test]

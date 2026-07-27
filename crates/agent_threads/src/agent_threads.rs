@@ -58,6 +58,7 @@ pub struct AgentLaunchCommand {
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
     pub cwd: Option<PathBuf>,
+    pub initialization_command: Option<String>,
     pub hidden: bool,
     pub default_launch_option: Option<String>,
 }
@@ -450,6 +451,9 @@ fn launch_command_from_content(
         args: content.args.unwrap_or_default(),
         env: content.env.unwrap_or_default().into_iter().collect(),
         cwd: content.cwd,
+        initialization_command: content
+            .initialization_command
+            .filter(|command| !command.trim().is_empty()),
         hidden: content.hidden.unwrap_or(false),
         default_launch_option: content.default_launch_option,
     }
@@ -759,6 +763,7 @@ mod tests {
             args: Vec::new(),
             env: HashMap::default(),
             cwd: None,
+            initialization_command: None,
             hidden: false,
             default_launch_option: default_launch_option.map(str::to_string),
         }
@@ -801,6 +806,44 @@ mod tests {
         assert_eq!(
             settings.command_for_kind("pi").command.as_deref(),
             Some("pi")
+        );
+    }
+
+    #[test]
+    fn initialization_command_is_per_agent_and_ignores_whitespace_only_values() {
+        let settings = AgentThreadSettings::from_settings(&settings::SettingsContent {
+            agent_threads: Some(settings::AgentThreadSettingsContent {
+                codex: Some(settings::AgentThreadCommandContent {
+                    initialization_command: Some(" source ~/.profile ".to_string()),
+                    ..Default::default()
+                }),
+                claude: Some(settings::AgentThreadCommandContent {
+                    initialization_command: Some("   ".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings
+                .command_for_kind("codex")
+                .initialization_command
+                .as_deref(),
+            Some(" source ~/.profile ")
+        );
+        assert!(
+            settings
+                .command_for_kind("claude")
+                .initialization_command
+                .is_none()
+        );
+        assert!(
+            settings
+                .command_for_kind("pi")
+                .initialization_command
+                .is_none()
         );
     }
 

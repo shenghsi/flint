@@ -5083,7 +5083,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 9] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5185,6 +5185,93 @@ fn panels_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Codex Initialization Command",
+                description: "Shell command to run before Codex starts. Codex starts only when the command succeeds.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.codex.initialization_command"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .codex
+                            .as_ref()?
+                            .initialization_command
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .codex
+                            .get_or_insert_default()
+                            .initialization_command = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("source ~/.profile"),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Claude Initialization Command",
+                description: "Shell command to run before Claude starts. Claude starts only when the command succeeds.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.claude.initialization_command"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .claude
+                            .as_ref()?
+                            .initialization_command
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .claude
+                            .get_or_insert_default()
+                            .initialization_command = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("source ~/.profile"),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Pi Initialization Command",
+                description: "Shell command to run before Pi starts. Pi starts only when the command succeeds.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.pi.initialization_command"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .pi
+                            .as_ref()?
+                            .initialization_command
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .pi
+                            .get_or_insert_default()
+                            .initialization_command = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("source ~/.profile"),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8776,11 +8863,23 @@ mod tests {
     }
 
     #[test]
-    fn agent_thread_hide_settings_include_all_registered_agents() {
+    fn agent_threads_per_agent_settings_include_all_registered_agents() {
         let page = panels_page();
         let pages = [page];
 
         for (title, json_path) in [
+            (
+                "Codex Initialization Command",
+                "agent_threads.codex.initialization_command",
+            ),
+            (
+                "Claude Initialization Command",
+                "agent_threads.claude.initialization_command",
+            ),
+            (
+                "Pi Initialization Command",
+                "agent_threads.pi.initialization_command",
+            ),
             ("Hide Codex", "agent_threads.codex.hidden"),
             ("Hide Claude", "agent_threads.claude.hidden"),
             ("Hide Pi", "agent_threads.pi.hidden"),
