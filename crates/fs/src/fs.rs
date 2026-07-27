@@ -611,6 +611,14 @@ fn path_to_c_string(path: &Path) -> io::Result<CString> {
     })
 }
 
+fn symlink_target_parent_to_watch(
+    target: &Path,
+    requires_poll_watcher: impl FnOnce(&Path) -> bool,
+) -> Option<&Path> {
+    let parent = target.parent()?;
+    (!requires_poll_watcher(parent)).then_some(parent)
+}
+
 #[async_trait::async_trait]
 impl Fs for RealFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
@@ -1098,7 +1106,11 @@ impl Fs for RealFs {
                 }
             }
             watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
+            // PollWatcher scans recursively during registration, which can
+            // block remote startup on large virtual filesystem mounts.
+            if let Some(parent) =
+                symlink_target_parent_to_watch(&target, fs_watcher::requires_poll_watcher)
+            {
                 watcher.add(parent).log_err();
             }
         }
@@ -3382,5 +3394,35 @@ fn atomic_replace<P: AsRef<Path>>(
             None,
             None,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symlink_target_parent_is_selected_for_native_watchers() {
+        let target = Path::new("/virtual/home/.gitconfig");
+
+        assert_eq!(
+            symlink_target_parent_to_watch(target, |_| false),
+            Some(Path::new("/virtual/home"))
+        );
+    }
+
+    #[test]
+    fn symlink_target_parent_is_skipped_for_poll_watchers() {
+        let target = Path::new("/virtual/home/.gitconfig");
+
+        assert_eq!(symlink_target_parent_to_watch(target, |_| true), None);
+    }
+
+    #[test]
+    fn symlink_target_without_parent_has_no_parent_watch() {
+        assert_eq!(
+            symlink_target_parent_to_watch(Path::new("/"), |_| false),
+            None
+        );
     }
 }
