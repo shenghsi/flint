@@ -518,7 +518,7 @@ impl AgentThreadStore {
             launched_at,
             resumed_session_id,
         };
-        let attention_window = window.clone();
+        let attention_window = window;
         self.threads.insert(
             terminal_item_id,
             ThreadEntry {
