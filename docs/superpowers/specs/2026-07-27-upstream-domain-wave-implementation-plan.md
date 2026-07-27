@@ -1,7 +1,7 @@
 # Upstream Domain-Wave Integration Implementation Plan
 
 **Date:** 2026-07-27
-**Status:** Ready for implementation review
+**Status:** Approved
 **Design:** `docs/superpowers/specs/2026-07-27-upstream-domain-wave-design.md`
 **Upstream fork point:** `6e9465a4288c332208643892e23b9d35d7be5c79`
 **Initial target:** Zed stable v1.12.0 plus explicitly selected v1.13.0-pre safety fixes
