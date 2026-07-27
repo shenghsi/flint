@@ -902,6 +902,8 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Only used to serve `proto::RunGitHook` requests from older remote
+    /// clients. New code lets `git commit` run hooks itself.
     fn run_hook(
         &self,
         hook: RunHook,
@@ -2378,7 +2380,6 @@ impl GitRepository for RealGitRepository {
             cmd.envs(env.iter())
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
-                .arg("--no-verify")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 
@@ -3572,6 +3573,7 @@ async fn run_git_command(
     mut command: util::command::Command,
     executor: BackgroundExecutor,
 ) -> Result<RemoteCommandOutput> {
+    command.kill_on_drop(true);
     if env.contains_key("GIT_ASKPASS") {
         let git_process = command.spawn()?;
         let output = git_process.output().await?;
@@ -3601,12 +3603,14 @@ async fn run_askpass_command(
     git_process: util::command::Child,
 ) -> anyhow::Result<RemoteCommandOutput> {
     select_biased! {
-        result = ask_pass.run().fuse() => {
+        result = ask_pass.run(None).fuse() => {
             match result {
                 AskPassResult::CancelledByUser => {
                     Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                 }
                 AskPassResult::Timedout => {
+                    // Unreachable because Git operations do not use the
+                    // connection-establishment timeout.
                     Err(anyhow!("Connecting to host timed out"))?
                 }
             }
@@ -3813,6 +3817,7 @@ mod tests {
     use std::{
         ffi::{OsStr, OsString},
         fs,
+        time::Duration,
     };
 
     use super::*;
@@ -3859,6 +3864,15 @@ mod tests {
         let mut env = checkpoint_author_envs();
         env.insert("GIT_ASKPASS".to_string(), "false".to_string());
         env
+    }
+
+    #[cfg(unix)]
+    fn write_git_hook(repository_path: &Path, name: &str, contents: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let hook_path = repository_path.join(".git").join("hooks").join(name);
+        fs::write(&hook_path, contents).unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[track_caller]
@@ -4274,6 +4288,182 @@ mod tests {
         assert!(
             !output.status.success(),
             "hooksPath should NOT be overridden for trusted repos"
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_propagates_commit_message_hook_failure(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repository_directory = tempfile::tempdir().unwrap();
+        git_init_repo(repository_directory.path());
+        let repository = RealGitRepository::new(
+            &repository_directory.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repository.set_trusted(true);
+
+        fs::write(repository_directory.path().join("file.txt"), "initial").unwrap();
+        repository
+            .stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repository
+            .commit(
+                "Initial commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(test_commit_envs()),
+            )
+            .await
+            .unwrap();
+
+        write_git_hook(
+            repository_directory.path(),
+            "commit-msg",
+            "#!/bin/sh\necho 'commit-msg rejected this message' >&2\nexit 1\n",
+        );
+        fs::write(repository_directory.path().join("file.txt"), "changed").unwrap();
+        repository
+            .stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        let git = repository.git_binary_in_worktree().unwrap();
+        let head_before = git.run(&["rev-parse", "HEAD"]).await.unwrap();
+        let error = repository
+            .commit(
+                "Rejected commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(test_commit_envs()),
+            )
+            .await
+            .expect_err("commit-msg hook should reject the commit");
+
+        assert!(
+            error
+                .to_string()
+                .contains("commit-msg rejected this message"),
+            "unexpected commit error: {error:#}"
+        );
+        assert_eq!(git.run(&["rev-parse", "HEAD"]).await.unwrap(), head_before);
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_git_command_waits_beyond_askpass_connection_timeout(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let temporary_directory = tempfile::tempdir().unwrap();
+        let started_path = temporary_directory.path().join("started");
+        let completion_path = temporary_directory.path().join("complete");
+        #[allow(clippy::disallowed_methods)]
+        let mut command = new_command("/bin/sh");
+        command
+            .args([
+                "-c",
+                "touch \"$1\"; while [ ! -f \"$2\" ]; do sleep 0.01; done; printf completed",
+                "wait-for-test",
+            ])
+            .arg(&started_path)
+            .arg(&completion_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let askpass = AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {});
+        let task = cx.foreground_executor().spawn(run_git_command(
+            Arc::new(HashMap::default()),
+            askpass,
+            command,
+            cx.background_executor.clone(),
+        ));
+
+        for _ in 0..100 {
+            if started_path.exists() {
+                break;
+            }
+            cx.background_executor.timer(Duration::from_millis(1)).await;
+        }
+        assert!(started_path.exists(), "test command should have started");
+        cx.executor().advance_clock(Duration::from_secs(18));
+        cx.run_until_parked();
+        fs::write(&completion_path, "").unwrap();
+
+        let output = task
+            .await
+            .expect("Git command should not inherit the SSH connection timeout");
+        assert_eq!(output.stdout, "completed");
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_cancelled_git_command_terminates_child(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let temporary_directory = tempfile::tempdir().unwrap();
+        let process_id_path = temporary_directory.path().join("pid");
+        #[allow(clippy::disallowed_methods)]
+        let mut command = new_command("/bin/sh");
+        command
+            .args([
+                "-c",
+                "printf '%s' \"$$\" > \"$1\"; while :; do sleep 0.01; done",
+                "wait-for-cancellation",
+            ])
+            .arg(&process_id_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let askpass = AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {});
+        let task = cx.foreground_executor().spawn(run_git_command(
+            Arc::new(HashMap::default()),
+            askpass,
+            command,
+            cx.background_executor.clone(),
+        ));
+
+        for _ in 0..100 {
+            if process_id_path.exists() {
+                break;
+            }
+            cx.background_executor.timer(Duration::from_millis(1)).await;
+        }
+        let process_id = fs::read_to_string(&process_id_path)
+            .expect("test command should record its process ID");
+
+        drop(task);
+        cx.run_until_parked();
+
+        #[allow(clippy::disallowed_methods)]
+        let status = std::process::Command::new("/bin/kill")
+            .args(["-0", process_id.as_str()])
+            .status()
+            .unwrap();
+        #[allow(clippy::disallowed_methods)]
+        let process_state = std::process::Command::new("/bin/ps")
+            .args(["-o", "state=", "-p", process_id.as_str()])
+            .output()
+            .unwrap();
+        let process_state = String::from_utf8_lossy(&process_state.stdout);
+        let terminated = !status.success() || process_state.trim_start().starts_with('Z');
+        if !terminated {
+            #[allow(clippy::disallowed_methods)]
+            std::process::Command::new("/bin/kill")
+                .args(["-9", process_id.as_str()])
+                .status()
+                .unwrap();
+        }
+        assert!(
+            terminated,
+            "canceling the Git task should terminate its child process; state was {process_state:?}"
         );
     }
 
