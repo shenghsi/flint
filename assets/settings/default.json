@@ -1587,6 +1587,10 @@
     "copy_on_select": false,
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
+    // Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even
+    // when the terminal application has enabled mouse reporting. When false,
+    // these clicks are forwarded to the application instead.
+    "open_links_in_mouse_mode": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
