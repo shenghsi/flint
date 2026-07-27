@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
-use imara_diff::{Algorithm, Sink, intern::InternedInput, sources::lines_with_terminator};
+use imara_diff::{Algorithm, Diff as ImaraDiff, InternedInput, sources::lines};
 use language::{
     Capability, Diff, DiffOptions, Language, LanguageName, LanguageRegistry,
     language_settings::LanguageSettings, word_diff_ranges,
@@ -1150,13 +1150,20 @@ fn compute_hunks(
             return tree;
         }
 
-        let input = InternedInput::new(
-            lines_with_terminator(diff_base.as_ref()),
-            lines_with_terminator(buffer_text.as_str()),
-        );
-        let sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
-        let hunks = imara_diff::diff(Algorithm::Histogram, &input, sink);
-        for hunk in hunks {
+        let input = InternedInput::new(lines(diff_base.as_ref()), lines(buffer_text.as_str()));
+        let mut diff = ImaraDiff::compute(Algorithm::Histogram, &input);
+        // Canonicalize the placement of ambiguous hunks (git's slider/indent
+        // heuristic). Without this, diffs of the same buffer against different
+        // base texts (e.g. HEAD vs index) can anchor the same logical change at
+        // different rows, and code that correlates hunks across those diffs
+        // misbehaves: hunks render as staged when they aren't, and staging or
+        // unstaging them corrupts the index.
+        diff.postprocess_lines(&input);
+        let mut sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
+        for hunk in diff.hunks() {
+            sink.process_change(hunk.before, hunk.after);
+        }
+        for hunk in sink.finish() {
             tree.push(hunk, buffer);
         }
     } else {
@@ -1202,7 +1209,7 @@ impl<'a> HunkSink<'a> {
     fn compute_line_offsets(text: &str) -> Vec<usize> {
         let mut offsets = vec![0];
         let mut offset = 0;
-        for line in lines_with_terminator(text) {
+        for line in lines(text) {
             offset += line.len();
             offsets.push(offset);
         }
@@ -1210,9 +1217,7 @@ impl<'a> HunkSink<'a> {
     }
 }
 
-impl Sink for HunkSink<'_> {
-    type Out = Vec<InternalDiffHunk>;
-
+impl HunkSink<'_> {
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         let old_start = before.start as usize;
         let old_end = before.end as usize;
@@ -1279,7 +1284,7 @@ impl Sink for HunkSink<'_> {
         });
     }
 
-    fn finish(self) -> Self::Out {
+    fn finish(self) -> Vec<InternalDiffHunk> {
         self.hunks
     }
 }
