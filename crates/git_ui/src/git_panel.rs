@@ -212,6 +212,16 @@ fn git_panel_context_menu(
             .action("View Stash", flint_actions::git::ViewStash.boxed_clone())
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
+            .action_disabled_when(
+                !state.has_unstaged_changes,
+                "View Unstaged Changes",
+                flint_actions::git::ViewUnstagedChanges.boxed_clone(),
+            )
+            .action_disabled_when(
+                !state.has_staged_changes,
+                "View Staged Changes",
+                flint_actions::git::ViewStagedChanges.boxed_clone(),
+            )
             .separator()
             .action_disabled_when(
                 !state.has_tracked_changes,
@@ -6388,6 +6398,16 @@ impl GitPanel {
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
                 .action("Open Diff (File)", menu::SecondaryConfirm.boxed_clone())
+                .action_disabled_when(
+                    !entry.status.staging().has_unstaged(),
+                    "View Unstaged Changes",
+                    flint_actions::git::ViewUnstagedChanges.boxed_clone(),
+                )
+                .action_disabled_when(
+                    !entry.status.staging().has_staged(),
+                    "View Staged Changes",
+                    flint_actions::git::ViewStagedChanges.boxed_clone(),
+                )
                 .when(!is_created, |context_menu| {
                     context_menu
                         .separator()
