@@ -139,6 +139,16 @@ All applicable Wave 3 tests must cover both remote routes. Direct uses only the
 configured ambient remote executable. Tunneled uses only the pinned
 Flint-managed executable and local traffic tunnel.
 
+Wave 3 completion evidence (reviewed 2026-07-27): the integrated remote-server
+suite passed 46 tests; remote recent-project identity passed 27 tests; workspace
+remote transitions passed 8 tests; terminal remote links passed 4 tests;
+extension dependency sync passed 3 tests; and symlink watcher coverage passed 5
+tests. The Agent Threads route matrix also passed six Tunneled-policy tests and
+the Direct-by-default SSH identity test. Those routing tests prove that managed
+provisioning, managed credentials, managed resume, and the local traffic tunnel
+remain Tunneled-only, while Direct continues to select the configured ambient
+command.
+
 ## Wave 4: Agent Threads
 
 | Priority | Upstream PR | Final commit | Provenance | Fork ancestry | Flint paths | Strategy | Prerequisites | Required tests | Status | Flint PR | Notes |
