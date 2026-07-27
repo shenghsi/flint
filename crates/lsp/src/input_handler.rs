@@ -4,8 +4,8 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::{
-    AsyncBufReadExt, AsyncRead, AsyncReadExt as _,
-    channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
+    AsyncBufReadExt, AsyncRead, AsyncReadExt as _, SinkExt as _,
+    channel::mpsc::{Receiver, Sender, channel},
 };
 use gpui::{BackgroundExecutor, Task};
 use log::warn;
@@ -18,10 +18,15 @@ use crate::{
 };
 
 const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
+
+/// Bounds messages buffered between the background reader and foreground dispatcher.
+/// A full queue stops reading server stdout so the OS pipe applies backpressure.
+const INCOMING_MESSAGE_QUEUE_CAPACITY: usize = 128;
+
 /// Handler for stdout of language server.
 pub struct LspStdoutHandler {
     pub(super) loop_handle: Task<Result<()>>,
-    pub(super) incoming_messages: UnboundedReceiver<NotificationOrRequest>,
+    pub(super) incoming_messages: Receiver<NotificationOrRequest>,
 }
 
 async fn read_headers<Stdout>(reader: &mut BufReader<Stdout>, buffer: &mut Vec<u8>) -> Result<()>
@@ -51,7 +56,7 @@ impl LspStdoutHandler {
     where
         Input: AsyncRead + Unpin + Send + 'static,
     {
-        let (tx, notifications_channel) = unbounded();
+        let (tx, notifications_channel) = channel(INCOMING_MESSAGE_QUEUE_CAPACITY);
         let loop_handle = cx.spawn(Self::handler(stdout, tx, response_handlers, io_handlers));
         Self {
             loop_handle,
@@ -61,7 +66,7 @@ impl LspStdoutHandler {
 
     async fn handler<Input>(
         stdout: Input,
-        notifications_sender: UnboundedSender<NotificationOrRequest>,
+        mut notifications_sender: Sender<NotificationOrRequest>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     ) -> anyhow::Result<()>
@@ -98,7 +103,7 @@ impl LspStdoutHandler {
             }
 
             if let Ok(msg) = serde_json::from_slice::<NotificationOrRequest>(&buffer) {
-                notifications_sender.unbounded_send(msg)?;
+                notifications_sender.send(msg).await?;
             } else if let Ok(AnyResponse {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
@@ -131,6 +136,109 @@ impl LspStdoutHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::{AsyncWriteExt as _, FutureExt as _, StreamExt as _};
+    use gpui::TestAppContext;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::Duration,
+    };
+
+    fn framed_notification() -> String {
+        let payload = r#"{"jsonrpc":"2.0","method":"test/notification","params":{}}"#;
+        format!("Content-Length: {}\r\n\r\n{payload}", payload.len())
+    }
+
+    #[gpui::test]
+    async fn incoming_notifications_apply_backpressure_without_losing_messages(
+        cx: &mut TestAppContext,
+    ) {
+        const EXPECTED_QUEUE_CAPACITY: usize = 128;
+        const TOTAL_MESSAGES: usize = EXPECTED_QUEUE_CAPACITY * 4;
+
+        let (mut writer, reader) = async_pipe::pipe();
+        let mut handler = LspStdoutHandler::new(
+            reader,
+            Arc::new(Mutex::new(Some(HashMap::default()))),
+            Arc::new(Mutex::new(HashMap::default())),
+            cx.background_executor.clone(),
+        );
+        let message = framed_notification();
+        let writer_task = cx.background_executor.spawn(async move {
+            for _ in 0..TOTAL_MESSAGES {
+                writer.write_all(message.as_bytes()).await?;
+            }
+            anyhow::Ok(())
+        });
+
+        cx.run_until_parked();
+        let mut received = 0;
+        while handler.incoming_messages.try_recv().is_ok() {
+            received += 1;
+        }
+
+        assert!(
+            received <= EXPECTED_QUEUE_CAPACITY + 2,
+            "expected a bounded queue near {EXPECTED_QUEUE_CAPACITY} messages, got {received}"
+        );
+
+        while received < TOTAL_MESSAGES {
+            assert!(
+                handler.incoming_messages.next().await.is_some(),
+                "the message stream ended after {received} of {TOTAL_MESSAGES} notifications"
+            );
+            received += 1;
+        }
+        writer_task.await.expect("write all notifications");
+    }
+
+    #[gpui::test]
+    async fn dropping_a_handler_releases_a_writer_blocked_by_backpressure(cx: &mut TestAppContext) {
+        const TOTAL_MESSAGES: usize = 4096;
+
+        let (mut writer, reader) = async_pipe::pipe();
+        let handler = LspStdoutHandler::new(
+            reader,
+            Arc::new(Mutex::new(Some(HashMap::default()))),
+            Arc::new(Mutex::new(HashMap::default())),
+            cx.background_executor.clone(),
+        );
+        let writer_finished = Arc::new(AtomicBool::new(false));
+        let writer_task = cx.background_executor.spawn({
+            let writer_finished = writer_finished.clone();
+            async move {
+                let message = framed_notification();
+                let result = async {
+                    for _ in 0..TOTAL_MESSAGES {
+                        writer.write_all(message.as_bytes()).await?;
+                    }
+                    anyhow::Ok(())
+                }
+                .await;
+                writer_finished.store(true, Ordering::SeqCst);
+                result
+            }
+        });
+
+        cx.run_until_parked();
+        assert!(
+            !writer_finished.load(Ordering::SeqCst),
+            "the writer should be blocked while the bounded queue is not consumed"
+        );
+
+        drop(handler);
+        let writer_result = writer_task.fuse();
+        let timeout = cx.background_executor.timer(Duration::from_secs(1)).fuse();
+        futures::pin_mut!(writer_result, timeout);
+        futures::select_biased! {
+            result = writer_result => {
+                assert!(result.is_err(), "closing a blocked reader should close its pipe");
+            }
+            () = timeout => panic!("blocked language-server writer did not stop after shutdown"),
+        }
+    }
 
     #[gpui::test]
     async fn test_read_headers() {
