@@ -3,7 +3,7 @@ use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{GitPanelGroupBy, RegisterSetting, Settings, StatusStyle};
+use settings::{GitPanelGroupBy, GitPanelSortBy, RegisterSetting, Settings, StatusStyle};
 use std::{path::PathBuf, time::Duration};
 use ui::{
     px,
@@ -26,7 +26,7 @@ pub struct GitPanelSettings {
     pub folder_icons: bool,
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
-    pub sort_by_path: bool,
+    pub sort_by: GitPanelSortBy,
     pub group_by: GitPanelGroupBy,
     pub collapse_untracked_diff: bool,
     pub tree_view: bool,
@@ -102,7 +102,7 @@ impl Settings for GitPanelSettings {
                     .map(ui_scrollbar_settings_from_raw),
             },
             fallback_branch_name: git_panel.fallback_branch_name.unwrap(),
-            sort_by_path: git_panel.sort_by_path.unwrap(),
+            sort_by: git_panel.sort_by.unwrap(),
             group_by: git_panel.group_by.unwrap(),
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
             tree_view: git_panel.tree_view.unwrap(),
@@ -110,16 +110,6 @@ impl Settings for GitPanelSettings {
             show_count_badge: git_panel.show_count_badge.unwrap(),
             starts_open: git_panel.starts_open.unwrap(),
             commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
-        }
-    }
-}
-
-impl GitPanelSettings {
-    pub fn effective_group_by(&self) -> GitPanelGroupBy {
-        if self.sort_by_path && self.group_by == GitPanelGroupBy::Status {
-            GitPanelGroupBy::None
-        } else {
-            self.group_by
         }
     }
 }

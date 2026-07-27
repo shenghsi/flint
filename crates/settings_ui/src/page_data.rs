@@ -5652,18 +5652,13 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Sort By Path",
-                description: "Sort entries in each Git panel group by path.",
+                title: "Git Panel Sort By",
+                description: "How entries are sorted within each Git panel group.",
                 field: Box::new(SettingField {
-                    json_path: Some("git_panel.sort_by_path"),
-                    pick: |settings_content| {
-                        settings_content.git_panel.as_ref()?.sort_by_path.as_ref()
-                    },
+                    json_path: Some("git_panel.sort_by"),
+                    pick: |settings_content| settings_content.git_panel.as_ref()?.sort_by.as_ref(),
                     write: |settings_content, value, _| {
-                        settings_content
-                            .git_panel
-                            .get_or_insert_default()
-                            .sort_by_path = value;
+                        settings_content.git_panel.get_or_insert_default().sort_by = value;
                     },
                 }),
                 metadata: None,
@@ -5676,11 +5671,7 @@ fn panels_page() -> SettingsPage {
                     json_path: Some("git_panel.group_by"),
                     pick: |settings_content| settings_content.git_panel.as_ref()?.group_by.as_ref(),
                     write: |settings_content, value, _| {
-                        let git_panel = settings_content.git_panel.get_or_insert_default();
-                        if value == Some(settings::GitPanelGroupBy::Status) {
-                            git_panel.sort_by_path = Some(false);
-                        }
-                        git_panel.group_by = value;
+                        settings_content.git_panel.get_or_insert_default().group_by = value;
                     },
                 }),
                 metadata: None,
@@ -8948,6 +8939,12 @@ mod tests {
         let page = panels_page();
         let pages = [page];
 
+        assert_eq!(
+            setting_item_by_title(&pages, "Git Panel Sort By")
+                .field
+                .json_path(),
+            Some("git_panel.sort_by")
+        );
         assert_eq!(
             setting_item_by_title(&pages, "Git Panel Group By")
                 .field

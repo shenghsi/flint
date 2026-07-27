@@ -364,3 +364,9 @@ pub(crate) mod m_2026_05_04 {
 
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
+
+pub(crate) mod m_2026_07_27 {
+    mod settings;
+
+    pub(crate) use settings::migrate_git_panel_sort_by_path;
+}

@@ -257,6 +257,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2026_05_04::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2026_05_04,
         ),
+        MigrationType::Json(migrations::m_2026_07_27::migrate_git_panel_sort_by_path),
     ];
     run_migrations(text, migrations)
 }
@@ -5420,6 +5421,73 @@ mod tests {
             "#
             .unindent(),
             None,
+        );
+    }
+
+    #[test]
+    fn test_migrate_git_panel_sort_by_path() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "git_panel": {
+                    "sort_by_path": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "git_panel": {
+                        "sort_by": "path"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "git_panel": {
+                    "sort_by_path": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "git_panel": {
+                        "sort_by": "name"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "git_panel": {
+                    "sort_by_path": true,
+                    "sort_by": "name"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "git_panel": {
+                        "sort_by": "name"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
         );
     }
 }
