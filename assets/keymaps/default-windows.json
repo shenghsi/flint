@@ -298,6 +298,13 @@
     },
   },
   {
+    "context": "AgentTerminalThread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-f": "buffer_search::Deploy",
+    },
+  },
+  {
     "context": "ProjectSearchBar",
     "use_key_equivalents": true,
     "bindings": {

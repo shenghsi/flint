@@ -2044,7 +2044,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn launching_a_new_thread_registers_it_as_live(cx: &mut TestAppContext) {
+    async fn live_local_agent_thread_search_context_is_registered(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
@@ -2058,6 +2058,13 @@ mod tests {
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0].kind_id, "codex");
         assert!(metadata[0].resumed_session_id.is_none());
+
+        let terminal_views = terminal_views(&window_handle, cx);
+        assert_eq!(terminal_views.len(), 1);
+        assert!(terminal_views[0].read_with(cx, |view, _| view.is_agent_thread()));
+
+        set_agent_hidden(cx, "codex", true);
+        assert!(terminal_views[0].read_with(cx, |view, _| view.is_agent_thread()));
     }
 
     #[gpui::test]
@@ -2427,7 +2434,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn resume_spawns_a_terminal_with_the_resume_command(cx: &mut TestAppContext) {
+    async fn resumed_agent_thread_search_context_preserves_the_resume_command(
+        cx: &mut TestAppContext,
+    ) {
         cx.executor().allow_parking();
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
@@ -2452,6 +2461,7 @@ mod tests {
 
         let terminal_views = terminal_views(&window_handle, cx);
         assert_eq!(terminal_views.len(), 1);
+        assert!(terminal_views[0].read_with(cx, |view, _| view.is_agent_thread()));
         let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
         let spawned = terminal.read_with(cx, |terminal, _| {
             terminal

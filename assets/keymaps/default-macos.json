@@ -344,6 +344,13 @@
     },
   },
   {
+    "context": "AgentTerminalThread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-f": "buffer_search::Deploy",
+    },
+  },
+  {
     "context": "ProjectSearchBar",
     "use_key_equivalents": true,
     "bindings": {

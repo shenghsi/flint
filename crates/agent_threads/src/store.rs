@@ -1655,6 +1655,7 @@ fn spawn_thread_task_inner(
             .ok_or_else(|| anyhow!("agent thread terminal closed before registration"))?;
         terminal_view.update(cx, |terminal_view, cx| {
             terminal_view.set_tab_icon_override(Some(kind_icon), cx);
+            terminal_view.set_agent_thread(true, cx);
         });
         let store = cx.update(|_, cx| AgentThreadStore::global(cx))?;
         store.update(cx, |store, cx| {
