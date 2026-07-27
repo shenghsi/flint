@@ -585,6 +585,115 @@ async fn test_close_workspace_prefers_already_loaded_neighboring_workspace(
     });
 }
 
+fn remote_project_group_key(id: u64, path: &str) -> ProjectGroupKey {
+    ProjectGroupKey::new(
+        Some(RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id },
+        )),
+        PathList::new(&[PathBuf::from(path)]),
+    )
+}
+
+fn assert_no_local_workspace_for_remote_group(
+    multi_workspace: &MultiWorkspace,
+    remote_key: &ProjectGroupKey,
+    cx: &App,
+) {
+    let workspaces: Vec<_> = multi_workspace.workspaces().collect();
+    assert!(
+        !workspaces.is_empty(),
+        "closing or removing a group should leave a fallback workspace"
+    );
+    for workspace in workspaces {
+        let workspace_key = workspace.read(cx).project_group_key(cx);
+        assert!(
+            workspace_key.host().is_some() || workspace_key.path_list() != remote_key.path_list(),
+            "an unloaded remote group must not create a local workspace for its paths"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_close_workspace_with_unloaded_remote_neighbor_does_not_create_local_workspace(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project = Project::test(fs, ["/root_a".as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    multi_workspace.update(cx, |multi_workspace, cx| {
+        multi_workspace.open_sidebar(cx);
+    });
+    cx.run_until_parked();
+
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let remote_key = remote_project_group_key(1, "/remote/project");
+    multi_workspace.update(cx, |multi_workspace, _| {
+        multi_workspace.test_add_project_group(ProjectGroup {
+            key: remote_key.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+
+    multi_workspace
+        .update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.close_workspace(&workspace, window, cx)
+        })
+        .await
+        .expect("closing the local workspace should succeed");
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert_no_local_workspace_for_remote_group(multi_workspace, &remote_key, cx);
+    });
+}
+
+#[gpui::test]
+async fn test_remove_group_with_unloaded_remote_neighbor_does_not_create_local_workspace(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project = Project::test(fs, ["/root_a".as_ref()], cx).await;
+    let local_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    multi_workspace.update(cx, |multi_workspace, cx| {
+        multi_workspace.open_sidebar(cx);
+    });
+    cx.run_until_parked();
+
+    let remote_key = remote_project_group_key(1, "/remote/project");
+    multi_workspace.update(cx, |multi_workspace, _| {
+        multi_workspace.test_add_project_group(ProjectGroup {
+            key: remote_key.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+
+    multi_workspace
+        .update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.remove_project_group(&local_key, window, cx)
+        })
+        .await
+        .expect("removing the local project group should succeed");
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert_no_local_workspace_for_remote_group(multi_workspace, &remote_key, cx);
+    });
+}
+
 #[gpui::test]
 async fn test_switching_projects_with_sidebar_closed_retains_old_active_workspace(
     cx: &mut TestAppContext,
