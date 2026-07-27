@@ -34,7 +34,7 @@ use project::{
     },
     project_settings::ProjectSettings,
 };
-use settings::{Settings, SettingsStore};
+use settings::{GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore};
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -87,14 +87,32 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    applied_view_options: ProjectDiffViewOptions,
     review_comment_count: usize,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
 
-const CONFLICT_SORT_PREFIX: u64 = 1;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProjectDiffViewOptions {
+    sort_by: GitPanelSortBy,
+    group_by: GitPanelGroupBy,
+    tree_view: bool,
+}
+
+impl ProjectDiffViewOptions {
+    fn current(cx: &App) -> Self {
+        let settings = GitPanelSettings::get_global(cx);
+        Self {
+            sort_by: settings.sort_by,
+            group_by: settings.group_by,
+            tree_view: settings.tree_view,
+        }
+    }
+}
+
+#[cfg(test)]
 const TRACKED_SORT_PREFIX: u64 = 2;
-const NEW_SORT_PREFIX: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -579,16 +597,20 @@ impl ProjectDiff {
             },
         );
 
-        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        let mut was_sort_by = GitPanelSettings::get_global(cx).sort_by;
+        let mut was_group_by = GitPanelSettings::get_global(cx).group_by;
+        let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
         let mut was_collapse_untracked_diff =
             GitPanelSettings::get_global(cx).collapse_untracked_diff;
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            let is_collapse_untracked_diff =
-                GitPanelSettings::get_global(cx).collapse_untracked_diff;
-            if is_sort_by_path != was_sort_by_path
-                || is_collapse_untracked_diff != was_collapse_untracked_diff
-            {
+            let settings = GitPanelSettings::get_global(cx);
+            let sort_by = settings.sort_by;
+            let group_by = settings.group_by;
+            let tree_view = settings.tree_view;
+            let collapse_untracked_diff = settings.collapse_untracked_diff;
+            let view_options_changed =
+                sort_by != was_sort_by || group_by != was_group_by || tree_view != was_tree_view;
+            if view_options_changed || collapse_untracked_diff != was_collapse_untracked_diff {
                 this._task = {
                     window.spawn(cx, {
                         let this = cx.weak_entity();
@@ -596,8 +618,10 @@ impl ProjectDiff {
                     })
                 }
             }
-            was_sort_by_path = is_sort_by_path;
-            was_collapse_untracked_diff = is_collapse_untracked_diff;
+            was_sort_by = sort_by;
+            was_group_by = group_by;
+            was_tree_view = tree_view;
+            was_collapse_untracked_diff = collapse_untracked_diff;
         })
         .detach();
 
@@ -615,6 +639,7 @@ impl ProjectDiff {
             multibuffer,
             buffer_subscriptions: Default::default(),
             pending_scroll: None,
+            applied_view_options: ProjectDiffViewOptions::current(cx),
             review_comment_count: 0,
             _task: task,
             _subscription: Subscription::join(
@@ -680,7 +705,24 @@ impl ProjectDiff {
     }
 
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
+        let current_path_key = {
+            let multibuffer = self.multibuffer.read(cx);
+            if multibuffer.location_for_path(&path_key, cx).is_some() {
+                Some(path_key.clone())
+            } else {
+                multibuffer
+                    .snapshot(cx)
+                    .buffers_with_paths()
+                    .find_map(|(_, current_path_key)| {
+                        (current_path_key.path == path_key.path).then(|| current_path_key.clone())
+                    })
+            }
+        };
+        if let Some(position) = current_path_key.and_then(|current_path_key| {
+            self.multibuffer
+                .read(cx)
+                .location_for_path(&current_path_key, cx)
+        }) {
             self.editor.update(cx, |editor, cx| {
                 editor.rhs_editor().update(cx, |editor, cx| {
                     editor.change_selections(
@@ -1070,7 +1112,11 @@ impl ProjectDiff {
                 editor.focus_handle(cx).focus(window, cx);
             });
         }
-        if self.pending_scroll.as_ref() == Some(&path_key) {
+        if self
+            .pending_scroll
+            .as_ref()
+            .is_some_and(|pending_path| pending_path.path == path_key.path)
+        {
             self.move_to_path(path_key, window, cx);
         }
 
@@ -1117,14 +1163,43 @@ impl ProjectDiff {
                 .buffers_with_paths()
                 .map(|(buffer_snapshot, path_key)| (path_key.clone(), buffer_snapshot.remote_id()))
                 .collect::<HashMap<_, _>>();
+            let view_options = ProjectDiffViewOptions::current(cx);
+            let preserve_fold_state = view_options != this.applied_view_options;
+            this.applied_view_options = view_options;
+            let previous_folded_paths = if preserve_fold_state {
+                let snapshot = this.multibuffer.read(cx).snapshot(cx);
+                let editor = this.editor.read(cx).rhs_editor().clone();
+                snapshot
+                    .buffers_with_paths()
+                    .map(|(buffer_snapshot, path_key)| {
+                        (
+                            path_key.path.clone(),
+                            editor
+                                .read(cx)
+                                .is_buffer_folded(buffer_snapshot.remote_id(), cx),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>()
+            } else {
+                HashMap::default()
+            };
 
             let mut entries = BTreeMap::new();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
+                let sort_prefixes = project_diff_sort_prefixes(
+                    &repo,
+                    buffers_to_load
+                        .iter()
+                        .map(|diff_buffer| (&diff_buffer.repo_path, diff_buffer.file_status)),
+                    cx,
+                );
 
                 for diff_buffer in buffers_to_load {
-                    let sort_prefix =
-                        sort_prefix(&repo, &diff_buffer.repo_path, diff_buffer.file_status, cx);
+                    let sort_prefix = sort_prefixes
+                        .get(&diff_buffer.repo_path)
+                        .copied()
+                        .unwrap_or(u64::MAX);
                     let path_key = PathKey::with_sort_prefix(
                         sort_prefix,
                         diff_buffer.repo_path.as_ref().clone(),
@@ -1149,10 +1224,12 @@ impl ProjectDiff {
                 }
             });
 
-            entries
+            (entries, previous_folded_paths)
         })?;
 
+        let (entries, previous_folded_paths) = entries;
         let mut buffers_to_fold = Vec::new();
+        let mut buffers_to_unfold = Vec::new();
 
         for (path_key, entry) in entries {
             if let Some((buffer, main_buffer, diff, conflict_set)) = entry.load.await.log_err() {
@@ -1161,16 +1238,25 @@ impl ProjectDiff {
                 yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        if let Some(buffer_id) = this.register_buffer(
-                            path_key,
-                            entry.file_status,
-                            buffer,
-                            main_buffer,
-                            diff,
-                            conflict_set,
-                            window,
-                            cx,
-                        ) {
+                        let path = path_key.path.clone();
+                        let buffer_id = buffer.read(cx).remote_id();
+                        let needs_fold = this
+                            .register_buffer(
+                                path_key,
+                                entry.file_status,
+                                buffer,
+                                main_buffer,
+                                diff,
+                                conflict_set,
+                                window,
+                                cx,
+                            )
+                            .is_some();
+                        if previous_folded_paths.get(&path) == Some(&true) {
+                            buffers_to_fold.push(buffer_id);
+                        } else if previous_folded_paths.contains_key(&path) {
+                            buffers_to_unfold.push(buffer_id);
+                        } else if needs_fold {
                             buffers_to_fold.push(buffer_id);
                         }
                     })
@@ -1184,6 +1270,15 @@ impl ProjectDiff {
                     editor
                         .rhs_editor()
                         .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
+                });
+            }
+            if !buffers_to_unfold.is_empty() {
+                this.editor.update(cx, |editor, cx| {
+                    editor.rhs_editor().update(cx, |editor, cx| {
+                        for buffer_id in buffers_to_unfold {
+                            editor.unfold_buffer(buffer_id, cx);
+                        }
+                    });
                 });
             }
             this.pending_scroll.take();
@@ -1217,16 +1312,141 @@ impl ProjectDiff {
 }
 
 fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
-    let settings = GitPanelSettings::get_global(cx);
+    let mut entries = repo
+        .cached_status()
+        .map(|entry| (entry.repo_path.clone(), entry.status))
+        .collect::<Vec<_>>();
+    if !entries
+        .iter()
+        .any(|(entry_path, _status)| entry_path == repo_path)
+    {
+        entries.push((repo_path.clone(), status));
+    }
 
-    if settings.sort_by_path && !settings.tree_view {
-        TRACKED_SORT_PREFIX
-    } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
-        CONFLICT_SORT_PREFIX
-    } else if status.is_created() {
-        NEW_SORT_PREFIX
-    } else {
-        TRACKED_SORT_PREFIX
+    project_diff_sort_prefixes(
+        repo,
+        entries.iter().map(|(path, status)| (path, *status)),
+        cx,
+    )
+    .get(repo_path)
+    .copied()
+    .unwrap_or(u64::MAX)
+}
+
+fn project_diff_sort_prefixes<'a>(
+    repo: &Repository,
+    entries: impl IntoIterator<Item = (&'a RepoPath, FileStatus)>,
+    cx: &App,
+) -> HashMap<RepoPath, u64> {
+    let settings = GitPanelSettings::get_global(cx);
+    let mut conflict_entries = Vec::new();
+    let mut first_group_entries = Vec::new();
+    let mut second_group_entries = Vec::new();
+
+    for (repo_path, status) in entries {
+        let entry = (repo_path.clone(), status);
+        match settings.group_by {
+            GitPanelGroupBy::None => first_group_entries.push(entry),
+            GitPanelGroupBy::Status => {
+                if repo.had_conflict_on_last_merge_head_change(repo_path) {
+                    conflict_entries.push(entry);
+                } else if status.is_created() {
+                    second_group_entries.push(entry);
+                } else {
+                    first_group_entries.push(entry);
+                }
+            }
+            GitPanelGroupBy::Staging => {
+                if repo.had_conflict_on_last_merge_head_change(repo_path) {
+                    conflict_entries.push(entry);
+                } else if status.staging().has_staged() {
+                    first_group_entries.push(entry);
+                } else {
+                    second_group_entries.push(entry);
+                }
+            }
+        }
+    }
+
+    let mut sort_prefixes = HashMap::default();
+    for (section_index, mut section_entries) in
+        [conflict_entries, first_group_entries, second_group_entries]
+            .into_iter()
+            .enumerate()
+    {
+        let mut ordered_paths = Vec::new();
+        if settings.tree_view {
+            append_tree_order(&mut ordered_paths, section_entries);
+        } else {
+            sort_flat_entries(&mut section_entries, settings.sort_by);
+            ordered_paths.extend(
+                section_entries
+                    .into_iter()
+                    .map(|(repo_path, _status)| repo_path),
+            );
+        }
+        for (path_index, repo_path) in ordered_paths.into_iter().enumerate() {
+            let section_prefix = (section_index as u64 + 1) << 32;
+            sort_prefixes.insert(repo_path, section_prefix + path_index as u64 + 1);
+        }
+    }
+
+    sort_prefixes
+}
+
+fn sort_flat_entries(entries: &mut [(RepoPath, FileStatus)], sort_by: GitPanelSortBy) {
+    match sort_by {
+        GitPanelSortBy::Path => {
+            entries.sort_by(|(left_path, _), (right_path, _)| left_path.cmp(right_path))
+        }
+        GitPanelSortBy::Name => entries.sort_by(|(left_path, _), (right_path, _)| {
+            left_path
+                .file_name()
+                .cmp(&right_path.file_name())
+                .then_with(|| left_path.cmp(right_path))
+        }),
+    }
+}
+
+fn append_tree_order(ordered_paths: &mut Vec<RepoPath>, mut entries: Vec<(RepoPath, FileStatus)>) {
+    entries.sort_by(|(left_path, _), (right_path, _)| left_path.cmp(right_path));
+
+    let mut root = ProjectDiffTreeNode::default();
+    for (repo_path, _status) in entries {
+        let components = repo_path.components().collect::<Vec<_>>();
+        if components.is_empty() {
+            root.files.push(repo_path);
+            continue;
+        }
+
+        let mut current = &mut root;
+        for (index, component) in components.iter().enumerate() {
+            if index == components.len() - 1 {
+                current.files.push(repo_path.clone());
+            } else {
+                current = current
+                    .children
+                    .entry((*component).to_string())
+                    .or_default();
+            }
+        }
+    }
+
+    root.append_ordered_paths(ordered_paths);
+}
+
+#[derive(Default)]
+struct ProjectDiffTreeNode {
+    children: BTreeMap<String, ProjectDiffTreeNode>,
+    files: Vec<RepoPath>,
+}
+
+impl ProjectDiffTreeNode {
+    fn append_ordered_paths(self, ordered_paths: &mut Vec<RepoPath>) {
+        for child in self.children.into_values() {
+            child.append_ordered_paths(ordered_paths);
+        }
+        ordered_paths.extend(self.files);
     }
 }
 
@@ -3271,6 +3491,95 @@ mod tests {
             "
             .unindent(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_view_options_reorder_project_diff_without_losing_fold_state(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "alpha": {
+                    "zeta.rs": "changed\n",
+                },
+                "beta": {
+                    "alpha.rs": "changed\n",
+                },
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("alpha/zeta.rs", "original\n".into()),
+                ("beta/alpha.rs", "original\n".into()),
+            ],
+        );
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let project_diff =
+            cx.new_window_entity(|window, cx| ProjectDiff::new(project, workspace, window, cx));
+        cx.run_until_parked();
+
+        let folded_path = rel_path("alpha/zeta.rs");
+        let (editor, folded_buffer_id) = project_diff.read_with(cx, |project_diff, cx| {
+            let editor = project_diff.editor.read(cx).rhs_editor().clone();
+            let snapshot = project_diff.multibuffer.read(cx).snapshot(cx);
+            let buffer_id = snapshot
+                .buffers_with_paths()
+                .find_map(|(buffer, path_key)| {
+                    (path_key.path.as_ref() == folded_path).then(|| buffer.remote_id())
+                })
+                .expect("folded file should be present in the project diff");
+            (editor, buffer_id)
+        });
+        editor.update(cx, |editor, cx| {
+            editor.fold_buffers(vec![folded_buffer_id], cx);
+        });
+
+        cx.update(|_window, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().sort_by =
+                        Some(settings::GitPanelSortBy::Name);
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            project_diff.read_with(cx, |project_diff, cx| project_diff.excerpt_paths(cx)),
+            [
+                rel_path("beta/alpha.rs").into_arc(),
+                rel_path("alpha/zeta.rs").into_arc(),
+            ]
+        );
+        project_diff.read_with(cx, |project_diff, cx| {
+            let snapshot = project_diff.multibuffer.read(cx).snapshot(cx);
+            let buffer_id = snapshot
+                .buffers_with_paths()
+                .find_map(|(buffer, path_key)| {
+                    (path_key.path.as_ref() == folded_path).then(|| buffer.remote_id())
+                })
+                .expect("folded file should remain in the project diff");
+            assert!(
+                project_diff
+                    .editor
+                    .read(cx)
+                    .rhs_editor()
+                    .read(cx)
+                    .is_buffer_folded(buffer_id, cx)
+            );
+        });
     }
 
     #[gpui::test]

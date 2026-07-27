@@ -932,10 +932,11 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-    // Whether to sort entries in each panel group by path.
+    // How entries are sorted within each Git panel group.
     //
-    // Default: false
-    "sort_by_path": false,
+    // Choices: path, name
+    // Default: path
+    "sort_by": "path",
     // How changed files are grouped in the Git panel.
     //
     // Choices: none, status, staging

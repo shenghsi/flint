@@ -506,11 +506,10 @@ pub struct GitPanelSettingsContent {
     /// Default: main
     pub fallback_branch_name: Option<String>,
 
-    /// Whether to sort entries in the panel by path rather than repository
-    /// status order.
+    /// How entries are sorted within each Git panel group.
     ///
-    /// Default: false
-    pub sort_by_path: Option<bool>,
+    /// Default: path
+    pub sort_by: Option<GitPanelSortBy>,
 
     /// How changed files are grouped in the Git panel.
     ///
@@ -569,6 +568,27 @@ pub enum GitPanelGroupBy {
     #[default]
     Status,
     Staging,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelSortBy {
+    #[default]
+    Path,
+    Name,
 }
 
 #[derive(

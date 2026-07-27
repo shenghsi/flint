@@ -60,12 +60,14 @@ use project::{
 };
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
+use settings::{GitPanelSortBy, Settings, SettingsStore, StatusStyle, update_settings_file};
 use smallvec::SmallVec;
+use std::cell::Cell;
 use std::future::Future;
 use std::io::ErrorKind;
 use std::ops::Range;
 use std::path::Path;
+use std::rc::Rc;
 use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
@@ -122,8 +124,12 @@ actions!(
         LastEntry,
         /// Toggles automatic co-author suggestions.
         ToggleFillCoAuthors,
-        /// Toggles sorting entries by path vs status.
+        /// Toggles sorting entries by path vs file name.
         ToggleSortByPath,
+        /// Sorts entries by path.
+        SetSortByPath,
+        /// Sorts entries by file name.
+        SetSortByName,
         /// Shows changed files without status grouping.
         SetGroupByNone,
         /// Groups changed files by tracked and untracked status.
@@ -177,9 +183,13 @@ struct GitMenuState {
     has_staged_changes: bool,
     has_unstaged_changes: bool,
     has_new_changes: bool,
-    sort_by_path: bool,
-    group_by: settings::GitPanelGroupBy,
     has_stash_items: bool,
+}
+
+#[derive(Clone, Copy)]
+struct GitPanelViewOptionsMenuState {
+    sort_by: settings::GitPanelSortBy,
+    group_by: settings::GitPanelGroupBy,
     tree_view: bool,
 }
 
@@ -233,58 +243,134 @@ fn git_panel_context_menu(
                 "Trash Untracked Files",
                 TrashUntrackedFiles.boxed_clone(),
             )
-            .separator()
-            .entry(
-                if state.tree_view {
-                    "Flat View"
-                } else {
-                    "Tree View"
-                },
-                Some(Box::new(ToggleTreeView)),
-                move |window, cx| window.dispatch_action(Box::new(ToggleTreeView), cx),
-            )
-            .when(!state.tree_view, |this| {
-                this.entry(
-                    if state.sort_by_path {
-                        "Sort by Status"
-                    } else {
-                        "Sort by Path"
-                    },
-                    Some(Box::new(ToggleSortByPath)),
-                    move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
-                )
+    })
+}
+
+fn git_panel_view_options_menu(
+    focus_handle: FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ContextMenu> {
+    let menu_state = Rc::new(Cell::new(GitPanelViewOptionsMenuState {
+        sort_by: GitPanelSettings::get_global(cx).sort_by,
+        group_by: GitPanelSettings::get_global(cx).group_by,
+        tree_view: GitPanelSettings::get_global(cx).tree_view,
+    }));
+
+    ContextMenu::build_persistent(window, cx, move |context_menu, _, _| {
+        let state = menu_state.get();
+        context_menu
+            .context(focus_handle.clone())
+            .header("View")
+            .item({
+                let menu_state = menu_state.clone();
+                ContextMenuEntry::new("List")
+                    .toggle(IconPosition::End, !state.tree_view)
+                    .handler(move |window, cx| {
+                        if state.tree_view {
+                            menu_state.set(GitPanelViewOptionsMenuState {
+                                tree_view: false,
+                                ..state
+                            });
+                            window.dispatch_action(Box::new(ToggleTreeView), cx);
+                        }
+                    })
+            })
+            .item({
+                let menu_state = menu_state.clone();
+                ContextMenuEntry::new("Tree")
+                    .toggle(IconPosition::End, state.tree_view)
+                    .handler(move |window, cx| {
+                        if !state.tree_view {
+                            menu_state.set(GitPanelViewOptionsMenuState {
+                                tree_view: true,
+                                ..state
+                            });
+                            window.dispatch_action(Box::new(ToggleTreeView), cx);
+                        }
+                    })
+            })
+            .when(!state.tree_view, |menu| {
+                menu.separator()
+                    .header("Sort By")
+                    .item({
+                        let menu_state = menu_state.clone();
+                        ContextMenuEntry::new("Path")
+                            .toggle(
+                                IconPosition::End,
+                                state.sort_by == settings::GitPanelSortBy::Path,
+                            )
+                            .handler(move |window, cx| {
+                                menu_state.set(GitPanelViewOptionsMenuState {
+                                    sort_by: settings::GitPanelSortBy::Path,
+                                    ..state
+                                });
+                                window.dispatch_action(Box::new(SetSortByPath), cx);
+                            })
+                    })
+                    .item({
+                        let menu_state = menu_state.clone();
+                        ContextMenuEntry::new("Name")
+                            .toggle(
+                                IconPosition::End,
+                                state.sort_by == settings::GitPanelSortBy::Name,
+                            )
+                            .handler(move |window, cx| {
+                                menu_state.set(GitPanelViewOptionsMenuState {
+                                    sort_by: settings::GitPanelSortBy::Name,
+                                    ..state
+                                });
+                                window.dispatch_action(Box::new(SetSortByName), cx);
+                            })
+                    })
             })
             .separator()
-            .item(
-                ContextMenuEntry::new("Do Not Group")
+            .header("Group By")
+            .item({
+                let menu_state = menu_state.clone();
+                ContextMenuEntry::new("None")
                     .toggle(
                         IconPosition::End,
                         state.group_by == settings::GitPanelGroupBy::None,
                     )
-                    .handler(|window, cx| {
+                    .handler(move |window, cx| {
+                        menu_state.set(GitPanelViewOptionsMenuState {
+                            group_by: settings::GitPanelGroupBy::None,
+                            ..state
+                        });
                         window.dispatch_action(Box::new(SetGroupByNone), cx);
-                    }),
-            )
-            .item(
-                ContextMenuEntry::new("Tracked & Untracked")
+                    })
+            })
+            .item({
+                let menu_state = menu_state.clone();
+                ContextMenuEntry::new("Status")
                     .toggle(
                         IconPosition::End,
                         state.group_by == settings::GitPanelGroupBy::Status,
                     )
-                    .handler(|window, cx| {
+                    .handler(move |window, cx| {
+                        menu_state.set(GitPanelViewOptionsMenuState {
+                            group_by: settings::GitPanelGroupBy::Status,
+                            ..state
+                        });
                         window.dispatch_action(Box::new(SetGroupByStatus), cx);
-                    }),
-            )
-            .item(
-                ContextMenuEntry::new("Staged & Unstaged")
+                    })
+            })
+            .item({
+                let menu_state = menu_state.clone();
+                ContextMenuEntry::new("Staging")
                     .toggle(
                         IconPosition::End,
                         state.group_by == settings::GitPanelGroupBy::Staging,
                     )
-                    .handler(|window, cx| {
+                    .handler(move |window, cx| {
+                        menu_state.set(GitPanelViewOptionsMenuState {
+                            group_by: settings::GitPanelGroupBy::Staging,
+                            ..state
+                        });
                         window.dispatch_action(Box::new(SetGroupByStaging), cx);
-                    }),
-            )
+                    })
+            })
     })
 }
 
@@ -868,14 +954,16 @@ impl GitPanel {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
 
-            let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            let mut was_sort_by = GitPanelSettings::get_global(cx).sort_by;
+            let mut was_group_by = GitPanelSettings::get_global(cx).group_by;
             let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_icons = GitPanelSettings::get_global(cx).folder_icons;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
-                let sort_by_path = settings.sort_by_path;
+                let sort_by = settings.sort_by;
+                let group_by = settings.group_by;
                 let tree_view = settings.tree_view;
                 let file_icons = settings.file_icons;
                 let folder_icons = settings.folder_icons;
@@ -885,7 +973,8 @@ impl GitPanel {
                 }
 
                 let mut update_entries = false;
-                if sort_by_path != was_sort_by_path || tree_view != was_tree_view {
+                if sort_by != was_sort_by || group_by != was_group_by || tree_view != was_tree_view
+                {
                     this.bulk_staging.take();
                     update_entries = true;
                 }
@@ -895,7 +984,8 @@ impl GitPanel {
                 if file_icons != was_file_icons || folder_icons != was_folder_icons {
                     cx.notify();
                 }
-                was_sort_by_path = sort_by_path;
+                was_sort_by = sort_by;
+                was_group_by = group_by;
                 was_tree_view = tree_view;
                 was_file_icons = file_icons;
                 was_folder_icons = folder_icons;
@@ -1080,7 +1170,7 @@ impl GitPanel {
                 .map(|status| {
                     if repo.had_conflict_on_last_merge_head_change(&repo_path) {
                         Section::Conflict
-                    } else if GitPanelSettings::get_global(cx).effective_group_by()
+                    } else if GitPanelSettings::get_global(cx).group_by
                         == settings::GitPanelGroupBy::Staging
                     {
                         if status.staging().has_staged() {
@@ -3657,17 +3747,31 @@ impl GitPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current_setting = GitPanelSettings::get_global(cx).sort_by_path;
+        let sort_by = match GitPanelSettings::get_global(cx).sort_by {
+            settings::GitPanelSortBy::Path => settings::GitPanelSortBy::Name,
+            settings::GitPanelSortBy::Name => settings::GitPanelSortBy::Path,
+        };
+        self.set_sort_by(sort_by, cx);
+    }
+
+    fn set_sort_by(&mut self, sort_by: settings::GitPanelSortBy, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
             let fs = workspace.app_state().fs.clone();
             cx.update_global::<SettingsStore, _>(|store, _cx| {
                 store.update_settings_file(fs, move |settings, _cx| {
-                    settings.git_panel.get_or_insert_default().sort_by_path =
-                        Some(!current_setting);
+                    settings.git_panel.get_or_insert_default().sort_by = Some(sort_by);
                 });
             });
         }
+    }
+
+    fn set_sort_by_path(&mut self, _: &SetSortByPath, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_sort_by(settings::GitPanelSortBy::Path, cx);
+    }
+
+    fn set_sort_by_name(&mut self, _: &SetSortByName, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_sort_by(settings::GitPanelSortBy::Name, cx);
     }
 
     fn set_group_by(&mut self, group_by: settings::GitPanelGroupBy, cx: &mut Context<Self>) {
@@ -3678,9 +3782,6 @@ impl GitPanel {
                 store.update_settings_file(fs, move |settings, _cx| {
                     let git_panel = settings.git_panel.get_or_insert_default();
                     git_panel.group_by = Some(group_by);
-                    if group_by == settings::GitPanelGroupBy::Status {
-                        git_panel.sort_by_path = Some(false);
-                    }
                 });
             });
         }
@@ -3934,8 +4035,8 @@ impl GitPanel {
         self.git_access = GitAccess::Yes;
 
         let settings = GitPanelSettings::get_global(cx);
-        let sort_by_path = settings.sort_by_path;
-        let group_by = settings.effective_group_by();
+        let sort_by = settings.sort_by;
+        let group_by = settings.group_by;
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
         let group_by_staging = group_by == settings::GitPanelGroupBy::Staging;
         let group_by_status = group_by == settings::GitPanelGroupBy::Status;
@@ -4065,7 +4166,18 @@ impl GitPanel {
             self.single_tracked_entry = tracked_entries.pop();
         }
 
-        if sort_by_path && !is_tree_view {
+        if !is_tree_view {
+            let sort_entries = |entries: &mut Vec<GitStatusEntry>| match sort_by {
+                GitPanelSortBy::Path => {
+                    entries.sort_by(|left, right| left.repo_path.cmp(&right.repo_path))
+                }
+                GitPanelSortBy::Name => entries.sort_by(|left, right| {
+                    left.repo_path
+                        .file_name()
+                        .cmp(&right.repo_path.file_name())
+                        .then_with(|| left.repo_path.cmp(&right.repo_path))
+                }),
+            };
             for entries in [
                 &mut conflict_entries,
                 &mut changed_entries,
@@ -4073,7 +4185,7 @@ impl GitPanel {
                 &mut staged_entries,
                 &mut unstaged_entries,
             ] {
-                entries.sort_by(|left, right| left.repo_path.cmp(&right.repo_path));
+                sort_entries(entries);
             }
         }
 
@@ -4631,11 +4743,27 @@ impl GitPanel {
                         has_staged_changes,
                         has_unstaged_changes,
                         has_new_changes,
-                        sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
-                        group_by: GitPanelSettings::get_global(cx).effective_group_by(),
                         has_stash_items,
-                        tree_view: GitPanelSettings::get_global(cx).tree_view,
                     },
+                    window,
+                    cx,
+                ))
+            })
+            .anchor(Anchor::TopRight)
+    }
+
+    fn render_view_options_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
+
+        PopoverMenu::new(id.into())
+            .trigger_with_tooltip(
+                IconButton::new("view-options-menu-trigger", IconName::Sliders)
+                    .icon_size(IconSize::Small),
+                Tooltip::text("View Options"),
+            )
+            .menu(move |window, cx| {
+                Some(git_panel_view_options_menu(
+                    focus_handle.clone(),
                     window,
                     cx,
                 ))
@@ -4980,6 +5108,7 @@ impl GitPanel {
                 .child(
                     h_flex()
                         .gap_1()
+                        .child(self.render_view_options_menu("view_options_menu"))
                         .child(self.render_ellipsis_menu("overflow_menu"))
                         .child(
                             Button::new("stage_unstage_all", text)
@@ -6429,10 +6558,7 @@ impl GitPanel {
                 has_staged_changes: self.has_staged_changes(),
                 has_unstaged_changes: self.has_unstaged_changes(),
                 has_new_changes: self.new_count > 0,
-                sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
-                group_by: GitPanelSettings::get_global(cx).effective_group_by(),
                 has_stash_items: self.stash_entries.entries.len() > 0,
-                tree_view: GitPanelSettings::get_global(cx).tree_view,
             },
             window,
             cx,
@@ -7174,6 +7300,8 @@ impl Render for GitPanel {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
+            .on_action(cx.listener(Self::set_sort_by_path))
+            .on_action(cx.listener(Self::set_sort_by_name))
             .on_action(cx.listener(Self::set_group_by_none))
             .on_action(cx.listener(Self::set_group_by_status))
             .on_action(cx.listener(Self::set_group_by_staging))
@@ -8010,6 +8138,16 @@ mod tests {
             message,
             "Your local changes to the following files would be overwritten by merge"
         );
+    }
+
+    #[gpui::test]
+    fn test_git_panel_sort_actions_are_registered(cx: &mut TestAppContext) {
+        for action_name in ["git_panel::SetSortByPath", "git_panel::SetSortByName"] {
+            assert!(
+                cx.update(|cx| cx.build_action(action_name, None).is_ok()),
+                "{action_name} should be registered"
+            );
+        }
     }
 
     #[gpui::test]
@@ -8933,7 +9071,9 @@ mod tests {
         cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.git_panel.get_or_insert_default().sort_by_path = Some(true);
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.sort_by = Some(settings::GitPanelSortBy::Path);
+                    git_panel.group_by = Some(settings::GitPanelGroupBy::None);
                 })
             });
         });
@@ -9216,6 +9356,95 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_flat_view_sorts_each_group_by_file_name(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "alpha": {
+                    "zeta.rs": "changed",
+                },
+                "beta": {
+                    "alpha.rs": "changed",
+                },
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("alpha/zeta.rs", StatusCode::Modified.worktree()),
+                ("beta/alpha.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace should be available");
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.group_by = Some(settings::GitPanelGroupBy::None);
+                    git_panel.sort_by = Some(settings::GitPanelSortBy::Name);
+                })
+            });
+        });
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("project should contain a worktree")
+                .read(cx)
+                .as_local()
+                .expect("test worktree should be local")
+                .scan_complete()
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        assert_entry_paths(&entries, &[Some("beta/alpha.rs"), Some("alpha/zeta.rs")]);
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_sort_by_path(&SetSortByPath, window, cx);
+        });
+        cx.executor().run_until_parked();
+        cx.update(|_window, cx| {
+            assert_eq!(
+                GitPanelSettings::get_global(cx).sort_by,
+                settings::GitPanelSortBy::Path
+            );
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_sort_by_name(&SetSortByName, window, cx);
+        });
+        cx.executor().run_until_parked();
+        cx.update(|_window, cx| {
+            assert_eq!(
+                GitPanelSettings::get_global(cx).sort_by,
+                settings::GitPanelSortBy::Name
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_open_diff(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -9244,13 +9473,13 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
         let panel = workspace.update_in(cx, GitPanel::new);
 
-        // Enable the `sort_by_path` setting and wait for entries to be updated,
-        // as there should no longer be separators between Tracked and Untracked
-        // files.
+        // Disable grouping and wait for entries to update so there are no
+        // separators between tracked and untracked files.
         cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.git_panel.get_or_insert_default().sort_by_path = Some(true);
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(settings::GitPanelGroupBy::None);
                 })
             });
         });
