@@ -1,4 +1,4 @@
-name: Windows process tests
+name: Process resource tests
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
       - Cargo.toml
       - crates/terminal/**
       - crates/util/**
-      - .github/workflows/windows_process_tests.yml
+      - .github/workflows/process_resource_tests.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,9 +15,18 @@ concurrency:
 
 jobs:
   tests:
-    runs-on: windows-latest
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
     steps:
       - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: ./script/linux
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
