@@ -403,7 +403,9 @@ message Envelope {
     StreamAgentThreadHistory stream_agent_thread_history = 467;
     AgentThreadHistorySnapshot agent_thread_history_snapshot = 468;
     ExtractAgentTranscript extract_agent_transcript = 469;
-    AgentTranscriptExcerpt agent_transcript_excerpt = 470; // current max
+    AgentTranscriptExcerpt agent_transcript_excerpt = 470;
+    ResolveCodeAction resolve_code_action = 471;
+    ResolveCodeActionResponse resolve_code_action_response = 472; // current max
   }
 
   reserved 87 to 88;

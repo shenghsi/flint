@@ -32,6 +32,8 @@ messages!(
     (AllocateWorktreeIdResponse, Foreground),
     (ApplyCodeAction, Background),
     (ApplyCodeActionResponse, Background),
+    (ResolveCodeAction, Background),
+    (ResolveCodeActionResponse, Background),
     (ApplyCompletionAdditionalEdits, Background),
     (ApplyCompletionAdditionalEditsResponse, Background),
     (BlameBuffer, Foreground),
@@ -314,6 +316,7 @@ messages!(
 request_messages!(
     (AllocateWorktreeId, AllocateWorktreeIdResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
+    (ResolveCodeAction, ResolveCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
         ApplyCompletionAdditionalEditsResponse
@@ -515,6 +518,7 @@ entity_messages!(
     AddWorktree,
     AllocateWorktreeId,
     ApplyCodeAction,
+    ResolveCodeAction,
     ApplyCompletionAdditionalEdits,
     BlameBuffer,
     BufferReloaded,
