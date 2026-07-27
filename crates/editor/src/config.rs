@@ -360,8 +360,12 @@ impl Editor {
         self.delegate_expand_excerpts = delegate;
     }
 
-    pub(super) fn set_delegate_stage_and_restore(&mut self, delegate: bool) {
+    pub fn set_delegate_stage_and_restore(&mut self, delegate: bool) {
         self.delegate_stage_and_restore = delegate;
+    }
+
+    pub(crate) fn delegates_stage_and_restore(&self) -> bool {
+        self.delegate_stage_and_restore
     }
 
     pub(super) fn set_on_local_selections_changed(

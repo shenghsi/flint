@@ -853,7 +853,7 @@ pub(crate) fn commit_message_editor(
 }
 
 impl GitPanel {
-    fn new(
+    pub(crate) fn new(
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -1763,7 +1763,7 @@ impl GitPanel {
         .detach();
     }
 
-    fn restore_tracked_files(
+    pub(crate) fn restore_tracked_files(
         &mut self,
         _: &RestoreTrackedFiles,
         window: &mut Window,
@@ -1775,10 +1775,8 @@ impl GitPanel {
             .cloned()
             .collect::<Vec<_>>();
 
-        match entries.len() {
-            0 => return,
-            1 => return self.revert_entry(&entries[0], window, cx),
-            _ => {}
+        if entries.is_empty() {
+            return;
         }
         let mut details = entries
             .iter()

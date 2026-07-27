@@ -1054,8 +1054,10 @@ impl GitStore {
                     });
 
                     this.update(cx, |this, cx| {
-                        cx.subscribe(&buffer_diff, Self::on_buffer_diff_event)
-                            .detach();
+                        cx.subscribe(&buffer_diff, move |this, diff, event, cx| {
+                            this.on_buffer_diff_event(buffer_id, diff, event, cx)
+                        })
+                        .detach();
 
                         this.loading_diffs.remove(&(buffer_id, diff_kind));
 
@@ -1203,7 +1205,10 @@ impl GitStore {
                 cx.new(|cx| BufferDiff::new(&text_snapshot, cx))
             };
 
-            cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
+            cx.subscribe(&diff, {
+                move |this, diff, event, cx| this.on_buffer_diff_event(buffer_id, diff, event, cx)
+            })
+            .detach();
             diff_state.update(cx, |diff_state, cx| {
                 diff_state.language_changed = true;
                 diff_state.language = language;
@@ -2021,12 +2026,12 @@ impl GitStore {
 
     fn on_buffer_diff_event(
         &mut self,
+        buffer_id: BufferId,
         diff: Entity<buffer_diff::BufferDiff>,
         event: &BufferDiffEvent,
         cx: &mut Context<Self>,
     ) {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
-            let buffer_id = diff.read(cx).buffer_id;
             if let Some(diff_state) = self.diffs.get(&buffer_id) {
                 let new_index_text = new_index_text.as_ref().map(|rope| rope.to_string());
                 if new_index_text.as_deref() == diff_state.read(cx).index_text.as_deref() {
