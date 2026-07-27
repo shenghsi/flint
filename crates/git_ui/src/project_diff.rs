@@ -4,10 +4,10 @@ use crate::{
     git_panel_settings::GitPanelSettings,
 };
 use anyhow::{Context as _, Result, anyhow};
-use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus};
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
+    Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -23,18 +23,21 @@ use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
+use itertools::Itertools as _;
 use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
-use multi_buffer::{MultiBuffer, PathKey};
+use multi_buffer::{MultiBuffer, MultiBufferDiffHunk, PathKey};
 use project::{
     ConflictSet, Project, ProjectPath,
     git_store::{
         Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
+    project_settings::ProjectSettings,
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -491,8 +494,8 @@ impl ProjectDiff {
         let focus_handle = cx.focus_handle();
         let multibuffer = cx.new(|cx| {
             let capability = match branch_diff.read(cx).diff_base() {
-                DiffBase::Head => Capability::ReadWrite,
-                DiffBase::Index | DiffBase::Staged | DiffBase::Merge { .. } => Capability::ReadOnly,
+                DiffBase::Head | DiffBase::Index => Capability::ReadWrite,
+                DiffBase::Staged | DiffBase::Merge { .. } => Capability::ReadOnly,
             };
             let mut multibuffer = MultiBuffer::new(capability);
             multibuffer.set_all_diff_hunks_expanded(cx);
@@ -510,11 +513,17 @@ impl ProjectDiff {
             );
             match branch_diff.read(cx).diff_base() {
                 DiffBase::Head => {}
-                DiffBase::Index | DiffBase::Staged | DiffBase::Merge { .. } => {
-                    diff_display_editor.disable_diff_hunk_controls(cx)
-                }
+                DiffBase::Index => diff_display_editor
+                    .set_render_diff_hunk_controls(Arc::new(render_unstaged_hunk_controls), cx),
+                DiffBase::Staged => diff_display_editor
+                    .set_render_diff_hunk_controls(Arc::new(render_staged_hunk_controls), cx),
+                DiffBase::Merge { .. } => diff_display_editor.disable_diff_hunk_controls(cx),
             }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
+                editor.set_delegate_stage_and_restore(matches!(
+                    branch_diff.read(cx).diff_base(),
+                    DiffBase::Index | DiffBase::Staged
+                ));
                 editor.set_show_diff_review_button(
                     matches!(
                         branch_diff.read(cx).diff_base(),
@@ -729,19 +738,38 @@ impl ProjectDiff {
         }
         let mut has_staged_hunks = false;
         let mut has_unstaged_hunks = false;
+        let mut can_restore = false;
         for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
-            match hunk.status.secondary {
-                DiffHunkSecondaryStatus::HasSecondaryHunk
-                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+            if self
+                .status_for_diff_buffer_id(hunk.buffer_id, cx)
+                .is_some_and(FileStatus::is_conflicted)
+            {
+                continue;
+            }
+            match self.diff_base(cx) {
+                DiffBase::Index => {
                     has_unstaged_hunks = true;
+                    can_restore |= !hunk.is_created_file();
                 }
-                DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                DiffBase::Staged => {
                     has_staged_hunks = true;
-                    has_unstaged_hunks = true;
                 }
-                DiffHunkSecondaryStatus::NoSecondaryHunk
-                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
-                    has_staged_hunks = true;
+                DiffBase::Head => match hunk.status.secondary {
+                    DiffHunkSecondaryStatus::HasSecondaryHunk
+                    | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+                        has_unstaged_hunks = true;
+                    }
+                    DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                        has_staged_hunks = true;
+                        has_unstaged_hunks = true;
+                    }
+                    DiffHunkSecondaryStatus::NoSecondaryHunk
+                    | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
+                        has_staged_hunks = true;
+                    }
+                },
+                DiffBase::Merge { .. } => {
+                    break;
                 }
             }
         }
@@ -764,6 +792,9 @@ impl ProjectDiff {
             selection,
             stage_all,
             unstage_all,
+            restore: can_restore,
+            restore_all: self.diff_base(cx) == &DiffBase::Index
+                && snapshot.diff_hunks().any(|hunk| !hunk.is_created_file()),
         }
     }
 
@@ -793,6 +824,17 @@ impl ProjectDiff {
                 self._task =
                     cx.spawn_in(window, async move |this, cx| Self::refresh(this, cx).await);
             }
+            EditorEvent::StageOrUnstageRequested { stage, hunks } => {
+                self.stage_or_unstage_hunks(*stage, hunks, cx);
+            }
+            EditorEvent::RestoreRequested { hunks } => {
+                if self.diff_base(cx) == &DiffBase::Index {
+                    let editor = self.editor.read(cx).rhs_editor().clone();
+                    editor.update(cx, |editor, cx| {
+                        editor.restore_diff_hunks(hunks.clone(), cx);
+                    });
+                }
+            }
             _ => {}
         }
         if editor.focus_handle(cx).contains_focused(window, cx)
@@ -800,6 +842,84 @@ impl ProjectDiff {
         {
             self.focus_handle.focus(window, cx)
         }
+    }
+
+    fn status_for_diff_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
+        let status_buffer_id = match self.diff_base(cx) {
+            DiffBase::Staged => {
+                let diff = self.multibuffer.read(cx).diff_for(buffer_id)?;
+                self.buffer_subscriptions
+                    .values()
+                    .find(|subscription| subscription._diff.entity_id() == diff.entity_id())
+                    .map(|subscription| subscription._main_buffer.read(cx).remote_id())?
+            }
+            DiffBase::Head | DiffBase::Index | DiffBase::Merge { .. } => buffer_id,
+        };
+        self.branch_diff
+            .read(cx)
+            .status_for_buffer_id(status_buffer_id, cx)
+    }
+
+    fn stage_or_unstage_hunks(
+        &mut self,
+        stage: bool,
+        hunks: &[MultiBufferDiffHunk],
+        cx: &mut Context<Self>,
+    ) {
+        let diff_base = self.diff_base(cx).clone();
+        if !matches!(
+            (diff_base, stage),
+            (DiffBase::Index, true) | (DiffBase::Staged, false)
+        ) {
+            return;
+        }
+
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let hunks_by_buffer = hunks.iter().chunk_by(|hunk| hunk.buffer_id);
+        for (buffer_id, hunks) in &hunks_by_buffer {
+            let Some(buffer) = self.multibuffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
+            let Some(diff) = self.multibuffer.read(cx).diff_for(buffer_id) else {
+                continue;
+            };
+            if self
+                .status_for_diff_buffer_id(buffer_id, cx)
+                .is_some_and(FileStatus::is_conflicted)
+            {
+                continue;
+            }
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let hunks = hunks
+                .map(|hunk| buffer_diff::DiffHunk {
+                    buffer_range: hunk.buffer_range.clone(),
+                    base_word_diffs: Vec::new(),
+                    buffer_word_diffs: Vec::new(),
+                    diff_base_byte_range: hunk.diff_base_byte_range.start.0
+                        ..hunk.diff_base_byte_range.end.0,
+                    secondary_status: hunk.status.secondary,
+                    range: language::Point::zero()..language::Point::zero(),
+                })
+                .collect::<Vec<_>>();
+
+            match self.diff_base(cx) {
+                DiffBase::Index => {
+                    let file_exists = buffer_snapshot
+                        .file()
+                        .is_some_and(|file| file.disk_state().exists());
+                    diff.update(cx, |diff, cx| {
+                        diff.stage_unstaged_hunks(&hunks, &buffer_snapshot.text, file_exists, cx);
+                    });
+                }
+                DiffBase::Staged => {
+                    diff.update(cx, |diff, cx| {
+                        diff.unstage_staged_hunks(&hunks, &buffer_snapshot.text, cx);
+                    });
+                }
+                DiffBase::Head | DiffBase::Merge { .. } => {}
+            }
+        }
+        drop(snapshot);
     }
 
     #[instrument(skip_all)]
@@ -1111,6 +1231,103 @@ fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: 
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiff {}
+
+fn render_unstaged_hunk_controls(
+    row: u32,
+    status: &DiffHunkStatus,
+    hunk_range: Range<multi_buffer::Anchor>,
+    is_created_file: bool,
+    line_height: Pixels,
+    editor: &Entity<Editor>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    if !ProjectSettings::get_global(cx)
+        .git
+        .show_stage_restore_buttons
+    {
+        return gpui::Empty.into_any_element();
+    }
+
+    let restore_range = hunk_range.clone();
+    h_flex()
+        .h(line_height)
+        .mr_1()
+        .gap_1()
+        .child(
+            Button::new(("stage", row as u64), "Stage")
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip(Tooltip::text("Stage Hunk"))
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, _window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                true,
+                                vec![hunk_range.start..hunk_range.start],
+                                cx,
+                            );
+                        });
+                    }
+                }),
+        )
+        .child(
+            Button::new(("restore", row as u64), "Restore")
+                .tooltip(Tooltip::text("Restore Hunk"))
+                .disabled(is_created_file)
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let point = restore_range.start.to_point(&snapshot.buffer_snapshot());
+                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                        });
+                    }
+                }),
+        )
+        .into_any_element()
+}
+
+fn render_staged_hunk_controls(
+    row: u32,
+    status: &DiffHunkStatus,
+    hunk_range: Range<multi_buffer::Anchor>,
+    _is_created_file: bool,
+    line_height: Pixels,
+    editor: &Entity<Editor>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    if !ProjectSettings::get_global(cx)
+        .git
+        .show_stage_restore_buttons
+    {
+        return gpui::Empty.into_any_element();
+    }
+
+    h_flex()
+        .h(line_height)
+        .mr_1()
+        .child(
+            Button::new(("unstage", row as u64), "Unstage")
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip(Tooltip::text("Unstage Hunk"))
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, _window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                false,
+                                vec![hunk_range.start..hunk_range.start],
+                                cx,
+                            );
+                        });
+                    }
+                }),
+        )
+        .into_any_element()
+}
 
 impl Focusable for ProjectDiff {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -1588,6 +1805,19 @@ impl ProjectDiffToolbar {
             })
             .ok();
     }
+
+    fn restore_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let Some(panel) = workspace.panel::<GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.restore_tracked_files(&git::RestoreTrackedFiles, window, cx);
+                });
+            })
+            .ok();
+    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for ProjectDiffToolbar {}
@@ -1601,7 +1831,12 @@ impl ToolbarItemView for ProjectDiffToolbar {
     ) -> ToolbarItemLocation {
         self.project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| item.read(cx).diff_base(cx) == &DiffBase::Head)
+            .filter(|item| {
+                matches!(
+                    item.read(cx).diff_base(cx),
+                    DiffBase::Head | DiffBase::Index | DiffBase::Staged
+                )
+            })
             .map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
@@ -1622,6 +1857,8 @@ impl ToolbarItemView for ProjectDiffToolbar {
 struct ButtonStates {
     stage: bool,
     unstage: bool,
+    restore: bool,
+    restore_all: bool,
     prev_next: bool,
     selection: bool,
     stage_all: bool,
@@ -1635,6 +1872,7 @@ impl Render for ProjectDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
+        let diff_base = project_diff.read(cx).diff_base(cx).clone();
 
         h_group_xl()
             .my_neg_1()
@@ -1644,49 +1882,95 @@ impl Render for ProjectDiffToolbar {
             .justify_between()
             .child(
                 h_group_sm()
-                    .when(button_states.selection, |el| {
-                        el.child(
-                            Button::new("stage", "Toggle Staged")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Toggle Staged",
-                                    &ToggleStaged,
-                                    &focus_handle,
-                                ))
-                                .disabled(!button_states.stage && !button_states.unstage)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&ToggleStaged, window, cx)
-                                })),
-                        )
-                    })
-                    .when(!button_states.selection, |el| {
+                    .when(
+                        diff_base == DiffBase::Head && button_states.selection,
+                        |el| {
+                            el.child(
+                                Button::new("stage", "Toggle Staged")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Toggle Staged",
+                                        &ToggleStaged,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(!button_states.stage && !button_states.unstage)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&ToggleStaged, window, cx)
+                                    })),
+                            )
+                        },
+                    )
+                    .when(
+                        diff_base == DiffBase::Head && !button_states.selection,
+                        |el| {
+                            el.child(
+                                Button::new("stage", "Stage")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Stage and go to next hunk",
+                                        &StageAndNext,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(
+                                        !button_states.prev_next
+                                            && !button_states.stage_all
+                                            && !button_states.unstage_all,
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&StageAndNext, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("unstage", "Unstage")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Unstage and go to next hunk",
+                                        &UnstageAndNext,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(
+                                        !button_states.prev_next
+                                            && !button_states.stage_all
+                                            && !button_states.unstage_all,
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&UnstageAndNext, window, cx)
+                                    })),
+                            )
+                        },
+                    )
+                    .when(diff_base == DiffBase::Index, |el| {
                         el.child(
                             Button::new("stage", "Stage")
+                                .disabled(!button_states.stage)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Stage and go to next hunk",
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&StageAndNext, window, cx)
                                 })),
                         )
                         .child(
+                            Button::new("restore", "Restore")
+                                .disabled(!button_states.restore)
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Restore selected hunks",
+                                    &git::Restore,
+                                    &focus_handle,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dispatch_action(&git::Restore, window, cx)
+                                })),
+                        )
+                    })
+                    .when(diff_base == DiffBase::Staged, |el| {
+                        el.child(
                             Button::new("unstage", "Unstage")
+                                .disabled(!button_states.unstage)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Unstage and go to next hunk",
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),
@@ -1728,7 +2012,9 @@ impl Render for ProjectDiffToolbar {
             .child(
                 h_group_sm()
                     .when(
-                        button_states.unstage_all && !button_states.stage_all,
+                        diff_base != DiffBase::Index
+                            && button_states.unstage_all
+                            && (diff_base == DiffBase::Staged || !button_states.stage_all),
                         |el| {
                             el.child(
                                 Button::new("unstage-all", "Unstage All")
@@ -1744,7 +2030,8 @@ impl Render for ProjectDiffToolbar {
                         },
                     )
                     .when(
-                        !button_states.unstage_all || button_states.stage_all,
+                        diff_base != DiffBase::Staged
+                            && (!button_states.unstage_all || button_states.stage_all),
                         |el| {
                             el.child(
                                 // todo make it so that changing to say "Unstaged"
@@ -1764,17 +2051,29 @@ impl Render for ProjectDiffToolbar {
                             )
                         },
                     )
-                    .child(
-                        Button::new("commit", "Commit")
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Commit",
-                                &Commit,
-                                &focus_handle,
-                            ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&Commit, window, cx);
-                            })),
-                    ),
+                    .when(diff_base == DiffBase::Index, |el| {
+                        el.child(
+                            Button::new("restore-all", "Restore All")
+                                .disabled(!button_states.restore_all)
+                                .tooltip(Tooltip::text("Restore All Changes"))
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.restore_all(window, cx)),
+                                ),
+                        )
+                    })
+                    .when(diff_base != DiffBase::Index, |el| {
+                        el.child(
+                            Button::new("commit", "Commit")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Commit",
+                                    &Commit,
+                                    &focus_handle,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dispatch_action(&Commit, window, cx);
+                                })),
+                        )
+                    }),
             )
     }
 }
@@ -1923,6 +2222,7 @@ mod tests {
     use collections::HashMap;
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
+    use fs::Fs as _;
     use git::status::{TrackedStatus, UnmergedStatus, UnmergedStatusCode};
     use gpui::TestAppContext;
     use language::ToOffset as _;
@@ -2086,7 +2386,7 @@ mod tests {
             assert_ne!(item.entity_id(), staged_diff.entity_id());
             assert_eq!(item.read(cx).diff_base(cx), &DiffBase::Index);
             assert_eq!(item.read(cx).tab_content_text(0, cx), "Unstaged Changes");
-            assert!(item.read(cx).multibuffer.read(cx).read_only());
+            assert!(!item.read(cx).multibuffer.read(cx).read_only());
             item
         });
         let unstaged_editor =
@@ -2316,6 +2616,589 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_staging_views_stage_and_unstage_only_the_selected_repeated_hunk(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "changed\nseparator\nchanged\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("file.txt", "same\nseparator\nsame\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_unstaged(workspace, &ViewUnstagedChanges, window, cx);
+        });
+        cx.run_until_parked();
+
+        let unstaged_editor = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .unwrap()
+                .read(cx)
+                .editor
+                .read(cx)
+                .rhs_editor()
+                .clone()
+        });
+        let mut editor_context = EditorTestContext::for_editor_in(unstaged_editor, cx).await;
+        editor_context.set_selections_state("same\nchanged\nseparator\nsame\nchaˇnged\n");
+        editor_context.update_editor(|editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+            window.dispatch_action(StageAndNext.boxed_clone(), cx);
+        });
+        editor_context.cx.run_until_parked();
+
+        let index_text = || {
+            fs.with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                state
+                    .index_contents
+                    .get(&RepoPath::from_rel_path(rel_path("file.txt")))
+                    .cloned()
+                    .expect("file remains in the index")
+            })
+            .unwrap()
+        };
+        assert_eq!(index_text(), "same\nseparator\nchanged\n");
+
+        workspace.update_in(&mut editor_context.cx, |workspace, window, cx| {
+            ProjectDiff::deploy_staged(workspace, &ViewStagedChanges, window, cx);
+        });
+        editor_context.cx.run_until_parked();
+
+        let staged_editor = workspace.update(&mut editor_context.cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .unwrap()
+                .read(cx)
+                .editor
+                .read(cx)
+                .rhs_editor()
+                .clone()
+        });
+        let mut staged_editor_context =
+            EditorTestContext::for_editor_in(staged_editor, &mut editor_context.cx).await;
+        staged_editor_context.set_selections_state("same\nseparator\nsame\nchaˇnged\n");
+        staged_editor_context.update_editor(|editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+            window.dispatch_action(UnstageAndNext.boxed_clone(), cx);
+        });
+        staged_editor_context.cx.run_until_parked();
+
+        assert_eq!(index_text(), "same\nseparator\nsame\n");
+    }
+
+    #[gpui::test]
+    async fn test_unstaged_view_stages_adjacent_selected_hunks(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let original = "zero\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n";
+        let worktree = "ZERO\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nNINE\n";
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": worktree,
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("file.txt", original.into())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_unstaged(workspace, &ViewUnstagedChanges, window, cx);
+        });
+        cx.run_until_parked();
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .unwrap()
+                .read(cx)
+                .editor
+                .read(cx)
+                .rhs_editor()
+                .clone()
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let hunks = snapshot.diff_hunks().collect::<Vec<_>>();
+            assert_eq!(hunks.len(), 2);
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([
+                    hunks[0].multi_buffer_range.start..hunks[1].multi_buffer_range.end
+                ]);
+            });
+            editor.focus_handle(cx).focus(window, cx);
+            window.dispatch_action(StageAndNext.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let index_text = fs.with_git_state(Path::new(path!("/project/.git")), false, |state| {
+            state
+                .index_contents
+                .get(&RepoPath::from_rel_path(rel_path("file.txt")))
+                .cloned()
+                .expect("file remains in the index")
+        });
+        assert_eq!(index_text.unwrap(), worktree);
+    }
+
+    #[gpui::test]
+    async fn test_split_unstaged_view_stages_hunk_from_left_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Split);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "changed\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("file.txt", "original\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_unstaged(workspace, &ViewUnstagedChanges, window, cx);
+        });
+        cx.run_until_parked();
+
+        let left_editor = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .unwrap()
+                .read(cx)
+                .editor
+                .read(cx)
+                .lhs_editor()
+                .expect("split view has a left editor")
+                .clone()
+        });
+        left_editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+            window.dispatch_action(StageAndNext.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let index_text = fs.with_git_state(Path::new(path!("/project/.git")), false, |state| {
+            state
+                .index_contents
+                .get(&RepoPath::from_rel_path(rel_path("file.txt")))
+                .cloned()
+                .expect("file remains in the index")
+        });
+        assert_eq!(index_text.unwrap(), "changed\n");
+    }
+
+    #[gpui::test]
+    async fn test_unstaged_view_restores_only_the_selected_hunk(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "changed\nseparator\nchanged\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("file.txt", "same\nseparator\nsame\n".into())],
+        );
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_unstaged(workspace, &ViewUnstagedChanges, window, cx);
+        });
+        cx.run_until_parked();
+
+        let unstaged_diff = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        let unstaged_editor =
+            unstaged_diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
+        let mut editor_context = EditorTestContext::for_editor_in(unstaged_editor, cx).await;
+        editor_context.set_selections_state("same\nchanged\nseparator\nsame\nchaˇnged\n");
+        editor_context.update_editor(|editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+            window.dispatch_action(git::Restore.boxed_clone(), cx);
+        });
+        editor_context.cx.run_until_parked();
+
+        let main_buffer = unstaged_diff.read_with(&editor_context.cx, |diff, _| {
+            diff.buffer_subscriptions
+                .get(rel_path("file.txt"))
+                .expect("file is present in the unstaged view")
+                ._main_buffer
+                .clone()
+        });
+        assert_eq!(
+            main_buffer.read_with(&editor_context.cx, |buffer, _| buffer.text()),
+            "changed\nseparator\nsame\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restore_all_tracked_changes_always_requires_confirmation(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "changed\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("file.txt", "original\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_unstaged(workspace, &ViewUnstagedChanges, window, cx);
+        });
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+        cx.run_until_parked();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.restore_tracked_files(&git::RestoreTrackedFiles, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(cx.has_pending_prompt());
+        assert_eq!(
+            String::from_utf8(fs.read_file_sync(path!("/project/file.txt")).unwrap()).unwrap(),
+            "changed\n"
+        );
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert_eq!(
+            String::from_utf8(fs.read_file_sync(path!("/project/file.txt")).unwrap()).unwrap(),
+            "changed\n"
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.restore_tracked_files(&git::RestoreTrackedFiles, window, cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_unstaged_view_does_not_stage_conflicted_hunks(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "conflict.txt": "worktree\n",
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("conflict.txt", "head\n".into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("conflict.txt", "index\n".into())],
+        );
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                "conflict.txt",
+                FileStatus::Unmerged(UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                }),
+            )],
+        );
+        let index_before = fs
+            .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                state
+                    .index_contents
+                    .get(&RepoPath::from_rel_path(rel_path("conflict.txt")))
+                    .cloned()
+                    .expect("conflicted file is present in the index")
+            })
+            .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_unstaged(workspace, &ViewUnstagedChanges, window, cx);
+        });
+        cx.run_until_parked();
+
+        let project_diff = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        assert!(!project_diff.read_with(cx, |project_diff, cx| {
+            project_diff.button_states(cx).stage
+        }));
+        let editor = project_diff.read_with(cx, |project_diff, cx| {
+            project_diff.editor.read(cx).rhs_editor().clone()
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+            window.dispatch_action(StageAndNext.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let index_text = fs.with_git_state(Path::new(path!("/project/.git")), false, |state| {
+            state
+                .index_contents
+                .get(&RepoPath::from_rel_path(rel_path("conflict.txt")))
+                .cloned()
+                .expect("conflicted file remains in the index")
+        });
+        assert_eq!(index_text.unwrap(), index_before);
+    }
+
+    #[gpui::test]
+    async fn test_staging_views_stage_and_unstage_deleted_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ ".git": {} }))
+            .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("deleted.txt", "deleted\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        for (diff_base, action) in [
+            (DiffBase::Index, StageAndNext.boxed_clone()),
+            (DiffBase::Staged, UnstageAndNext.boxed_clone()),
+        ] {
+            workspace.update_in(cx, |workspace, window, cx| {
+                ProjectDiff::deploy_diff_base(workspace, diff_base.clone(), None, window, cx);
+            });
+            cx.run_until_parked();
+            let editor = workspace.update(cx, |workspace, cx| {
+                workspace
+                    .active_item_as::<ProjectDiff>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .rhs_editor()
+                    .clone()
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                editor.focus_handle(cx).focus(window, cx);
+                window.dispatch_action(action.as_ref().boxed_clone(), cx);
+            });
+            cx.run_until_parked();
+
+            let index_text = fs.with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                state
+                    .index_contents
+                    .get(&RepoPath::from_rel_path(rel_path("deleted.txt")))
+                    .cloned()
+            });
+            match diff_base {
+                DiffBase::Index => assert_eq!(index_text.unwrap(), None),
+                DiffBase::Staged => {
+                    assert_eq!(index_text.unwrap(), Some("deleted\n".into()));
+                }
+                DiffBase::Head | DiffBase::Merge { .. } => unreachable!(),
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_staging_views_do_not_offer_text_hunk_actions_for_binary_files(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "binary.dat": "text\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("binary.dat", "original\n".into())],
+        );
+        fs.write(
+            Path::new(path!("/project/binary.dat")),
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_unstaged(workspace, &ViewUnstagedChanges, window, cx);
+        });
+        cx.run_until_parked();
+
+        let project_diff = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        let button_states =
+            project_diff.read_with(cx, |project_diff, cx| project_diff.button_states(cx));
+        assert!(!button_states.stage);
+        assert!(!button_states.restore);
+    }
+
+    #[gpui::test]
+    async fn test_staging_view_surfaces_index_write_errors(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "changed\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("file.txt", "original\n".into())],
+        );
+        fs.set_error_message_for_index_write(
+            Path::new(path!("/project/.git")),
+            Some("simulated index failure".into()),
+        );
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        let _panel = workspace.update_in(cx, GitPanel::new);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_unstaged(workspace, &ViewUnstagedChanges, window, cx);
+        });
+        cx.run_until_parked();
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .unwrap()
+                .read(cx)
+                .editor
+                .read(cx)
+                .rhs_editor()
+                .clone()
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+            window.dispatch_action(StageAndNext.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| workspace.notification_ids().len()),
+            1
+        );
     }
 
     #[gpui::test]

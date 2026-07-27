@@ -1637,6 +1637,73 @@ impl BufferDiff {
         new_index_text
     }
 
+    pub fn stage_unstaged_hunks(
+        &mut self,
+        hunks: &[DiffHunk],
+        buffer: &text::BufferSnapshot,
+        file_exists: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if hunks.is_empty() {
+            return;
+        }
+
+        let new_index_text = if file_exists {
+            let mut index_text = self.inner.base_text.read(cx).as_rope().clone();
+            let mut edits = hunks
+                .iter()
+                .map(|hunk| {
+                    let worktree_range = hunk.buffer_range.to_offset(buffer);
+                    let replacement = buffer.text_for_range(worktree_range).collect::<String>();
+                    (hunk.diff_base_byte_range.clone(), replacement)
+                })
+                .collect::<Vec<_>>();
+            edits.sort_by_key(|(range, _)| range.start);
+            for (range, replacement) in edits.into_iter().rev() {
+                index_text.replace(range, &replacement);
+            }
+            Some(index_text)
+        } else {
+            None
+        };
+
+        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(new_index_text));
+    }
+
+    pub fn unstage_staged_hunks(
+        &mut self,
+        hunks: &[DiffHunk],
+        index_buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if hunks.is_empty() {
+            return;
+        }
+
+        let new_index_text = if self.inner.base_text_exists {
+            let head_text = self.inner.base_text.read(cx).as_rope();
+            let mut index_text = index_buffer.as_rope().clone();
+            let mut edits = hunks
+                .iter()
+                .map(|hunk| {
+                    let replacement = head_text
+                        .chunks_in_range(hunk.diff_base_byte_range.clone())
+                        .collect::<String>();
+                    (hunk.buffer_range.to_offset(index_buffer), replacement)
+                })
+                .collect::<Vec<_>>();
+            edits.sort_by_key(|(range, _)| range.start);
+            for (range, replacement) in edits.into_iter().rev() {
+                index_text.replace(range, &replacement);
+            }
+            Some(index_text)
+        } else {
+            None
+        };
+
+        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(new_index_text));
+    }
+
     pub fn stage_or_unstage_all_hunks(
         &mut self,
         stage: bool,

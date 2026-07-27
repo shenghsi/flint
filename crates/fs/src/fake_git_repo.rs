@@ -390,7 +390,7 @@ impl GitRepository for FakeGitRepository {
                     .fs
                     .read_file_sync(path)
                     .ok()
-                    .map(|content| String::from_utf8(content).unwrap())?;
+                    .map(|content| String::from_utf8_lossy(&content).into_owned())?;
                 let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
                 Some((RepoPath::from_rel_path(&repo_path), (content, is_ignored)))
             })

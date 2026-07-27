@@ -694,7 +694,7 @@ impl Editor {
         );
     }
 
-    pub(super) fn restore_diff_hunks(&self, hunks: Vec<MultiBufferDiffHunk>, cx: &mut App) {
+    pub fn restore_diff_hunks(&self, hunks: Vec<MultiBufferDiffHunk>, cx: &mut App) {
         let mut revert_changes = HashMap::default();
         let chunk_by = hunks.into_iter().chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
@@ -1704,7 +1704,7 @@ impl Editor {
         }
     }
 
-    fn stage_or_unstage_diff_hunks(
+    pub fn stage_or_unstage_diff_hunks(
         &mut self,
         stage: bool,
         ranges: Vec<Range<Anchor>>,
@@ -1769,7 +1769,7 @@ impl Editor {
         }
     }
 
-    fn restore_hunks_in_ranges(
+    pub fn restore_hunks_in_ranges(
         &mut self,
         ranges: Vec<Range<Point>>,
         window: &mut Window,
