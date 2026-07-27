@@ -54,4 +54,5 @@ windows.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 util_macros.workspace = true
