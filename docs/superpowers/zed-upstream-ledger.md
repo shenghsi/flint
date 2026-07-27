@@ -68,8 +68,20 @@ interfaces and are not covered by these exclusions.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | P0 | [#60584](https://github.com/zed-industries/zed/pull/60584) | `eb962794a33cbd414c6a343a8bb1136c94fe6901` | v1.13.0-pre notes | Absent | `crates/buffer_diff`, `crates/git_ui` | `adapt` | None | Task 1.1 repeated-line stage/unstage and index integrity | `implementing` | [#68](https://github.com/shenghsi/flint/pull/68) | Canonicalize ambiguous hunk placement. |
 | P0 | [#61185](https://github.com/zed-industries/zed/pull/61185) | `2a983bca8616c6d8ad111667a5ed6064cc3cbb61` | v1.13.0-pre notes | Absent | `crates/git`, `crates/git_ui` | `adapt` | #60584 | Task 1.2 rejecting `commit-msg` hook and slow operation | `proposed` | — | Separate connection timeout from operation duration. |
-| P0 | [#58275](https://github.com/zed-industries/zed/pull/58275) | `29622911de00305340012f798f17c04a274f4b31` | v1.8 notes | Absent | `crates/agent_threads`, `crates/git_ui` | `audit` | None | Task 1.3 explicit disposable-worktree ownership | `proposed` | — | Exclude if no reachable Flint archive path deletes worktrees. |
+| P0 | [#58275](https://github.com/zed-industries/zed/pull/58275) | `29622911de00305340012f798f17c04a274f4b31` | v1.8 notes | Absent | Removed `agent_ui` archival flow | `none` | None | Task 1.3 source and deletion-call-site evidence | `excluded` | [#69](https://github.com/shenghsi/flint/pull/69) | Flint has no thread archival path that deletes worktrees. |
 | P0 | [#58339](https://github.com/zed-industries/zed/pull/58339) | `381f2f4977b2c104190073af01ae9762ecdd9c9e` | v1.6 notes | Present | `crates/fs` | `none` | None | Existing symlink trash behavior | `baseline-present` | — | Release-note timing is later than the commit and does not indicate absence. |
+
+Task 1.3 exclusion evidence (reviewed 2026-07-27): upstream #58275
+protects the worktree deletion flow in the removed
+`crates/agent_ui/src/thread_worktree_archive.rs` module. Flint's
+`AgentThreadStore::begin_shutdown` only removes the live terminal entry,
+terminates its local or remote process, and releases its egress lease.
+`agent_threads` has no archive action, no `git_ui` dependency, and no
+worktree-deletion call site. Flint's production `Repository::remove_worktree`
+callers are limited to the user-initiated worktree picker and rollback of a
+failed worktree creation. Importing upstream's created-worktree registry,
+creation-time RPC, and archive verification would therefore add no reachable
+safety behavior to Flint.
 
 ## Wave 2: Core stability and resource management
 
