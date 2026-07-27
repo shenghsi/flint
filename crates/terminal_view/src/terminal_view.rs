@@ -144,6 +144,7 @@ pub struct TerminalView {
     /// Overrides the tab icon, e.g. to show the originating agent's icon for
     /// terminals launched from the agent threads panel.
     tab_icon_override: Option<IconName>,
+    agent_thread: bool,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -307,6 +308,7 @@ impl TerminalView {
             needs_serialize: false,
             custom_title: None,
             tab_icon_override: None,
+            agent_thread: false,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
@@ -326,6 +328,18 @@ impl TerminalView {
             max_lines_when_unfocused,
         };
         cx.notify();
+    }
+
+    pub fn set_agent_thread(&mut self, agent_thread: bool, cx: &mut Context<Self>) {
+        if self.agent_thread == agent_thread {
+            return;
+        }
+        self.agent_thread = agent_thread;
+        cx.notify();
+    }
+
+    pub fn is_agent_thread(&self) -> bool {
+        self.agent_thread
     }
 
     const MAX_EMBEDDED_LINES: usize = 1_000;
@@ -959,6 +973,9 @@ impl TerminalView {
     fn dispatch_context(&self, cx: &App) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("Terminal");
+        if self.agent_thread {
+            dispatch_context.add("AgentTerminalThread");
+        }
 
         if self.terminal.read(cx).vi_mode_enabled() {
             dispatch_context.add("vi_mode");
@@ -2541,6 +2558,77 @@ mod tests {
                 (active_pane, terminal, terminal_view)
             })
             .unwrap()
+    }
+
+    #[gpui::test]
+    async fn agent_thread_search_context_is_opt_in(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_, _, terminal_view) = add_display_only_terminal(&project, window_handle, true, cx);
+
+        terminal_view.read_with(cx, |terminal_view, cx| {
+            assert!(
+                !terminal_view
+                    .dispatch_context(cx)
+                    .contains("AgentTerminalThread")
+            );
+        });
+        terminal_view.update(cx, |terminal_view, cx| {
+            terminal_view.set_agent_thread(true, cx);
+        });
+        terminal_view.read_with(cx, |terminal_view, cx| {
+            assert!(
+                terminal_view
+                    .dispatch_context(cx)
+                    .contains("AgentTerminalThread")
+            );
+            assert!(terminal_view.dispatch_context(cx).contains("Terminal"));
+        });
+    }
+
+    #[gpui::test]
+    async fn agent_thread_search_preserves_the_active_result_when_output_arrives(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+        let matches = vec![
+            Range::new(Point::new(0, 0), Point::new(0, 5)),
+            Range::new(Point::new(1, 0), Point::new(1, 5)),
+        ];
+        let token = SearchToken::new(1);
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal.update(cx, |terminal, cx| {
+                    terminal.write_output(b"needle one\nneedle two\n", cx);
+                });
+                terminal_view.update(cx, |terminal_view, cx| {
+                    terminal_view.set_agent_thread(true, cx);
+                    terminal_view.update_matches(&matches, Some(0), token, window, cx);
+                    terminal_view.activate_match(0, &matches, token, window, cx);
+                });
+                terminal.update(cx, |terminal, cx| terminal.sync(window, cx));
+
+                terminal.update(cx, |terminal, cx| {
+                    terminal.write_output(b"more output\n", cx);
+                    terminal.sync(window, cx);
+                });
+
+                terminal_view.update(cx, |terminal_view, cx| {
+                    assert_eq!(
+                        terminal_view.active_match_index(
+                            Direction::Next,
+                            &matches,
+                            token,
+                            window,
+                            cx,
+                        ),
+                        Some(0)
+                    );
+                });
+            })
+            .expect("failed to update terminal window");
     }
 
     /// Creates a worktree with 1 file /root.txt and returns the project, workspace, and window handle.
