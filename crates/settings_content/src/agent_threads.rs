@@ -75,6 +75,11 @@ pub struct AgentThreadCommandContent {
     pub env: Option<HashMap<String, String>>,
     /// Working directory override for this agent kind.
     pub cwd: Option<PathBuf>,
+    /// Shell command to run before launching this agent. The agent launches
+    /// only when this command succeeds.
+    ///
+    /// Default: ""
+    pub initialization_command: Option<String>,
     /// Hide this agent's section from the Agent Threads panel.
     ///
     /// Default: false

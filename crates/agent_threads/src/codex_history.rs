@@ -120,6 +120,7 @@ impl AgentHistoryProvider for CodexHistoryProvider {
             args,
             env: base.env.clone(),
             cwd: Some(thread.project_root.clone()),
+            initialization_command: base.initialization_command.clone(),
             hidden: base.hidden,
             default_launch_option: base.default_launch_option.clone(),
         }
@@ -596,6 +597,7 @@ mod tests {
             args: vec!["--ignored-fresh-session-arg".to_string()],
             env: HashMap::default(),
             cwd: None,
+            initialization_command: Some("source ~/.profile".to_string()),
             hidden: false,
             default_launch_option: None,
         };
@@ -611,6 +613,10 @@ mod tests {
         assert_eq!(resumed.command, Some("codex".to_string()));
         assert_eq!(resumed.args, vec!["resume", "session-a"]);
         assert_eq!(resumed.cwd, Some(PathBuf::from("/root")));
+        assert_eq!(
+            resumed.initialization_command.as_deref(),
+            Some("source ~/.profile")
+        );
     }
 
     #[test]

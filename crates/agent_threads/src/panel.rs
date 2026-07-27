@@ -1905,6 +1905,7 @@ mod tests {
             args: Some(vec![label.to_string()]),
             env: Some(collections::HashMap::default()),
             cwd: Some(PathBuf::from(root_path)),
+            initialization_command: None,
             hidden: None,
             default_launch_option: None,
         }
@@ -1967,6 +1968,25 @@ mod tests {
                     _ => panic!("unknown kind_id {kind_id}"),
                 };
                 command.hidden = Some(hidden);
+            });
+        });
+    }
+
+    fn set_initialization_command(
+        cx: &mut TestAppContext,
+        kind_id: &'static str,
+        initialization_command: &str,
+    ) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                let content = settings.agent_threads.get_or_insert_default();
+                let command = match kind_id {
+                    "codex" => content.codex.get_or_insert_default(),
+                    "claude" => content.claude.get_or_insert_default(),
+                    "pi" => content.pi.get_or_insert_default(),
+                    _ => panic!("unknown kind_id {kind_id}"),
+                };
+                command.initialization_command = Some(initialization_command.to_string());
             });
         });
     }
@@ -2065,6 +2085,36 @@ mod tests {
 
         set_agent_hidden(cx, "codex", true);
         assert!(terminal_views[0].read_with(cx, |view, _| view.is_agent_thread()));
+    }
+
+    #[gpui::test]
+    async fn local_agent_thread_runs_initialization_before_the_agent_command(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_initialization_command(cx, "codex", "printf initialization-ran");
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let spawned = terminal_views(&window_handle, cx)[0].read_with(cx, |view, cx| {
+            view.terminal()
+                .read(cx)
+                .task()
+                .expect("terminal should have a task")
+                .spawned_task
+                .clone()
+        });
+        let combined_command = spawned
+            .args
+            .last()
+            .expect("shell should receive a combined command");
+        assert!(combined_command.starts_with("printf initialization-ran && "));
+        assert!(combined_command.ends_with("echo codex"));
     }
 
     #[gpui::test]

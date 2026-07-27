@@ -690,6 +690,27 @@ fn format_task_for_activation(
     }
 }
 
+pub fn wrap_task_with_initialization_command(
+    mut task: SpawnInTerminal,
+    initialization_command: &str,
+    shell: &str,
+    is_windows: bool,
+) -> SpawnInTerminal {
+    let shell_kind = ShellKind::new(shell, is_windows);
+    let task_command = format_task_for_activation(&task, shell_kind, shell, is_windows);
+    let combined_command = if shell_kind == ShellKind::PowerShell {
+        format!("& {{ {initialization_command} }}; if ($?) {{ {task_command} }} else {{ exit 1 }}")
+    } else {
+        let separator = shell_kind.sequential_and_commands_separator();
+        format!("{initialization_command} {separator} {task_command}")
+    };
+
+    task.command = Some(shell.to_string());
+    task.args = shell_kind.args_for_shell(true, combined_command);
+    task.shell = Shell::Program(shell.to_string());
+    task
+}
+
 fn quote_prepared_task_arg_for_activation<'a>(
     spawn_task: &SpawnInTerminal,
     shell_kind: ShellKind,
@@ -811,6 +832,85 @@ mod tests {
         assert_eq!(
             format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
             "&cargo test 'some test'"
+        );
+    }
+
+    #[test]
+    fn initialization_command_runs_before_the_quoted_task() {
+        let task = SpawnInTerminal {
+            command: Some("/opt/Flint Agents/codex".to_string()),
+            args: vec!["resume".to_string(), "session with spaces".to_string()],
+            shell: Shell::System,
+            ..SpawnInTerminal::default()
+        };
+
+        let task =
+            wrap_task_with_initialization_command(task, "source ~/.profile", "/bin/zsh", false);
+
+        assert_eq!(task.command.as_deref(), Some("/bin/zsh"));
+        assert_eq!(
+            task.args,
+            vec![
+                "-i",
+                "-c",
+                "source ~/.profile && '/opt/Flint Agents/codex' resume 'session with spaces'"
+            ]
+        );
+    }
+
+    #[test]
+    fn powershell_initialization_failure_prevents_the_agent_command() {
+        let task = SpawnInTerminal {
+            command: Some("codex.exe".to_string()),
+            args: vec!["resume".to_string(), "session-a".to_string()],
+            shell: Shell::System,
+            ..SpawnInTerminal::default()
+        };
+
+        let task = wrap_task_with_initialization_command(
+            task,
+            "Initialize-AgentEnvironment",
+            "powershell.exe",
+            true,
+        );
+
+        assert_eq!(task.command.as_deref(), Some("powershell.exe"));
+        assert_eq!(
+            task.args,
+            vec![
+                "-C",
+                "& { Initialize-AgentEnvironment }; if ($?) { &codex.exe resume session-a } else { exit 1 }"
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn initialization_failure_prevents_the_agent_command(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        let temporary_directory = tempfile::tempdir().expect("temporary directory");
+        let marker = temporary_directory.path().join("agent-ran");
+        let task = SpawnInTerminal {
+            command: Some("/usr/bin/touch".to_string()),
+            args: vec![marker.to_string_lossy().into_owned()],
+            shell: Shell::System,
+            ..SpawnInTerminal::default()
+        };
+        let task = wrap_task_with_initialization_command(task, "exit 17", "/bin/sh", false);
+        let status = util::command::new_command(
+            task.command
+                .as_deref()
+                .expect("wrapped task should have a command"),
+        )
+        .args(&task.args)
+        .status()
+        .await
+        .expect("wrapped command should run");
+
+        assert_eq!(status.code(), Some(17));
+        assert!(
+            !marker.exists(),
+            "agent command must not run after init failure"
         );
     }
 }
