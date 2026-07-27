@@ -158,13 +158,6 @@ impl PtyProcessInfo {
 
     #[cfg(windows)]
     pub(crate) fn kill_current_process(&self) -> bool {
-        #[cfg(test)]
-        eprintln!(
-            "[DEBUG-pr76-conpty] kill_current_process root={} current={:?} has_job={}",
-            self.pid_getter.fallback_pid().as_u32(),
-            self.pid_getter.pid().map(|process_id| process_id.as_u32()),
-            self.process_job.is_some()
-        );
         if let Some(process_job) = &self.process_job {
             match process_job.terminate() {
                 Ok(()) => return true,
