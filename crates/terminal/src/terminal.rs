@@ -3891,12 +3891,19 @@ mod tests {
              Set-Content -LiteralPath '{escaped_pid_file}' -Value $p.Id; \
              Start-Sleep -Seconds 60"
         );
-        let (terminal, _completion_rx) = build_test_terminal_with_arguments(
+        let (terminal, completion_rx) = build_test_terminal_with_arguments(
             cx,
             "powershell.exe".to_string(),
             vec!["-NoProfile".to_string(), "-Command".to_string(), script],
         )
         .await;
+        terminal.update(cx, |terminal, _| {
+            terminal.task = Some(TaskState {
+                status: TaskStatus::Running,
+                completion_rx,
+                spawned_task: SpawnInTerminal::default(),
+            });
+        });
 
         let grandchild_pid = {
             let mut grandchild_pid = None;
