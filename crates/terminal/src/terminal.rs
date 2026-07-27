@@ -3889,7 +3889,7 @@ mod tests {
         let script = format!(
             "$p = Start-Process -FilePath ping.exe -ArgumentList @('-n','60','127.0.0.1') -PassThru -WindowStyle Hidden; \
              Set-Content -LiteralPath '{escaped_pid_file}' -Value $p.Id; \
-             Wait-Process -Id $p.Id"
+             Start-Sleep -Seconds 60"
         );
         let (terminal, _completion_rx) = build_test_terminal_with_arguments(
             cx,
@@ -3918,22 +3918,11 @@ mod tests {
             process_is_alive(grandchild_pid),
             "grandchild should be alive after spawning"
         );
-        let mut process_snapshot = sysinfo::System::new_all();
-        process_snapshot.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-        let grandchild_parent = process_snapshot
-            .process(sysinfo::Pid::from_u32(grandchild_pid))
-            .and_then(|process| process.parent())
-            .map(|process_id| process_id.as_u32());
-        let (terminal_root, terminal_current) =
-            terminal.update(cx, |terminal, _| match &terminal.terminal_type {
-                TerminalType::Pty { info, .. } => (
-                    info.pid_getter().fallback_pid().as_u32(),
-                    info.pid().map(|process_id| process_id.as_u32()),
-                ),
-                TerminalType::DisplayOnly => (0, None),
-            });
-        eprintln!(
-            "[DEBUG-pr76-conpty] expected grandchild={grandchild_pid} parent={grandchild_parent:?} terminal_root={terminal_root} terminal_current={terminal_current:?}"
+        assert!(
+            terminal.update(cx, |terminal, _| terminal
+                .task()
+                .is_some_and(|task| task.status == TaskStatus::Running)),
+            "terminal task should still be running before cancellation"
         );
 
         terminal.update(cx, |terminal, _| terminal.kill_active_task());
