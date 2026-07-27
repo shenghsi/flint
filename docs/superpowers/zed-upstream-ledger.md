@@ -159,11 +159,29 @@ command.
 | P1 | [#58962](https://github.com/zed-industries/zed/pull/58962) | `620ceaaaca40b346736660f12eefce38e235cb59` | v1.8 notes | Absent | removed native agent database; inspect Agent Threads persistence | `audit` | Flint history index and restoration | Task 4.4 quit during output and restore | `excluded` | [#100](https://github.com/shenghsi/flint/pull/100) | Zed flushes native-agent content to keep its separate metadata and conversation databases consistent; Flint has neither database and external CLIs own their transcripts, so agent output cannot create that orphaned-content race. Flint PRs [#23](https://github.com/shenghsi/flint/pull/23) and [#24](https://github.com/shenghsi/flint/pull/24) already atomically snapshot known external session IDs, protect the quit snapshot from teardown, restore background workspaces once, and suppress live duplicates. Running task terminals are not workspace-serialized, preventing ghost terminals. Fresh Codex sessions remain explicitly non-restorable because Codex exposes no session-ID assignment flag. Current snapshot, deduplication, sequential restore, and scoped key-value tests pass. |
 | P1 | [#59968](https://github.com/zed-industries/zed/pull/59968) | `ea87b0579464067eb45a1c1a1f2c1bdb80af7e1f` | v1.11 notes | Absent | `crates/worktree`, `crates/project`, remote-project protocol, `crates/agent_threads`, `crates/agent_history` | `adapt` | None | Task 4.5 bare checkout identity | `landed` | [#101](https://github.com/shenghsi/flint/pull/101) | Flint now tracks linked-worktree identity locally and through its remote-project protocol, grouping bare-checkout and nested linked worktrees under the shared repository while keeping ordinary sibling subdirectories distinct. Agent history and resume continue to use actual checkout roots; their complete suites pass. Direct and Tunneled routes share this project metadata transport, and the existing route matrix passes. Zed collaboration database/RPC paths remain excluded because Flint has no collaboration backend. |
 | P2 | [#57747](https://github.com/zed-industries/zed/pull/57747) | `7e0f63412c60008f9dae7fcf65fc6ab6d7e0f957` | v1.11 notes | Absent | `crates/terminal`, `crates/terminal_view` | `adapt` | None | Task 4.6 shell escaping and agent recognition | `landed` | [#103](https://github.com/shenghsi/flint/pull/103) | Dropped POSIX paths use bare backslash escaping so terminal coding agents recognize file references, while PowerShell and cmd retain target-shell quoting. Tests cover spaces, both quote types, backslashes, Unicode, multiple paths, target path style, and every supported terminal drop source. The shared `TerminalView` covers Codex, Claude, and Pi across local, Direct, and Tunneled terminals. Zed's removed native `agent_ui` helper remains excluded. Upstream supplied no automated tests. |
-| P2 | [#60067](https://github.com/zed-industries/zed/pull/60067) | `f5c975162cf217f2c9cd1a2c1192eb2bb4653cdc` | v1.11 notes | Absent | `crates/terminal`, `crates/terminal_view`, settings crates | `adapt` | None | Task 4.7 mouse reporting and link opening | `proposed` | — | Preserve ordinary terminal clicks. |
+| P2 | [#60067](https://github.com/zed-industries/zed/pull/60067) | `f5c975162cf217f2c9cd1a2c1192eb2bb4653cdc` | v1.11 notes | Absent | `crates/terminal`, `crates/terminal_view`, settings crates | `adapt` | None | Task 4.7 mouse reporting and link opening | `landed` | [#105](https://github.com/shenghsi/flint/pull/105) | `terminal.open_links_in_mouse_mode` defaults to true and is exposed at its exact Settings Editor path. Cmd/Ctrl-click opens links during mouse reporting; capture mismatches are consumed without malformed PTY sequences, while ordinary and non-link clicks and the disabled setting forward press/release. Shift remains the terminal escape hatch. Tests cover plain shells and Vim, Claude, and OpenCode mouse protocols. Shared terminal behavior covers every agent and local, Direct, and Tunneled routes. Later #60880 fixes Shift-drag selection independently and remains for Wave 8 reconciliation. |
 
-Every Wave 4 entry requires explicit settings/defaults, Settings Editor,
-visibility, actions, history/resume, local, Direct, Tunneled, and
-provider-capability results.
+### Wave 4 completion audit
+
+- Settings and visibility: Codex, Claude, and Pi have defaults and exact
+  Settings Editor controls for `initialization_command` and `hidden`.
+  Provider-neutral terminal completion, file-drop, link-opening, notification,
+  restoration, and panel settings remain visible independently of agent kind.
+- Actions and history: registry, panel, terminal-search, launch, and restoration
+  tests cover hidden kinds, new and resumed threads, live-thread focus, and
+  history for all three agents. Fresh Codex sessions remain explicitly
+  non-restorable because Codex exposes no session-ID assignment flag.
+- Routes: local launches use the local command; Direct uses only the configured
+  ambient remote command and exposes no Flint-managed launch or credential
+  controls; Tunneled uses only the pinned Flint-managed command and local
+  traffic tunnel. New, resumed, and initialization-command tests cover those
+  route boundaries.
+- Provider capabilities: credential and plan-usage UI is gated on explicit
+  capabilities. Codex and Claude declare both; Pi intentionally declares
+  neither. Remote credential UI appears only for Tunneled sessions and offers
+  sign-out without remote sign-in or provider-management actions.
+- Verification: all 201 `agent_threads` tests passed after Task 4.7, alongside
+  the affected terminal, terminal-view, settings, and Settings Editor suites.
 
 ## Wave 5: Git workflow
 
