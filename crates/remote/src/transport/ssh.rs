@@ -29,7 +29,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
 use util::command::{Child, Stdio};
@@ -38,6 +38,9 @@ use util::{
     rel_path::RelPath,
     shell::ShellKind,
 };
+
+/// How long to wait for SSH to connect when no askpass prompt has opened.
+const SSH_CONNECTION_PROMPT_TIMEOUT: Duration = Duration::from_secs(17);
 
 pub(crate) struct SshRemoteConnection {
     socket: SshSocket,
@@ -1003,7 +1006,7 @@ impl SshRemoteConnection {
             )?;
 
             let result = select_biased! {
-                result = askpass.run().fuse() => {
+                result = askpass.run(Some(SSH_CONNECTION_PROMPT_TIMEOUT)).fuse() => {
                     match result {
                         AskPassResult::CancelledByUser => {
                             master_process.as_mut().kill().ok();
@@ -1060,7 +1063,7 @@ impl SshRemoteConnection {
             )?;
 
             let result = select_biased! {
-                result = askpass.run().fuse() => {
+                result = askpass.run(Some(SSH_CONNECTION_PROMPT_TIMEOUT)).fuse() => {
                     match result {
                         AskPassResult::CancelledByUser => {
                             master_process.as_mut().kill().ok();
