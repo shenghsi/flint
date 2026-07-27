@@ -115,7 +115,7 @@ platform behavior remains deferred or unclassified.
 | P1 | [#58157](https://github.com/zed-industries/zed/pull/58157) | `36a3a2a784fb51f7e58bc6f90e9e0202587ad4bb` | v1.8 notes | Absent | `crates/worktree`, `crates/proto`, `crates/remote_server` | `adapt` | None | Task 3.1 create, modify, rename, delete, protocol round-trip, and remote editing events | `landed` | [#78](https://github.com/shenghsi/flint/pull/78) | The existing wire format carries updated paths and removed entry IDs. The shared remote-worktree client now emits those paths without changing route or protocol capabilities. |
 | P1 | [#59272](https://github.com/zed-industries/zed/pull/59272) | `338530f2e9b36ea05cc27db96e8f2270bd32cd12` | v1.8 notes | Absent | `crates/recent_projects`, `crates/workspace` | `adapt` | #58157 | Task 3.2 remote picker, close, and remove transitions | `landed` | [#80](https://github.com/shenghsi/flint/pull/80) | Flint already reopens restored remote groups through its shared remote-project path. The two remaining local fallback sites now avoid creating ghost workspaces for unloaded remote neighbors. |
 | P1 | [#53953](https://github.com/zed-industries/zed/pull/53953) | `2838ea3f59458fc550d844e78fb4fec8eaf39fa3` | v1.12 notes | Absent | `crates/recent_projects` | `adapt` | #58157 | Task 3.2 local/remote same-path and different-host filtering | `landed` | [#80](https://github.com/shenghsi/flint/pull/80) | Persisted workspace locations are compared with open folders by semantic remote connection identity. Direct and Tunneled remain transport modes for the same checkout, and the persistence key did not change. |
-| P1 | [#60139](https://github.com/zed-industries/zed/pull/60139) | `7b128f9263396555041d3c416ba75cf7554fe1a4` | v1.10 notes | Absent | `crates/project`, `crates/recent_projects` | `adapt` | None | Task 3.3 cross-path-style trust validation | `proposed` | — | Use the remote host's negotiated path style. |
+| P1 | [#60139](https://github.com/zed-industries/zed/pull/60139) | `7b128f9263396555041d3c416ba75cf7554fe1a4` | v1.10 notes | Absent | `crates/workspace` | `none` | None | Task 3.3 source and reachability evidence | `excluded` | [#82](https://github.com/shenghsi/flint/pull/82) | Zed's fix validates its editable trust-path input, which Flint does not contain. Flint derives the parent scope without local-platform absolute-path validation. |
 | P1 | [#59134](https://github.com/zed-industries/zed/pull/59134) | `503292376ed04fca814c8b4533b38f90863675fb` | v1.12 notes | Absent | `crates/git`, `crates/git_ui` | `adapt` | None | Task 3.4 Direct and Tunneled remote worktree creation | `proposed` | — | Default branch exists only as a remote ref. |
 | P1 | [#57049](https://github.com/zed-industries/zed/pull/57049) | `5a7d414a23938c5efb674d0c2948813e37448eea` | v1.11 notes | Absent | `crates/fs`, `crates/remote` | `adapt` | Wave 2 watcher stack | Task 3.5 symlinked `.gitconfig` connection | `proposed` | — | Avoid invalid parent watches for poll-watched targets. |
 | P1 | [#59999](https://github.com/zed-industries/zed/pull/59999) | `0deb6c0deaa91d12bafae3b76d41c965bd4d7615` | v1.10 notes | Absent | `crates/project` | `adapt` | None | Task 3.6a remote code-lens resolution | `proposed` | — | Test Direct and Tunneled routes. |
@@ -123,6 +123,17 @@ platform behavior remains deferred or unclassified.
 | P1 | [#52537](https://github.com/zed-industries/zed/pull/52537) | `776585038e56672e2bb5ee48899c79c654aeaba2` | v1.10 notes | Absent | `crates/terminal_view` | `adapt` | None | Task 3.6c paths outside worktrees | `proposed` | — | Include non-ASCII rows and columns. |
 | P1 | [#58240](https://github.com/zed-industries/zed/pull/58240) | `513e2b2ee3d59373bbafc5995119088d3ea2d368` | v1.6 notes | Present | removed native agent terminal path | `none` | None | Source evidence | `baseline-present` | — | Local-only sandbox terminal temporary directories. |
 | P1 | [#58533](https://github.com/zed-industries/zed/pull/58533) | `44fb295593d5e1c10b61a64bc0be2fc43e49f5b1` | v1.7 notes | Present | removed native `agent_ui` | `none` | None | Source evidence | `baseline-present` | — | Remote native-agent terminal restoration panic. |
+
+Task 3.3 exclusion evidence (reviewed 2026-07-27): upstream #60139 changes
+Zed's editable `Folder to trust` field so its absolute-path validation uses the
+remote worktree store's path style instead of the client's platform.
+Flint's security modal has no editable trust-path field or
+`Path::is_absolute` rejection path. Its checkbox derives the parent directly
+from the restricted worktree path, and `TrustedWorktrees::trust` already uses
+`WorktreeStore::path_style()` when checking absolute paths. Direct and
+Tunneled projects both reach this shared modal and trust store, so importing
+the upstream input validator would add an otherwise absent UI feature rather
+than fix reachable Flint behavior.
 
 All applicable Wave 3 tests must cover both remote routes. Direct uses only the
 configured ambient remote executable. Tunneled uses only the pinned
