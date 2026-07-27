@@ -17,7 +17,7 @@ use fs::Fs;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 pub use remote_connection::{RemoteConnectionModal, connect};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
@@ -47,8 +47,8 @@ use ui::{
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, PathList,
-    RecentWorkspace, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
+    HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, RecentWorkspace,
+    SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 
@@ -2403,14 +2403,24 @@ impl RecentProjectsDelegate {
             .any(|key| key.matches(&workspace.project_group_key()))
     }
 
-    fn is_open_folder(&self, paths: &PathList) -> bool {
+    fn is_open_folder(&self, workspace: &RecentWorkspace) -> bool {
         if self.open_folders.is_empty() {
             return false;
         }
 
-        for workspace_path in paths.paths() {
+        let workspace_host = match &workspace.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(options) => Some(options),
+        };
+
+        for workspace_path in workspace.paths.paths() {
             for open_folder in &self.open_folders {
-                if workspace_path == &open_folder.path {
+                if workspace_path == &open_folder.path
+                    && same_remote_connection_identity(
+                        workspace_host,
+                        open_folder.connection_options.as_ref(),
+                    )
+                {
                     return true;
                 }
             }
@@ -2426,7 +2436,7 @@ impl RecentProjectsDelegate {
     ) -> bool {
         !self.is_current_workspace(workspace.workspace_id, cx)
             && !self.is_in_current_window_groups(workspace)
-            && !self.is_open_folder(&workspace.paths)
+            && !self.is_open_folder(workspace)
     }
 }
 
@@ -2443,7 +2453,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::{AppState, SerializedProjectGroupState, open_paths};
+    use workspace::{AppState, PathList, SerializedProjectGroupState, open_paths};
 
     use super::*;
 
@@ -2691,6 +2701,48 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn open_folder_filter_distinguishes_local_and_remote_projects(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let shared_path = PathBuf::from("/repo");
+        let delegate = RecentProjectsDelegate::new(
+            WeakEntity::new_invalid(),
+            false,
+            cx.update(|cx| cx.focus_handle()),
+            vec![OpenFolderEntry {
+                worktree_id: WorktreeId::from_usize(0),
+                name: "repo".into(),
+                path: shared_path.clone(),
+                branch: None,
+                is_active: false,
+                connection_options: None,
+            }],
+            Vec::new(),
+            ProjectPickerStyle::Modal,
+        );
+        let paths = PathList::new(&[shared_path]);
+        let local_workspace = RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(1),
+            location: SerializedWorkspaceLocation::Local,
+            paths: paths.clone(),
+            identity_paths: paths.clone(),
+            timestamp: Utc::now(),
+        };
+        let remote_workspace = RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(2),
+            location: SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Mock(
+                remote::MockConnectionOptions { id: 1 },
+            )),
+            paths: paths.clone(),
+            identity_paths: paths,
+            timestamp: Utc::now(),
+        };
+
+        assert!(delegate.is_open_folder(&local_workspace));
+        assert!(!delegate.is_open_folder(&remote_workspace));
+    }
+
     fn set_ssh_connections(cx: &mut TestAppContext, connections: Vec<SshConnection>) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -2706,6 +2758,47 @@ mod tests {
             host: host.into(),
             ..Default::default()
         })
+    }
+
+    #[gpui::test]
+    fn open_folder_filter_distinguishes_remote_hosts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let shared_path = PathBuf::from("/repo");
+        let connection_options = ssh_options("host-a");
+        let delegate = RecentProjectsDelegate::new(
+            WeakEntity::new_invalid(),
+            false,
+            cx.update(|cx| cx.focus_handle()),
+            vec![OpenFolderEntry {
+                worktree_id: WorktreeId::from_usize(0),
+                name: "repo".into(),
+                path: shared_path.clone(),
+                branch: None,
+                is_active: false,
+                connection_options: Some(connection_options.clone()),
+            }],
+            Vec::new(),
+            ProjectPickerStyle::Modal,
+        );
+        let paths = PathList::new(&[shared_path]);
+        let same_host_workspace = RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(1),
+            location: SerializedWorkspaceLocation::Remote(connection_options),
+            paths: paths.clone(),
+            identity_paths: paths.clone(),
+            timestamp: Utc::now(),
+        };
+        let other_host_workspace = RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(2),
+            location: SerializedWorkspaceLocation::Remote(ssh_options("host-b")),
+            paths: paths.clone(),
+            identity_paths: paths,
+            timestamp: Utc::now(),
+        };
+
+        assert!(delegate.is_open_folder(&same_host_workspace));
+        assert!(!delegate.is_open_folder(&other_host_workspace));
     }
 
     #[gpui::test]
