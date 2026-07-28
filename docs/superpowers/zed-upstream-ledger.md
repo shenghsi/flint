@@ -1,8 +1,11 @@
 # Zed Upstream Integration Ledger
 
 **Flint fork point:** `6e9465a4288c332208643892e23b9d35d7be5c79`
-**Initial reviewed range:** Zed v1.6 through v1.12, plus selected
-v1.13.0-pre safety fixes
+**Completed stable baseline:** Zed v1.6.3 through v1.12.1
+
+**Historical exception:** selected v1.13.0-pre entries approved before the
+stable-only review boundary remain recorded, but preview releases are no longer
+discovery inputs.
 **Program design:**
 `docs/superpowers/specs/2026-07-27-upstream-domain-wave-design.md`
 **Implementation plan:**
@@ -61,6 +64,30 @@ The `zed_extension_api` crate name, `zed:api-version` and
 `zed:extension/*` WIT namespaces, `ZED_*` environment variables, upstream Zed
 service endpoints, and `zed-industries` dependencies remain compatibility
 interfaces and are not covered by these exclusions.
+
+## Recurring stable-release review
+
+The owner is [@shenghsi](https://github.com/shenghsi), the Flint maintainer.
+Review every new Zed stable release within seven days of publication. Preview
+release notes and tags ending in `-pre` are excluded.
+
+For each stable release:
+
+1. export only GitHub `/pull/<number>` links from the release body;
+2. deduplicate by upstream PR number across all reviewed stable tags;
+3. record the stable tag and final merge commit;
+4. prove fork-point or latest-reviewed-baseline ancestry;
+5. inspect the full PR and later corrections on Zed main;
+6. classify the entry as `landed`, `deferred`, `superseded`,
+   `baseline-present`, or `excluded`; and
+7. advance the baseline only after the release has no unclassified entry.
+
+Safety, security, corruption, data-loss, crash, and hang fixes are triaged
+immediately rather than waiting for the seven-day review. A release-note entry
+does not authorize a port: applicable work still requires reproduction,
+regression coverage, current-architecture adaptation, CI, and review.
+Product-boundary exclusions remain explicit and are reconsidered only when
+Flint's supported product surface changes.
 
 ## Wave 1: Safety and data integrity
 
@@ -225,18 +252,18 @@ SSH and exposed no attachable CGWindow.
 
 | Priority | Upstream PR | Final commit | Provenance | Fork ancestry | Flint paths | Strategy | Prerequisites | Required tests | Status | Flint PR | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| P2 | [#61275 anchor resolution](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/text` | `adapt` | #58681 baseline retained | `anchor_to_offset_fragmented_buffer` | `implementing` | [#125](https://github.com/shenghsi/flint/pull/125) | Direct offset lookup improved the fragmented-buffer benchmark by 2.42% and 2.72% in two statistically significant A/B runs. |
+| P2 | [#61275 anchor resolution](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/text` | `adapt` | #58681 baseline retained | `anchor_to_offset_fragmented_buffer` | `landed` | [#125](https://github.com/shenghsi/flint/pull/125) | Direct offset lookup improved the fragmented-buffer benchmark by 2.42% and 2.72% in two statistically significant A/B runs; merged as `de7a662495`. |
 | P2 | [#61275 line shaping](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/editor` | `none` | None | `editor_render_with_color_inlays` | `deferred` | [#126](https://github.com/shenghsi/flint/pull/126) | Two A/B runs found no measurable render improvement: +0.32% at p=0.76 and +0.28% at p=0.78, with both confidence intervals spanning zero. The production edit is not ported. |
-| P2 | [#61275 operation sorting](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/text` | `adapt` | None | `insert_10k_unique_shuffled_operations` | `implementing` | [#133](https://github.com/shenghsi/flint/pull/133) | Unstable sorting improved real queue insertion by 10.71% and 10.60% in two statistically significant A/B runs. |
-| P2 | [#61275 multibuffer sorting](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/multi_buffer` | `adapt` | None | `sort_10k_edited_paths` | `implementing` | [#133](https://github.com/shenghsi/flint/pull/133) | Borrowing `PathKey` values in the comparator improved sorting by 66.15% and 66.20% in two runs. |
-| P2 | [#61275 worktree scanning](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/worktree`, `crates/worktree_benchmarks` | `adapt` | None | `worktree_benchmarks --deferred-directories 10000` | `implementing` | [#133](https://github.com/shenghsi/flint/pull/133) | Tombstone assignment reduced median scan completion from 140.27 ms to 82.17 ms across five runs, a 41.42% improvement. |
-| P2 | [#58881](https://github.com/zed-industries/zed/pull/58881) | `253606e8e0396da2d6897c1eb996ea92aece23c4` | v1.9 notes | Absent | crash handler and process launch | `adapt` | Wave 2 process ownership | `init_defers_startup_work_until_the_returned_future_is_polled` and `cargo test -p crashes` | `implementing` | [#133](https://github.com/shenghsi/flint/pull/133) | Future construction now performs no process-launch work; the configured background executor owns executable resolution, socket-path resolution, child launch, connection, and keepalive lifecycle. |
+| P2 | [#61275 operation sorting](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/text` | `adapt` | None | `insert_10k_unique_shuffled_operations` | `landed` | [#133](https://github.com/shenghsi/flint/pull/133) | Unstable sorting improved real queue insertion by 10.71% and 10.60% in two statistically significant A/B runs; merged as `275148b26e`. |
+| P2 | [#61275 multibuffer sorting](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/multi_buffer` | `adapt` | None | `sort_10k_edited_paths` | `landed` | [#133](https://github.com/shenghsi/flint/pull/133) | Borrowing `PathKey` values in the comparator improved sorting by 66.15% and 66.20% in two runs; merged as `275148b26e`. |
+| P2 | [#61275 worktree scanning](https://github.com/zed-industries/zed/pull/61275) | `ac5538b7239196b7413da76a6258bc9ac4a017fe` | v1.13.0-pre notes | Absent | `crates/worktree`, `crates/worktree_benchmarks` | `adapt` | None | `worktree_benchmarks --deferred-directories 10000` | `landed` | [#133](https://github.com/shenghsi/flint/pull/133) | Tombstone assignment reduced median scan completion from 140.27 ms to 82.17 ms across five runs, a 41.42% improvement; merged as `275148b26e`. |
+| P2 | [#58881](https://github.com/zed-industries/zed/pull/58881) | `253606e8e0396da2d6897c1eb996ea92aece23c4` | v1.9 notes | Absent | crash handler and process launch | `adapt` | Wave 2 process ownership | `init_defers_startup_work_until_the_returned_future_is_polled` and `cargo test -p crashes` | `landed` | [#133](https://github.com/shenghsi/flint/pull/133) | Future construction now performs no process-launch work; the configured background executor owns executable resolution, socket-path resolution, child launch, connection, and keepalive lifecycle; merged as `275148b26e`. |
 | P2 | [#58681](https://github.com/zed-industries/zed/pull/58681) | `ab2683b04cc6f3563e3a745dd10076746030cac0` | v1.7 notes | Present | `crates/text` | `none` | None | `FragmentBuilder` source; large normalized-text and edit-splitting tests | `baseline-present` | [#124](https://github.com/shenghsi/flint/pull/124) | Text rebuilds append sliced old fragment subtrees as `Tree` chunks rather than copying their leaves, preserving the inherited structural sharing across large edits. |
-| P2 | [#59710](https://github.com/zed-industries/zed/pull/59710) | `76e07d5c9ac38930d051c153b21eeb57ba71cbb4` | v1.10 notes | Absent | default settings and formatter behavior | `audit` | Explicit product decision | Task 7.2 default and migration tests | `proposed` | — | Preserve current behavior until separately approved. |
+| P2 | [#59710](https://github.com/zed-industries/zed/pull/59710) | `76e07d5c9ac38930d051c153b21eeb57ba71cbb4` | v1.10 notes | Absent | default settings and formatter behavior | `none` | Explicit product decision | Current defaults and formatter tests | `deferred` | — | Preserve Flint's current format-on-save behavior; changing the default requires separate product approval and migration design. |
 | P2 | [#59860](https://github.com/zed-industries/zed/pull/59860) | `40d20036af34343a09f0ce6a2eb38c9e5a60e9ae` | v1.10 notes | Absent | `crates/settings_ui`, `crates/settings_content`, `crates/agent_threads` | `audit` | None | Task 7.3 exact Agent Threads JSON paths and capability tests | `landed` | [#123](https://github.com/shenghsi/flint/pull/123) | Merged as `8ebaccc3bf7d9b0ba6208a0af68a546d1c69a8a0`; Zed model-provider and MCP settings remain excluded by the product boundary, and every applicable Flint external-agent setting has exact-path coverage. |
 | P1 | [#60870](https://github.com/zed-industries/zed/pull/60870) | `b9bfd5722e6520cdb54378c2d8a341edf5981e6d` | v1.10.3 notes | Absent | `crates/node_runtime` | `adapt` | None | `test_npm_info_accepts_npm_12_array_response` plus existing object-response tests | `landed` | [#122](https://github.com/shenghsi/flint/pull/122) | Merged as `627ca8aa694cfab018252c0be90406e7d3359d00`; accepts npm 12's one-element array response while preserving earlier object responses and includes malformed stdout in parser errors. |
-| P1 | [#60970](https://github.com/zed-industries/zed/pull/60970) | `a25f19cb2f55baa4cf8638981043ac64af741d62` | v1.12 notes | Absent | `crates/languages`, `crates/node_runtime` | `adapt` | #60870 landed; review #61126 | TypeScript 6/7 SDK, install-version, and selector-range tests | `implementing` | [#133](https://github.com/shenghsi/flint/pull/133) | Query and pin the latest TypeScript 6 release for typescript-language-server instead of installing incompatible TypeScript 7. |
-| P1 | [#61126](https://github.com/zed-industries/zed/pull/61126) | `c7ee116ead3476eaf6f34a8bbb833f628d300959` | v1.13.0-pre notes | Absent | `crates/languages`, extension recommendation | `adapt` | #60970 | TypeScript 6/7 SDK tests for typescript-language-server and vtsls | `implementing` | [#133](https://github.com/shenghsi/flint/pull/133) | Pass a project SDK only when `tsserver.js` exists, let vtsls fall back for TypeScript 7, and keep external extension APIs unchanged. |
+| P1 | [#60970](https://github.com/zed-industries/zed/pull/60970) | `a25f19cb2f55baa4cf8638981043ac64af741d62` | v1.12 notes | Absent | `crates/languages`, `crates/node_runtime` | `adapt` | #60870 landed; review #61126 | TypeScript 6/7 SDK, install-version, and selector-range tests | `landed` | [#133](https://github.com/shenghsi/flint/pull/133) | Query and pin the latest TypeScript 6 release for typescript-language-server instead of installing incompatible TypeScript 7; merged as `275148b26e`. |
+| P1 | [#61126](https://github.com/zed-industries/zed/pull/61126) | `c7ee116ead3476eaf6f34a8bbb833f628d300959` | v1.13.0-pre notes | Absent | `crates/languages`, extension recommendation | `adapt` | #60970 | TypeScript 6/7 SDK tests for typescript-language-server and vtsls | `landed` | [#133](https://github.com/shenghsi/flint/pull/133) | Pass a project SDK only when `tsserver.js` exists, let vtsls fall back for TypeScript 7, and keep external extension APIs unchanged; merged as `275148b26e`. |
 | P2 | [#58259](https://github.com/zed-industries/zed/pull/58259) | `53667331bdaa09d25193d5156393d6169b12d84a` | v1.7 notes | Present | `crates/extension_api`, `crates/extension_host` | `none` | None | v0.8 WIT and current host mapping source | `baseline-present` | [#124](https://github.com/shenghsi/flint/pull/124) | The current extension API exposes only AArch64 and x86-64 and rejects unsupported host architectures. Older versioned WIT definitions retain x86 solely for binary compatibility with extensions built against those APIs. |
 
 Task 7.6 baseline evidence (reviewed 2026-07-28): the eight commits above
@@ -267,13 +294,22 @@ Threads equivalent and remain excluded by the product boundary.
 
 ## Wave 8: Final audit and recurring maintenance
 
-Wave 8 adds newly discovered PRs before implementation and closes every seeded
-entry with a terminal classification.
+Wave 8 reconciles the 568 PRs in Zed's non-preview v1.6-v1.12 release notes.
+The complete one-disposition-per-PR index and audit method are in the
+[stable reconciliation report](specs/2026-07-29-zed-v1.12-stable-reconciliation.md).
+
+| Priority | Upstream PR | Final commit | Provenance | Fork ancestry | Flint paths | Strategy | Prerequisites | Required tests | Status | Flint PR | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| P0 | [#58866](https://github.com/zed-industries/zed/pull/58866) | `3f16f7b9082f8828e4d6ae207d2349b1ef932517` | v1.7.2 notes | Absent | `crates/lsp` | `adapt` | None | Retained notification subscription releases a stopped fake language server | `implementing` | [#134](https://github.com/shenghsi/flint/pull/134) | Notification subscriptions hold handlers weakly, so the server owns their lifetime. |
+| P0 | [#59270](https://github.com/zed-industries/zed/pull/59270) | `c578f4d12b94be3bf41912aa7fb707ddf5e30382` | v1.8.2 notes | Absent | `crates/util`, `crates/terminal` | `adapt` | None | Real `dash` PTY syntax-error tests for quoted and unquoted builders | `implementing` | [#134](https://github.com/shenghsi/flint/pull/134) | Redirected POSIX and Fish shells receive a newline-delimited `exec </dev/null`, causing syntax-error prompts to exit. |
+| P0 | [#59372](https://github.com/zed-industries/zed/pull/59372) | `969c6c719ca10102903590e15601c55b57a8838e` | v1.11.3 notes | Absent | `crates/editor` | `adapt` | None | Undo and redo with an empty restored selection set | `implementing` | [#134](https://github.com/shenghsi/flint/pull/134) | Buffer history still advances while invalid empty selection history is ignored. |
+| P0 | [#59471](https://github.com/zed-industries/zed/pull/59471) | `2ec0e6c2d7024f684e8bc23ce5882419b81f7f11` | v1.11.3 notes | Absent | `crates/editor` | `adapt` | None | Completion replacement after newest selection moves to another buffer | `implementing` | [#134](https://github.com/shenghsi/flint/pull/134) | Completion lookaround is resolved only when the selection and replacement snapshots identify the same buffer. |
 
 Completion requires:
 
-- reconciliation of all v1.6-v1.12 stable and preview release-note PRs;
+- reconciliation of all v1.6-v1.12 stable release-note PRs;
 - no unclassified P0-P2 entry;
 - a macOS, Linux, Windows, local, Direct, and Tunneled compatibility matrix;
 - an upstream baseline recorded by commit and release tags; and
-- an owner and cadence for recurring stable, preview, and later-main review.
+- an owner and cadence for recurring stable-release and later-main correction
+  review.
