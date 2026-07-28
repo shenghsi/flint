@@ -500,15 +500,20 @@ fn select_npm_package_version(
     mut info: NpmInfo,
     before: Option<&str>,
 ) -> Result<Version> {
+    let latest_version = info
+        .dist_tags
+        .latest
+        .take()
+        .filter(|latest| info.versions.is_empty() || info.versions.contains(latest));
+
     if let Some(before) = before
         && !info.time.is_empty()
     {
         let before_timestamp = DateTime::parse_from_rfc3339(before)
             .with_context(|| format!("parsing npm before config timestamp {before:?}"))?
             .with_timezone(&Utc);
-        let latest_version = info.dist_tags.latest.as_ref();
 
-        if let Some(version) = latest_version
+        if let Some(version) = latest_version.as_ref()
             && npm_version_was_published_before(version, &info.time, &before_timestamp)?
         {
             return Ok(version.clone());
@@ -517,7 +522,7 @@ fn select_npm_package_version(
         for version in info.versions.iter().rev() {
             if is_allowed_npm_version_before(
                 version,
-                latest_version,
+                latest_version.as_ref(),
                 &info.time,
                 &before_timestamp,
             )? {
@@ -528,8 +533,7 @@ fn select_npm_package_version(
         bail!("no version found for npm package {package_name} before {before}");
     }
 
-    info.dist_tags
-        .latest
+    latest_version
         .or_else(|| info.versions.pop())
         .with_context(|| format!("no version found for npm package {package_name}"))
 }
@@ -1265,6 +1269,22 @@ mod tests {
         assert_eq!(
             select_npm_package_version("test-package", info, None)?,
             Version::parse("3.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_ignores_dist_tag_outside_returned_versions() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["6.1.0", "6.2.0"]
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version("typescript@^6", info, None)?,
+            Version::parse("6.2.0")?
         );
         Ok(())
     }
