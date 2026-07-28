@@ -611,6 +611,7 @@ impl TypeScriptLspAdapter {
     const NEW_SERVER_PATH: &str = "node_modules/typescript-language-server/lib/cli.mjs";
 
     const PACKAGE_NAME: &str = "typescript";
+    const PACKAGE_VERSION_QUERY: &str = "typescript@^6";
     const SERVER_PACKAGE_NAME: &str = "typescript-language-server";
 
     const SERVER_NAME: LanguageServerName =
@@ -634,7 +635,12 @@ impl TypeScriptLspAdapter {
 
         if self
             .fs
-            .is_dir(&adapter.worktree_root_path().join(tsdk_path))
+            .is_file(
+                &adapter
+                    .worktree_root_path()
+                    .join(tsdk_path)
+                    .join("tsserver.js"),
+            )
             .await
         {
             Some(tsdk_path)
@@ -661,7 +667,7 @@ impl LspInstaller for TypeScriptLspAdapter {
         Ok(TypeScriptVersions {
             typescript_version: self
                 .node
-                .npm_package_latest_version(Self::PACKAGE_NAME)
+                .npm_package_latest_version(Self::PACKAGE_VERSION_QUERY)
                 .await?,
             server_version: self
                 .node
@@ -689,7 +695,7 @@ impl LspInstaller for TypeScriptLspAdapter {
                     Self::PACKAGE_NAME,
                     &server_path,
                     &container_dir,
-                    VersionStrategy::Latest(&typescript_version),
+                    VersionStrategy::Pin(&typescript_version),
                 )
                 .await
             {
@@ -718,7 +724,7 @@ impl LspInstaller for TypeScriptLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        _latest_version: Self::BinaryVersion,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -726,10 +732,14 @@ impl LspInstaller for TypeScriptLspAdapter {
 
         async move {
             let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+            let typescript_version = latest_version.typescript_version.to_string();
 
-            node.npm_install_latest_packages(
+            node.npm_install_packages(
                 &container_dir,
-                &[Self::PACKAGE_NAME, Self::SERVER_PACKAGE_NAME],
+                &[
+                    (Self::PACKAGE_NAME, typescript_version.as_str()),
+                    (Self::SERVER_PACKAGE_NAME, "latest"),
+                ],
             )
             .await?;
 
@@ -889,15 +899,70 @@ mod tests {
     use std::path::Path;
 
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
+    use node_runtime::NodeRuntime;
     use project::FakeFs;
     use serde_json::json;
     use task::TaskTemplates;
     use unindent::Unindent;
     use util::{path, rel_path::rel_path};
 
+    use crate::test_support::TestLspAdapterDelegate;
     use crate::typescript::{
-        PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+        PackageJsonData, TypeScriptContextProvider, TypeScriptLspAdapter,
+        replace_test_name_parameters,
     };
+
+    #[gpui::test]
+    async fn typescript_7_project_sdk_is_not_passed_to_typescript_language_server(
+        executor: BackgroundExecutor,
+    ) {
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "node_modules": {
+                    "typescript": {
+                        "lib": {
+                            "typescript.js": "",
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let delegate = TestLspAdapterDelegate::new(path!("/root").into());
+        let adapter = TypeScriptLspAdapter::new(NodeRuntime::unavailable(), fs);
+
+        assert_eq!(adapter.tsdk_path(&delegate).await, None);
+    }
+
+    #[gpui::test]
+    async fn typescript_6_project_sdk_is_passed_to_typescript_language_server(
+        executor: BackgroundExecutor,
+    ) {
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "node_modules": {
+                    "typescript": {
+                        "lib": {
+                            "tsserver.js": "",
+                            "typescript.js": "",
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let delegate = TestLspAdapterDelegate::new(path!("/root").into());
+        let adapter = TypeScriptLspAdapter::new(NodeRuntime::unavailable(), fs);
+
+        assert_eq!(
+            adapter.tsdk_path(&delegate).await,
+            Some("node_modules/typescript/lib")
+        );
+    }
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
