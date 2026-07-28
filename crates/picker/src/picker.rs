@@ -76,6 +76,10 @@ actions!(
     [
         /// Confirms the selected completion in the picker.
         ConfirmCompletion,
+        /// Toggles multi-select mode for pickers that support it.
+        ToggleMultiSelect,
+        /// Toggles the focused item and advances to the next selectable item.
+        MultiSelectNext,
         /// Toggles the preview between hidden and visible.
         TogglePreview,
         /// Shows the preview to the right of the results.
@@ -101,6 +105,30 @@ struct PendingUpdateMatches {
     _task: Task<Result<()>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PickerItemId(SharedString);
+
+impl PickerItemId {
+    pub fn new(value: impl Into<SharedString>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
+    }
+
+    pub fn into_shared_string(self) -> SharedString {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PickerRestorationState {
+    pub query: String,
+    pub multi_select_enabled: bool,
+    pub selected_item_ids: Vec<PickerItemId>,
+}
+
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     element_container: ElementContainer,
@@ -122,6 +150,8 @@ pub struct Picker<D: PickerDelegate> {
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
     preview: Option<Preview>,
     preview_size: Option<Pixels>,
+    multi_select_enabled: bool,
+    selected_item_ids: Vec<PickerItemId>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -169,6 +199,26 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn select_on_hover(&self) -> bool {
         true
+    }
+
+    fn supports_multi_select(&self) -> bool {
+        false
+    }
+
+    fn item_id(&self, _index: usize) -> Option<PickerItemId> {
+        None
+    }
+
+    fn item_id_is_valid(&self, _id: &PickerItemId, _cx: &App) -> bool {
+        false
+    }
+
+    fn confirm_multi(
+        &mut self,
+        _ids: Vec<PickerItemId>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
     }
 
     // Allows binding some optional effect to when the selection changes.
@@ -471,6 +521,8 @@ impl<D: PickerDelegate> Picker<D> {
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
             preview,
             preview_size: None,
+            multi_select_enabled: false,
+            selected_item_ids: Vec::new(),
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -680,6 +732,129 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
+    pub fn set_multi_select_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if !self.delegate.supports_multi_select() {
+            return;
+        }
+        self.multi_select_enabled = enabled;
+        if !enabled {
+            self.selected_item_ids.clear();
+        }
+        cx.notify();
+    }
+
+    pub fn multi_select_enabled(&self) -> bool {
+        self.multi_select_enabled
+    }
+
+    pub fn selected_item_ids(&self) -> &[PickerItemId] {
+        &self.selected_item_ids
+    }
+
+    pub fn is_item_selected(&self, index: usize) -> bool {
+        self.delegate
+            .item_id(index)
+            .is_some_and(|item_id| self.selected_item_ids.contains(&item_id))
+    }
+
+    pub fn toggle_item_selection(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.multi_select_enabled
+            || !self.delegate.supports_multi_select()
+            || !self.delegate.can_select(index, window, cx)
+        {
+            return;
+        }
+        let Some(item_id) = self.delegate.item_id(index) else {
+            return;
+        };
+        if !self.delegate.item_id_is_valid(&item_id, cx) {
+            return;
+        }
+
+        if let Some(selected_index) = self
+            .selected_item_ids
+            .iter()
+            .position(|selected| selected == &item_id)
+        {
+            self.selected_item_ids.remove(selected_index);
+        } else {
+            self.selected_item_ids.push(item_id);
+        }
+        cx.notify();
+    }
+
+    pub fn reconcile_multi_selection(&mut self, cx: &mut Context<Self>) {
+        self.selected_item_ids
+            .retain(|item_id| self.delegate.item_id_is_valid(item_id, cx));
+        cx.notify();
+    }
+
+    fn ordered_selected_item_ids(&self, cx: &App) -> Vec<PickerItemId> {
+        let mut ordered = Vec::with_capacity(self.selected_item_ids.len());
+        for index in 0..self.delegate.match_count() {
+            let Some(item_id) = self.delegate.item_id(index) else {
+                continue;
+            };
+            if self.selected_item_ids.contains(&item_id) && !ordered.contains(&item_id) {
+                ordered.push(item_id);
+            }
+        }
+        for item_id in &self.selected_item_ids {
+            if !ordered.contains(item_id) && self.delegate.item_id_is_valid(item_id, cx) {
+                ordered.push(item_id.clone());
+            }
+        }
+        ordered
+    }
+
+    pub fn restoration_state(&self, cx: &App) -> PickerRestorationState {
+        PickerRestorationState {
+            query: self.query(cx),
+            multi_select_enabled: self.multi_select_enabled,
+            selected_item_ids: self.selected_item_ids.clone(),
+        }
+    }
+
+    pub fn restore_state(
+        &mut self,
+        state: PickerRestorationState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.multi_select_enabled =
+            state.multi_select_enabled && self.delegate.supports_multi_select();
+        self.selected_item_ids = state.selected_item_ids;
+        self.set_query(&state.query, window, cx);
+        cx.notify();
+    }
+
+    fn toggle_multi_select(
+        &mut self,
+        _: &ToggleMultiSelect,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_multi_select_enabled(!self.multi_select_enabled, cx);
+    }
+
+    fn multi_select_next(
+        &mut self,
+        _: &MultiSelectNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.multi_select_enabled {
+            self.set_multi_select_enabled(true, cx);
+        }
+        self.toggle_item_selection(self.delegate.selected_index(), window, cx);
+        self.select_next(&menu::SelectNext, window, cx);
+    }
+
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.should_dismiss() {
             self.delegate.dismissed(window, cx);
@@ -760,6 +935,12 @@ impl<D: PickerDelegate> Picker<D> {
         if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(&update_query, window, cx);
             self.set_selected_index(0, Some(Direction::Down), false, window, cx);
+        } else if self.multi_select_enabled && !self.selected_item_ids.is_empty() {
+            let item_ids = self.ordered_selected_item_ids(cx);
+            if item_ids.is_empty() {
+                return;
+            }
+            self.delegate.confirm_multi(item_ids, window, cx);
         } else {
             self.delegate.confirm(secondary, window, cx)
         }
@@ -1042,20 +1223,48 @@ impl<D: PickerDelegate> Picker<D> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use std::cell::Cell;
+    use std::{
+        cell::{Cell, RefCell},
+        collections::HashSet,
+    };
 
     struct TestDelegate {
-        items: Vec<bool>,
+        items: Vec<(SharedString, bool)>,
+        valid_item_ids: HashSet<SharedString>,
         selected_index: usize,
         confirmed_index: Rc<Cell<Option<usize>>>,
+        confirmed_item_ids: Rc<RefCell<Vec<PickerItemId>>>,
     }
 
     impl TestDelegate {
         fn new(items: Vec<bool>) -> Self {
+            let items: Vec<(SharedString, bool)> = items
+                .into_iter()
+                .enumerate()
+                .map(|(index, selectable)| (index.to_string().into(), selectable))
+                .collect::<Vec<_>>();
+            let valid_item_ids = items.iter().map(|(id, _)| id.clone()).collect();
             Self {
                 items,
+                valid_item_ids,
                 selected_index: 0,
                 confirmed_index: Rc::new(Cell::new(None)),
+                confirmed_item_ids: Rc::default(),
+            }
+        }
+
+        fn with_ids(ids: &[&str]) -> Self {
+            let items: Vec<(SharedString, bool)> = ids
+                .iter()
+                .map(|id| (SharedString::from(*id), true))
+                .collect::<Vec<_>>();
+            let valid_item_ids = items.iter().map(|(id, _)| id.clone()).collect();
+            Self {
+                items,
+                valid_item_ids,
+                selected_index: 0,
+                confirmed_index: Rc::new(Cell::new(None)),
+                confirmed_item_ids: Rc::default(),
             }
         }
     }
@@ -1086,7 +1295,10 @@ mod tests {
             _window: &mut Window,
             _cx: &mut Context<Picker<Self>>,
         ) -> bool {
-            self.items.get(ix).copied().unwrap_or(false)
+            self.items
+                .get(ix)
+                .map(|(_, selectable)| *selectable)
+                .unwrap_or(false)
         }
 
         fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -1109,6 +1321,27 @@ mod tests {
             _cx: &mut Context<Picker<Self>>,
         ) {
             self.confirmed_index.set(Some(self.selected_index));
+        }
+
+        fn supports_multi_select(&self) -> bool {
+            true
+        }
+
+        fn item_id(&self, index: usize) -> Option<PickerItemId> {
+            Some(PickerItemId::new(self.items.get(index)?.0.clone()))
+        }
+
+        fn item_id_is_valid(&self, id: &PickerItemId, _cx: &App) -> bool {
+            self.valid_item_ids.contains(id.as_str())
+        }
+
+        fn confirm_multi(
+            &mut self,
+            ids: Vec<PickerItemId>,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            *self.confirmed_item_ids.borrow_mut() = ids;
         }
 
         fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
@@ -1205,6 +1438,129 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_multi_select_uses_stable_ids_across_reordering_and_filtering(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::with_ids(&["a", "b", "c"]), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_multi_select_enabled(true, cx);
+            picker.toggle_item_selection(1, window, cx);
+            assert_eq!(
+                picker
+                    .selected_item_ids()
+                    .iter()
+                    .map(PickerItemId::as_str)
+                    .collect::<Vec<_>>(),
+                vec!["b"]
+            );
+
+            picker.delegate.items =
+                vec![("c".into(), true), ("b".into(), true), ("a".into(), true)];
+            assert_eq!(
+                picker
+                    .selected_item_ids()
+                    .iter()
+                    .map(PickerItemId::as_str)
+                    .collect::<Vec<_>>(),
+                vec!["b"]
+            );
+
+            picker.delegate.items = vec![("a".into(), true)];
+            assert_eq!(
+                picker
+                    .selected_item_ids()
+                    .iter()
+                    .map(PickerItemId::as_str)
+                    .collect::<Vec<_>>(),
+                vec!["b"],
+                "filtering must not discard a still-valid identity"
+            );
+
+            picker.delegate.valid_item_ids.remove("b");
+            picker.reconcile_multi_selection(cx);
+            assert!(picker.selected_item_ids().is_empty());
+
+            picker.delegate.items = vec![("disabled".into(), false)];
+            picker.delegate.valid_item_ids.insert("disabled".into());
+            picker.toggle_item_selection(0, window, cx);
+            assert!(
+                picker.selected_item_ids().is_empty(),
+                "disabled entries must not become selected"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_multi_confirm_follows_current_result_order(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let confirmed_item_ids = Rc::new(RefCell::new(Vec::new()));
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            let mut delegate = TestDelegate::with_ids(&["a", "b", "c"]);
+            delegate.confirmed_item_ids = confirmed_item_ids.clone();
+            Picker::uniform_list(delegate, window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_multi_select_enabled(true, cx);
+            picker.toggle_item_selection(2, window, cx);
+            picker.toggle_item_selection(0, window, cx);
+            picker.delegate.items =
+                vec![("b".into(), true), ("a".into(), true), ("c".into(), true)];
+            picker.do_confirm(false, window, cx);
+        });
+
+        assert_eq!(
+            confirmed_item_ids
+                .borrow()
+                .iter()
+                .map(PickerItemId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["a", "c"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restoration_state_preserves_query_mode_and_stable_ids(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::with_ids(&["a", "b"]), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.restore_state(
+                PickerRestorationState {
+                    query: "needle".to_string(),
+                    multi_select_enabled: true,
+                    selected_item_ids: vec![PickerItemId::new("b")],
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "needle");
+            assert!(picker.multi_select_enabled());
+            assert_eq!(
+                picker
+                    .selected_item_ids()
+                    .iter()
+                    .map(PickerItemId::as_str)
+                    .collect::<Vec<_>>(),
+                vec!["b"]
+            );
+        });
+    }
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
@@ -1254,6 +1610,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
+            .on_action(cx.listener(Self::toggle_multi_select))
+            .on_action(cx.listener(Self::multi_select_next))
             .on_action(cx.listener(Self::toggle_preview))
             .on_action(cx.listener(Self::set_preview_right))
             .on_action(cx.listener(Self::set_preview_below))
