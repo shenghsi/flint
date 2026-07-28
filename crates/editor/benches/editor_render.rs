@@ -1,11 +1,14 @@
 use criterion::{Bencher, BenchmarkId};
 use editor::{
-    Editor, EditorMode, MultiBuffer,
+    Editor, EditorMode, Inlay, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
-use gpui::{AppContext as _, BenchAppContext, Focusable as _, TestAppContext, TestDispatcher};
+use gpui::{
+    AppContext as _, BenchAppContext, Focusable as _, TestAppContext, TestDispatcher, rgba,
+};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::SettingsStore;
+use text::Point;
 use ui::IntoElement;
 use util::RandomCharIter;
 
@@ -116,6 +119,42 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     })
 }
 
+fn editor_render_with_color_inlays(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
+    let mut cx = cx.clone();
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&"visible line\n".repeat(200), cx));
+
+    let cx = cx.add_empty_window();
+    let editor = cx.update(|window, cx| {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(EditorMode::full(), buffer.clone(), None, window, cx);
+            editor.set_style(editor::EditorStyle::default(), window, cx);
+            let snapshot = buffer.read(cx).snapshot(cx);
+            let inlays = (0..200)
+                .map(|row| {
+                    Inlay::color(
+                        row as usize,
+                        snapshot.anchor_after(Point::new(row, 7)),
+                        rgba(0x61afefff),
+                    )
+                })
+                .collect();
+            editor.splice_inlays(&[], inlays, cx);
+            editor
+        });
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+
+    bencher.iter(|| {
+        cx.update(|window, cx| {
+            let mut view = editor.clone().into_any_element();
+            let _ = view.request_layout(window, cx);
+            let _ = view.prepaint(window, cx);
+            view.paint(window, cx);
+        });
+    })
+}
+
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -146,6 +185,11 @@ fn criterion_benches(criterion: &mut criterion::Criterion) {
         BenchmarkId::new("editor_render", "TestAppContext"),
         &cx,
         editor_render,
+    );
+    group.bench_with_input(
+        BenchmarkId::new("editor_render_with_color_inlays", "TestAppContext"),
+        &cx,
+        editor_render_with_color_inlays,
     );
     group.finish();
 
