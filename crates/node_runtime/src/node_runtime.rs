@@ -273,7 +273,12 @@ impl NodeRuntime {
             )
             .await?;
 
-        let info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+        let info: NpmInfo = serde_json::from_slice(&output.stdout).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to parse npm info response: {error}\nstdout: {}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })?;
         let before = npm_config_before(instance.as_ref(), http.proxy())
             .await
             .context("getting npm before config")
@@ -402,9 +407,42 @@ enum ArchiveType {
     Zip,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug)]
 pub struct NpmInfo {
+    dist_tags: NpmInfoDistTags,
+    versions: Vec<Version>,
+    time: HashMap<String, String>,
+}
+
+impl<'de> Deserialize<'de> for NpmInfo {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let response = NpmInfoResponse::deserialize(deserializer)?;
+        let fields = match response {
+            NpmInfoResponse::Object(fields) => fields,
+            NpmInfoResponse::Npm12Array([fields]) => fields,
+        };
+
+        Ok(Self {
+            dist_tags: fields.dist_tags,
+            versions: fields.versions,
+            time: fields.time,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum NpmInfoResponse {
+    Object(NpmInfoFields),
+    Npm12Array([NpmInfoFields; 1]),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct NpmInfoFields {
     #[serde(default)]
     dist_tags: NpmInfoDistTags,
     versions: Vec<Version>,
@@ -1252,6 +1290,29 @@ mod tests {
         assert_eq!(
             select_npm_package_version("test-package", info, Some("2024-02-15T00:00:00.000Z"))?,
             Version::parse("2.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_npm_info_accepts_npm_12_array_response() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"[
+                {
+                    "dist-tags": { "latest": "3.0.0" },
+                    "versions": ["1.0.0", "2.0.0", "3.0.0"]
+                }
+            ]"#,
+        )?;
+
+        assert_eq!(info.dist_tags.latest, Some(Version::parse("3.0.0")?));
+        assert_eq!(
+            info.versions,
+            vec![
+                Version::parse("1.0.0")?,
+                Version::parse("2.0.0")?,
+                Version::parse("3.0.0")?
+            ]
         );
         Ok(())
     }
