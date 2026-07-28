@@ -1,17 +1,24 @@
 mod head;
 pub mod highlighted_match_with_paths;
+mod persistence;
 pub mod popover_menu;
+mod preview;
+
+use preview::Preview;
+pub use preview::{Layout as PreviewLayout, Update as PreviewUpdate};
 
 use anyhow::Result;
 
 use flint_actions::editor::{MoveDown, MoveUp};
 use gpui::{
-    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, Render,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
-    uniform_list,
+    Action, AnyElement, App, Bounds, ClickEvent, Context, CursorStyle, DismissEvent, DragMoveEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, Length, ListSizingBehavior, ListState,
+    MouseButton, MouseUpEvent, Pixels, Render, ScrollStrategy, Task, UniformListScrollHandle,
+    Window, actions, canvas, div, list, prelude::*, uniform_list,
 };
+use gpui_util::ResultExt;
 use head::Head;
+use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
@@ -19,8 +26,9 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Color, Divider, DocumentationAside, DocumentationSide, Label, ListItem, ListItemSpacing,
-    ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
+    Button, Color, Divider, DocumentationAside, DocumentationSide, IconButton, IconName, Label,
+    ListItem, ListItemSpacing, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*,
+    utils::WithRemSize, v_flex,
 };
 use ui_input::{ErasedEditor, ErasedEditorEvent};
 use workspace::{ModalView, item::Settings};
@@ -29,6 +37,28 @@ enum ElementContainer {
     List(ListState),
     UniformList(UniformListScrollHandle),
 }
+
+#[derive(Clone, Copy)]
+enum DividerDrag {
+    Right {
+        start_x: Pixels,
+        start_width: Pixels,
+    },
+    Below {
+        start_y: Pixels,
+        start_height: Pixels,
+    },
+}
+
+struct DividerDragView;
+
+impl Render for DividerDragView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+const MIN_PREVIEW_PX: Pixels = px(240.);
 
 pub enum Direction {
     Up,
@@ -45,7 +75,15 @@ actions!(
     picker,
     [
         /// Confirms the selected completion in the picker.
-        ConfirmCompletion
+        ConfirmCompletion,
+        /// Toggles the preview between hidden and visible.
+        TogglePreview,
+        /// Shows the preview to the right of the results.
+        SetPreviewRight,
+        /// Shows the preview below the results.
+        SetPreviewBelow,
+        /// Hides the preview.
+        SetPreviewHidden
     ]
 );
 
@@ -82,6 +120,8 @@ pub struct Picker<D: PickerDelegate> {
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    preview: Option<Preview>,
+    preview_size: Option<Pixels>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -263,6 +303,24 @@ pub trait PickerDelegate: Sized + 'static {
     fn documentation_aside_index(&self) -> Option<usize> {
         None
     }
+
+    /// A stable, human-readable identifier for this picker, used as the
+    /// persistence key for the preview layout. Delegates that support a preview
+    /// should override this so each picker remembers its own layout.
+    fn name() -> &'static str {
+        "picker"
+    }
+
+    /// Returns the data the preview should show for the currently selected
+    /// match, or `None` if there is nothing to preview. Called whenever the
+    /// selection or the matches change.
+    fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
+        None
+    }
+
+    /// Called after the preview layout changes so delegates can react (a
+    /// horizontal preview may want different sizing than a vertical one).
+    fn preview_layout_changed(&mut self, _layout_is_horizontal: bool) {}
 }
 
 impl<D: PickerDelegate> Focusable for Picker<D> {
@@ -292,7 +350,33 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        Self::new(delegate, ContainerKind::UniformList, head, window, cx)
+        Self::new(delegate, ContainerKind::UniformList, head, None, window, cx)
+    }
+
+    /// A picker similar to [`uniform_list()`](Self::uniform_list) however this picker has a
+    /// preview window where it shows extra information about the selected match.
+    pub fn uniform_list_with_preview(
+        delegate: D,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let head = Head::editor(
+            delegate.placeholder_text(window, cx),
+            Self::on_input_editor_event,
+            window,
+            cx,
+        );
+
+        let preview = Preview::new_editor(project, window, cx);
+        Self::new(
+            delegate,
+            ContainerKind::UniformList,
+            head,
+            Some(preview),
+            window,
+            cx,
+        )
     }
 
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
@@ -304,7 +388,7 @@ impl<D: PickerDelegate> Picker<D> {
     ) -> Self {
         let head = Head::empty(Self::on_empty_head_blur, window, cx);
 
-        Self::new(delegate, ContainerKind::UniformList, head, window, cx)
+        Self::new(delegate, ContainerKind::UniformList, head, None, window, cx)
     }
 
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
@@ -313,7 +397,34 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn nonsearchable_list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let head = Head::empty(Self::on_empty_head_blur, window, cx);
 
-        Self::new(delegate, ContainerKind::List, head, window, cx)
+        Self::new(delegate, ContainerKind::List, head, None, window, cx)
+    }
+
+    /// A picker similar to [`list()`](Self::list) (variable-height rows) but with
+    /// a preview window. Use this instead of [`uniform_list_with_preview()`](Self::uniform_list_with_preview)
+    /// when [`PickerDelegate::render_match`] can return rows of different heights.
+    pub fn list_with_preview(
+        delegate: D,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let head = Head::editor(
+            delegate.placeholder_text(window, cx),
+            Self::on_input_editor_event,
+            window,
+            cx,
+        );
+
+        let preview = Preview::new_editor(project, window, cx);
+        Self::new(
+            delegate,
+            ContainerKind::List,
+            head,
+            Some(preview),
+            window,
+            cx,
+        )
     }
 
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
@@ -327,17 +438,24 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        Self::new(delegate, ContainerKind::List, head, window, cx)
+        Self::new(delegate, ContainerKind::List, head, None, window, cx)
     }
 
     fn new(
         delegate: D,
         container: ContainerKind,
         head: Head,
+        mut preview: Option<Preview>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let element_container = Self::create_element_container(container);
+        if let Some(preview) = &mut preview {
+            preview.layout = persistence::load_layout(D::name(), cx)
+                .log_err()
+                .flatten()
+                .unwrap_or_default();
+        };
         let mut this = Self {
             delegate,
             head,
@@ -351,6 +469,8 @@ impl<D: PickerDelegate> Picker<D> {
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
+            preview,
+            preview_size: None,
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -470,6 +590,7 @@ impl<D: PickerDelegate> Picker<D> {
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
             }
+            self.update_preview(window, cx);
             if scroll_to_index {
                 self.scroll_to_item_index(ix);
             }
@@ -760,6 +881,7 @@ impl<D: PickerDelegate> Picker<D> {
             },
         }
         self.pending_update_matches = None;
+        self.update_preview(window, cx);
         if let Some(secondary) = self.confirm_on_update.take() {
             self.do_confirm(secondary, window, cx);
         }
@@ -1126,6 +1248,10 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
+            .on_action(cx.listener(Self::toggle_preview))
+            .on_action(cx.listener(Self::set_preview_right))
+            .on_action(cx.listener(Self::set_preview_below))
+            .on_action(cx.listener(Self::set_preview_hidden))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {
@@ -1181,6 +1307,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 })
             })
             .children(self.delegate.render_footer(window, cx))
+            .when(self.preview.is_some(), |menu| {
+                menu.child(self.render_preview_controls(cx))
+            })
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::End {
@@ -1192,63 +1321,317 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
             });
 
-        let Some(aside) = aside else {
-            return menu;
-        };
-
-        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
-            WithRemSize::new(ui_font_size)
-                .occlude()
-                .elevation_2(cx)
-                .w_full()
-                .p_2()
-                .overflow_hidden()
-                .when(is_wide_window, |this| this.max_w_96())
-                .when(!is_wide_window, |this| this.max_w_48())
-                .child((aside.render)(cx))
-        };
-
-        if is_wide_window {
-            let aside_index = self.delegate.documentation_aside_index();
-            let picker_bounds = self.picker_bounds.get();
-            let item_bounds =
-                aside_index.and_then(|ix| self.item_bounds.borrow().get(&ix).copied());
-
-            let item_position = match (picker_bounds, item_bounds) {
-                (Some(picker_bounds), Some(item_bounds)) => {
-                    let relative_top = item_bounds.origin.y - picker_bounds.origin.y;
-                    let height = item_bounds.size.height;
-                    Some((relative_top, height))
-                }
-                _ => None,
+        let results: AnyElement = if let Some(aside) = aside {
+            let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+                WithRemSize::new(ui_font_size)
+                    .occlude()
+                    .elevation_2(cx)
+                    .w_full()
+                    .p_2()
+                    .overflow_hidden()
+                    .when(is_wide_window, |this| this.max_w_96())
+                    .when(!is_wide_window, |this| this.max_w_48())
+                    .child((aside.render)(cx))
             };
 
-            div()
-                .relative()
-                .child(menu)
-                // Only render the aside once we have bounds to avoid flicker
-                .when_some(item_position, |this, (top, height)| {
-                    this.child(
-                        h_flex()
-                            .absolute()
-                            .when(aside.side == DocumentationSide::Left, |el| {
-                                el.right_full().mr_1()
-                            })
-                            .when(aside.side == DocumentationSide::Right, |el| {
-                                el.left_full().ml_1()
-                            })
-                            .top(top)
-                            .h(height)
-                            .child(render_aside(aside, cx)),
-                    )
-                })
+            if is_wide_window {
+                let aside_index = self.delegate.documentation_aside_index();
+                let picker_bounds = self.picker_bounds.get();
+                let item_bounds =
+                    aside_index.and_then(|ix| self.item_bounds.borrow().get(&ix).copied());
+
+                let item_position = match (picker_bounds, item_bounds) {
+                    (Some(picker_bounds), Some(item_bounds)) => {
+                        let relative_top = item_bounds.origin.y - picker_bounds.origin.y;
+                        let height = item_bounds.size.height;
+                        Some((relative_top, height))
+                    }
+                    _ => None,
+                };
+
+                div()
+                    .relative()
+                    .child(menu)
+                    // Only render the aside once we have bounds to avoid flicker
+                    .when_some(item_position, |this, (top, height)| {
+                        this.child(
+                            h_flex()
+                                .absolute()
+                                .when(aside.side == DocumentationSide::Left, |el| {
+                                    el.right_full().mr_1()
+                                })
+                                .when(aside.side == DocumentationSide::Right, |el| {
+                                    el.left_full().ml_1()
+                                })
+                                .top(top)
+                                .h(height)
+                                .child(render_aside(aside, cx)),
+                        )
+                    })
+                    .into_any_element()
+            } else {
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .justify_end()
+                    .child(render_aside(aside, cx))
+                    .child(menu)
+                    .into_any_element()
+            }
         } else {
-            v_flex()
-                .w_full()
-                .gap_1()
-                .justify_end()
-                .child(render_aside(aside, cx))
-                .child(menu)
+            menu.into_any_element()
+        };
+
+        self.render_with_preview(results, window, cx)
+    }
+}
+
+impl<D: PickerDelegate> Picker<D> {
+    fn update_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(preview) = &mut self.preview else {
+            return;
+        };
+        match self.delegate.try_get_preview_data_for_match(cx) {
+            Some(update) => preview.update(update, window, cx),
+            None => preview.clear(cx),
         }
+    }
+
+    fn render_with_preview(
+        &mut self,
+        results: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(preview) = self.preview.as_ref() else {
+            return results;
+        };
+        match preview.layout {
+            PreviewLayout::Hidden => results,
+            PreviewLayout::Right => {
+                let preview_width = self.preview_width(window);
+                let preview_element = preview.render(cx);
+                let border_color = cx.theme().colors().border_variant;
+                h_flex()
+                    .id("picker-preview-split-right")
+                    .size_full()
+                    .child(div().flex_1().min_w_0().overflow_hidden().child(results))
+                    .child(
+                        div()
+                            .id("picker-preview-divider-right")
+                            .w(px(1.))
+                            .h_full()
+                            .bg(border_color)
+                            .cursor(CursorStyle::ResizeColumn)
+                            .on_drag(
+                                DividerDrag::Right {
+                                    start_x: window.mouse_position().x,
+                                    start_width: preview_width,
+                                },
+                                |_, _, _, cx| cx.new(|_| DividerDragView),
+                            )
+                            .on_drag_move::<DividerDrag>(cx.listener(
+                                |this, event: &DragMoveEvent<DividerDrag>, _window, cx| {
+                                    let DividerDrag::Right {
+                                        start_x,
+                                        start_width,
+                                    } = event.drag(cx)
+                                    else {
+                                        return;
+                                    };
+                                    let delta = event.event.position.x - *start_x;
+                                    this.set_preview_size(Some(*start_width - delta), _window, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .w(preview_width)
+                            .h_full()
+                            .overflow_hidden()
+                            .child(preview_element),
+                    )
+                    .into_any_element()
+            }
+            PreviewLayout::Below => {
+                let preview_height = self.preview_height(window);
+                let preview_element = preview.render(cx);
+                let border_color = cx.theme().colors().border_variant;
+                v_flex()
+                    .id("picker-preview-split-below")
+                    .size_full()
+                    .child(div().flex_1().min_h_0().overflow_hidden().child(results))
+                    .child(
+                        div()
+                            .id("picker-preview-divider-below")
+                            .h(px(1.))
+                            .w_full()
+                            .bg(border_color)
+                            .cursor(CursorStyle::ResizeRow)
+                            .on_drag(
+                                DividerDrag::Below {
+                                    start_y: window.mouse_position().y,
+                                    start_height: preview_height,
+                                },
+                                |_, _, _, cx| cx.new(|_| DividerDragView),
+                            )
+                            .on_drag_move::<DividerDrag>(cx.listener(
+                                |this, event: &DragMoveEvent<DividerDrag>, _window, cx| {
+                                    let DividerDrag::Below {
+                                        start_y,
+                                        start_height,
+                                    } = event.drag(cx)
+                                    else {
+                                        return;
+                                    };
+                                    let delta = event.event.position.y - *start_y;
+                                    this.set_preview_size(Some(*start_height - delta), _window, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .h(preview_height)
+                            .w_full()
+                            .overflow_hidden()
+                            .child(preview_element),
+                    )
+                    .into_any_element()
+            }
+        }
+    }
+
+    pub fn preview_layout(&self) -> Option<PreviewLayout> {
+        self.preview.as_ref().map(|preview| preview.layout)
+    }
+
+    pub fn preview_current_path(
+        &self,
+        cx: &App,
+    ) -> Option<std::sync::Arc<util::rel_path::RelPath>> {
+        self.preview
+            .as_ref()
+            .and_then(|preview| preview.current_path(cx))
+    }
+
+    pub fn preview_width(&self, window: &mut Window) -> Pixels {
+        let viewport = window.viewport_size().width;
+        let max = (viewport - MIN_PREVIEW_PX).max(MIN_PREVIEW_PX);
+        self.preview_size
+            .unwrap_or_else(|| (viewport * 0.4).clamp(MIN_PREVIEW_PX, max))
+            .clamp(MIN_PREVIEW_PX, max)
+    }
+
+    pub fn preview_height(&self, window: &mut Window) -> Pixels {
+        let viewport = window.viewport_size().height;
+        let max = (viewport - MIN_PREVIEW_PX).max(MIN_PREVIEW_PX);
+        self.preview_size
+            .unwrap_or_else(|| (viewport * 0.3).clamp(MIN_PREVIEW_PX, max))
+            .clamp(MIN_PREVIEW_PX, max)
+    }
+
+    pub fn set_preview_size(
+        &mut self,
+        size: Option<Pixels>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.preview_size = size;
+        cx.notify();
+    }
+
+    fn toggle_preview(&mut self, _: &TogglePreview, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_preview_visible(window, cx);
+    }
+
+    fn toggle_preview_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = match self.preview_layout() {
+            Some(PreviewLayout::Hidden) | None => PreviewLayout::Right,
+            Some(_) => PreviewLayout::Hidden,
+        };
+        self.set_preview_layout(next, window, cx);
+    }
+
+    fn render_preview_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current_layout = self.preview_layout().unwrap_or(PreviewLayout::Hidden);
+        let preview_visible = current_layout != PreviewLayout::Hidden;
+
+        h_flex()
+            .w_full()
+            .p_1p5()
+            .gap_1()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                Button::new("picker-preview-toggle", "Preview")
+                    .when(preview_visible, |button| button.color(Color::Accent))
+                    .on_click(cx.listener(|picker, _, window, cx| {
+                        picker.toggle_preview_visible(window, cx);
+                    })),
+            )
+            .when(preview_visible, |controls| {
+                controls
+                    .child(Divider::vertical())
+                    .child(
+                        IconButton::new("picker-preview-right", IconName::DiffSplit)
+                            .toggle_state(current_layout == PreviewLayout::Right)
+                            .tooltip(Tooltip::text("Preview to the Right"))
+                            .on_click(cx.listener(|picker, _, window, cx| {
+                                picker.set_preview_layout(PreviewLayout::Right, window, cx);
+                            })),
+                    )
+                    .child(
+                        IconButton::new("picker-preview-below", IconName::DiffUnified)
+                            .toggle_state(current_layout == PreviewLayout::Below)
+                            .tooltip(Tooltip::text("Preview Below"))
+                            .on_click(cx.listener(|picker, _, window, cx| {
+                                picker.set_preview_layout(PreviewLayout::Below, window, cx);
+                            })),
+                    )
+            })
+    }
+
+    fn set_preview_right(
+        &mut self,
+        _: &SetPreviewRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_preview_layout(PreviewLayout::Right, window, cx);
+    }
+
+    fn set_preview_below(
+        &mut self,
+        _: &SetPreviewBelow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_preview_layout(PreviewLayout::Below, window, cx);
+    }
+
+    fn set_preview_hidden(
+        &mut self,
+        _: &SetPreviewHidden,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_preview_layout(PreviewLayout::Hidden, window, cx);
+    }
+
+    fn set_preview_layout(
+        &mut self,
+        layout: PreviewLayout,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(preview) = &mut self.preview else {
+            return;
+        };
+        preview.layout = layout;
+        self.preview_size = None;
+        persistence::store_layout(D::name(), Some(layout), cx);
+        self.delegate
+            .preview_layout_changed(matches!(layout, PreviewLayout::Right));
+        cx.notify();
     }
 }

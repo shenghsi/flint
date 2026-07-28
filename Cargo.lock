@@ -10141,10 +10141,16 @@ name = "picker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "db",
  "editor",
  "flint_actions",
  "gpui",
+ "gpui_util",
+ "language",
  "menu",
+ "multi_buffer",
+ "project",
+ "rope",
  "schemars",
  "serde",
  "settings",
@@ -10152,6 +10158,7 @@ dependencies = [
  "theme_settings",
  "ui",
  "ui_input",
+ "util",
  "workspace",
 ]
 
