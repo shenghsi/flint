@@ -8,6 +8,7 @@ use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{ButtonStyle, IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
+use util::paths::PathMatcher;
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 
@@ -19,11 +20,13 @@ pub mod buffer_search;
 pub mod project_search;
 pub(crate) mod search_bar;
 pub mod search_status_button;
+pub mod text_finder;
 
 pub fn init(cx: &mut App) {
     menu::init();
     buffer_search::init(cx);
     project_search::init(cx);
+    text_finder::init(cx);
 }
 
 actions!(
@@ -84,6 +87,10 @@ pub enum SearchOption {
     OneMatchPerLine,
     Backwards,
 }
+
+const REPLACE_PLACEHOLDER: &str = "Replace in project…";
+const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
+const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
 
 pub enum SearchSource<'a, 'b> {
     Buffer,
@@ -184,6 +191,40 @@ impl SearchOptions {
         options.set(SearchOptions::REGEX, settings.regex);
         options
     }
+
+    pub fn build_query(
+        &self,
+        query: impl ToString,
+        files_to_include: PathMatcher,
+        files_to_exclude: PathMatcher,
+        match_full_paths: bool,
+        buffers: Option<Vec<gpui::Entity<language::Buffer>>>,
+    ) -> anyhow::Result<SearchQuery> {
+        if self.contains(SearchOptions::REGEX) {
+            SearchQuery::regex(
+                query,
+                self.contains(SearchOptions::WHOLE_WORD),
+                self.contains(SearchOptions::CASE_SENSITIVE),
+                self.contains(SearchOptions::INCLUDE_IGNORED),
+                self.contains(SearchOptions::ONE_MATCH_PER_LINE),
+                files_to_include,
+                files_to_exclude,
+                match_full_paths,
+                buffers,
+            )
+        } else {
+            SearchQuery::text(
+                query,
+                self.contains(SearchOptions::WHOLE_WORD),
+                self.contains(SearchOptions::CASE_SENSITIVE),
+                self.contains(SearchOptions::INCLUDE_IGNORED),
+                files_to_include,
+                files_to_exclude,
+                match_full_paths,
+                buffers,
+            )
+        }
+    }
 }
 
 pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
@@ -201,4 +242,37 @@ pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
             );
         })
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use util::paths::{PathMatcher, PathStyle};
+
+    #[test]
+    fn search_options_build_the_shared_project_query() {
+        let include = PathMatcher::new(["src/**/*.rs"], PathStyle::Posix)
+            .expect("include glob should be valid");
+        let exclude = PathMatcher::new(["target/**"], PathStyle::Posix)
+            .expect("exclude glob should be valid");
+        let options =
+            SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE | SearchOptions::INCLUDE_IGNORED;
+
+        let query = options
+            .build_query("Flint\\s+Finder", include, exclude, true, None)
+            .expect("regex should be valid");
+
+        assert!(query.is_regex());
+        assert!(query.case_sensitive());
+        assert!(query.include_ignored());
+        assert!(query.match_full_paths());
+        assert_eq!(
+            query.files_to_include().sources().collect::<Vec<_>>(),
+            ["src/**/*.rs"]
+        );
+        assert_eq!(
+            query.files_to_exclude().sources().collect::<Vec<_>>(),
+            ["target/**"]
+        );
+    }
 }

@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -7,7 +8,7 @@ use gpui::{
     prelude::*, px,
 };
 use gpui_util::ResultExt;
-use language::{Buffer, Capability};
+use language::{Buffer, Capability, ToPoint};
 use project::Project;
 use ui::{Color, Label, LabelCommon, v_flex};
 use util::rel_path::RelPath;
@@ -58,13 +59,24 @@ impl Preview {
     }
 }
 
-pub struct Update {
-    abs_path: PathBuf,
+pub enum Update {
+    Path(PathBuf),
+    Buffer {
+        buffer: Entity<Buffer>,
+        match_range: Range<language::Anchor>,
+    },
 }
 
 impl Update {
     pub fn from_path(abs_path: PathBuf) -> Self {
-        Self { abs_path }
+        Self::Path(abs_path)
+    }
+
+    pub fn from_buffer(buffer: Entity<Buffer>, match_range: Range<language::Anchor>) -> Self {
+        Self::Buffer {
+            buffer,
+            match_range,
+        }
     }
 }
 
@@ -149,7 +161,18 @@ impl EditorPreview {
     }
 
     fn update(&mut self, update: Update, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_from_path(update.abs_path, window, cx);
+        match update {
+            Update::Path(abs_path) => self.update_from_path(abs_path, window, cx),
+            Update::Buffer {
+                buffer,
+                match_range,
+            } => {
+                self.load_guard.begin_load();
+                self.load_task = Task::ready(());
+                self.update_from_buffer(buffer, Some(match_range), window, cx);
+                cx.notify();
+            }
+        }
     }
 
     fn update_from_path(&mut self, abs_path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
@@ -174,7 +197,7 @@ impl EditorPreview {
                     if !this.load_guard.is_current(load_id) {
                         return;
                     }
-                    this.update_from_buffer(buffer, window, cx);
+                    this.update_from_buffer(buffer, None, window, cx);
                     cx.notify();
                 })
                 .log_err();
@@ -196,6 +219,7 @@ impl EditorPreview {
     fn update_from_buffer(
         &mut self,
         buffer: Entity<Buffer>,
+        match_range: Option<Range<language::Anchor>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -207,6 +231,11 @@ impl EditorPreview {
         let max_rows = (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
 
         self.preview_editor.update(cx, |editor, cx| {
+            let focus_row = match_range
+                .as_ref()
+                .map(|range| range.start.to_point(&buffer.read(cx).text_snapshot()).row)
+                .unwrap_or_default()
+                .min(max_rows);
             let multi_buffer = editor.buffer().clone();
             multi_buffer.update(cx, |multi_buffer, cx| {
                 multi_buffer.clear(cx);
@@ -214,7 +243,7 @@ impl EditorPreview {
                 // how much is materialized for a very large file.
                 multi_buffer.set_excerpts_for_buffer(
                     buffer,
-                    [rope::Point::new(0, 0)..rope::Point::new(0, 0)],
+                    [rope::Point::new(focus_row, 0)..rope::Point::new(focus_row, 0)],
                     max_rows,
                     cx,
                 );
