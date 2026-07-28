@@ -28,6 +28,7 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+menu.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

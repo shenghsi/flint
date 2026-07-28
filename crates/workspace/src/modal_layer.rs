@@ -1,6 +1,6 @@
 use gpui::{
-    AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Global, ManagedView,
-    MouseButton, Subscription, WeakFocusHandle,
+    AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, ManagedView, MouseButton,
+    Subscription,
 };
 use ui::prelude::*;
 
@@ -8,42 +8,6 @@ use ui::prelude::*;
 pub enum DismissDecision {
     Dismiss(bool),
     Pending,
-}
-
-// A modal that hosts a picker forwards its own focus handle to the inner picker,
-// so the modal layer recognizes a reopenable picker by focus identity rather than
-// requiring each modal wrapper to implement its own opt-in.
-#[derive(Default)]
-struct ReopenablePickerRegistry {
-    handles: Vec<WeakFocusHandle>,
-}
-
-impl Global for ReopenablePickerRegistry {}
-
-pub fn register_reopenable_picker(focus_handle: &FocusHandle, cx: &mut App) {
-    let registry = cx.default_global::<ReopenablePickerRegistry>();
-    registry.handles.retain(|handle| handle.upgrade().is_some());
-    if !registry.handles.iter().any(|handle| handle == focus_handle) {
-        registry.handles.push(focus_handle.downgrade());
-    }
-}
-
-pub fn deregister_reopenable_picker(focus_handle: &FocusHandle, cx: &mut App) {
-    let registry = cx.default_global::<ReopenablePickerRegistry>();
-    registry
-        .handles
-        .retain(|handle| handle.upgrade().is_some() && handle != focus_handle);
-}
-
-fn focus_handle_is_reopenable(focus_handle: &FocusHandle, cx: &App) -> bool {
-    cx.try_global::<ReopenablePickerRegistry>()
-        .is_some_and(|registry| {
-            registry
-                .handles
-                .iter()
-                .filter_map(|handle| handle.upgrade())
-                .any(|handle| &handle == focus_handle)
-        })
 }
 
 pub trait ModalView: ManagedView {
@@ -110,21 +74,14 @@ pub struct ActiveModal {
 
 pub struct ModalLayer {
     active_modal: Option<ActiveModal>,
-    // Kept alive (hidden) rather than dropped on dismissal so `ReopenLastPicker`
-    // can reveal it again with its exact prior state. Left intact across
-    // non-reopenable modals (e.g. the command palette), which may trigger the reopen.
-    stashed_modal: Option<Box<dyn ModalViewHandle>>,
-    // Set when a reveal was requested while another modal was still active (e.g. the
-    // which-key popup that is dismissed only after the reopen action fires). The reveal
-    // then happens once that modal closes, so it doesn't matter whether the triggering
-    // modal is dismissed before or after the action dispatches.
-    reveal_stash_when_free: bool,
     dismiss_on_focus_lost: bool,
 }
 
 pub(crate) struct ModalOpenedEvent;
+pub(crate) struct ModalClosedEvent;
 
 impl EventEmitter<ModalOpenedEvent> for ModalLayer {}
+impl EventEmitter<ModalClosedEvent> for ModalLayer {}
 
 impl Default for ModalLayer {
     fn default() -> Self {
@@ -136,8 +93,6 @@ impl ModalLayer {
     pub fn new() -> Self {
         Self {
             active_modal: None,
-            stashed_modal: None,
-            reveal_stash_when_free: false,
             dismiss_on_focus_lost: false,
         }
     }
@@ -154,9 +109,6 @@ impl ModalLayer {
         V: ModalView,
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
-        // Opening a modal explicitly supersedes any reveal that was waiting for the
-        // layer to become free.
-        self.reveal_stash_when_free = false;
         if let Some(active_modal) = &self.active_modal {
             let should_close = active_modal.modal.view().downcast::<V>().is_ok();
             let did_close = self.hide_modal(window, cx);
@@ -199,26 +151,6 @@ impl ModalLayer {
         cx.notify();
     }
 
-    /// Reveals the most recently stashed reopenable modal, if any. Returns whether
-    /// a modal was revealed.
-    pub fn reveal_stashed_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.stashed_modal.is_none() {
-            return false;
-        }
-        if self.active_modal.is_some() {
-            // Another modal is still closing (e.g. the which-key popup that dismisses
-            // only after this action fires). Reveal once it is gone; see `hide_modal`.
-            self.reveal_stash_when_free = true;
-            return false;
-        }
-        let Some(modal) = self.stashed_modal.take() else {
-            return false;
-        };
-        self.show_modal(modal, window, cx);
-        cx.emit(ModalOpenedEvent);
-        true
-    }
-
     /// Attempts to hide the currently active modal.
     ///
     /// The modal's `on_before_dismiss` method is called to determine if dismissal should proceed.
@@ -246,24 +178,15 @@ impl ModalLayer {
         }
 
         if let Some(active_modal) = self.active_modal.take() {
-            let reopenable = focus_handle_is_reopenable(&active_modal.modal.focus_handle(cx), cx);
             if let Some(previous_focus) = active_modal.previous_focus_handle
                 && active_modal.focus_handle.contains_focused(window, cx)
             {
                 previous_focus.focus(window, cx);
             }
-            if reopenable {
-                self.stashed_modal = Some(active_modal.modal);
-            }
             cx.notify();
+            cx.emit(ModalClosedEvent);
         }
         self.dismiss_on_focus_lost = false;
-        // A reveal was requested while this modal was still active; now that the layer
-        // is free, honor it.
-        if self.reveal_stash_when_free && self.active_modal.is_none() {
-            self.reveal_stash_when_free = false;
-            self.reveal_stashed_modal(window, cx);
-        }
         true
     }
 

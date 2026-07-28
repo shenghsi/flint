@@ -14,7 +14,7 @@ use gpui::{
     Action, AnyElement, App, Bounds, ClickEvent, Context, CursorStyle, DismissEvent, DragMoveEvent,
     Entity, EventEmitter, FocusHandle, Focusable, Length, ListSizingBehavior, ListState,
     MouseButton, MouseUpEvent, Pixels, Render, ScrollStrategy, Task, UniformListScrollHandle,
-    Window, actions, canvas, div, list, prelude::*, uniform_list,
+    WeakEntity, Window, actions, canvas, div, list, prelude::*, uniform_list,
 };
 use gpui_util::ResultExt;
 use head::Head;
@@ -219,6 +219,18 @@ pub trait PickerDelegate: Sized + 'static {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) {
+    }
+
+    fn workspace(&self, _cx: &App) -> Option<WeakEntity<workspace::Workspace>> {
+        None
+    }
+
+    fn reopen_request(
+        &self,
+        _state: &PickerRestorationState,
+        _cx: &App,
+    ) -> Option<Arc<dyn workspace::ReopenablePickerRequest>> {
+        None
     }
 
     // Allows binding some optional effect to when the selection changes.
@@ -611,6 +623,9 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let delegate = &self.delegate;
+        self.selected_item_ids
+            .retain(|item_id| delegate.item_id_is_valid(item_id, cx));
         let match_count = self.delegate.match_count();
         if match_count == 0 {
             return;
@@ -840,7 +855,9 @@ impl<D: PickerDelegate> Picker<D> {
         self.multi_select_enabled =
             state.multi_select_enabled && self.delegate.supports_multi_select();
         self.selected_item_ids = state.selected_item_ids;
-        self.set_query(&state.query, window, cx);
+        if self.query(cx) != state.query {
+            self.set_query(&state.query, window, cx);
+        }
         cx.notify();
     }
 
@@ -868,6 +885,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.should_dismiss() {
+            self.record_reopen_request(cx);
             self.delegate.dismissed(window, cx);
             cx.emit(DismissEvent);
         }
@@ -954,14 +972,42 @@ impl<D: PickerDelegate> Picker<D> {
             self.set_query(&update_query, window, cx);
             self.set_selected_index(0, Some(Direction::Down), false, window, cx);
         } else if self.multi_select_enabled && !self.selected_item_ids.is_empty() {
+            self.record_reopen_request(cx);
             let item_ids = self.ordered_selected_item_ids(cx);
             if item_ids.is_empty() {
                 return;
             }
             self.delegate.confirm_multi(item_ids, window, cx);
         } else {
+            self.record_reopen_request(cx);
             self.delegate.confirm(secondary, window, cx)
         }
+    }
+
+    fn record_reopen_request(&self, cx: &mut Context<Self>) {
+        let state = self.restoration_state(cx);
+        let Some(request) = self.delegate.reopen_request(&state, cx) else {
+            return;
+        };
+        let Some(workspace) = self.delegate.workspace(cx) else {
+            return;
+        };
+        workspace
+            .update(cx, |workspace, _| {
+                workspace.record_picker_request(
+                    request,
+                    workspace::StoredPickerState {
+                        query: state.query,
+                        multi_select_enabled: state.multi_select_enabled,
+                        selected_item_ids: state
+                            .selected_item_ids
+                            .into_iter()
+                            .map(PickerItemId::into_shared_string)
+                            .collect(),
+                    },
+                );
+            })
+            .log_err();
     }
 
     fn on_input_editor_event(
@@ -1715,6 +1761,40 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             ),
                     )
                 })
+            })
+            .when(self.delegate.supports_multi_select(), |picker| {
+                let selected_count = self.selected_item_ids.len();
+                picker.child(
+                    h_flex()
+                        .w_full()
+                        .px_2()
+                        .py_1()
+                        .justify_between()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(
+                            Label::new(if self.multi_select_enabled {
+                                format!("{selected_count} selected")
+                            } else {
+                                "Select multiple items".to_string()
+                            })
+                            .size(ui::LabelSize::Small)
+                            .color(Color::Muted),
+                        )
+                        .child(
+                            Button::new(
+                                "toggle-picker-multi-select",
+                                if self.multi_select_enabled {
+                                    "Done"
+                                } else {
+                                    "Select Multiple"
+                                },
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(ToggleMultiSelect.boxed_clone(), cx);
+                            }),
+                        ),
+                )
             })
             .children(self.delegate.render_footer(window, cx))
             .when(self.preview.is_some(), |menu| {

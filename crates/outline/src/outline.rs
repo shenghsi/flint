@@ -10,15 +10,15 @@ use gpui::{
     ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
     rems,
 };
-use language::{Outline, OutlineItem};
+use language::{BufferId, Outline, OutlineItem};
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate, PreviewUpdate};
+use picker::{Picker, PickerDelegate, PickerItemId, PickerRestorationState, PreviewUpdate};
 use settings::Settings;
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -117,6 +117,74 @@ fn outline_for_editor(
 
 pub struct OutlineView {
     picker: Entity<Picker<OutlineViewDelegate>>,
+}
+
+struct BufferSymbolsRequest {
+    buffer_id: BufferId,
+}
+
+impl BufferSymbolsRequest {
+    fn editor(&self, workspace: &Workspace, cx: &App) -> Option<Entity<Editor>> {
+        let editor = workspace.active_item_as::<Editor>(cx)?;
+        let buffer_id = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .as_singleton()?
+            .remote_id();
+        (buffer_id == self.buffer_id).then_some(editor)
+    }
+}
+
+impl workspace::ReopenablePickerRequest for BufferSymbolsRequest {
+    fn is_valid(&self, workspace: &Workspace, cx: &App) -> bool {
+        self.editor(workspace, cx).is_some()
+    }
+
+    fn reopen(
+        &self,
+        state: workspace::StoredPickerState,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<anyhow::Result<()>> {
+        let Some(editor) = self.editor(workspace, cx) else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "source buffer for Buffer Symbols is no longer active"
+            )));
+        };
+        let Some(outline_task) = outline_for_editor(&editor, cx) else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "source buffer for Buffer Symbols is unavailable"
+            )));
+        };
+        cx.spawn_in(window, async move |workspace, cx| {
+            let items = outline_task.await;
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    let outline = OutlineView::new(Outline::new(items), editor, window, cx);
+                    outline.picker.update(cx, |picker, cx| {
+                        picker.restore_state(
+                            PickerRestorationState {
+                                query: state.query,
+                                multi_select_enabled: state.multi_select_enabled,
+                                selected_item_ids: state
+                                    .selected_item_ids
+                                    .into_iter()
+                                    .map(PickerItemId::new)
+                                    .collect(),
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                    outline
+                });
+                anyhow::Ok(())
+            })?
+        })
+    }
 }
 
 impl Focusable for OutlineView {
@@ -269,6 +337,26 @@ impl PickerDelegate for OutlineViewDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search buffer symbols...".into()
+    }
+
+    fn workspace(&self, cx: &App) -> Option<WeakEntity<Workspace>> {
+        Some(self.active_editor.read(cx).workspace()?.downgrade())
+    }
+
+    fn reopen_request(
+        &self,
+        _state: &PickerRestorationState,
+        cx: &App,
+    ) -> Option<Arc<dyn workspace::ReopenablePickerRequest>> {
+        let buffer_id = self
+            .active_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .as_singleton()?
+            .remote_id();
+        Some(Arc::new(BufferSymbolsRequest { buffer_id }))
     }
 
     fn match_count(&self) -> usize {
@@ -496,7 +584,7 @@ mod tests {
     use workspace::{AppState, MultiWorkspace, Workspace};
 
     #[gpui::test]
-    async fn test_outline_view_row_highlights(cx: &mut TestAppContext) {
+    async fn test_outline_view_row_highlights_and_reopen(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -632,6 +720,29 @@ mod tests {
         );
         // On confirm, should place the caret on the first row of the highlighted rows range.
         assert_single_caret_at_row(&editor, expected_first_highlighted_row, cx);
+
+        let outline_view = open_outline_view(&workspace, cx);
+        outline_view.update_in(cx, |picker, window, cx| {
+            picker.set_query("field", window, cx);
+        });
+        let original_id = outline_view.entity_id();
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+        cx.dispatch_action(workspace::ReopenLastPicker);
+        cx.run_until_parked();
+
+        let reopened = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<OutlineView>(cx)
+                .expect("Buffer Symbols should reopen")
+                .read(cx)
+                .picker
+                .clone()
+        });
+        assert_ne!(original_id, reopened.entity_id());
+        reopened.read_with(cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "field");
+        });
     }
 
     #[gpui::test]

@@ -10,6 +10,7 @@ mod multi_workspace_tests;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
+mod picker_history;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
@@ -35,6 +36,7 @@ pub use multi_workspace::{
     SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
+pub use picker_history::*;
 pub use remote::{
     RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
 };
@@ -1298,6 +1300,8 @@ pub struct Workspace {
     active_workspace_id: Option<Rc<Cell<EntityId>>>,
     active_worktree_creation: ActiveWorktreeCreation,
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,
+    picker_history: Option<PickerHistoryEntry>,
+    pending_picker_reopen: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1528,6 +1532,16 @@ impl Workspace {
             },
         )
         .detach();
+        cx.subscribe_in(
+            &modal_layer,
+            window,
+            |workspace, _, _: &modal_layer::ModalClosedEvent, window, cx| {
+                if workspace.pending_picker_reopen {
+                    workspace.execute_picker_reopen(window, cx);
+                }
+            },
+        )
+        .detach();
 
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
@@ -1657,6 +1671,8 @@ impl Workspace {
             open_in_dev_container: false,
             _dev_container_task: None,
             deferred_save_items: Vec::new(),
+            picker_history: None,
+            pending_picker_reopen: false,
         }
     }
 
@@ -6697,20 +6713,52 @@ impl Workspace {
             .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx))
     }
 
+    pub fn record_picker_request(
+        &mut self,
+        request: Arc<dyn ReopenablePickerRequest>,
+        state: StoredPickerState,
+    ) {
+        self.picker_history = Some(PickerHistoryEntry { request, state });
+        self.pending_picker_reopen = false;
+    }
+
+    pub fn has_reopenable_picker(&self) -> bool {
+        self.picker_history.is_some()
+    }
+
+    pub fn reopenable_picker_is_valid(&self, cx: &App) -> bool {
+        self.picker_history
+            .as_ref()
+            .is_some_and(|entry| entry.request.is_valid(self, cx))
+    }
+
+    fn execute_picker_reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.picker_history.clone() else {
+            return;
+        };
+        if !entry.request.is_valid(self, cx) {
+            self.picker_history = None;
+            self.pending_picker_reopen = false;
+            return;
+        }
+        entry
+            .request
+            .reopen(entry.state, self, window, cx)
+            .detach_and_log_err(cx);
+        self.pending_picker_reopen = false;
+    }
+
     fn reopen_last_picker(
         &mut self,
         _: &ReopenLastPicker,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // When triggered from within another modal (e.g. the command palette), that
-        // modal's dismissal is asynchronous, so defer the reveal until it has closed;
-        // otherwise a modal would still be active and the reveal would be a no-op.
-        cx.defer_in(window, |workspace, window, cx| {
-            workspace.modal_layer.update(cx, |modal_layer, cx| {
-                modal_layer.reveal_stashed_modal(window, cx);
-            });
-        });
+        if self.modal_layer.read(cx).has_active_modal() {
+            self.pending_picker_reopen = true;
+            return;
+        }
+        self.execute_picker_reopen(window, cx);
     }
 
     pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
@@ -12209,197 +12257,134 @@ mod tests {
         }
     }
 
-    // Registers its focus handle as a reopenable picker on construction, like a real
-    // `Picker` does, so the modal layer recognizes it by focus identity.
-    struct ReopenableTestModal(FocusHandle);
-
-    impl ReopenableTestModal {
-        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
-            let focus_handle = cx.focus_handle();
-            register_reopenable_picker(&focus_handle, cx);
-            Self(focus_handle)
-        }
+    struct ReconstructTestPickerRequest {
+        construction_count: Arc<AtomicUsize>,
+        valid: Arc<AtomicBool>,
     }
 
-    impl EventEmitter<DismissEvent> for ReopenableTestModal {}
-
-    impl Focusable for ReopenableTestModal {
-        fn focus_handle(&self, _cx: &App) -> FocusHandle {
-            self.0.clone()
+    impl ReopenablePickerRequest for ReconstructTestPickerRequest {
+        fn is_valid(&self, _workspace: &Workspace, _cx: &App) -> bool {
+            self.valid.load(std::sync::atomic::Ordering::SeqCst)
         }
-    }
 
-    impl ModalView for ReopenableTestModal {}
-
-    impl Render for ReopenableTestModal {
-        fn render(
-            &mut self,
-            _window: &mut Window,
-            _cx: &mut Context<ReopenableTestModal>,
-        ) -> impl IntoElement {
-            div().track_focus(&self.0)
+        fn reopen(
+            &self,
+            _state: StoredPickerState,
+            workspace: &mut Workspace,
+            window: &mut Window,
+            cx: &mut Context<Workspace>,
+        ) -> Task<Result<()>> {
+            self.construction_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            workspace.toggle_modal(window, cx, TestModal::new);
+            Task::ready(Ok(()))
         }
     }
 
     #[gpui::test]
-    async fn test_reopen_last_picker(cx: &mut gpui::TestAppContext) {
+    async fn test_reopen_last_picker_reconstructs_a_new_modal(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let construction_count = Arc::new(AtomicUsize::new(1));
+        let valid = Arc::new(AtomicBool::new(true));
 
-        // A non-reopenable modal is dropped on dismissal and cannot be revealed.
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, TestModal::new);
-        });
-        cx.executor().run_until_parked();
-        assert!(workspace.read_with(cx, |workspace, cx| {
-            workspace.active_modal::<TestModal>(cx).is_some()
-        }));
-        workspace.update_in(cx, |workspace, window, cx| {
-            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
-                modal_layer.hide_modal(window, cx);
-                modal_layer.reveal_stashed_modal(window, cx)
-            });
-            assert!(!revealed, "a non-reopenable modal should not be revealable");
-        });
-
-        // A reopenable modal is stashed on dismissal and revealed as the *same*
-        // entity, so its prior state is preserved exactly.
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace.toggle_modal(window, cx, ReopenableTestModal::new);
-        });
-        cx.executor().run_until_parked();
-        let original_id = workspace.read_with(cx, |workspace, cx| {
-            workspace
-                .active_modal::<ReopenableTestModal>(cx)
-                .unwrap()
-                .entity_id()
-        });
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace
-                .modal_layer
-                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
-        });
-        cx.executor().run_until_parked();
-        assert!(workspace.read_with(cx, |workspace, cx| {
-            workspace.active_modal::<ReopenableTestModal>(cx).is_none()
-        }));
-        workspace.update_in(cx, |workspace, window, cx| {
-            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
-                modal_layer.reveal_stashed_modal(window, cx)
-            });
-            assert!(revealed, "a reopenable modal should be revealable");
-        });
-        cx.executor().run_until_parked();
-        let revealed_id = workspace.read_with(cx, |workspace, cx| {
-            workspace
-                .active_modal::<ReopenableTestModal>(cx)
-                .unwrap()
-                .entity_id()
-        });
-        assert_eq!(
-            original_id, revealed_id,
-            "reveal should restore the same modal entity rather than building a new one"
-        );
-
-        workspace.update_in(cx, |workspace, window, cx| {
-            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
-                modal_layer.reveal_stashed_modal(window, cx)
-            });
-            assert!(!revealed, "reveal should be a no-op while a modal is open");
-        });
-
-        // A non-reopenable modal must not discard the stash, which is what lets the
-        // command palette be used to trigger the reopen.
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace
-                .modal_layer
-                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
-            workspace.toggle_modal(window, cx, TestModal::new);
-        });
-        cx.executor().run_until_parked();
-        workspace.update_in(cx, |workspace, window, cx| {
-            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
-                modal_layer.hide_modal(window, cx);
-                modal_layer.reveal_stashed_modal(window, cx)
-            });
-            assert!(
-                revealed,
-                "a non-reopenable modal must not discard the stash"
+            workspace.record_picker_request(
+                Arc::new(ReconstructTestPickerRequest {
+                    construction_count: construction_count.clone(),
+                    valid,
+                }),
+                StoredPickerState {
+                    query: "needle".to_string(),
+                    multi_select_enabled: true,
+                    selected_item_ids: vec!["selected-file".into()],
+                },
             );
         });
-        cx.executor().run_until_parked();
-
-        // Reopen triggered from within a modal that dismisses asynchronously and
-        // dispatches the action in the same cycle, as the command palette does.
-        workspace.update_in(cx, |workspace, window, cx| {
+        cx.run_until_parked();
+        let original_id = workspace.read_with(cx, |workspace, cx| {
             workspace
-                .modal_layer
-                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
-            workspace.toggle_modal(window, cx, TestModal::new);
+                .active_modal::<TestModal>(cx)
+                .expect("original modal should be open")
+                .entity_id()
         });
-        cx.executor().run_until_parked();
+
         workspace.update_in(cx, |workspace, window, cx| {
-            // Mirror the command palette's confirm: emit DismissEvent on itself and
-            // dispatch the reopen action within the same update.
-            let palette = workspace.active_modal::<TestModal>(cx).unwrap();
-            palette.update(cx, |_, cx| cx.emit(DismissEvent));
+            workspace.hide_modal(window, cx);
             workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
         });
-        cx.executor().run_until_parked();
-        assert!(
-            workspace.read_with(cx, |workspace, cx| workspace
-                .active_modal::<ReopenableTestModal>(cx)
-                .is_some()),
-            "reopen triggered from within a dismissing modal should reveal the stash"
+        cx.run_until_parked();
+
+        let reopened_id = workspace.read_with(cx, |workspace, cx| {
+            let history = workspace
+                .picker_history
+                .as_ref()
+                .expect("history should contain reconstructible values");
+            assert_eq!(history.state.query, "needle");
+            assert!(history.state.multi_select_enabled);
+            assert_eq!(history.state.selected_item_ids, ["selected-file"]);
+            workspace
+                .active_modal::<TestModal>(cx)
+                .expect("reconstructed modal should be open")
+                .entity_id()
+        });
+        assert_ne!(original_id, reopened_id);
+        assert_eq!(
+            construction_count.load(std::sync::atomic::Ordering::SeqCst),
+            2
         );
     }
 
     #[gpui::test]
-    async fn test_reopen_last_picker_with_active_leader_modal(cx: &mut gpui::TestAppContext) {
+    async fn test_reopen_last_picker_waits_for_active_modal_and_clears_invalid_history(
+        cx: &mut gpui::TestAppContext,
+    ) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let construction_count = Arc::new(AtomicUsize::new(1));
+        let valid = Arc::new(AtomicBool::new(true));
 
-        // Stash a reopenable modal.
         workspace.update_in(cx, |workspace, window, cx| {
-            workspace.toggle_modal(window, cx, ReopenableTestModal::new);
-        });
-        cx.executor().run_until_parked();
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace
-                .modal_layer
-                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
-        });
-        cx.executor().run_until_parked();
-
-        // A non-reopenable modal (e.g. the which-key popup) is already
-        // active when the reopen fires, and it dismisses *after* the action rather
-        // than before it (which-key dismisses when pending input clears).
-        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.record_picker_request(
+                Arc::new(ReconstructTestPickerRequest {
+                    construction_count: construction_count.clone(),
+                    valid: valid.clone(),
+                }),
+                StoredPickerState::default(),
+            );
             workspace.toggle_modal(window, cx, TestModal::new);
-        });
-        cx.executor().run_until_parked();
-        workspace.update_in(cx, |workspace, window, cx| {
-            // Reopen fires first (chord completes and dispatches the action)...
             workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
-            // ...then the modal dismisses
-            let modal = workspace.active_modal::<TestModal>(cx).unwrap();
+            assert_eq!(
+                construction_count.load(std::sync::atomic::Ordering::SeqCst),
+                1,
+                "reconstruction must wait until the active modal closes"
+            );
+            let modal = workspace
+                .active_modal::<TestModal>(cx)
+                .expect("transient modal should be open");
             modal.update(cx, |_, cx| cx.emit(DismissEvent));
         });
-        cx.executor().run_until_parked();
-        assert!(
-            workspace.read_with(cx, |workspace, cx| workspace
-                .active_modal::<ReopenableTestModal>(cx)
-                .is_some()),
-            "reopen with an active modal that dismisses after the action should reveal the stash"
+        cx.run_until_parked();
+        assert_eq!(
+            construction_count.load(std::sync::atomic::Ordering::SeqCst),
+            2
         );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.hide_modal(window, cx);
+            valid.store(false, std::sync::atomic::Ordering::SeqCst);
+            workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
+            assert!(!workspace.has_reopenable_picker());
+        });
     }
 
     #[gpui::test]

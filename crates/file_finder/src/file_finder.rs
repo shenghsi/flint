@@ -19,7 +19,7 @@ use open_path_prompt::{
     OpenPathPrompt,
     file_finder_settings::{FileFinderSettings, FileFinderWidth},
 };
-use picker::{Picker, PickerDelegate, PickerItemId, PreviewUpdate};
+use picker::{Picker, PickerDelegate, PickerItemId, PickerRestorationState, PreviewUpdate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
@@ -66,6 +66,52 @@ actions!(
         OpenWithoutDismiss
     ]
 );
+
+struct FileFinderRequest {
+    separate_history: bool,
+}
+
+impl workspace::ReopenablePickerRequest for FileFinderRequest {
+    fn is_valid(&self, _workspace: &Workspace, _cx: &App) -> bool {
+        true
+    }
+
+    fn reopen(
+        &self,
+        state: workspace::StoredPickerState,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<anyhow::Result<()>> {
+        let open_task = FileFinder::open(workspace, self.separate_history, window, cx);
+        cx.spawn_in(window, async move |workspace, cx| {
+            open_task.await;
+            workspace.update_in(cx, |workspace, window, cx| {
+                let file_finder = workspace
+                    .active_modal::<FileFinder>(cx)
+                    .ok_or_else(|| anyhow::anyhow!("File Finder did not open"))?;
+                file_finder.update(cx, |file_finder, cx| {
+                    file_finder.picker.update(cx, |picker, cx| {
+                        picker.restore_state(
+                            PickerRestorationState {
+                                query: state.query,
+                                multi_select_enabled: state.multi_select_enabled,
+                                selected_item_ids: state
+                                    .selected_item_ids
+                                    .into_iter()
+                                    .map(PickerItemId::new)
+                                    .collect(),
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                });
+                anyhow::Ok(())
+            })?
+        })
+    }
+}
 
 impl ModalView for FileFinder {
     fn on_before_dismiss(
@@ -1602,6 +1648,20 @@ impl PickerDelegate for FileFinderDelegate {
         true
     }
 
+    fn workspace(&self, _cx: &App) -> Option<WeakEntity<Workspace>> {
+        Some(self.workspace.clone())
+    }
+
+    fn reopen_request(
+        &self,
+        _state: &PickerRestorationState,
+        _cx: &App,
+    ) -> Option<Arc<dyn workspace::ReopenablePickerRequest>> {
+        Some(Arc::new(FileFinderRequest {
+            separate_history: self.separate_history,
+        }))
+    }
+
     fn item_id(&self, index: usize) -> Option<PickerItemId> {
         let path = self.matches.get(index)?.project_path()?;
         Some(project_path_item_id(&path))
@@ -1612,7 +1672,7 @@ impl PickerDelegate for FileFinderDelegate {
             self.project
                 .read(cx)
                 .worktree_for_id(path.worktree_id, cx)
-                .is_some()
+                .is_some_and(|worktree| worktree.read(cx).entry_for_path(&path.path).is_some())
         })
     }
 
@@ -2040,24 +2100,26 @@ impl FileFinderDelegate {
             let color = Color::Custom(file_icons::file_icon_color(&icon, cx));
             Some(Icon::from_path(icon).color(color))
         });
-        let picker = cx.entity().downgrade();
-        let checkbox = Checkbox::new(
-            ("file-finder-multi-select", ix),
-            if multi_selected {
-                ToggleState::Selected
-            } else {
-                ToggleState::Unselected
-            },
-        )
-        .on_click(move |_, window, cx| {
-            picker
-                .update(cx, |picker, cx| {
-                    if !picker.multi_select_enabled() {
-                        picker.set_multi_select_enabled(true, cx);
-                    }
-                    picker.toggle_item_selection(ix, window, cx);
-                })
-                .log_err();
+        let checkbox = path_match.project_path().map(|_| {
+            let picker = cx.entity().downgrade();
+            Checkbox::new(
+                ("file-finder-multi-select", ix),
+                if multi_selected {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                },
+            )
+            .on_click(move |_, window, cx| {
+                picker
+                    .update(cx, |picker, cx| {
+                        if !picker.multi_select_enabled() {
+                            picker.set_multi_select_enabled(true, cx);
+                        }
+                        picker.toggle_item_selection(ix, window, cx);
+                    })
+                    .log_err();
+            })
         });
 
         Some(
@@ -2066,7 +2128,7 @@ impl FileFinderDelegate {
                 .start_slot::<AnyElement>(
                     h_flex()
                         .gap_1()
-                        .child(checkbox)
+                        .children(checkbox)
                         .children(file_icon)
                         .into_any_element(),
                 )

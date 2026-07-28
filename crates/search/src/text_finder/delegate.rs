@@ -38,7 +38,7 @@ use gpui::{
 };
 use gpui::{Entity, FocusHandle};
 use language::{Buffer, LanguageAwareStyling};
-use picker::{Picker, PickerDelegate, PickerItemId};
+use picker::{Picker, PickerDelegate, PickerItemId, PickerRestorationState};
 use project::{Project, ProjectPath, Search, WorktreeId};
 use project::{SearchResults, search::SearchQuery, search::SearchResult};
 use settings::Settings;
@@ -54,7 +54,7 @@ use workspace::SplitDirection;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
 
-use super::{Fold, SearchMatch, Unfold};
+use super::{Fold, SearchMatch, TextFinderRequest, Unfold};
 use crate::project_search::{ActiveSettings, ProjectSearch};
 use crate::{ProjectSearchView, SearchOptions};
 
@@ -579,7 +579,7 @@ pub(crate) async fn matches_to_multibuffer(
     PopulateProjectSearch::Completed
 }
 
-const SEARCH_DEBOUNCE_MS: u64 = 100;
+pub(crate) const SEARCH_DEBOUNCE_MS: u64 = 100;
 const CLICK_THRESHOLD_MS: u128 = 50;
 const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
@@ -622,6 +622,20 @@ impl PickerDelegate for Delegate {
         true
     }
 
+    fn workspace(&self, cx: &App) -> Option<gpui::WeakEntity<Workspace>> {
+        Some(self.project_search_view.read(cx).workspace.clone())
+    }
+
+    fn reopen_request(
+        &self,
+        _state: &PickerRestorationState,
+        _cx: &App,
+    ) -> Option<Arc<dyn workspace::ReopenablePickerRequest>> {
+        Some(Arc::new(TextFinderRequest {
+            search_options: self.search_options,
+        }))
+    }
+
     fn item_id(&self, index: usize) -> Option<PickerItemId> {
         let path = match self.entries.get(index)? {
             Entry::Header(path) => path,
@@ -636,7 +650,7 @@ impl PickerDelegate for Delegate {
             self.project(cx)
                 .read(cx)
                 .worktree_for_id(path.worktree_id, cx)
-                .is_some()
+                .is_some_and(|worktree| worktree.read(cx).entry_for_path(&path.path).is_some())
         })
     }
 

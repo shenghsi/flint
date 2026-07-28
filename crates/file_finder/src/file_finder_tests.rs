@@ -4587,6 +4587,46 @@ async fn test_file_finder_preview(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_file_finder_reopen_restores_query_and_multi_selection(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.txt": "alpha\n",
+                "b.txt": "beta\n",
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("txt");
+    cx.run_until_parked();
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_multi_select_enabled(true, cx);
+        picker.toggle_item_selection(0, window, cx);
+    });
+    let original_id = picker.entity_id();
+    let selected_ids = picker.read_with(cx, |picker, _| picker.selected_item_ids().to_vec());
+
+    cx.dispatch_action(menu::Cancel);
+    cx.run_until_parked();
+    cx.dispatch_action(workspace::ReopenLastPicker);
+    cx.run_until_parked();
+
+    let reopened = active_file_picker(&workspace, cx);
+    assert_ne!(original_id, reopened.entity_id());
+    reopened.read_with(cx, |picker, cx| {
+        assert_eq!(picker.query(cx), "txt");
+        assert!(picker.multi_select_enabled());
+        assert_eq!(picker.selected_item_ids(), selected_ids);
+    });
+}
+
 #[derive(Debug, Default)]
 struct SearchEntries {
     history: Vec<Arc<RelPath>>,

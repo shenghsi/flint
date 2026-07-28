@@ -11,11 +11,11 @@ use gpui::{
     FocusHandle, Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
     prelude::*,
 };
-use language::{Buffer, HighlightId, LanguageAwareStyling};
-use picker::{Picker, PickerDelegate};
+use language::{Buffer, BufferId, HighlightId, LanguageAwareStyling};
+use picker::{Picker, PickerDelegate, PickerItemId, PickerRestorationState};
 use project::{Location, Project, ProjectPath};
 use settings::{GoToDefinitionFallback, Settings as _};
-use text::{Anchor, Point};
+use text::{Anchor, Point, ToPointUtf16};
 use theme_settings::ThemeSettings;
 use ui::{Divider, FluentBuilder};
 use ui::{ListItem, ListItemSpacing, prelude::*};
@@ -209,6 +209,80 @@ pub struct LspLocationsPicker {
     _subscription: Subscription,
 }
 
+struct LspLocationsReopenRequest {
+    kind: LspPickerKind,
+    source_buffer_id: BufferId,
+    source_position: text::PointUtf16,
+}
+
+impl workspace::ReopenablePickerRequest for LspLocationsReopenRequest {
+    fn is_valid(&self, workspace: &Workspace, cx: &App) -> bool {
+        workspace
+            .project()
+            .read(cx)
+            .buffer_for_id(self.source_buffer_id, cx)
+            .is_some()
+    }
+
+    fn reopen(
+        &self,
+        state: workspace::StoredPickerState,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<anyhow::Result<()>> {
+        let project = workspace.project().clone();
+        let Some(buffer) = project.read(cx).buffer_for_id(self.source_buffer_id, cx) else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "source buffer for LSP locations is unavailable"
+            )));
+        };
+        let editor = workspace.open_project_item::<Editor>(
+            workspace.active_pane().clone(),
+            buffer,
+            true,
+            true,
+            true,
+            true,
+            window,
+            cx,
+        );
+        let position = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .as_singleton()
+            .map(|snapshot| {
+                snapshot.point_utf16_to_point(snapshot.clip_point_utf16(
+                    language::Unclipped(self.source_position),
+                    language::Bias::Left,
+                ))
+            })
+            .unwrap_or_default();
+        editor.update(cx, |editor, cx| {
+            editor.go_to_singleton_buffer_point(position, window, cx);
+        });
+        LspLocationsPicker::open(
+            self.kind,
+            editor,
+            workspace,
+            window,
+            cx,
+            Some(PickerRestorationState {
+                query: state.query,
+                multi_select_enabled: state.multi_select_enabled,
+                selected_item_ids: state
+                    .selected_item_ids
+                    .into_iter()
+                    .map(PickerItemId::new)
+                    .collect(),
+            }),
+        );
+        Task::ready(Ok(()))
+    }
+}
+
 impl LspLocationsPicker {
     fn open_for_editor(
         kind: LspPickerKind,
@@ -223,7 +297,7 @@ impl LspLocationsPicker {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            Self::open(kind, editor, workspace, window, cx);
+            Self::open(kind, editor, workspace, window, cx, None);
         });
     }
 
@@ -237,6 +311,7 @@ impl LspLocationsPicker {
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
+        restoration_state: Option<PickerRestorationState>,
     ) {
         let project = workspace.project().clone();
         let fallback = EditorSettings::get_global(cx).go_to_definition_fallback;
@@ -293,7 +368,13 @@ impl LspLocationsPicker {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        Self::new(kind, matches, project, editor, window, cx)
+                        let picker = Self::new(kind, matches, project, editor, window, cx);
+                        if let Some(state) = restoration_state {
+                            picker.picker.update(cx, |picker, cx| {
+                                picker.restore_state(state, window, cx);
+                            });
+                        }
+                        picker
                     });
                 })
                 .log_err();
@@ -552,6 +633,30 @@ impl PickerDelegate for LspLocationsDelegate {
         self.kind.placeholder().into()
     }
 
+    fn workspace(&self, cx: &App) -> Option<WeakEntity<Workspace>> {
+        Some(self.editor.upgrade()?.read(cx).workspace()?.downgrade())
+    }
+
+    fn reopen_request(
+        &self,
+        _state: &PickerRestorationState,
+        cx: &App,
+    ) -> Option<Arc<dyn workspace::ReopenablePickerRequest>> {
+        let editor = self.editor.upgrade()?;
+        let editor = editor.read(cx);
+        let position = editor.selections.newest_anchor().head();
+        let (buffer, buffer_position) = editor
+            .buffer()
+            .read(cx)
+            .text_anchor_for_position(position, cx)?;
+        let snapshot = buffer.read(cx).snapshot();
+        Some(Arc::new(LspLocationsReopenRequest {
+            kind: self.kind,
+            source_buffer_id: snapshot.remote_id(),
+            source_position: buffer_position.to_point_utf16(&snapshot),
+        }))
+    }
+
     fn match_count(&self) -> usize {
         self.entries.len()
     }
@@ -788,7 +893,7 @@ mod tests {
         let workspace = cx.workspace.clone();
         cx.update(|window, cx| {
             workspace.update(cx, |workspace, cx| {
-                LspLocationsPicker::open(kind, editor, workspace, window, cx);
+                LspLocationsPicker::open(kind, editor, workspace, window, cx, None);
             });
         });
         cx.run_until_parked();
@@ -842,6 +947,63 @@ mod tests {
             active_picker(&mut cx).is_some(),
             "multiple references should open the picker"
         );
+    }
+
+    #[gpui::test]
+    async fn test_reopen_reruns_lsp_query_and_reconstructs_picker(cx: &mut TestAppContext) {
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state(SOURCE);
+        let request_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>({
+                let request_count = request_count.clone();
+                move |params, _| {
+                    let request_count = request_count.clone();
+                    let uri = params.text_document_position.text_document.uri;
+                    async move {
+                        request_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(Some(references(uri, &[(1, 8, 11), (2, 14, 17)])))
+                    }
+                }
+            });
+
+        open(&mut cx, LspPickerKind::References);
+        let original = active_picker(&mut cx).expect("LSP picker should open");
+        cx.update(|window, cx| {
+            original.update(cx, |picker, cx| {
+                picker.picker.update(cx, |picker, cx| {
+                    picker.set_query("abc", window, cx);
+                });
+            });
+        });
+
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+        let workspace = cx.workspace.clone();
+        assert!(cx.update(|_, app| workspace.read(app).has_reopenable_picker()));
+        assert!(cx.update(|_, app| workspace.read(app).reopenable_picker_is_valid(app)));
+        cx.dispatch_action(workspace::ReopenLastPicker);
+        cx.run_until_parked();
+
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "reopening should rerun the LSP query"
+        );
+        let reopened = active_picker(&mut cx).expect("LSP picker should reopen");
+        assert_ne!(original.entity_id(), reopened.entity_id());
+        cx.update(|_, cx| {
+            reopened.read_with(cx, |picker, cx| {
+                assert_eq!(picker.picker.read(cx).query(cx), "abc");
+            });
+        });
     }
 
     #[gpui::test]
