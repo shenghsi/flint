@@ -7262,26 +7262,43 @@ impl Editor {
         });
     }
 
+    fn restore_selections(
+        &mut self,
+        selections: Option<Arc<[Selection<Anchor>]>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selections) = selections.filter(|selections| !selections.is_empty()) {
+            self.change_selections(
+                SelectionEffects::no_scroll(),
+                window,
+                cx,
+                |selection_state| {
+                    selection_state.select_anchors(selections.to_vec());
+                },
+            );
+        }
+    }
+
     pub fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only(cx) {
             return;
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) =
-                self.selection_history.transaction(transaction_id).cloned()
-            {
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            } else {
-                log::error!(
-                    "No entry in selection_history found for undo. \
-                     This may correspond to a bug where undo does not update the selection. \
-                     If this is occurring, please add details to \
-                     https://github.com/zed-industries/flint/issues/22692"
-                );
-            }
+            let selections =
+                if let Some((selections, _)) = self.selection_history.transaction(transaction_id) {
+                    Some(selections.clone())
+                } else {
+                    log::error!(
+                        "No entry in selection_history found for undo. \
+                         This may correspond to a bug where undo does not update the selection. \
+                         If this is occurring, please add details to \
+                         https://github.com/zed-industries/flint/issues/22692"
+                    );
+                    None
+                };
+            self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             cx.emit(EditorEvent::Edited { transaction_id });
@@ -7295,12 +7312,10 @@ impl Editor {
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) =
-                self.selection_history.transaction(transaction_id).cloned()
+            let selections = if let Some((_, Some(selections))) =
+                self.selection_history.transaction(transaction_id)
             {
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
+                Some(selections.clone())
             } else {
                 log::error!(
                     "No entry in selection_history found for redo. \
@@ -7308,7 +7323,9 @@ impl Editor {
                      If this is occurring, please add details to \
                      https://github.com/zed-industries/flint/issues/22692"
                 );
-            }
+                None
+            };
+            self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             cx.emit(EditorEvent::Edited { transaction_id });
