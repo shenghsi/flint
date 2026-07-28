@@ -902,6 +902,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn select_query(&self, window: &mut Window, cx: &mut App) {
+        if let Head::Editor(editor) = &self.head {
+            editor.select_all(window, cx);
+        }
+    }
+
     fn scroll_to_item_index(&mut self, ix: usize) {
         match &mut self.element_container {
             ElementContainer::List(state) => state.scroll_to_reveal_item(ix),

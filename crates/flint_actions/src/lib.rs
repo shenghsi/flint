@@ -208,6 +208,18 @@ pub mod dev {
     );
 }
 
+pub mod text_finder {
+    use gpui::actions;
+
+    actions!(
+        text_finder,
+        [
+            /// Opens the project Text Finder.
+            Toggle,
+        ]
+    );
+}
+
 pub mod remote_debug {
     use gpui::actions;
 
