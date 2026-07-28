@@ -19,7 +19,7 @@ use open_path_prompt::{
     OpenPathPrompt,
     file_finder_settings::{FileFinderSettings, FileFinderWidth},
 };
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PreviewUpdate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
@@ -188,7 +188,8 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let project = delegate.project.clone();
+        let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, project, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
@@ -1573,6 +1574,10 @@ fn full_path_budget(
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "file_finder"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project files...".into()
     }
@@ -1589,6 +1594,12 @@ impl PickerDelegate for FileFinderDelegate {
         self.has_changed_selected_index = true;
         self.selected_index = ix;
         cx.notify();
+    }
+
+    fn try_get_preview_data_for_match(&self, cx: &App) -> Option<PreviewUpdate> {
+        let path_match = self.matches.get(self.selected_index)?;
+        let abs_path = path_match.abs_path(&self.project, cx)?;
+        Some(PreviewUpdate::from_path(abs_path))
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {

@@ -4495,6 +4495,90 @@ fn active_file_picker(
     })
 }
 
+#[gpui::test]
+async fn test_file_finder_preview(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.txt": "alpha\n",
+                "b.txt": "beta\n",
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| picker.read(cx).preview_layout()),
+        Some(picker::PreviewLayout::Hidden),
+        "preview is hidden until toggled"
+    );
+
+    cx.dispatch_action(picker::TogglePreview);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| picker.read(cx).preview_layout()),
+        Some(picker::PreviewLayout::Right)
+    );
+    cx.dispatch_action(picker::SetPreviewBelow);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| picker.read(cx).preview_layout()),
+        Some(picker::PreviewLayout::Below)
+    );
+
+    cx.simulate_input("txt");
+    cx.run_until_parked();
+    let first_path = cx.read(|cx| {
+        picker
+            .read(cx)
+            .preview_current_path(cx)
+            .map(|path| path.as_unix_str().to_string())
+    });
+    assert_eq!(first_path.as_deref(), Some("a.txt"));
+
+    cx.dispatch_action(SelectNext);
+    cx.run_until_parked();
+    let second_path = cx.read(|cx| {
+        picker
+            .read(cx)
+            .preview_current_path(cx)
+            .map(|path| path.as_unix_str().to_string())
+    });
+    assert_eq!(second_path.as_deref(), Some("b.txt"));
+    assert_ne!(first_path, second_path, "preview followed the selection");
+
+    cx.simulate_input("no-such-file");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| picker.read(cx).preview_current_path(cx)),
+        None,
+        "preview clears when the picker has no selected match"
+    );
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_preview_size(Some(gpui::px(500.)), window, cx);
+        assert_eq!(picker.preview_width(window), gpui::px(500.));
+        picker.set_preview_size(Some(gpui::px(10.)), window, cx);
+        assert!(
+            picker.preview_width(window) > gpui::px(10.),
+            "preview width is clamped up to its minimum"
+        );
+    });
+
+    cx.dispatch_action(picker::SetPreviewHidden);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| picker.read(cx).preview_layout()),
+        Some(picker::PreviewLayout::Hidden)
+    );
+}
+
 #[derive(Debug, Default)]
 struct SearchEntries {
     history: Vec<Arc<RelPath>>,
