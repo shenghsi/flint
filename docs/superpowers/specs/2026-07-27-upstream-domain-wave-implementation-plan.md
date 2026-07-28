@@ -1098,6 +1098,8 @@ Wave 6 completion gate against their integrated state.
 
 **Integrated branch:** `feature/search-picker-modernization`
 
+**Status:** Complete in [Flint PR #120](https://github.com/shenghsi/flint/pull/120).
+
 **Starting files:**
 
 - Symbol and outline picker implementations in `crates/editor` and
@@ -1122,6 +1124,8 @@ Wave 6 completion gate against their integrated state.
 
 **Integrated branch:** `feature/search-picker-modernization`
 
+**Status:** Complete in [Flint PR #120](https://github.com/shenghsi/flint/pull/120).
+
 **Starting files:**
 
 - `crates/search/src/`
@@ -1144,6 +1148,8 @@ Wave 6 completion gate against their integrated state.
 **Depends on:** Tasks 6.1-6.4.
 
 **Integrated branch:** `feature/search-picker-modernization`
+
+**Status:** Complete in [Flint PR #120](https://github.com/shenghsi/flint/pull/120).
 
 **Starting files:**
 
@@ -1169,6 +1175,8 @@ Wave 6 completion gate against their integrated state.
 **Classification:** Reimplementation of two upstream PRs in the integrated
 Wave 6 PR.
 
+**Status:** Complete in [Flint PR #120](https://github.com/shenghsi/flint/pull/120).
+
 #### Task 6.6a: Add the picker selection model
 
 **Integrated branch:** `feature/search-picker-modernization`
@@ -1188,10 +1196,15 @@ independently on the integrated branch.
 
 ### Wave 6 completion
 
-Run picker, File Finder, search, editor, project, and workspace tests. Build the
-app and manually verify resizing, preview cancellation, search-state sharing,
-LSP navigation, reopening, and multi-select. Open the integrated PR titled
-`search: Modernize symbol and LSP pickers`.
+Complete in [Flint PR #120](https://github.com/shenghsi/flint/pull/120),
+merged as `0373e988f5fde14865e30b802f61261a98e9d430`. Picker, File Finder,
+search, project-symbol, outline, LSP-location, editor, project, workspace,
+settings content, and Settings Editor suites passed locally. CI passed
+formatting, clippy, Linux build, Linux and Windows resource checks, and all
+4,682 workspace tests. The signed debug app bundle and executable were
+verified. Its log confirmed workspace initialization and first-frame
+rendering; interactive UI automation was unavailable because the Mac was
+accessed over SSH and exposed no attachable CGWindow.
 
 ## Wave 7: Performance and Settings Compatibility
 
