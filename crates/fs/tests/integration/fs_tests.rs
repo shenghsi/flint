@@ -726,6 +726,49 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_trash_preserves_symlink_target(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let target_path = temp_dir.path().join("target.txt");
+    let symlink_path = temp_dir.path().join("link.txt");
+    std::fs::write(&target_path, "target contents").expect("write symlink target");
+    std::os::unix::fs::symlink(&target_path, &symlink_path).expect("create symlink");
+    let fs = RealFs::new(None, executor);
+
+    let trashed_entry = fs
+        .trash(&symlink_path, RemoveOptions::default())
+        .await
+        .expect("trashing the symlink should succeed");
+
+    assert!(!symlink_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(&target_path).expect("read symlink target after trash"),
+        "target contents"
+    );
+
+    let restored_path = fs
+        .restore(trashed_entry)
+        .await
+        .expect("restoring the symlink should succeed");
+    assert_eq!(restored_path.file_name(), symlink_path.file_name());
+    assert!(
+        std::fs::symlink_metadata(&symlink_path)
+            .expect("read restored symlink metadata")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target_path).expect("read symlink target after restore"),
+        "target contents"
+    );
+}
+
+#[gpui::test]
 async fn test_fake_fs_trash(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
     fs.insert_tree(
