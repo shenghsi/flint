@@ -3379,7 +3379,7 @@ impl ToOffset for usize {
 impl ToOffset for Anchor {
     #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        snapshot.summary_for_anchor(self)
+        snapshot.offset_for_anchor(self)
     }
 }
 
@@ -3521,7 +3521,7 @@ impl FromAnchor for PointUtf16 {
 impl FromAnchor for usize {
     #[inline]
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
-        snapshot.summary_for_anchor(anchor)
+        snapshot.offset_for_anchor(anchor)
     }
 }
 
