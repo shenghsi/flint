@@ -1386,7 +1386,8 @@ measurement.
 
 **Steps:**
 
-1. Export stable and preview release-note PRs.
+1. Export stable release-note PRs from non-`-pre` tags. Do not use preview
+   release notes as discovery inputs.
 2. Deduplicate by upstream PR.
 3. Prove fork-point ancestry for each candidate.
 4. Classify remaining editor, language, debugger, platform, and extension
@@ -1427,7 +1428,7 @@ focused test PRs for missing automation rather than one large mixed PR.
 
 1. Record the completed upstream baseline by Zed commit and tags.
 2. Assign an owner and review cadence.
-3. Define stable/preview deduplication by PR.
+3. Define stable-release deduplication by PR and exclude preview tags.
 4. Require immediate triage of safety, corruption, security, hang, and data-loss
    fixes.
 5. Require later-main correction review before implementation.
