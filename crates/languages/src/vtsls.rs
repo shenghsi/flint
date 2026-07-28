@@ -60,7 +60,12 @@ impl VtslsLspAdapter {
 
         if self
             .fs
-            .is_dir(&adapter.worktree_root_path().join(tsdk_path))
+            .is_file(
+                &adapter
+                    .worktree_root_path()
+                    .join(tsdk_path)
+                    .join("tsserver.js"),
+            )
             .await
         {
             Some(tsdk_path)
@@ -413,7 +418,62 @@ async fn get_cached_ts_server_binary(
 
 #[cfg(test)]
 mod tests {
+    use gpui::BackgroundExecutor;
+    use node_runtime::NodeRuntime;
+    use project::FakeFs;
+    use serde_json::json;
+    use util::path;
+
+    use crate::test_support::TestLspAdapterDelegate;
     use crate::vtsls::VtslsLspAdapter;
+
+    #[gpui::test]
+    async fn typescript_7_project_sdk_is_not_passed_to_vtsls(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "node_modules": {
+                    "typescript": {
+                        "lib": {
+                            "typescript.js": "",
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let delegate = TestLspAdapterDelegate::new(path!("/root").into());
+        let adapter = VtslsLspAdapter::new(NodeRuntime::unavailable(), fs);
+
+        assert_eq!(adapter.tsdk_path(&delegate).await, None);
+    }
+
+    #[gpui::test]
+    async fn typescript_6_project_sdk_is_passed_to_vtsls(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "node_modules": {
+                    "typescript": {
+                        "lib": {
+                            "tsserver.js": "",
+                            "typescript.js": "",
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let delegate = TestLspAdapterDelegate::new(path!("/root").into());
+        let adapter = VtslsLspAdapter::new(NodeRuntime::unavailable(), fs);
+
+        assert_eq!(
+            adapter.tsdk_path(&delegate).await,
+            Some("node_modules/typescript/lib")
+        );
+    }
 
     #[test]
     fn test_diagnostic_message_to_markdown() {

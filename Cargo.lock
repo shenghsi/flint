@@ -8349,6 +8349,7 @@ dependencies = [
  "buffer_diff",
  "clock",
  "collections",
+ "criterion",
  "ctor",
  "futures-lite 1.13.0",
  "gpui",
@@ -17702,9 +17703,11 @@ dependencies = [
 name = "worktree_benchmarks"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "fs",
  "gpui_platform",
  "settings",
+ "tempfile",
  "worktree",
 ]
 
