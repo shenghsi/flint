@@ -1451,3 +1451,21 @@ The P0-P2 program is complete when:
 - performance changes have reproducible measurements;
 - the v1.6-v1.12 reconciliation has no unclassified P0-P2 item; and
 - the recurring upstream review process has a named owner and baseline.
+
+### Completion record
+
+Completed on 2026-07-29. The stable-only reconciliation classifies all 568
+unique PRs cited by Zed's non-preview v1.6-v1.12 release notes exactly once.
+Wave 8 landed four safety fixes in
+[Flint PR #134](https://github.com/shenghsi/flint/pull/134), merged as
+`71afcb5e64645f75e11bc27bd6304bb269ba46b6`.
+
+The exact-head CI run passed formatting, Linux build and clippy, and all 4,695
+executed workspace tests with 11 skipped. The separate process-resource run
+passed its Ubuntu and Windows util and terminal tests and scoped clippy checks.
+The compatibility matrix also records the macOS bundle smoke, local, Direct,
+Tunneled, Git, Agent Threads, picker, migration, and extension evidence.
+
+Recurring review is owned by `@shenghsi`: review each stable release within
+seven days, immediately triage safety fixes, review later-main corrections
+before implementation, deduplicate by PR, and exclude preview tags.
