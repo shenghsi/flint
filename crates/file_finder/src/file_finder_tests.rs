@@ -4534,6 +4534,14 @@ async fn test_file_finder_preview(cx: &mut TestAppContext) {
 
     cx.simulate_input("txt");
     cx.run_until_parked();
+    picker.read_with(cx, |picker, cx| {
+        assert!(picker.delegate.supports_multi_select());
+        let first_id = picker
+            .delegate
+            .item_id(0)
+            .expect("file matches should have stable identities");
+        assert!(picker.delegate.item_id_is_valid(&first_id, cx));
+    });
     let first_path = cx.read(|cx| {
         picker
             .read(cx)

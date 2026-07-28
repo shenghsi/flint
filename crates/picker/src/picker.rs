@@ -323,6 +323,17 @@ pub trait PickerDelegate: Sized + 'static {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem>;
 
+    fn render_match_with_state(
+        &self,
+        ix: usize,
+        selected: bool,
+        _multi_selected: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        self.render_match(ix, selected, window, cx)
+    }
+
     fn render_header(
         &self,
         _window: &mut Window,
@@ -928,7 +939,14 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
         self.set_selected_index(ix, None, false, window, cx);
-        self.do_confirm(secondary, window, cx)
+        if secondary && self.delegate.supports_multi_select() {
+            if !self.multi_select_enabled {
+                self.set_multi_select_enabled(true, cx);
+            }
+            self.toggle_item_selection(ix, window, cx);
+        } else {
+            self.do_confirm(secondary, window, cx)
+        }
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -1153,9 +1171,10 @@ impl<D: PickerDelegate> Picker<D> {
                     }
                 }))
             })
-            .children(self.delegate.render_match(
+            .children(self.delegate.render_match_with_state(
                 ix,
                 ix == self.delegate.selected_index(),
+                self.is_item_selected(ix),
                 window,
                 cx,
             ))
@@ -1525,6 +1544,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["a", "c"]
         );
+    }
+
+    #[gpui::test]
+    async fn test_secondary_click_toggles_multi_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::with_ids(&["a", "b"]), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.handle_click(1, true, window, cx);
+            assert!(picker.multi_select_enabled());
+            assert_eq!(
+                picker
+                    .selected_item_ids()
+                    .iter()
+                    .map(PickerItemId::as_str)
+                    .collect::<Vec<_>>(),
+                vec!["b"]
+            );
+            assert_eq!(
+                picker.delegate.confirmed_index.get(),
+                None,
+                "secondary-clicking a multi-select delegate must not confirm"
+            );
+        });
     }
 
     #[gpui::test]

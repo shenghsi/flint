@@ -23,6 +23,7 @@
 //!                             . --------  Project search tab
 //! ```
 use std::ops::ControlFlow;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
@@ -37,18 +38,18 @@ use gpui::{
 };
 use gpui::{Entity, FocusHandle};
 use language::{Buffer, LanguageAwareStyling};
-use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectPath, Search};
+use picker::{Picker, PickerDelegate, PickerItemId};
+use project::{Project, ProjectPath, Search, WorktreeId};
 use project::{SearchResults, search::SearchQuery, search::SearchResult};
 use settings::Settings;
 use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    Disclosure, Divider, FluentBuilder, ListItem, ListItemSpacing, Toggleable, Tooltip, prelude::*,
-    text_for_keystroke,
+    Checkbox, Disclosure, Divider, FluentBuilder, ListItem, ListItemSpacing, ToggleState,
+    Toggleable, Tooltip, prelude::*, text_for_keystroke,
 };
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::SplitDirection;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
@@ -584,6 +585,24 @@ const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 const MAX_MATCH_CONTEXT_BYTES: usize = 512;
 
+fn project_path_item_id(path: &ProjectPath) -> PickerItemId {
+    PickerItemId::new(format!(
+        "{}:{}",
+        path.worktree_id.to_usize(),
+        path.path.as_unix_str()
+    ))
+}
+
+fn parse_project_path_item_id(id: &PickerItemId) -> Option<ProjectPath> {
+    let (worktree_id, path) = id.as_str().split_once(':')?;
+    let worktree_id = worktree_id.parse::<usize>().ok()?;
+    let path = RelPath::unix(Path::new(path)).ok()?;
+    Some(ProjectPath {
+        worktree_id: WorktreeId::from_usize(worktree_id),
+        path: Arc::from(path),
+    })
+}
+
 impl PickerDelegate for Delegate {
     type ListItem = AnyElement;
 
@@ -597,6 +616,56 @@ impl PickerDelegate for Delegate {
 
     fn match_count(&self) -> usize {
         self.entries.len()
+    }
+
+    fn supports_multi_select(&self) -> bool {
+        true
+    }
+
+    fn item_id(&self, index: usize) -> Option<PickerItemId> {
+        let path = match self.entries.get(index)? {
+            Entry::Header(path) => path,
+            Entry::Match(match_index) => &self.matches.get(*match_index)?.path,
+            Entry::Separator => return None,
+        };
+        Some(project_path_item_id(path))
+    }
+
+    fn item_id_is_valid(&self, id: &PickerItemId, cx: &App) -> bool {
+        parse_project_path_item_id(id).is_some_and(|path| {
+            self.project(cx)
+                .read(cx)
+                .worktree_for_id(path.worktree_id, cx)
+                .is_some()
+        })
+    }
+
+    fn confirm_multi(
+        &mut self,
+        ids: Vec<PickerItemId>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let paths = ids
+            .iter()
+            .filter_map(parse_project_path_item_id)
+            .collect::<Vec<_>>();
+        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+            return;
+        };
+        let open_tasks = workspace.update(cx, |workspace, cx| {
+            paths
+                .into_iter()
+                .map(|path| workspace.open_path_preview(path, None, false, false, true, window, cx))
+                .collect::<Vec<_>>()
+        });
+        cx.spawn_in(window, async move |_, _| {
+            for open_task in open_tasks {
+                open_task.await.log_err();
+            }
+        })
+        .detach();
+        cx.emit(DismissEvent);
     }
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
@@ -785,6 +854,17 @@ impl PickerDelegate for Delegate {
         &self,
         ix: usize,
         selected: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        self.render_match_with_state(ix, selected, false, window, cx)
+    }
+
+    fn render_match_with_state(
+        &self,
+        ix: usize,
+        selected: bool,
+        multi_selected: bool,
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
@@ -796,6 +876,7 @@ impl PickerDelegate for Delegate {
                     .into_any_element(),
             ),
             Entry::Header(path) => {
+                let picker = cx.entity().downgrade();
                 let path_style = self.project(cx).read(cx).path_style(cx);
                 let file_name = path
                     .path
@@ -831,6 +912,28 @@ impl PickerDelegate for Delegate {
                                 .p_1()
                                 .gap_1p5()
                                 .rounded_sm()
+                                .child(
+                                    Checkbox::new(
+                                        ("text-finder-multi-select", ix),
+                                        if multi_selected {
+                                            ToggleState::Selected
+                                        } else {
+                                            ToggleState::Unselected
+                                        },
+                                    )
+                                    .on_click(
+                                        move |_, window, cx| {
+                                            picker
+                                                .update(cx, |picker, cx| {
+                                                    if !picker.multi_select_enabled() {
+                                                        picker.set_multi_select_enabled(true, cx);
+                                                    }
+                                                    picker.toggle_item_selection(ix, window, cx);
+                                                })
+                                                .log_err();
+                                        },
+                                    ),
+                                )
                                 .when(selected, |this| {
                                     this.bg(cx.theme().colors().ghost_element_selected)
                                 })
@@ -1289,6 +1392,7 @@ mod tests {
 
         picker.update(cx, |picker, _| {
             assert_eq!(picker.delegate.matches.len(), 2);
+            assert!(picker.delegate.supports_multi_select());
             assert_eq!(
                 picker
                     .delegate
@@ -1300,6 +1404,25 @@ mod tests {
             );
 
             let collapsed_path = picker.delegate.matches[0].path.clone();
+            let header_index = picker
+                .delegate
+                .entries
+                .iter()
+                .position(|entry| matches!(entry, Entry::Header(path) if *path == collapsed_path))
+                .expect("result group should have a header");
+            let match_index = picker
+                .delegate
+                .entries
+                .iter()
+                .position(|entry| {
+                    matches!(entry, Entry::Match(index) if picker.delegate.matches[*index].path == collapsed_path)
+                })
+                .expect("expanded result group should have a match");
+            assert_eq!(
+                picker.delegate.item_id(header_index),
+                picker.delegate.item_id(match_index),
+                "a match row should select its parent file"
+            );
             picker.delegate.toggle_group_collapsed(&collapsed_path);
             assert_eq!(
                 picker

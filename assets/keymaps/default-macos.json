@@ -995,6 +995,7 @@
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
+      "cmd-shift-s": "picker::ToggleMultiSelect",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
     },
@@ -1018,6 +1019,14 @@
     "bindings": {
       "cmd-shift-a": "file_finder::ToggleSplitMenu",
       "cmd-shift-i": "file_finder::ToggleFilterMenu",
+      "tab": "picker::MultiSelectNext",
+    },
+  },
+  {
+    "context": "TextFinder || (TextFinder > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "tab": "picker::MultiSelectNext",
     },
   },
   {
