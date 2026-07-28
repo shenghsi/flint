@@ -2342,6 +2342,7 @@ Sentence ending file2.rs.
                     .to_vec(),
             )
             .await;
+        cx.background_executor.run_until_parked();
 
         // file2.rs:5:3 should be highlighted and clickable
         cx.set_state(indoc! {"
@@ -2418,6 +2419,7 @@ Sentence ending file2.rs.
                     .to_vec(),
             )
             .await;
+        cx.background_executor.run_until_parked();
 
         // file2.rs:3 should be highlighted and clickable
         cx.set_state(indoc! {"
@@ -2475,6 +2477,7 @@ Sentence ending file2.rs.
                 "line 1\nline 2\nline 3\n".as_bytes().to_vec(),
             )
             .await;
+        cx.background_executor.run_until_parked();
 
         // file2.rs:2:in should resolve to file2.rs line 2 (like Ruby backtraces)
         cx.set_state(indoc! {"
