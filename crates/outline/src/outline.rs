@@ -12,7 +12,7 @@ use gpui::{
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PreviewUpdate};
 use settings::Settings;
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
@@ -176,9 +176,15 @@ impl OutlineView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> OutlineView {
+        let project = editor.read(cx).project().cloned();
         let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
+            let picker = if let Some(project) = project {
+                Picker::uniform_list_with_preview(delegate, project, window, cx)
+            } else {
+                Picker::uniform_list(delegate, window, cx)
+            };
+            picker
                 .max_height(Some(vh(0.75, window)))
                 .show_scrollbar(true)
         });
@@ -284,6 +290,23 @@ impl PickerDelegate for OutlineViewDelegate {
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) {
         self.set_selected_index(ix, true, cx);
+    }
+
+    fn try_get_preview_data_for_match(&self, cx: &App) -> Option<PreviewUpdate> {
+        let selected_match = self.matches.get(self.selected_match_index)?;
+        let outline_item = self.outline.items.get(selected_match.candidate_id)?;
+        let multi_buffer = self.active_editor.read(cx).buffer().clone();
+        let (buffer, start) = multi_buffer
+            .read(cx)
+            .text_anchor_for_position(outline_item.range.start, cx)?;
+        let (end_buffer, end) = multi_buffer
+            .read(cx)
+            .text_anchor_for_position(outline_item.range.end, cx)?;
+        if buffer != end_buffer {
+            return None;
+        }
+
+        Some(PreviewUpdate::from_buffer(buffer, start..end))
     }
 
     fn update_matches(
@@ -536,6 +559,13 @@ mod tests {
 
         let outline_view = open_outline_view(&workspace, cx);
         ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            outline_view.read_with(cx, |outline_view, cx| {
+                outline_view.preview_current_path(cx)
+            }),
+            Some(rel_path("a.rs").into()),
+            "buffer symbols should preview the active file"
+        );
         assert_eq!(
             highlighted_display_rows(&editor, cx),
             Vec::<u32>::new(),

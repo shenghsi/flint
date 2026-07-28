@@ -5,7 +5,7 @@ use gpui::{
     TextStyle, WeakEntity, Window, relative, rems,
 };
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PreviewUpdate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
@@ -25,8 +25,9 @@ pub fn init(cx: &mut App) {
                     let project = workspace.project().clone();
                     let handle = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, move |window, cx| {
-                        let delegate = ProjectSymbolsDelegate::new(handle, project);
-                        Picker::uniform_list(delegate, window, cx).width(rems(34.))
+                        let delegate = ProjectSymbolsDelegate::new(handle, project.clone());
+                        Picker::uniform_list_with_preview(delegate, project, window, cx)
+                            .width(rems(34.))
                     })
                 },
             );
@@ -183,6 +184,13 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         self.selected_match_index = ix;
     }
 
+    fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
+        let candidate_id = self.matches.get(self.selected_match_index)?.candidate_id;
+        Some(PreviewUpdate::from_symbol(
+            self.symbols.get(candidate_id)?.clone(),
+        ))
+    }
+
     fn update_matches(
         &mut self,
         query: String,
@@ -330,7 +338,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{path::Path, sync::Arc};
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::MultiWorkspace;
 
     #[gpui::test]
@@ -429,8 +437,9 @@ mod tests {
 
         // Create the project symbols view.
         let symbols = cx.new_window_entity(|window, cx| {
-            Picker::uniform_list(
+            Picker::uniform_list_with_preview(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
+                project.clone(),
                 window,
                 cx,
             )
@@ -457,11 +466,19 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.read_with(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, cx| {
             let delegate = &symbols.delegate;
             assert_eq!(delegate.matches.len(), 2);
             assert_eq!(delegate.matches[0].string, "ton");
             assert_eq!(delegate.matches[1].string, "one");
+            assert!(
+                delegate.try_get_preview_data_for_match(cx).is_some(),
+                "the selected project symbol should provide preview data"
+            );
+            assert_eq!(
+                symbols.preview_current_path(cx),
+                Some(rel_path("test.rs").into())
+            );
         });
 
         // Spawn more updates such that in the end, there are again no matches.
