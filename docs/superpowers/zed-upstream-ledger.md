@@ -229,11 +229,25 @@ SSH and exposed no attachable CGWindow.
 | P2 | [#58881](https://github.com/zed-industries/zed/pull/58881) | `253606e8e0396da2d6897c1eb996ea92aece23c4` | v1.9 notes | Absent | crash handler and process launch | `adapt` | Wave 2 process ownership | Task 7.1 startup workload and lifecycle | `proposed` | — | Keep separate from editor hot paths. |
 | P2 | [#58681](https://github.com/zed-industries/zed/pull/58681) | `ab2683b04cc6f3563e3a745dd10076746030cac0` | v1.7 notes | Present | text implementation | `none` | None | Existing large-edit behavior | `baseline-present` | — | Structural sharing is already inherited. |
 | P2 | [#59710](https://github.com/zed-industries/zed/pull/59710) | `76e07d5c9ac38930d051c153b21eeb57ba71cbb4` | v1.10 notes | Absent | default settings and formatter behavior | `audit` | Explicit product decision | Task 7.2 default and migration tests | `proposed` | — | Preserve current behavior until separately approved. |
-| P2 | [#59860](https://github.com/zed-industries/zed/pull/59860) | `40d20036af34343a09f0ce6a2eb38c9e5a60e9ae` | v1.10 notes | Absent | `crates/settings_ui`, `crates/settings_content`, `crates/agent_threads` | `audit` | None | Task 7.3 exact Agent Threads JSON paths | `proposed` | — | Native model-provider and MCP pages are excluded; audit external-agent coverage only. |
-| P1 | [#60870](https://github.com/zed-industries/zed/pull/60870) | `b9bfd5722e6520cdb54378c2d8a341edf5981e6d` | v1.10.3 notes | Absent | `crates/node_runtime` | `adapt` | None | `test_npm_info_accepts_npm_12_array_response` plus existing object-response tests | `implementing` | [#122](https://github.com/shenghsi/flint/pull/122) | Accept npm 12's one-element array response while preserving earlier object responses and include malformed stdout in parser errors. |
+| P2 | [#59860](https://github.com/zed-industries/zed/pull/59860) | `40d20036af34343a09f0ce6a2eb38c9e5a60e9ae` | v1.10 notes | Absent | `crates/settings_ui`, `crates/settings_content`, `crates/agent_threads` | `audit` | None | Task 7.3 exact Agent Threads JSON paths and capability tests | `implementing` | [#123](https://github.com/shenghsi/flint/pull/123) | Zed model-provider and MCP settings are excluded by the product boundary. Flint's external-agent controls already exist; add complete exact-path coverage for their Settings Editor fields. |
+| P1 | [#60870](https://github.com/zed-industries/zed/pull/60870) | `b9bfd5722e6520cdb54378c2d8a341edf5981e6d` | v1.10.3 notes | Absent | `crates/node_runtime` | `adapt` | None | `test_npm_info_accepts_npm_12_array_response` plus existing object-response tests | `landed` | [#122](https://github.com/shenghsi/flint/pull/122) | Merged as `627ca8aa694cfab018252c0be90406e7d3359d00`; accepts npm 12's one-element array response while preserving earlier object responses and includes malformed stdout in parser errors. |
 | P1 | [#60970](https://github.com/zed-industries/zed/pull/60970) | `a25f19cb2f55baa4cf8638981043ac64af741d62` | v1.12 notes | Absent | `crates/languages` | `adapt` | Review #61126 | Task 7.5 TypeScript 6 and 7 projects | `proposed` | — | Pinning may be only an intermediate fix. |
 | P1 | [#61126](https://github.com/zed-industries/zed/pull/61126) | `c7ee116ead3476eaf6f34a8bbb833f628d300959` | v1.13.0-pre notes | Absent | `crates/languages`, extension recommendation | `audit` | #60970 | Task 7.5 final vtsls and tsgo behavior | `proposed` | — | Avoid false invalid-tsserver errors. |
 | P2 | [#58259](https://github.com/zed-industries/zed/pull/58259) | `53667331bdaa09d25193d5156393d6169b12d84a` | v1.7 notes | Present | extension download architecture | `none` | None | Source evidence | `baseline-present` | — | x86 extension-managed binary downloads were already removed. |
+
+Task 7.3 audit evidence (reviewed 2026-07-28): Agent Threads registers
+Codex, Claude, and Pi. Each has Settings Editor controls for its initialization
+command and visibility, while panel-wide controls cover the thread limit, plan
+usage, completion notifications, session reopening, and dock position. The
+exact-path acceptance table covers all eleven fields. Credential commands and
+plan usage are gated by `credential_policy` and `supports_plan_usage`; Pi has
+neither capability, and its omission is tested. Remote credential UI is
+available only for Tunneled routes, and credential launch tests prove that
+Direct routes retain the ambient executable while Tunneled routes use the
+pinned Flint-managed executable. The SSH route selector and persistence live
+with remote connection settings rather than per-agent settings. Zed's native
+language-model provider and MCP configuration pages have no Flint Agent
+Threads equivalent and remain excluded by the product boundary.
 
 ## Wave 8: Final audit and recurring maintenance
 
