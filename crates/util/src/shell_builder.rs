@@ -10,7 +10,7 @@ pub struct ShellBuilder {
     program: String,
     args: Vec<String>,
     interactive: bool,
-    /// Whether to redirect stdin to /dev/null for the spawned command as a subshell.
+    /// Whether to redirect stdin to /dev/null for the spawned shell.
     redirect_stdin: bool,
     kind: ShellKind,
 }
@@ -99,12 +99,12 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Fish => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
+                    ShellKind::Fish | ShellKind::Posix => {
+                        // A separate line makes interactive shells apply the redirect before
+                        // parsing a later command that may contain invalid shell syntax.
+                        combined_command.insert_str(0, "exec </dev/null\n");
                     }
-                    ShellKind::Posix
-                    | ShellKind::Nushell
+                    ShellKind::Nushell
                     | ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
@@ -145,12 +145,12 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Fish => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
+                    ShellKind::Fish | ShellKind::Posix => {
+                        // A separate line makes interactive shells apply the redirect before
+                        // parsing a later command that may contain invalid shell syntax.
+                        combined_command.insert_str(0, "exec </dev/null\n");
                     }
-                    ShellKind::Posix
-                    | ShellKind::Nushell
+                    ShellKind::Nushell
                     | ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
@@ -286,7 +286,7 @@ mod test {
             .build(Some("echo".into()), &["test".to_string()]);
 
         assert_eq!(program, "fish");
-        assert_eq!(args, vec!["-i", "-c", "begin; echo test; end </dev/null"]);
+        assert_eq!(args, vec!["-i", "-c", "exec </dev/null\necho test"]);
     }
 
     #[test]
@@ -302,7 +302,7 @@ mod test {
         assert_eq!(program, "sh");
         assert_eq!(
             args,
-            vec!["-i", "-c", "(cat <<EOF\nhello\nEOF\n) </dev/null"]
+            vec!["-i", "-c", "exec </dev/null\ncat <<EOF\nhello\nEOF"]
         );
     }
 

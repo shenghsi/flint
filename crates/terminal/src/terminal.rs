@@ -3052,6 +3052,78 @@ mod tests {
         (terminal, completion_rx)
     }
 
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn redirected_shell_exits_after_a_syntax_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let shell = Shell::Program("dash".to_owned());
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .redirect_stdin_to_dev_null()
+            .build(Some("cat <(echo hi)".to_owned()), &[]);
+        let (terminal, completion_rx) = build_test_terminal_with_arguments(cx, program, args).await;
+
+        let completion = completion_rx.recv().fuse();
+        let timeout = cx.background_executor.timer(Duration::from_secs(2)).fuse();
+        futures::pin_mut!(completion, timeout);
+
+        futures::select_biased! {
+            status = completion => {
+                let status = status.expect("terminal should report its exit status");
+                assert!(
+                    status.is_some_and(|status| !status.success()),
+                    "a syntax error should exit the shell with a failure"
+                );
+            }
+            _ = timeout => {
+                let lines = terminal.read_with(cx, |terminal, _| {
+                    terminal.last_n_non_empty_lines(10)
+                });
+                panic!(
+                    "the shell waited for PTY input after reporting a syntax error; \
+                    output={lines:?}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn redirected_unquoted_shell_exits_after_a_syntax_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let shell = Shell::Program("dash".to_owned());
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .redirect_stdin_to_dev_null()
+            .build_no_quote(Some("cat <(echo hi)".to_owned()), &[]);
+        let (terminal, completion_rx) = build_test_terminal_with_arguments(cx, program, args).await;
+
+        let completion = completion_rx.recv().fuse();
+        let timeout = cx.background_executor.timer(Duration::from_secs(2)).fuse();
+        futures::pin_mut!(completion, timeout);
+
+        futures::select_biased! {
+            status = completion => {
+                let status = status.expect("terminal should report its exit status");
+                assert!(
+                    status.is_some_and(|status| !status.success()),
+                    "a syntax error should exit the shell with a failure"
+                );
+            }
+            _ = timeout => {
+                let lines = terminal.read_with(cx, |terminal, _| {
+                    terminal.last_n_non_empty_lines(10)
+                });
+                panic!(
+                    "the shell waited for PTY input after reporting a syntax error; \
+                    output={lines:?}"
+                );
+            }
+        }
+    }
+
     fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
