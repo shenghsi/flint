@@ -79,6 +79,7 @@ reconstructible request. A request contains:
 - the invocation context needed to issue it again;
 - action options;
 - the previous query;
+- whether multi-select mode was enabled;
 - stable selected identities where the consumer supports restoration.
 
 The request does not contain a live view, entity, delegate, task, buffer
@@ -159,6 +160,13 @@ stable matched files, not individual matching lines. This makes multi-confirm
 open each selected file once and remains meaningful when result groups expand
 or collapse.
 
+File Finder renders one checkbox on each result row. Text Finder renders one
+checkbox on each file-header row and does not duplicate it on every match
+line. Toggling multi-selection while a match line is focused selects or
+deselects that line's parent file. A collapsed file header remains selectable.
+Match rows reflect their parent file's selected styling so keyboard users can
+see the state without moving focus back to the header.
+
 Multi-select behavior is:
 
 - regular confirmation retains existing single-result behavior;
@@ -173,6 +181,11 @@ Multi-select behavior is:
 - disabled or vanished entries cannot be newly selected and are removed during
   reconciliation;
 - dismissal clears live selection state after recording reopenable state.
+
+Reopening restores whether multi-select mode was enabled as well as the stable
+selected identities that remain valid. A reconstructed picker with no
+remaining selected identities may still reopen in multi-select mode when that
+was the recorded state.
 
 Multi-confirm opens valid selections in deterministic result order. Individual
 open failures are surfaced through Flint's existing error-notification path;
