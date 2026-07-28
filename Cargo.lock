@@ -13843,6 +13843,7 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "criterion",
  "ctor",
  "gpui",
  "log",
