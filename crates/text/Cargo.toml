@@ -41,3 +41,7 @@ zlog.workspace = true
 [[bench]]
 name = "operation_queue"
 harness = false
+
+[[bench]]
+name = "anchor_resolution"
+harness = false

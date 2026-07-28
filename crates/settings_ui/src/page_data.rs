@@ -8910,11 +8910,22 @@ mod tests {
     }
 
     #[test]
-    fn agent_threads_per_agent_settings_include_all_registered_agents() {
+    fn agent_threads_settings_use_exact_json_paths() {
         let page = panels_page();
         let pages = [page];
 
         for (title, json_path) in [
+            (
+                "Max Visible Threads Per Agent",
+                "agent_threads.max_visible_threads_per_agent",
+            ),
+            ("Show Plan Usage", "agent_threads.show_plan_usage"),
+            ("Notify When Finished", "agent_threads.notify_when_finished"),
+            (
+                "Reopen Sessions",
+                "agent_threads.reopen_sessions_on_startup",
+            ),
+            ("Agent Threads Panel Dock", "agent_threads.dock"),
             (
                 "Codex Initialization Command",
                 "agent_threads.codex.initialization_command",
