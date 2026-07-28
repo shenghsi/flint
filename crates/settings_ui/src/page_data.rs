@@ -7194,6 +7194,22 @@ fn language_settings_field_mut<T>(
     write(language_content, value);
 }
 
+fn lsp_results_location_setting_item() -> SettingsPageItem {
+    SettingsPageItem::SettingItem(SettingItem {
+        title: "LSP Results Location",
+        description: "Where to show LSP results that can contain multiple locations (Go to Definition, Go to Implementation, Find All References).",
+        field: Box::new(SettingField {
+            json_path: Some("lsp_results_location"),
+            pick: |settings_content| settings_content.editor.lsp_results_location.as_ref(),
+            write: |settings_content, value, _| {
+                settings_content.editor.lsp_results_location = value;
+            },
+        }),
+        metadata: None,
+        files: USER,
+    })
+}
+
 fn language_settings_data() -> Box<[SettingsPageItem]> {
     fn indentation_section() -> [SettingsPageItem; 5] {
         [
@@ -8477,7 +8493,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 9] {
+    fn lsp_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8577,6 +8593,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                 metadata: None,
                 files: USER,
             }),
+            lsp_results_location_setting_item(),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Semantic Tokens",
                 description: {
@@ -8932,6 +8949,15 @@ mod tests {
                 .json_path(),
             Some("terminal.open_links_in_mouse_mode")
         );
+    }
+
+    #[test]
+    fn lsp_results_location_uses_exact_json_path() {
+        let SettingsPageItem::SettingItem(setting_item) = lsp_results_location_setting_item()
+        else {
+            panic!("LSP results location should be a setting item");
+        };
+        assert_eq!(setting_item.field.json_path(), Some("lsp_results_location"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod multi_workspace_tests;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
+mod picker_history;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
@@ -35,6 +36,7 @@ pub use multi_workspace::{
     SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
+pub use picker_history::*;
 pub use remote::{
     RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
 };
@@ -296,6 +298,8 @@ actions!(
         OpenComponentPreview,
         /// Reloads the active item.
         ReloadActiveItem,
+        /// Reopens the most recently dismissed picker in the current window.
+        ReopenLastPicker,
         /// Resets the active dock to its default size.
         ResetActiveDockSize,
         /// Resets all open docks to their default sizes.
@@ -1296,6 +1300,8 @@ pub struct Workspace {
     active_workspace_id: Option<Rc<Cell<EntityId>>>,
     active_worktree_creation: ActiveWorktreeCreation,
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,
+    picker_history: Option<PickerHistoryEntry>,
+    pending_picker_reopen: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1526,6 +1532,16 @@ impl Workspace {
             },
         )
         .detach();
+        cx.subscribe_in(
+            &modal_layer,
+            window,
+            |workspace, _, _: &modal_layer::ModalClosedEvent, window, cx| {
+                if workspace.pending_picker_reopen {
+                    workspace.execute_picker_reopen(window, cx);
+                }
+            },
+        )
+        .detach();
 
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
@@ -1655,6 +1671,8 @@ impl Workspace {
             open_in_dev_container: false,
             _dev_container_task: None,
             deferred_save_items: Vec::new(),
+            picker_history: None,
+            pending_picker_reopen: false,
         }
     }
 
@@ -6238,6 +6256,7 @@ impl Workspace {
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
+            .on_action(cx.listener(Self::reopen_last_picker))
             .on_action(cx.listener(Self::toggle_theme_mode))
             .on_action(cx.listener(|workspace, action: &Save, window, cx| {
                 workspace
@@ -6692,6 +6711,54 @@ impl Workspace {
     pub fn hide_modal(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.modal_layer
             .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx))
+    }
+
+    pub fn record_picker_request(
+        &mut self,
+        request: Arc<dyn ReopenablePickerRequest>,
+        state: StoredPickerState,
+    ) {
+        self.picker_history = Some(PickerHistoryEntry { request, state });
+        self.pending_picker_reopen = false;
+    }
+
+    pub fn has_reopenable_picker(&self) -> bool {
+        self.picker_history.is_some()
+    }
+
+    pub fn reopenable_picker_is_valid(&self, cx: &App) -> bool {
+        self.picker_history
+            .as_ref()
+            .is_some_and(|entry| entry.request.is_valid(self, cx))
+    }
+
+    fn execute_picker_reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.picker_history.clone() else {
+            return;
+        };
+        if !entry.request.is_valid(self, cx) {
+            self.picker_history = None;
+            self.pending_picker_reopen = false;
+            return;
+        }
+        entry
+            .request
+            .reopen(entry.state, self, window, cx)
+            .detach_and_log_err(cx);
+        self.pending_picker_reopen = false;
+    }
+
+    fn reopen_last_picker(
+        &mut self,
+        _: &ReopenLastPicker,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.modal_layer.read(cx).has_active_modal() {
+            self.pending_picker_reopen = true;
+            return;
+        }
+        self.execute_picker_reopen(window, cx);
     }
 
     pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
@@ -12188,6 +12255,136 @@ mod tests {
         ) -> impl IntoElement {
             div().track_focus(&self.0)
         }
+    }
+
+    struct ReconstructTestPickerRequest {
+        construction_count: Arc<AtomicUsize>,
+        valid: Arc<AtomicBool>,
+    }
+
+    impl ReopenablePickerRequest for ReconstructTestPickerRequest {
+        fn is_valid(&self, _workspace: &Workspace, _cx: &App) -> bool {
+            self.valid.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn reopen(
+            &self,
+            _state: StoredPickerState,
+            workspace: &mut Workspace,
+            window: &mut Window,
+            cx: &mut Context<Workspace>,
+        ) -> Task<Result<()>> {
+            self.construction_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            workspace.toggle_modal(window, cx, TestModal::new);
+            Task::ready(Ok(()))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reopen_last_picker_reconstructs_a_new_modal(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let construction_count = Arc::new(AtomicUsize::new(1));
+        let valid = Arc::new(AtomicBool::new(true));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestModal::new);
+            workspace.record_picker_request(
+                Arc::new(ReconstructTestPickerRequest {
+                    construction_count: construction_count.clone(),
+                    valid,
+                }),
+                StoredPickerState {
+                    query: "needle".to_string(),
+                    multi_select_enabled: true,
+                    selected_item_ids: vec!["selected-file".into()],
+                },
+            );
+        });
+        cx.run_until_parked();
+        let original_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TestModal>(cx)
+                .expect("original modal should be open")
+                .entity_id()
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.hide_modal(window, cx);
+            workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
+        });
+        cx.run_until_parked();
+
+        let reopened_id = workspace.read_with(cx, |workspace, cx| {
+            let history = workspace
+                .picker_history
+                .as_ref()
+                .expect("history should contain reconstructible values");
+            assert_eq!(history.state.query, "needle");
+            assert!(history.state.multi_select_enabled);
+            assert_eq!(history.state.selected_item_ids, ["selected-file"]);
+            workspace
+                .active_modal::<TestModal>(cx)
+                .expect("reconstructed modal should be open")
+                .entity_id()
+        });
+        assert_ne!(original_id, reopened_id);
+        assert_eq!(
+            construction_count.load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reopen_last_picker_waits_for_active_modal_and_clears_invalid_history(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let construction_count = Arc::new(AtomicUsize::new(1));
+        let valid = Arc::new(AtomicBool::new(true));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.record_picker_request(
+                Arc::new(ReconstructTestPickerRequest {
+                    construction_count: construction_count.clone(),
+                    valid: valid.clone(),
+                }),
+                StoredPickerState::default(),
+            );
+            workspace.toggle_modal(window, cx, TestModal::new);
+            workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
+            assert_eq!(
+                construction_count.load(std::sync::atomic::Ordering::SeqCst),
+                1,
+                "reconstruction must wait until the active modal closes"
+            );
+            let modal = workspace
+                .active_modal::<TestModal>(cx)
+                .expect("transient modal should be open");
+            modal.update(cx, |_, cx| cx.emit(DismissEvent));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            construction_count.load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.hide_modal(window, cx);
+            valid.store(false, std::sync::atomic::Ordering::SeqCst);
+            workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
+            assert!(!workspace.has_reopenable_picker());
+        });
     }
 
     #[gpui::test]

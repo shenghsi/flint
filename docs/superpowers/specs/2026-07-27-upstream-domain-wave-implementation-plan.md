@@ -1033,6 +1033,12 @@ single-file diffs, and split history diffs.
 
 ## Wave 6: Search and Picker Modernization
 
+Tasks 6.1 and 6.2 landed independently. Deliver the remaining Tasks 6.3
+through 6.6 together on `feature/search-picker-modernization` in one
+integration PR titled `search: Modernize symbol and LSP pickers`. Keep
+reviewable feature slices as separate commits within that branch, then run the
+Wave 6 completion gate against their integrated state.
+
 ### Task 6.1: Add a resizable picker with File Finder preview
 
 **Upstream:** Zed PR #59604, commit
@@ -1090,7 +1096,7 @@ single-file diffs, and split history diffs.
 
 **Depends on:** Task 6.1.
 
-**Branch:** `feature/symbol-picker-previews`
+**Integrated branch:** `feature/search-picker-modernization`
 
 **Starting files:**
 
@@ -1103,7 +1109,7 @@ single-file diffs, and split history diffs.
 1. Resolve the final upstream project-symbol and buffer-symbol preview PRs.
 2. Add preview navigation tests for local, remote, and unsaved buffers.
 3. Reuse the picker preview contract from Task 6.1.
-4. Open a PR titled `workspace: Add symbol picker previews`.
+4. Commit the symbol-preview slice independently on the integrated branch.
 
 ### Task 6.4: Add LSP result pickers
 
@@ -1114,7 +1120,7 @@ single-file diffs, and split history diffs.
 
 **Depends on:** Tasks 6.1 and 6.3.
 
-**Branch:** `feature/lsp-result-pickers`
+**Integrated branch:** `feature/search-picker-modernization`
 
 **Starting files:**
 
@@ -1131,13 +1137,13 @@ single-file diffs, and split history diffs.
    locations, missing files, and remote results.
 3. Ensure the picker does not trigger duplicate LSP queries while navigating.
 4. Expose exact Settings Editor paths.
-5. Open a PR titled `editor: Add previewable LSP result pickers`.
+5. Commit the LSP-result slice independently on the integrated branch.
 
 ### Task 6.5: Reopen the last picker
 
 **Depends on:** Tasks 6.1-6.4.
 
-**Branch:** `feature/reopen-last-picker`
+**Integrated branch:** `feature/search-picker-modernization`
 
 **Starting files:**
 
@@ -1150,7 +1156,8 @@ single-file diffs, and split history diffs.
 1. Store a reconstructible picker request, not a live view or stale entity.
 2. Add tests for File Finder, Text Finder, symbol, and LSP pickers.
 3. Clear history when its project or required capability disappears.
-4. Open a PR titled `workspace: Reopen the last picker`.
+4. Commit the picker-reconstruction slice independently on the integrated
+   branch.
 
 ### Task 6.6: Add picker multi-select
 
@@ -1159,30 +1166,32 @@ single-file diffs, and split history diffs.
 - #59931 `94b6d377badf9c2202850b551c4700a54b83895f`
 - #60919 `90b3aa0b3bd3b453775b11a386907c7ac9acd997`
 
-**Classification:** Reimplementation in two PRs.
+**Classification:** Reimplementation of two upstream PRs in the integrated
+Wave 6 PR.
 
 #### Task 6.6a: Add the picker selection model
 
-**Branch:** `feature/picker-multi-select`
+**Integrated branch:** `feature/search-picker-modernization`
 
 Add a selection collection with deterministic keyboard and pointer behavior.
 Test selection across filtering, reordering, async refresh, disabled entries,
-and picker close. Add File Finder and Text Finder consumers. Open
-`picker: Add multi-select support`.
+and picker close. Add File Finder and Text Finder consumers. Commit the
+selection-model slice independently on the integrated branch.
 
 #### Task 6.6b: Add multi-select controls and accessibility
 
-**Branch:** `feature/picker-multi-select-controls`
+**Integrated branch:** `feature/search-picker-modernization`
 
 Add checkboxes, the mode button, shortcuts, focus behavior, and accessible
-labels. Test narrow layouts and keyboard-only use. Open
-`picker: Improve multi-select controls`.
+labels. Test narrow layouts and keyboard-only use. Commit the controls slice
+independently on the integrated branch.
 
 ### Wave 6 completion
 
 Run picker, File Finder, search, editor, project, and workspace tests. Build the
 app and manually verify resizing, preview cancellation, search-state sharing,
-LSP navigation, reopening, and multi-select.
+LSP navigation, reopening, and multi-select. Open the integrated PR titled
+`search: Modernize symbol and LSP pickers`.
 
 ## Wave 7: Performance and Settings Compatibility
 

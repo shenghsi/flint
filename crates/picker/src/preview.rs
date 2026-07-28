@@ -8,8 +8,8 @@ use gpui::{
     prelude::*, px,
 };
 use gpui_util::ResultExt;
-use language::{Buffer, Capability, ToPoint};
-use project::Project;
+use language::{Bias, Buffer, Capability, ToPoint};
+use project::{Project, Symbol};
 use ui::{Color, Label, LabelCommon, v_flex};
 use util::rel_path::RelPath;
 
@@ -65,6 +65,7 @@ pub enum Update {
         buffer: Entity<Buffer>,
         match_range: Range<language::Anchor>,
     },
+    Symbol(Symbol),
 }
 
 impl Update {
@@ -77,6 +78,10 @@ impl Update {
             buffer,
             match_range,
         }
+    }
+
+    pub fn from_symbol(symbol: Symbol) -> Self {
+        Self::Symbol(symbol)
     }
 }
 
@@ -172,6 +177,7 @@ impl EditorPreview {
                 self.update_from_buffer(buffer, Some(match_range), window, cx);
                 cx.notify();
             }
+            Update::Symbol(symbol) => self.update_from_symbol(symbol, window, cx),
         }
     }
 
@@ -209,6 +215,41 @@ impl EditorPreview {
                     }
                     this.current_path = None;
                     this.message = Some(format!("Unable to preview file: {error:#}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        });
+    }
+
+    fn update_from_symbol(&mut self, symbol: Symbol, window: &mut Window, cx: &mut Context<Self>) {
+        let load_id = self.load_guard.begin_load();
+        let open_task = self.project.update(cx, |project, cx| {
+            project.open_buffer_for_symbol(&symbol, cx)
+        });
+
+        self.load_task = cx.spawn_in(window, async move |this, cx| match open_task.await {
+            Ok(buffer) => {
+                this.update_in(cx, |this, window, cx| {
+                    if !this.load_guard.is_current(load_id) {
+                        return;
+                    }
+                    let snapshot = buffer.read(cx).text_snapshot();
+                    let start = snapshot.clip_point_utf16(symbol.range.start, Bias::Left);
+                    let end = snapshot.clip_point_utf16(symbol.range.end, Bias::Left);
+                    let match_range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                    this.update_from_buffer(buffer, Some(match_range), window, cx);
+                    cx.notify();
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    if !this.load_guard.is_current(load_id) {
+                        return;
+                    }
+                    this.current_path = None;
+                    this.message = Some(format!("Unable to preview symbol: {error:#}").into());
                     cx.notify();
                 })
                 .log_err();

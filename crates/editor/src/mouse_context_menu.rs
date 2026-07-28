@@ -231,10 +231,13 @@ pub fn deploy_context_menu(
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .action("Go to Definition", Box::new(GoToDefinition))
+                .action("Go to Definition", Box::new(GoToDefinition::default()))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
-                .action("Go to Implementation", Box::new(GoToImplementation))
+                .action(
+                    "Go to Implementation",
+                    Box::new(GoToImplementation::default()),
+                )
                 .action(
                     "Find All References",
                     Box::new(FindAllReferences::default()),

@@ -537,6 +537,7 @@
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
+      "ctrl-k ctrl-p": "workspace::ReopenLastPicker",
       "ctrl-k ctrl-s": "flint::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-k ctrl-shift-t": "theme::ToggleMode",
@@ -948,6 +949,7 @@
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
+      "ctrl-shift-s": "picker::ToggleMultiSelect",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
     },
   },
@@ -969,6 +971,13 @@
       "ctrl-p": "file_finder::Toggle",
       "ctrl-shift-a": "file_finder::ToggleSplitMenu",
       "ctrl-shift-i": "file_finder::ToggleFilterMenu",
+      "tab": "picker::MultiSelectNext",
+    },
+  },
+  {
+    "context": "TextFinder || (TextFinder > Picker > Editor)",
+    "bindings": {
+      "tab": "picker::MultiSelectNext",
     },
   },
   {

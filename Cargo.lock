@@ -4314,6 +4314,7 @@ dependencies = [
  "latex_render",
  "line_ending_selector",
  "log",
+ "lsp_locations",
  "markdown",
  "markdown_preview",
  "menu",
@@ -7647,6 +7648,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsp_locations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "file_icons",
+ "fuzzy",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "lsp",
+ "menu",
+ "picker",
+ "project",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "lyon"
 version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9277,6 +9304,7 @@ dependencies = [
 name = "outline"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "editor",
  "flint_actions",
  "futures 0.3.32",
@@ -10737,6 +10765,7 @@ dependencies = [
  "gpui",
  "language",
  "lsp",
+ "menu",
  "ordered-float 2.10.1",
  "picker",
  "project",

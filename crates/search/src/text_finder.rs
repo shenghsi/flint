@@ -11,7 +11,7 @@ use gpui::{
     Modifiers, Subscription, Task, WeakEntity, actions,
 };
 use language::Buffer;
-use picker::Picker;
+use picker::{Picker, PickerItemId, PickerRestorationState};
 
 use project::ProjectPath;
 use settings::SeedQuerySetting;
@@ -36,6 +36,59 @@ pub struct TextFinder {
     init_modifiers: Option<Modifiers>,
     workspace_id: Option<WorkspaceId>,
     _subscription: Subscription,
+}
+
+pub(crate) struct TextFinderRequest {
+    search_options: SearchOptions,
+}
+
+impl workspace::ReopenablePickerRequest for TextFinderRequest {
+    fn is_valid(&self, _workspace: &Workspace, _cx: &App) -> bool {
+        true
+    }
+
+    fn reopen(
+        &self,
+        state: workspace::StoredPickerState,
+        _workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<anyhow::Result<()>> {
+        let open_task = TextFinder::open(
+            Some(SearchSeed {
+                query: state.query.clone(),
+                options: Some(self.search_options),
+            }),
+            window,
+            cx,
+        );
+        cx.spawn_in(window, async move |workspace, cx| {
+            open_task.await;
+            workspace.update_in(cx, |workspace, window, cx| {
+                let text_finder = workspace
+                    .active_modal::<TextFinder>(cx)
+                    .ok_or_else(|| anyhow::anyhow!("Text Finder did not open"))?;
+                text_finder.update(cx, |text_finder, cx| {
+                    text_finder.picker.update(cx, |picker, cx| {
+                        picker.restore_state(
+                            PickerRestorationState {
+                                query: state.query,
+                                multi_select_enabled: state.multi_select_enabled,
+                                selected_item_ids: state
+                                    .selected_item_ids
+                                    .into_iter()
+                                    .map(PickerItemId::new)
+                                    .collect(),
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                });
+                anyhow::Ok(())
+            })?
+        })
+    }
 }
 
 /// Persists the query and active filters of the just-closed Text Finder in the per-project
@@ -611,5 +664,77 @@ mod tests {
             TextFinder::seed_query(workspace, window, cx)
         });
         assert!(seed_query.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_reopen_restores_text_finder_state(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({"one.rs": "const ONE: usize = 1;"}))
+            .await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace should exist");
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        workspace
+            .update_in(cx, |_, window, cx| {
+                TextFinder::open(
+                    Some(SearchSeed {
+                        query: "ONE".to_string(),
+                        options: None,
+                    }),
+                    window,
+                    cx,
+                )
+            })
+            .await;
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(
+                delegate::SEARCH_DEBOUNCE_MS + 50,
+            ));
+        cx.run_until_parked();
+
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TextFinder>(cx)
+                .expect("Text Finder should be open")
+                .read(cx)
+                .picker
+                .clone()
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_multi_select_enabled(true, cx);
+            picker.toggle_item_selection(1, window, cx);
+        });
+        let original_id = picker.entity_id();
+        let selected_ids = picker.read_with(cx, |picker, _| picker.selected_item_ids().to_vec());
+
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+        cx.dispatch_action(workspace::ReopenLastPicker);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(
+                delegate::SEARCH_DEBOUNCE_MS + 50,
+            ));
+        cx.run_until_parked();
+
+        let reopened = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TextFinder>(cx)
+                .expect("Text Finder should reopen")
+                .read(cx)
+                .picker
+                .clone()
+        });
+        assert_ne!(original_id, reopened.entity_id());
+        reopened.read_with(cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "ONE");
+            assert!(picker.multi_select_enabled());
+            assert_eq!(picker.selected_item_ids(), selected_ids);
+        });
     }
 }

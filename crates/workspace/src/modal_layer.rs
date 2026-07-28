@@ -1,6 +1,6 @@
 use gpui::{
-    AnyView, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable as _, ManagedView,
-    MouseButton, Subscription,
+    AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, ManagedView, MouseButton,
+    Subscription,
 };
 use ui::prelude::*;
 
@@ -31,6 +31,8 @@ pub trait ModalView: ManagedView {
 trait ModalViewHandle {
     fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision;
     fn view(&self) -> AnyView;
+    fn focus_handle(&self, cx: &App) -> FocusHandle;
+    fn subscribe_dismiss(&self, window: &mut Window, cx: &mut Context<ModalLayer>) -> Subscription;
     fn fade_out_background(&self, cx: &mut App) -> bool;
     fn render_bare(&self, cx: &mut App) -> bool;
 }
@@ -42,6 +44,16 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
 
     fn view(&self) -> AnyView {
         self.clone().into()
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.read(cx).focus_handle(cx)
+    }
+
+    fn subscribe_dismiss(&self, window: &mut Window, cx: &mut Context<ModalLayer>) -> Subscription {
+        cx.subscribe_in(self, window, |this, _, _: &DismissEvent, window, cx| {
+            this.hide_modal(window, cx);
+        })
     }
 
     fn fade_out_background(&self, cx: &mut App) -> bool {
@@ -66,8 +78,10 @@ pub struct ModalLayer {
 }
 
 pub(crate) struct ModalOpenedEvent;
+pub(crate) struct ModalClosedEvent;
 
 impl EventEmitter<ModalOpenedEvent> for ModalLayer {}
+impl EventEmitter<ModalClosedEvent> for ModalLayer {}
 
 impl Default for ModalLayer {
     fn default() -> Self {
@@ -103,27 +117,25 @@ impl ModalLayer {
             }
         }
         let new_modal = cx.new(|cx| build_view(window, cx));
-        self.show_modal(new_modal, window, cx);
+        self.show_modal(Box::new(new_modal), window, cx);
         cx.emit(ModalOpenedEvent);
     }
 
     /// Shows a modal and sets up subscriptions for dismiss events and focus tracking.
     /// The modal is automatically focused after being shown.
-    fn show_modal<V>(&mut self, new_modal: Entity<V>, window: &mut Window, cx: &mut Context<Self>)
-    where
-        V: ModalView,
-    {
+    fn show_modal(
+        &mut self,
+        modal: Box<dyn ModalViewHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let focus_handle = cx.focus_handle();
+        let modal_focus_handle = modal.focus_handle(cx);
+        let dismiss_subscription = modal.subscribe_dismiss(window, cx);
         self.active_modal = Some(ActiveModal {
-            modal: Box::new(new_modal.clone()),
+            modal,
             _subscriptions: [
-                cx.subscribe_in(
-                    &new_modal,
-                    window,
-                    |this, _, _: &DismissEvent, window, cx| {
-                        this.hide_modal(window, cx);
-                    },
-                ),
+                dismiss_subscription,
                 cx.on_focus_out(&focus_handle, window, |this, _event, window, cx| {
                     if this.dismiss_on_focus_lost {
                         this.hide_modal(window, cx);
@@ -134,7 +146,7 @@ impl ModalLayer {
             focus_handle,
         });
         cx.defer_in(window, move |_, window, cx| {
-            window.focus(&new_modal.focus_handle(cx), cx);
+            window.focus(&modal_focus_handle, cx);
         });
         cx.notify();
     }
@@ -172,6 +184,7 @@ impl ModalLayer {
                 previous_focus.focus(window, cx);
             }
             cx.notify();
+            cx.emit(ModalClosedEvent);
         }
         self.dismiss_on_focus_lost = false;
         true

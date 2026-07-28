@@ -5,7 +5,7 @@ use gpui::{
     TextStyle, WeakEntity, Window, relative, rems,
 };
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PickerItemId, PickerRestorationState, PreviewUpdate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
@@ -25,8 +25,9 @@ pub fn init(cx: &mut App) {
                     let project = workspace.project().clone();
                     let handle = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, move |window, cx| {
-                        let delegate = ProjectSymbolsDelegate::new(handle, project);
-                        Picker::uniform_list(delegate, window, cx).width(rems(34.))
+                        let delegate = ProjectSymbolsDelegate::new(handle, project.clone());
+                        Picker::uniform_list_with_preview(delegate, project, window, cx)
+                            .width(rems(34.))
                     })
                 },
             );
@@ -36,6 +37,45 @@ pub fn init(cx: &mut App) {
 }
 
 pub type ProjectSymbols = Entity<Picker<ProjectSymbolsDelegate>>;
+
+struct ProjectSymbolsRequest;
+
+impl workspace::ReopenablePickerRequest for ProjectSymbolsRequest {
+    fn is_valid(&self, _workspace: &Workspace, _cx: &App) -> bool {
+        true
+    }
+
+    fn reopen(
+        &self,
+        state: workspace::StoredPickerState,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<anyhow::Result<()>> {
+        let project = workspace.project().clone();
+        let workspace_handle = cx.entity().downgrade();
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            let delegate = ProjectSymbolsDelegate::new(workspace_handle, project.clone());
+            let mut picker =
+                Picker::uniform_list_with_preview(delegate, project, window, cx).width(rems(34.));
+            picker.restore_state(
+                PickerRestorationState {
+                    query: state.query,
+                    multi_select_enabled: state.multi_select_enabled,
+                    selected_item_ids: state
+                        .selected_item_ids
+                        .into_iter()
+                        .map(PickerItemId::new)
+                        .collect(),
+                },
+                window,
+                cx,
+            );
+            picker
+        });
+        Task::ready(Ok(()))
+    }
+}
 
 pub struct ProjectSymbolsDelegate {
     workspace: WeakEntity<Workspace>,
@@ -112,6 +152,18 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         "Search project symbols...".into()
     }
 
+    fn workspace(&self, _cx: &App) -> Option<WeakEntity<Workspace>> {
+        Some(self.workspace.clone())
+    }
+
+    fn reopen_request(
+        &self,
+        _state: &PickerRestorationState,
+        _cx: &App,
+    ) -> Option<Arc<dyn workspace::ReopenablePickerRequest>> {
+        Some(Arc::new(ProjectSymbolsRequest))
+    }
+
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(symbol) = self
             .matches
@@ -181,6 +233,13 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_match_index = ix;
+    }
+
+    fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
+        let candidate_id = self.matches.get(self.selected_match_index)?.candidate_id;
+        Some(PreviewUpdate::from_symbol(
+            self.symbols.get(candidate_id)?.clone(),
+        ))
     }
 
     fn update_matches(
@@ -330,11 +389,11 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{path::Path, sync::Arc};
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::MultiWorkspace;
 
     #[gpui::test]
-    async fn test_project_symbols(cx: &mut TestAppContext) {
+    async fn test_project_symbols_and_reopen(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -429,8 +488,9 @@ mod tests {
 
         // Create the project symbols view.
         let symbols = cx.new_window_entity(|window, cx| {
-            Picker::uniform_list(
+            Picker::uniform_list_with_preview(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
+                project.clone(),
                 window,
                 cx,
             )
@@ -457,11 +517,19 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.read_with(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, cx| {
             let delegate = &symbols.delegate;
             assert_eq!(delegate.matches.len(), 2);
             assert_eq!(delegate.matches[0].string, "ton");
             assert_eq!(delegate.matches[1].string, "one");
+            assert!(
+                delegate.try_get_preview_data_for_match(cx).is_some(),
+                "the selected project symbol should provide preview data"
+            );
+            assert_eq!(
+                symbols.preview_current_path(cx),
+                Some(rel_path("test.rs").into())
+            );
         });
 
         // Spawn more updates such that in the end, there are again no matches.
@@ -477,12 +545,29 @@ mod tests {
 
         // Check that rust-analyzer path style symbols work
         symbols.update_in(cx, |p, window, cx| {
-            p.update_matches("dir::to".to_string(), window, cx);
+            p.set_query("dir::to", window, cx);
         });
 
         cx.run_until_parked();
         symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 1);
+        });
+
+        let original_id = symbols.entity_id();
+        symbols.update_in(cx, |picker, window, cx| {
+            picker.cancel(&menu::Cancel, window, cx);
+        });
+        cx.dispatch_action(workspace::ReopenLastPicker);
+        cx.run_until_parked();
+
+        let reopened = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<Picker<ProjectSymbolsDelegate>>(cx)
+                .expect("Project Symbols should reopen")
+        });
+        assert_ne!(original_id, reopened.entity_id());
+        reopened.read_with(cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "dir::to");
         });
     }
 
@@ -593,6 +678,7 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             editor::init(cx);
+            super::init(cx);
         });
     }
 
