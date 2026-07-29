@@ -1,7 +1,11 @@
 # Zed Upstream Integration Ledger
 
 **Flint fork point:** `6e9465a4288c332208643892e23b9d35d7be5c79`
-**Completed stable baseline:** Zed v1.6.3 through v1.12.1
+
+**Latest observed Zed stable release:** [v1.12.1](https://github.com/zed-industries/zed/releases/tag/v1.12.1)
+(`2a37601c02a32b22e7700835c04b89ff75ffcd5d`), published 2026-07-27
+
+**Completed stable reconciliation:** Zed v1.6.3 through v1.12.1
 
 **Historical exception:** selected v1.13.0-pre entries approved before the
 stable-only review boundary remain recorded, but preview releases are no longer
