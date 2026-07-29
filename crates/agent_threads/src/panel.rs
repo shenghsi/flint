@@ -1873,6 +1873,17 @@ mod tests {
         });
     }
 
+    /// `wrap_task_in_system_shell` (see `project::terminals`) collapses the
+    /// spawned command and its args into a single shell string on Windows,
+    /// so asserting on `command`/`args` directly only works cross-platform
+    /// via substring checks against the flattened command line.
+    fn spawned_command_line(spawned: &task::SpawnInTerminal) -> String {
+        std::iter::once(spawned.command.clone().unwrap_or_default())
+            .chain(spawned.args.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     fn set_show_plan_usage(cx: &mut TestAppContext, enabled: bool) {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
@@ -2221,19 +2232,19 @@ mod tests {
         wait_for_live_count(cx, root, 1).await;
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
-        let args = terminal_views(&window_handle, cx)[0].read_with(cx, |view, cx| {
+        let spawned = terminal_views(&window_handle, cx)[0].read_with(cx, |view, cx| {
             view.terminal()
                 .read(cx)
                 .task()
                 .expect("spawned terminal should have a task")
                 .spawned_task
-                .args
                 .clone()
         });
+        let command_line = spawned_command_line(&spawned);
 
         assert!(
-            args.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()),
-            "expected default launch option's args in {args:?}"
+            command_line.contains("--dangerously-bypass-approvals-and-sandbox"),
+            "expected default launch option's flag in {command_line:?}"
         );
     }
 
@@ -2520,8 +2531,11 @@ mod tests {
                 .spawned_task
                 .clone()
         });
-        assert_eq!(spawned.command, Some("echo".to_string()));
-        assert_eq!(spawned.args, vec!["resume", "session-a"]);
+        let command_line = spawned_command_line(&spawned);
+        assert!(
+            command_line.contains("echo") && command_line.contains("resume session-a"),
+            "expected the echo resume command in {command_line:?}"
+        );
         assert_eq!(spawned.cwd, Some(PathBuf::from(root)));
         assert_eq!(spawned.full_label, "Fix the bug");
     }
@@ -2567,13 +2581,10 @@ mod tests {
                 .spawned_task
                 .clone()
         });
-        assert_eq!(
-            spawned.args,
-            vec![
-                "resume",
-                "session-a",
-                "--dangerously-bypass-approvals-and-sandbox"
-            ]
+        let command_line = spawned_command_line(&spawned);
+        assert!(
+            command_line.contains("resume session-a --dangerously-bypass-approvals-and-sandbox"),
+            "expected the extra flag appended to the resume command in {command_line:?}"
         );
     }
 
