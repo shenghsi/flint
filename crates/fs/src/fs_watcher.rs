@@ -31,6 +31,20 @@ pub struct FsWatcher {
 struct FsWatcherRegistration {
     id: WatcherRegistrationId,
     mode: WatcherMode,
+    // Some native backends (e.g. Windows' `ReadDirectoryChangesW`) only report
+    // changes to entries *inside* a watched directory, never a rename of the
+    // watched directory itself as seen from its own parent. `parent_watch`, when
+    // present, is a second registration on the parent used only to notice that
+    // and synthesize a rescan; see `register_parent_rename_watch`.
+    parent_watch: Option<WatcherRegistrationId>,
+}
+
+fn remove_fs_watcher_registration(registration: FsWatcherRegistration) {
+    let global_watcher = global_watcher();
+    global_watcher.remove(registration.id);
+    if let Some(parent_watch) = registration.parent_watch {
+        global_watcher.remove(parent_watch);
+    }
 }
 
 impl FsWatcher {
@@ -101,9 +115,8 @@ impl Drop for FsWatcher {
             std::mem::swap(old.deref_mut(), &mut registrations);
         }
 
-        let global_watcher = global_watcher();
         for (_, registration) in registrations {
-            global_watcher.remove(registration.id);
+            remove_fs_watcher_registration(registration);
         }
     }
 }
@@ -150,7 +163,7 @@ impl Watcher for FsWatcher {
                 .or_else(|| registrations.remove(&WatchKey::folded(path)))
         };
         if let Some(registration) = registration {
-            global_watcher().remove(registration.id);
+            remove_fs_watcher_registration(registration);
         }
         Ok(())
     }
@@ -222,10 +235,9 @@ fn register_existing_path(
     };
     let root_path = SanitizedPath::new_arc(path.as_ref());
     let path_for_callback = path.clone();
-    let Some(registration_id) = global_watcher().add(
-        path,
-        mode,
-        case_insensitive,
+    let Some(registration_id) = global_watcher().add(path.clone(), mode, case_insensitive, {
+        let tx = tx.clone();
+        let pending_path_events = pending_path_events.clone();
         move |event: &notify::Event| {
             log::trace!("watcher received event: {event:?}");
             push_notify_event(
@@ -236,15 +248,93 @@ fn register_existing_path(
                 path_for_callback.as_ref(),
                 event,
             );
-        },
-    )?
+        }
+    })?
     else {
         return Ok(None);
     };
+    let parent_watch =
+        register_parent_rename_watch(&path, case_insensitive, mode, tx, pending_path_events);
     Ok(Some(FsWatcherRegistration {
         id: registration_id,
         mode,
+        parent_watch,
     }))
+}
+
+// See the doc comment on `FsWatcherRegistration::parent_watch`. This watches
+// `path`'s parent (non-recursively, so it only sees direct children) purely to
+// notice `path` itself disappearing from its parent's listing (removed,
+// renamed away, or renamed back in, e.g. a case-only rename on a
+// case-insensitive filesystem) and to synthesize a rescan when that happens,
+// since the primary watch on `path` won't see that on its own.
+fn register_parent_rename_watch(
+    path: &Arc<Path>,
+    case_insensitive: bool,
+    mode: WatcherMode,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+) -> Option<WatcherRegistrationId> {
+    let parent = path.parent()?;
+    if std::fs::symlink_metadata(parent).is_err() {
+        return None;
+    }
+    let parent: Arc<Path> = parent.into();
+    let root_path = SanitizedPath::new_arc(path.as_ref());
+    global_watcher()
+        .add(
+            parent,
+            mode,
+            case_insensitive,
+            move |event: &notify::Event| {
+                push_rescan_if_root_touched(
+                    &tx,
+                    &pending_path_events,
+                    &root_path,
+                    case_insensitive,
+                    event,
+                );
+            },
+        )
+        .log_err()
+        .flatten()
+}
+
+fn push_rescan_if_root_touched(
+    tx: &smol::channel::Sender<()>,
+    pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
+    root_path: &SanitizedPath,
+    case_insensitive: bool,
+    event: &notify::Event,
+) {
+    if !matches!(
+        event.kind,
+        EventKind::Remove(_)
+            | EventKind::Create(_)
+            | EventKind::Modify(notify::event::ModifyKind::Name(_))
+    ) {
+        return;
+    }
+    let root_touched = event.paths.iter().any(|event_path| {
+        let event_path = SanitizedPath::new(event_path);
+        if case_insensitive {
+            WatchKey::folded_path(&event_path) == WatchKey::folded_path(root_path)
+        } else {
+            event_path.as_path() == root_path.as_path()
+        }
+    });
+    if !root_touched {
+        return;
+    }
+    log::trace!("watched root {root_path:?} was touched from its parent; scheduling rescan");
+    enqueue_path_events(
+        tx,
+        pending_path_events,
+        vec![PathEvent {
+            path: root_path.as_path().to_path_buf(),
+            kind: Some(PathEventKind::Rescan),
+        }],
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -1280,6 +1370,55 @@ mod tests {
                 .contains_key(watched_path.as_ref()),
             "a skipped registration should be retried"
         );
+    }
+
+    #[test]
+    fn parent_watch_synthesizes_rescan_when_root_is_renamed() {
+        let _test_guard = GLOBAL_WATCHER_TEST_LOCK.lock();
+        let temporary_directory = tempfile::tempdir().expect("create temporary directory");
+        let watched_root = temporary_directory.path().join("root");
+        std::fs::create_dir_all(&watched_root).expect("create watched root");
+
+        let (event_tx, _event_rx) = async_channel::unbounded();
+        let pending_path_events = Arc::new(Mutex::new(Vec::new()));
+        let root: Arc<Path> = watched_root.clone().into();
+
+        let registration =
+            register_existing_path(root, false, event_tx, pending_path_events.clone())
+                .expect("register root watch")
+                .expect("root watch registered");
+        assert!(
+            registration.parent_watch.is_some(),
+            "a watched root with an existing parent should also register a parent rename watch"
+        );
+
+        // Simulate the parent directory's watcher observing the root being
+        // renamed away, as `ReadDirectoryChangesW` reports it on Windows
+        // (the root's own native watch handle never sees this on its own -
+        // that's the bug `parent_watch` exists to work around).
+        handle_native_event(Ok(notify::Event::new(EventKind::Modify(
+            notify::event::ModifyKind::Name(notify::event::RenameMode::From),
+        ))
+        .add_path(watched_root.clone())));
+
+        // Dispatch happens on the global watcher's background dispatch
+        // thread, so poll for it rather than checking immediately.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let rescanned = loop {
+            let rescanned = pending_path_events.lock().iter().any(|event| {
+                event.path == watched_root && event.kind == Some(PathEventKind::Rescan)
+            });
+            if rescanned || Instant::now() >= deadline {
+                break rescanned;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(
+            rescanned,
+            "renaming the watched root should synthesize a rescan for it"
+        );
+
+        remove_fs_watcher_registration(registration);
     }
 
     #[test]
