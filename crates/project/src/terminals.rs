@@ -691,7 +691,7 @@ fn format_task_for_activation(
 }
 
 pub fn wrap_task_with_initialization_command(
-    mut task: SpawnInTerminal,
+    task: SpawnInTerminal,
     initialization_command: &str,
     shell: &str,
     is_windows: bool,
@@ -705,8 +705,28 @@ pub fn wrap_task_with_initialization_command(
         format!("{initialization_command} {separator} {task_command}")
     };
 
+    wrap_task_in_shell(task, shell, is_windows, combined_command)
+}
+
+pub fn wrap_task_in_system_shell(
+    task: SpawnInTerminal,
+    shell: &str,
+    is_windows: bool,
+) -> SpawnInTerminal {
+    let shell_kind = ShellKind::new(shell, is_windows);
+    let task_command = format_task_for_activation(&task, shell_kind, shell, is_windows);
+    wrap_task_in_shell(task, shell, is_windows, task_command)
+}
+
+fn wrap_task_in_shell(
+    mut task: SpawnInTerminal,
+    shell: &str,
+    is_windows: bool,
+    command: String,
+) -> SpawnInTerminal {
+    let shell_kind = ShellKind::new(shell, is_windows);
     task.command = Some(shell.to_string());
-    task.args = shell_kind.args_for_shell(true, combined_command);
+    task.args = shell_kind.args_for_shell(true, command);
     task.shell = Shell::Program(shell.to_string());
     task
 }
@@ -833,6 +853,28 @@ mod tests {
             format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
             "&cargo test 'some test'"
         );
+    }
+
+    #[test]
+    fn system_shell_wraps_windows_command_shims_with_quoted_arguments() {
+        let task = SpawnInTerminal {
+            command: Some("codex".to_string()),
+            args: vec!["resume".to_string(), "session with spaces".to_string()],
+            shell: Shell::System,
+            ..SpawnInTerminal::default()
+        };
+
+        let task = wrap_task_in_system_shell(task, "powershell.exe", true);
+
+        assert_eq!(task.command.as_deref(), Some("powershell.exe"));
+        assert_eq!(
+            task.args,
+            vec![
+                "-C".to_string(),
+                "&codex resume 'session with spaces'".to_string(),
+            ]
+        );
+        assert_eq!(task.shell, Shell::Program("powershell.exe".to_string()));
     }
 
     #[test]

@@ -1621,6 +1621,7 @@ fn spawn_thread_task_inner(
     let command_label = command_label(&command, &label);
     let initialization_command = command.initialization_command.take();
     let is_windows = workspace.project().read(cx).path_style(cx).is_windows();
+    let remote_client = workspace.project().read(cx).remote_client();
     let remote_process = match prepare_remote_thread_process(
         &mut command,
         remote_connection,
@@ -1649,7 +1650,6 @@ fn spawn_thread_task_inner(
         ..SpawnInTerminal::default()
     };
     if let Some(initialization_command) = initialization_command {
-        let remote_client = workspace.project().read(cx).remote_client();
         let shell = remote_client
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell())
@@ -1665,6 +1665,12 @@ fn spawn_thread_task_inner(
             &initialization_command,
             &shell,
             is_windows,
+        );
+    } else if is_windows && remote_client.is_none() {
+        task = project::terminals::wrap_task_in_system_shell(
+            task,
+            &util::shell::get_system_shell(),
+            true,
         );
     }
 
