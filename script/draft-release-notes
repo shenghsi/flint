@@ -2,6 +2,8 @@
 
 const { execFileSync } = require("child_process");
 
+const REPO_URL = "https://github.com/shenghsi/flint";
+
 main();
 
 async function main() {
@@ -19,35 +21,28 @@ async function main() {
     process.exit(1);
   }
 
-  // currently we can only draft notes for patch releases.
-  if (parts[2] === 0) {
+  let suffix = channel == "preview" ? "-pre" : "";
+  let tag = `v${version}${suffix}`;
+  let priorTag = getPriorTag(parts, tag, suffix);
+
+  if (priorTag == null) {
+    console.error(`No prior ${channel} tag found before ${tag}`);
     process.exit(0);
   }
-
-  let priorVersion = [parts[0], parts[1], parts[2] - 1].join(".");
-  let suffix = channel == "preview" ? "-pre" : "";
-  let [tag, priorTag] = [`v${version}${suffix}`, `v${priorVersion}${suffix}`];
 
   try {
     execFileSync("rm", ["-rf", "target/shallow_clone"]);
     execFileSync("git", [
       "clone",
-      "https://github.com/flint-industries/flint",
+      REPO_URL,
       "target/shallow_clone",
       "--filter=tree:0",
       "--no-checkout",
       "--branch",
       tag,
-      "--depth",
-      100,
     ]);
     execFileSync("git", ["-C", "target/shallow_clone", "rev-parse", "--verify", tag]);
-    try {
-      execFileSync("git", ["-C", "target/shallow_clone", "rev-parse", "--verify", priorTag]);
-    } catch (e) {
-      console.error(`Prior tag ${priorTag} not found`);
-      process.exit(0);
-    }
+    execFileSync("git", ["-C", "target/shallow_clone", "rev-parse", "--verify", priorTag]);
   } catch (e) {
     console.error(e.stderr.toString());
     process.exit(1);
@@ -60,11 +55,11 @@ async function main() {
   let skipped = [];
 
   for (const commit of newCommits) {
-    let link = "https://github.com/flint-industries/flint/pull/" + commit.pr;
+    let link = `${REPO_URL}/pull/` + commit.pr;
     let notes = commit.releaseNotes;
     if (commit.pr == "") {
-      link = "https://github.com/flint-industries/flint/commits/" + commit.hash;
-    } else if (!notes.includes("flint-industries/flint/issues")) {
+      link = `${REPO_URL}/commits/` + commit.hash;
+    } else if (!notes.includes(`${REPO_URL}/issues`)) {
       notes = notes + " ([#" + commit.pr + "](" + link + "))";
     }
 
@@ -78,11 +73,66 @@ async function main() {
   }
 
   if (releaseNotes.length === 0) {
-    const compareUrl = `https://github.com/flint-industries/flint/compare/${priorTag}...${tag}#commits_bucket`;
+    const compareUrl = `${REPO_URL}/compare/${priorTag}...${tag}#commits_bucket`;
     console.log(`No public-facing changes in this release. [View the commits](${compareUrl}).\n`);
   } else {
     console.log(releaseNotes.join("\n") + "\n");
   }
+}
+
+// Finds the highest existing tag on the same channel (stable tags have no
+// suffix, preview tags end in "-pre") that is lower than the version being
+// released. Tags aren't necessarily one patch apart - minor/major bumps and
+// promotions from the preview to the stable channel both skip versions - so
+// this walks the actual tag list on GitHub instead of decrementing the patch
+// number.
+function getPriorTag(currentVersionParts, currentTag, suffix) {
+  const tagPattern = suffix
+    ? /^v(\d+)\.(\d+)\.(\d+)-pre$/
+    : /^v(\d+)\.(\d+)\.(\d+)$/;
+  const [curMajor, curMinor, curPatch] = currentVersionParts.map(Number);
+
+  const output = execFileSync("git", ["ls-remote", "--tags", REPO_URL], {
+    encoding: "utf8",
+  });
+
+  let priorTag = null;
+  let priorVersion = null;
+
+  for (const line of output.split("\n")) {
+    const refTag = line.split("refs/tags/")[1];
+    if (!refTag || refTag.endsWith("^{}") || refTag === currentTag) {
+      continue;
+    }
+
+    const match = refTag.match(tagPattern);
+    if (!match) {
+      continue;
+    }
+
+    const version = [Number(match[1]), Number(match[2]), Number(match[3])];
+    const isLower =
+      version[0] < curMajor ||
+      (version[0] === curMajor && version[1] < curMinor) ||
+      (version[0] === curMajor && version[1] === curMinor && version[2] < curPatch);
+    if (!isLower) {
+      continue;
+    }
+
+    const isHigherThanPrior =
+      priorVersion == null ||
+      version[0] > priorVersion[0] ||
+      (version[0] === priorVersion[0] && version[1] > priorVersion[1]) ||
+      (version[0] === priorVersion[0] &&
+        version[1] === priorVersion[1] &&
+        version[2] > priorVersion[2]);
+    if (isHigherThanPrior) {
+      priorVersion = version;
+      priorTag = refTag;
+    }
+  }
+
+  return priorTag;
 }
 
 function getCommits(oldTag, newTag) {

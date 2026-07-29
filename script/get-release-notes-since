@@ -82,7 +82,7 @@ async function getReleases(startDate, endDate) {
       },
       body: JSON.stringify({
         query,
-        variables: { owner: "flint-industries", repo: "flint", cursor },
+        variables: { owner: "shenghsi", repo: "flint", cursor },
       }),
     });
 
