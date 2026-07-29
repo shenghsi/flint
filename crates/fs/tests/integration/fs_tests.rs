@@ -16,6 +16,7 @@ use serde_json::json;
 use tempfile::TempDir;
 use util::path;
 
+#[cfg(not(windows))]
 async fn watcher_delivered_equivalent_path(
     events: &mut (impl futures::Stream<Item = Vec<PathEvent>> + Unpin),
     executor: &BackgroundExecutor,
