@@ -1013,7 +1013,10 @@ mod tests {
                 "/tmp/世界.rs:3:2"
             );
             let open_target = open_target.expect("the remote path should produce an open target");
-            assert_eq!(open_target.path().path, Path::new(path!("/tmp/世界.rs")));
+            // Deliberately not `path!()`-wrapped: this is a POSIX-style path
+            // naming a remote host, so it should stay forward-slashed even
+            // when the local host (running this test) is Windows.
+            assert_eq!(open_target.path().path, Path::new("/tmp/世界.rs"));
             assert_eq!(open_target.path().row, Some(3));
             assert_eq!(open_target.path().column, Some(2));
         }
