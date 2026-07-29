@@ -97,6 +97,17 @@ async fn test_fake_fs(executor: BackgroundExecutor) {
     );
 }
 
+// Windows' `ReadDirectoryChangesW` (behind the `notify` crate's native
+// backend) only reports changes to entries *inside* a watched directory, so
+// it never reports a rename of the watched directory itself as seen from its
+// own parent - a case-only rename of the watched root is silently missed. A
+// fix that additionally watched the root's parent directory was attempted
+// (#146) but caused unrelated watcher instability on Windows CI under
+// nextest's parallel test load (many unrelated tests' tempdirs share the
+// same parent, and churn there produced "the handle is invalid" errors for
+// an unrelated test); it was reverted. A real fix needs someone with direct
+// access to a Windows machine to debug that failure mode.
+#[cfg(not(windows))]
 #[gpui::test]
 async fn test_realfs_watch_delivers_events_after_case_only_root_rename(
     executor: BackgroundExecutor,
