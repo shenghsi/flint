@@ -240,21 +240,33 @@ Release Notes:
 
 # Releases
 
+Releases are cut from two branches, gated by `crates/flint/RELEASE_CHANNEL`
+(a one-word file: `stable` or `preview`). `script/determine-release-channel`
+validates every tag against this file's contents on the tagged commit and
+fails the release job if they disagree:
+
+- `main` — `RELEASE_CHANNEL` is `preview`; tags use the `vX.Y.Z-pre` suffix.
+- `stable` — `RELEASE_CHANNEL` is `stable`; tags use plain `vX.Y.Z`. Promote a
+  build to stable by merging the commit from `main` into `stable`, then
+  tagging there — never by flipping `RELEASE_CHANNEL` on `main` itself.
+
 To cut a release, walk through these steps in order:
 
-1. Check the version already on `main`: `grep '^version' crates/flint/Cargo.toml`
-   and `git tag -l "vX.Y.*"`. A bump sometimes rides along inside an unrelated
-   merged PR (e.g. a `Cargo.toml` edit bundled with an icon change), so `main`
-   may already carry the version you're about to release — don't assume a
-   dedicated bump commit is still needed if the working tree is already at
-   the target version and untagged.
+1. Check the version already committed on the target branch:
+   `grep '^version' crates/flint/Cargo.toml` and `git tag -l "vX.Y.*"`. A bump
+   sometimes rides along inside an unrelated merged PR (e.g. a `Cargo.toml`
+   edit bundled with an icon change), so the branch may already carry the
+   version you're about to release — don't assume a dedicated bump commit is
+   still needed if the working tree is already at the target version and
+   untagged.
 2. If the version still needs bumping: edit `version` in
    `crates/flint/Cargo.toml`, run `cargo check -p flint` (or `cargo build`) so
-   `Cargo.lock` picks up the change, commit, and push to main.
-3. Before tagging, confirm local `main` matches `origin/main`
-   (`git fetch && git status`) — the tag must point at the commit that's
-   actually merged upstream, not a stale local one.
-4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+   `Cargo.lock` picks up the change, commit on a feature branch, and open a PR
+   into the target branch (`main` for preview, `stable` for stable releases).
+3. Before tagging, confirm the local target branch matches its remote
+   counterpart (`git fetch && git status`) — the tag must point at the commit
+   that's actually merged upstream, not a stale local one.
+4. Tag and push: `git tag vX.Y.Z[-pre] <branch> && git push origin vX.Y.Z[-pre]`.
 5. Do not run `gh release create` by hand after pushing the tag.
    `.github/workflows/release.yml` triggers on any `v*` tag push, runs
    tests/clippy, builds the macOS/Linux/Windows binaries, and creates the
@@ -271,6 +283,23 @@ To cut a release, walk through these steps in order:
    Stable (non-`-pre`) releases finish as a draft with all assets attached —
    publish with `gh release edit vX.Y.Z --draft=false` once
    `validate_release_assets` has passed.
+8. Release notes come from `script/draft-release-notes`, which finds the
+   highest existing tag on the *same channel* (via `git ls-remote --tags`)
+   below the version being released, and pulls each intervening commit's
+   `Release notes:` bullet. If no earlier tag exists on that channel — e.g.
+   the very first `-pre` tag ever, or right after switching a branch onto a
+   new channel — there's nothing to diff against and `release.yml`'s `|| true`
+   silently swallows the script's failure, leaving a generic placeholder body
+   instead of real notes. Check `gh release view <tag> --json body` after
+   `create_draft_release` finishes rather than assuming it produced real
+   notes; don't delete a tag that a later release still needs as its diff
+   base (deleting the GitHub *release* is fine, deleting the *tag* is what
+   breaks the lookup).
+9. Rapid successive merges to `main` show earlier `CI` workflow runs as
+   `cancelled` — expected, not a failure. Its concurrency group is keyed on
+   `github.ref` alone, so each new push to `main` cancels whatever previous
+   run on `main` is still in flight; only the latest run (covering the final
+   merged state) matters.
 
 # Crash Investigation
 
