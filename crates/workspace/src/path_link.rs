@@ -468,7 +468,7 @@ fn project_paths_to_check(
                 .filter_map(|path_to_check| normalize_absolute_candidate(cwd, path_to_check))
         })
         .chain(potential_paths.iter().filter_map(|path_to_check| {
-            (path_to_check.path.starts_with("~") || path_to_check.path.is_absolute())
+            (path_to_check.path.starts_with("~") || is_path_like_absolute(&path_to_check.path))
                 .then(|| path_to_check.clone())
         }))
         .collect()
@@ -478,7 +478,7 @@ fn normalize_absolute_candidate(
     cwd: &Path,
     path_to_check: &PathWithPosition,
 ) -> Option<PathWithPosition> {
-    if !path_to_check.path.is_relative() {
+    if is_path_like_absolute(&path_to_check.path) {
         return None;
     }
     let path = normalize_lexically(&cwd.join(&path_to_check.path)).ok()?;
@@ -487,4 +487,14 @@ fn normalize_absolute_candidate(
         row: path_to_check.row,
         column: path_to_check.column,
     })
+}
+
+// `Path::is_absolute` only recognizes the host OS's own convention (e.g. it
+// requires a drive prefix on Windows), but paths surfaced from terminal
+// output frequently name a remote (often POSIX) filesystem regardless of the
+// local host OS. A leading `/` is never a valid relative-path component on
+// any platform, so treat it as absolute unconditionally rather than joining
+// it onto a local, differently-styled `cwd`.
+fn is_path_like_absolute(path: &Path) -> bool {
+    path.is_absolute() || path.to_string_lossy().starts_with('/')
 }
