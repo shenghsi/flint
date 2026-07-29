@@ -263,6 +263,11 @@ To cut a release, walk through these steps in order:
    `crates/flint/Cargo.toml`, run `cargo check -p flint` (or `cargo build`) so
    `Cargo.lock` picks up the change, commit on a feature branch, and open a PR
    into the target branch (`main` for preview, `stable` for stable releases).
+   If the bump exists specifically to retry a release after a fix (e.g. a
+   test or clippy failure that blocked the previous tag's release run), add
+   the version bump as an extra commit on that same fix branch/PR instead of
+   opening a separate bump-only PR — this avoids a second full CI run (and
+   its ~45 min `tests` job) just to land a two-line version change.
 3. Before tagging, confirm the local target branch matches its remote
    counterpart (`git fetch && git status`) — the tag must point at the commit
    that's actually merged upstream, not a stale local one.
