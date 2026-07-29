@@ -3814,10 +3814,11 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::time::Duration;
     use std::{
         ffi::{OsStr, OsString},
         fs,
-        time::Duration,
     };
 
     use super::*;
