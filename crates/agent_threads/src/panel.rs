@@ -895,9 +895,9 @@ impl AgentThreadsPanel {
         }
     }
 
-    fn show_all_for_section(&mut self, kind_id: &'static str) {
+    fn toggle_show_all_for_section(&mut self, kind_id: &'static str) {
         if let Some(section) = self.sections.get_mut(kind_id) {
-            section.show_all = true;
+            section.show_all = !section.show_all;
         }
     }
 
@@ -1082,7 +1082,8 @@ impl AgentThreadsPanel {
         );
         let cap = AgentThreadSettings::get_global(cx).max_visible_threads_per_agent;
         let total = rows.len();
-        let (rows, truncated) = apply_visible_cap(rows, cap, show_all);
+        let can_toggle_visible_count = total > cap;
+        let (rows, _truncated) = apply_visible_cap(rows, cap, show_all);
         let new_thread_launch_option_label = new_thread_launch_option_label(cx, kind);
         let new_thread_launch_option_visual = new_thread_launch_option_visual(cx, kind);
         let agent_route = self.workspace.upgrade().and_then(|workspace| {
@@ -1238,17 +1239,21 @@ impl AgentThreadsPanel {
                 for row in rows {
                     body_children.push(self.render_row(kind, row, cx));
                 }
-                if truncated {
-                    let remaining = total - cap;
+                if can_toggle_visible_count {
+                    let label = if show_all {
+                        "Show less".to_string()
+                    } else {
+                        format!("Show {} more", total - cap)
+                    };
                     body_children.push(
                         Button::new(
                             SharedString::from(format!("agent-thread-show-more-{kind_id}")),
-                            format!("Show {remaining} more"),
+                            label,
                         )
                         .size(ButtonSize::Compact)
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.show_all_for_section(kind_id);
+                            this.toggle_show_all_for_section(kind_id);
                             cx.notify();
                         }))
                         .into_any_element(),
@@ -2438,7 +2443,7 @@ mod tests {
 
         panel.update(cx, |panel, _| {
             panel.toggle_section_collapsed("codex");
-            panel.show_all_for_section("codex");
+            panel.toggle_show_all_for_section("codex");
         });
 
         let (collapsed_after, show_all_after) = panel.update(cx, |panel, _| {
@@ -2447,6 +2452,14 @@ mod tests {
         });
         assert!(collapsed_after);
         assert!(show_all_after);
+
+        panel.update(cx, |panel, _| {
+            panel.toggle_show_all_for_section("codex");
+        });
+
+        let show_all_after_second_toggle =
+            panel.update(cx, |panel, _| panel.sections.get("codex").unwrap().show_all);
+        assert!(!show_all_after_second_toggle);
     }
 
     #[gpui::test]
