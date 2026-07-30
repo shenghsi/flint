@@ -75,7 +75,8 @@ Flint has some compatibility support for Emacs and Vim [modelines](./modelines.m
 
 ## Per-Release Channel Overrides
 
-Use different settings for Stable, Preview, or Nightly builds by adding top-level channel keys:
+Use different settings for Stable or Nightly builds by adding top-level channel
+keys:
 
 ```json [settings]
 {
@@ -84,9 +85,6 @@ Use different settings for Stable, Preview, or Nightly builds by adding top-leve
   "nightly": {
     "theme": "Rosé Pine",
     "vim_mode": true
-  },
-  "preview": {
-    "theme": "Catppuccin Mocha"
   }
 }
 ```
@@ -94,7 +92,6 @@ Use different settings for Stable, Preview, or Nightly builds by adding top-leve
 With this configuration:
 
 - **Stable** uses One Dark with vim mode off
-- **Preview** uses Catppuccin Mocha with vim mode off
 - **Nightly** uses Rosé Pine with vim mode on
 
 Changes made in the Settings Editor apply across all channels.

@@ -11,8 +11,6 @@ Flint is developed primarily on macOS, making it a first-class platform with ful
 
 Download Flint from the [download page](https://flint.dev/download). The download is a `.dmg` file—open it and drag Flint to your Applications folder.
 
-For the preview build, which receives updates about a week ahead of stable, visit the [preview releases page](https://flint.dev/releases/preview).
-
 After installation, Flint checks for updates automatically and prompts you when a new version is available.
 
 ### Homebrew
@@ -21,12 +19,6 @@ You can also install Flint using Homebrew:
 
 ```sh
 brew install --cask flint
-```
-
-For the preview version:
-
-```sh
-brew install --cask flint@preview
 ```
 
 ### Building from Source

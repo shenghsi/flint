@@ -582,20 +582,3 @@ jobs:
           echo "All expected assets are present in the release."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  auto_release_preview:
-    needs:
-      - validate_release_assets
-    if: endsWith(inputs.release_tag || github.ref_name, '-pre')
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-      - name: Auto-release preview
-        run: |
-          tag="$RELEASE_TAG"
-          gh release edit "$tag" --draft=false --prerelease
-          echo "Preview release $tag published"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

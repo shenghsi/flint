@@ -26,12 +26,6 @@ If you installed Flint using Homebrew, use the following command:
 brew uninstall --cask flint
 ```
 
-Or for the preview version:
-
-```sh
-brew uninstall --cask flint@preview
-```
-
 ### Removing User Data (Optional)
 
 To completely remove all Flint configuration files and data:

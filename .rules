@@ -212,6 +212,11 @@ code:**
   or switch to a feature branch.
 - Deliver every repository change through a pull request, including
   documentation, rules, and other non-functional changes.
+- After a feature branch's pull request merges into `main`, delete both the
+  local and remote copies of that branch
+  (`git branch -d <branch>` and `git push origin --delete <branch>`, or
+  `gh pr merge --delete-branch` at merge time) so stale branches don't
+  accumulate.
 
 # Push hygiene
 

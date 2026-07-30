@@ -4,7 +4,7 @@ env:
   RUST_BACKTRACE: "1"
 on:
   schedule:
-    - cron: "0 3 * * *" # daily at 03:00 UTC
+    - cron: "0 19 * * *" # daily at 03:00 Asia/Taipei
   workflow_dispatch: {}
 concurrency:
   group: ${{ github.workflow }}
@@ -64,6 +64,8 @@ jobs:
       CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
+      - name: Select nightly release channel
+        run: printf nightly > crates/flint/RELEASE_CHANNEL
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -90,6 +92,8 @@ jobs:
       CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
+      - name: Select nightly release channel
+        run: printf nightly > crates/flint/RELEASE_CHANNEL
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -116,6 +120,8 @@ jobs:
       CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
+      - name: Select nightly release channel
+        run: printf nightly > crates/flint/RELEASE_CHANNEL
       - run: ./script/linux
       - run: ./script/download-wasi-sdk
       # DEB/RPM releases are disabled because they do not support auto updates.
@@ -164,6 +170,8 @@ jobs:
       CXX: clang++
     steps:
       - uses: actions/checkout@v4
+      - name: Select nightly release channel
+        run: printf nightly > crates/flint/RELEASE_CHANNEL
       - run: ./script/linux
       - run: ./script/download-wasi-sdk
       # DEB/RPM releases are disabled because they do not support auto updates.
@@ -210,6 +218,9 @@ jobs:
       CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
+      - name: Select nightly release channel
+        shell: pwsh
+        run: Set-Content -Path crates/flint/RELEASE_CHANNEL -Value nightly -NoNewline
       - name: Setup sccache
         uses: ./.github/actions/setup-sccache
       - shell: pwsh
@@ -234,6 +245,9 @@ jobs:
       CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
+      - name: Select nightly release channel
+        shell: pwsh
+        run: Set-Content -Path crates/flint/RELEASE_CHANNEL -Value nightly -NoNewline
       - name: Setup sccache
         uses: ./.github/actions/setup-sccache
       - shell: pwsh
