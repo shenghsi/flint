@@ -920,6 +920,13 @@ impl AgentThreadsPanel {
         }
     }
 
+    /// Resets the section's visible row count straight back to the default cap.
+    fn reset_section_visible_count(&mut self, kind_id: &'static str) {
+        if let Some(section) = self.sections.get_mut(kind_id) {
+            section.visible_override = None;
+        }
+    }
+
     fn deploy_resume_options_menu(
         &mut self,
         kind: AgentKindDefinition,
@@ -1290,6 +1297,20 @@ impl AgentThreadsPanel {
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
                                     this.collapse_section_visible_count(kind_id, cap);
+                                    cx.notify();
+                                },
+                            )),
+                        );
+                        controls = controls.child(
+                            Button::new(
+                                SharedString::from(format!("agent-thread-show-default-{kind_id}")),
+                                "Show default",
+                            )
+                            .size(ButtonSize::Compact)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.reset_section_visible_count(kind_id);
                                     cx.notify();
                                 },
                             )),
@@ -2551,6 +2572,23 @@ mod tests {
             panel.sections.get("codex").unwrap().visible_override
         });
         assert_eq!(visible_override_after_second_collapse, None);
+
+        panel.update(cx, |panel, _| {
+            panel.expand_section_visible_count("codex", 5, 20);
+            panel.expand_section_visible_count("codex", 5, 20);
+        });
+        let visible_override_before_reset = panel.update(cx, |panel, _| {
+            panel.sections.get("codex").unwrap().visible_override
+        });
+        assert_eq!(visible_override_before_reset, Some(20));
+
+        panel.update(cx, |panel, _| {
+            panel.reset_section_visible_count("codex");
+        });
+        let visible_override_after_reset = panel.update(cx, |panel, _| {
+            panel.sections.get("codex").unwrap().visible_override
+        });
+        assert_eq!(visible_override_after_reset, None);
     }
 
     #[gpui::test]
