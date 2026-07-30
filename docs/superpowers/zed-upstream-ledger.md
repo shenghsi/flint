@@ -40,12 +40,13 @@ git config remote.upstream.fetch '+refs/heads/main:refs/remotes/upstream/main'
 ```
 
 If the remote was previously fetched with the default `+refs/heads/*` refspec,
-drop the stale cached branches and repack:
+drop the now out-of-scope cached branches by fetching with `--prune` — pruning
+is computed from the *configured* refspec, not from what currently exists on
+the remote, so this alone removes every cached branch besides `main` even
+though those branches still exist upstream — then repack:
 
 ```sh
-git for-each-ref --format='%(refname)' refs/remotes/upstream \
-  | grep -vE '^refs/remotes/upstream/(main|HEAD)$' \
-  | xargs -n1 git update-ref -d
+git fetch upstream --prune
 git gc --prune=now
 ```
 
