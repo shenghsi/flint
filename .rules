@@ -240,40 +240,48 @@ Release Notes:
 
 # Releases
 
-Releases are cut from two branches, gated by `crates/flint/RELEASE_CHANNEL`
-(a one-word file: `stable` or `preview`). `script/determine-release-channel`
-validates every tag against this file's contents on the tagged commit and
-fails the release job if they disagree:
+Flint ships two channels, both built directly from `main` — there is no
+separate release branch and no preview channel anymore
+(`docs/superpowers/specs/2026-07-30-stable-nightly-release-model-design.md`
+records the design):
 
-- `main` — `RELEASE_CHANNEL` is `preview`; tags use the `vX.Y.Z-pre` suffix.
-- `stable` — `RELEASE_CHANNEL` is `stable`; tags use plain `vX.Y.Z`. Promote a
-  build to stable by merging the commit from `main` into `stable`, then
-  tagging there — never by flipping `RELEASE_CHANNEL` on `main` itself.
+- **Stable** — tagged releases. `crates/flint/RELEASE_CHANNEL` on `main` is
+  always `stable`; tags are plain `vX.Y.Z`. `script/determine-release-channel`
+  rejects any tag ending in `-pre` and fails the release job.
+- **Nightly** — a moving `nightly` tag and prerelease GitHub release, rebuilt
+  from the latest `main` commit daily by
+  `.github/workflows/release_nightly.yml`. Each nightly build job overwrites
+  `crates/flint/RELEASE_CHANNEL` to `nightly` in its own checkout before
+  compiling; that edit is never committed back to `main`.
 
-To cut a release, walk through these steps in order:
+The old `stable` branch still exists on `origin` but is inactive and
+historical — do not merge into it or tag from it. `script/test-release-channel-model`
+verifies the channel-gating scripts (main builds `stable`, `-pre` tags are
+rejected, and the installer refuses `ZED_CHANNEL=preview`) and is worth
+running after touching any of these scripts.
 
-1. Check the version already committed on the target branch:
+To cut a stable release, walk through these steps in order:
+
+1. Check the version already committed on `main`:
    `grep '^version' crates/flint/Cargo.toml` and `git tag -l "vX.Y.*"`. A bump
    sometimes rides along inside an unrelated merged PR (e.g. a `Cargo.toml`
-   edit bundled with an icon change), so the branch may already carry the
-   version you're about to release — don't assume a dedicated bump commit is
-   still needed if the working tree is already at the target version and
-   untagged.
+   edit bundled with an icon change), so `main` may already carry the version
+   you're about to release — don't assume a dedicated bump commit is still
+   needed if the working tree is already at the target version and untagged.
 2. If the version still needs bumping: edit `version` in
    `crates/flint/Cargo.toml`, run `cargo check -p flint` (or `cargo build`) so
    `Cargo.lock` picks up the change, commit on a feature branch, and open a PR
-   into the target branch (`main` for preview, `stable` for stable releases).
-   Don't default to a separate bump-only PR whenever a fix/feature PR is
-   already in flight — ask the user whether to bundle the version bump into
-   that same branch/PR instead, since each additional PR restarts the full CI
-   run (including the ~45 min `tests` job) just to land a two-line version
-   change. This applies whether the bump is to retry a release blocked by
-   that fix, or the fix/feature simply happens to warrant a release
-   afterward — ask either way rather than assuming.
-3. Before tagging, confirm the local target branch matches its remote
-   counterpart (`git fetch && git status`) — the tag must point at the commit
-   that's actually merged upstream, not a stale local one.
-4. Tag and push: `git tag vX.Y.Z[-pre] <branch> && git push origin vX.Y.Z[-pre]`.
+   into `main`. Don't default to a separate bump-only PR whenever a fix/feature
+   PR is already in flight — ask the user whether to bundle the version bump
+   into that same branch/PR instead, since each additional PR restarts the
+   full CI run (including the ~45 min `tests` job) just to land a two-line
+   version change. This applies whether the bump is to retry a release
+   blocked by that fix, or the fix/feature simply happens to warrant a
+   release afterward — ask either way rather than assuming.
+3. Before tagging, confirm the local `main` matches its remote counterpart
+   (`git fetch && git status`) — the tag must point at the commit that's
+   actually merged upstream, not a stale local one.
+4. Tag and push: `git tag vX.Y.Z main && git push origin vX.Y.Z`.
 5. Do not run `gh release create` by hand after pushing the tag.
    `.github/workflows/release.yml` triggers on any `v*` tag push, runs
    tests/clippy, builds the macOS/Linux/Windows binaries, and creates the
@@ -286,27 +294,34 @@ To cut a release, walk through these steps in order:
    it with `gh run watch <run-id> --interval 3600 --exit-status` so subsequent
    checks happen every 60 minutes. Do not poll the release more frequently
    unless the user explicitly asks for a different cadence.
-7. Only tags ending in `-pre` auto-publish (`auto_release_preview` job).
-   Stable (non-`-pre`) releases finish as a draft with all assets attached —
-   publish with `gh release edit vX.Y.Z --draft=false` once
-   `validate_release_assets` has passed.
+7. There is no auto-publish job anymore — every release finishes as a draft
+   with all assets attached; publish with
+   `gh release edit vX.Y.Z --draft=false` once `validate_release_assets` has
+   passed.
 8. Release notes come from `script/draft-release-notes`, which finds the
-   highest existing tag on the *same channel* (via `git ls-remote --tags`)
-   below the version being released, and pulls each intervening commit's
-   `Release notes:` bullet. If no earlier tag exists on that channel — e.g.
-   the very first `-pre` tag ever, or right after switching a branch onto a
-   new channel — there's nothing to diff against and `release.yml`'s `|| true`
-   silently swallows the script's failure, leaving a generic placeholder body
-   instead of real notes. Check `gh release view <tag> --json body` after
-   `create_draft_release` finishes rather than assuming it produced real
-   notes; don't delete a tag that a later release still needs as its diff
-   base (deleting the GitHub *release* is fine, deleting the *tag* is what
-   breaks the lookup).
+   highest existing plain `vX.Y.Z` tag (via `git ls-remote --tags`) below the
+   version being released and pulls each intervening commit's
+   `Release notes:` bullet. If no earlier tag exists — e.g. the very first
+   stable tag cut after this switch — there's nothing to diff against and
+   `release.yml`'s `|| true` silently swallows the script's failure, leaving a
+   generic placeholder body instead of real notes. Check
+   `gh release view <tag> --json body` after `create_draft_release` finishes
+   rather than assuming it produced real notes; don't delete a tag that a
+   later release still needs as its diff base (deleting the GitHub *release*
+   is fine, deleting the *tag* is what breaks the lookup).
 9. Rapid successive merges to `main` show earlier `CI` workflow runs as
    `cancelled` — expected, not a failure. Its concurrency group is keyed on
    `github.ref` alone, so each new push to `main` cancels whatever previous
    run on `main` is still in flight; only the latest run (covering the final
    merged state) matters.
+
+Nightly builds are unattended: `release_nightly.yml` runs daily at 03:00
+Asia/Taipei (19:00 UTC the previous day) via cron, skips the rebuild if the
+`nightly` tag already points at the current `main` commit, and otherwise
+force-moves the `nightly` tag (`git tag -f nightly HEAD`) and replaces the
+assets on the existing `nightly` prerelease. Don't hand-manage the `nightly`
+tag or release; re-run the `release_nightly` workflow (`workflow_dispatch`) if
+a rebuild is needed out of cadence.
 
 # Crash Investigation
 
