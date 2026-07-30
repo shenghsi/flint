@@ -444,7 +444,7 @@ fn path_for_style(path: &Path, path_style: PathStyle) -> Result<String> {
 fn normalize_path_for_style(path: &str, path_style: PathStyle) -> String {
     let path = match path_style {
         PathStyle::Posix => path.replace('\\', "/"),
-        PathStyle::Windows => path.to_string(),
+        PathStyle::Windows => path.replace('/', "\\"),
     };
     path_style.normalize(&path)
 }
@@ -873,7 +873,7 @@ fn base_dir_from_env(
                     .flatten()
             })
             .ok_or_else(|| anyhow!("no home directory in the project's resolved environment"))?;
-        path_style.join_path(home, default_dir_name)
+        path_style.join_path(home, normalize_path_for_style(default_dir_name, path_style))
     }
 }
 
