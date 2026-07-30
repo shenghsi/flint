@@ -5,16 +5,20 @@ set -eu
 # (https://github.com/shenghsi/flint/releases) and unpacks it into ~/.local/.
 # Set ZED_VERSION to a tag (e.g. v0.3.7) to pin a version; it defaults to the
 # latest release for the selected channel.
-# Set ZED_CHANNEL=preview to install the latest preview build instead of
-# stable (preview releases are published to GitHub as prereleases, so
-# GitHub's "latest" redirect never returns them and has to be resolved
-# separately).
+# Set ZED_CHANNEL=nightly to install the latest nightly build.
 
 main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
     channel="${ZED_CHANNEL:-stable}"
     ZED_VERSION="${ZED_VERSION:-latest}"
+    case "$channel" in
+        stable | nightly) ;;
+        *)
+            echo "Unsupported release channel: $channel" >&2
+            exit 1
+            ;;
+    esac
     # Use TMPDIR if available (for environments with non-standard temp directories)
     if [ -n "${TMPDIR:-}" ] && [ -d "${TMPDIR}" ]; then
         temp="$(mktemp -d "$TMPDIR/flint-XXXXXX")"
@@ -85,17 +89,12 @@ main() {
 
 # Builds the GitHub Releases download URL for a given asset filename. Uses the
 # "latest" redirect unless ZED_VERSION pins a specific tag (with or without the
-# leading "v"), or the preview channel is selected (see latest_preview_tag).
+# leading "v"). Nightly uses its moving tag.
 github_release_url() {
     asset="$1"
     if [ "$ZED_VERSION" = "latest" ]; then
-        if [ "$channel" = "preview" ]; then
-            tag="$(latest_preview_tag)"
-            if [ -z "$tag" ]; then
-                echo "Could not find a published preview release" >&2
-                exit 1
-            fi
-            echo "https://github.com/shenghsi/flint/releases/download/$tag/$asset"
+        if [ "$channel" = "nightly" ]; then
+            echo "https://github.com/shenghsi/flint/releases/download/nightly/$asset"
         else
             echo "https://github.com/shenghsi/flint/releases/latest/download/$asset"
         fi
@@ -106,28 +105,6 @@ github_release_url() {
         esac
         echo "https://github.com/shenghsi/flint/releases/download/$tag/$asset"
     fi
-}
-
-# GitHub's "/releases/latest" redirect only ever resolves to the newest
-# non-prerelease release, so it can't be used to find the newest preview
-# build. Preview releases are tagged "vX.Y.Z-pre" and published with GitHub's
-# "prerelease" flag set (see script/create-draft-release), so instead we walk
-# the releases list (newest first) and return the tag of the first entry
-# marked as a prerelease.
-latest_preview_tag() {
-    curl "https://api.github.com/repos/shenghsi/flint/releases" | awk '
-        /"tag_name":/ {
-            tag = $0
-            sub(/^[^:]*: *"/, "", tag)
-            sub(/",?$/, "", tag)
-        }
-        /"prerelease":/ {
-            if ($0 ~ /true/ && tag != "") {
-                print tag
-                exit
-            }
-        }
-    '
 }
 
 linux() {
@@ -150,9 +127,6 @@ linux() {
         ;;
       nightly)
         appid="dev.flint.Flint-Nightly"
-        ;;
-      preview)
-        appid="dev.flint.Flint-Preview"
         ;;
       dev)
         appid="dev.flint.Flint-Dev"

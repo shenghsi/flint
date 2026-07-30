@@ -1,13 +1,15 @@
 ---
 title: Flint on Windows
-description: "Get the latest stable builds via the download page. If you want to download our preview build, you can find it on its [releases p..."
+description: "Install the latest stable Flint build on Windows."
 ---
 
 # Flint on Windows
 
 ## Installing Flint
 
-Get the latest stable builds via [the download page](https://flint.dev/download). If you want to download our preview build, you can find it on its [releases page](https://flint.dev/releases/preview). After the first manual installation, Flint will periodically check for install updates.
+Get the latest stable build via the
+[download page](https://flint.dev/download). After the first manual
+installation, Flint periodically checks for updates.
 
 You can also build flint from source, see [these docs](https://flint.dev/docs/development/windows) for instructions.
 

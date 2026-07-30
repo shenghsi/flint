@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repository_root=$(git rev-parse --show-toplevel)
+cd "$repository_root"
+
+version=$(script/get-crate-version flint)
+channel=$(cat crates/flint/RELEASE_CHANNEL)
+
+if [[ "$channel" != "stable" ]]; then
+    echo "main must build the stable channel, found: $channel" >&2
+    exit 1
+fi
+
+github_environment=$(mktemp)
+preview_output=$(mktemp)
+trap 'rm -f "$github_environment" "$preview_output"' EXIT
+
+GITHUB_ACTIONS=true \
+GITHUB_REF=refs/tags/v"$version" \
+GITHUB_REF_NAME=v"$version" \
+GITHUB_ENV="$github_environment" \
+script/determine-release-channel
+
+if GITHUB_ACTIONS=true \
+    GITHUB_REF=refs/tags/v"$version"-pre \
+    GITHUB_REF_NAME=v"$version"-pre \
+    GITHUB_ENV="$github_environment" \
+    script/determine-release-channel >"$preview_output" 2>&1
+then
+    echo "preview release tag was accepted" >&2
+    exit 1
+fi
+
+if ! grep -q "invalid release tag" "$preview_output"; then
+    echo "preview release tag failed for an unexpected reason" >&2
+    cat "$preview_output" >&2
+    exit 1
+fi
+
+if ZED_CHANNEL=preview script/install.sh >"$preview_output" 2>&1; then
+    echo "preview installer channel was accepted" >&2
+    exit 1
+fi
+
+if ! grep -q "Unsupported release channel: preview" "$preview_output"; then
+    echo "preview installer channel failed for an unexpected reason" >&2
+    cat "$preview_output" >&2
+    exit 1
+fi
