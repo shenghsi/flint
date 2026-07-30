@@ -27,10 +27,14 @@ pub struct FsWatcher {
     pending_registrations: Arc<Mutex<HashMap<Arc<std::path::Path>, Task<()>>>>,
 }
 
-#[derive(Clone, Copy)]
 struct FsWatcherRegistration {
     id: WatcherRegistrationId,
     mode: WatcherMode,
+    _parent_rename_watcher: Option<Box<dyn WatchBackend>>,
+}
+
+fn remove_fs_watcher_registration(registration: FsWatcherRegistration) {
+    global_watcher().remove(registration.id);
 }
 
 impl FsWatcher {
@@ -101,9 +105,8 @@ impl Drop for FsWatcher {
             std::mem::swap(old.deref_mut(), &mut registrations);
         }
 
-        let global_watcher = global_watcher();
         for (_, registration) in registrations {
-            global_watcher.remove(registration.id);
+            remove_fs_watcher_registration(registration);
         }
     }
 }
@@ -150,7 +153,7 @@ impl Watcher for FsWatcher {
                 .or_else(|| registrations.remove(&WatchKey::folded(path)))
         };
         if let Some(registration) = registration {
-            global_watcher().remove(registration.id);
+            remove_fs_watcher_registration(registration);
         }
         Ok(())
     }
@@ -220,12 +223,20 @@ fn register_existing_path(
     } else {
         WatcherMode::Native
     };
+    #[cfg(target_os = "windows")]
+    let parent_rename_watch = register_parent_rename_watch(
+        &path,
+        case_insensitive,
+        tx.clone(),
+        pending_path_events.clone(),
+    );
+    #[cfg(not(target_os = "windows"))]
+    let parent_rename_watch = None;
     let root_path = SanitizedPath::new_arc(path.as_ref());
     let path_for_callback = path.clone();
-    let Some(registration_id) = global_watcher().add(
-        path,
-        mode,
-        case_insensitive,
+    let registration = global_watcher().add(path.clone(), mode, case_insensitive, {
+        let tx = tx.clone();
+        let pending_path_events = pending_path_events.clone();
         move |event: &notify::Event| {
             log::trace!("watcher received event: {event:?}");
             push_notify_event(
@@ -236,15 +247,68 @@ fn register_existing_path(
                 path_for_callback.as_ref(),
                 event,
             );
-        },
-    )?
-    else {
-        return Ok(None);
+        }
+    });
+    let registration_id = match registration {
+        Ok(Some(registration_id)) => registration_id,
+        Ok(None) => return Ok(None),
+        Err(error) => return Err(error),
     };
     Ok(Some(FsWatcherRegistration {
         id: registration_id,
         mode,
+        _parent_rename_watcher: parent_rename_watch,
     }))
+}
+
+#[cfg(target_os = "windows")]
+fn register_parent_rename_watch(
+    path: &Arc<Path>,
+    case_insensitive: bool,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+) -> Option<Box<dyn WatchBackend>> {
+    let parent = path.parent()?;
+    let root_path = SanitizedPath::new_arc(path);
+    let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
+    let mut watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
+        move |event: notify::Result<notify::Event>| {
+            let Ok(event) = event else {
+                return;
+            };
+            if !matches!(
+                event.kind,
+                EventKind::Remove(_)
+                    | EventKind::Create(_)
+                    | EventKind::Modify(notify::event::ModifyKind::Name(_))
+            ) {
+                return;
+            }
+
+            let root_touched = event.paths.iter().any(|event_path| {
+                if case_insensitive {
+                    WatchKey::folded_path(SanitizedPath::new(event_path))
+                        == WatchKey::folded_path(&root_path)
+                } else {
+                    event_path == root_path.as_path()
+                }
+            });
+            if root_touched {
+                enqueue_path_events(
+                    &tx,
+                    &pending_path_events,
+                    vec![PathEvent {
+                        path: root_path.as_path().to_path_buf(),
+                        kind: Some(PathEventKind::Rescan),
+                    }],
+                );
+            }
+        },
+        config,
+    )
+    .log_err()?;
+    notify::Watcher::watch(&mut watcher, parent, notify::RecursiveMode::NonRecursive).log_err()?;
+    Some(Box::new(watcher))
 }
 
 #[cfg(target_os = "linux")]
