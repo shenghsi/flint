@@ -299,10 +299,11 @@ To cut a stable release, walk through these steps in order:
    it with `gh run watch <run-id> --interval 3600 --exit-status` so subsequent
    checks happen every 60 minutes. Do not poll the release more frequently
    unless the user explicitly asks for a different cadence.
-7. There is no auto-publish job anymore — every release finishes as a draft
-   with all assets attached; publish with
-   `gh release edit vX.Y.Z --draft=false` once `validate_release_assets` has
-   passed.
+7. `auto_release_stable` publishes the release automatically
+   (`gh release edit vX.Y.Z --draft=false`) once `validate_release_assets`
+   passes — there is no manual publish step. This relies on Nightly already
+   having verified whatever's on `main`: don't tag a stable release from a
+   `main` commit that hasn't had at least one green Nightly build.
 8. Release notes come from `script/draft-release-notes`, which finds the
    highest existing plain `vX.Y.Z` tag (via `git ls-remote --tags`) below the
    version being released and pulls each intervening commit's
