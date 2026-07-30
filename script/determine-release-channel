@@ -22,8 +22,6 @@ expected_tag_name=""
 case ${channel} in
 stable)
     expected_tag_name="v${version}";;
-preview)
-    expected_tag_name="v${version}-pre";;
 dev|nightly)
     expected_tag_name="v${version}-dev";;
 *)

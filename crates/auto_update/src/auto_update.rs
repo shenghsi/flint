@@ -41,8 +41,15 @@ impl std::fmt::Display for MissingDependencyError {
 
 impl std::error::Error for MissingDependencyError {}
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
-const NIGHTLY_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
+const NIGHTLY_POLL_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
+
+fn poll_interval(release_channel: ReleaseChannel) -> Duration {
+    match release_channel {
+        ReleaseChannel::Nightly => NIGHTLY_POLL_INTERVAL,
+        _ => POLL_INTERVAL,
+    }
+}
 
 #[cfg(target_os = "linux")]
 fn linux_rsync_install_hint() -> &'static str {
@@ -413,11 +420,7 @@ impl AutoUpdater {
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let poll_interval =
-            ReleaseChannel::try_global(cx).map_or(POLL_INTERVAL, |channel| match channel {
-                ReleaseChannel::Nightly => NIGHTLY_POLL_INTERVAL,
-                _ => POLL_INTERVAL,
-            });
+        let poll_interval = ReleaseChannel::try_global(cx).map_or(POLL_INTERVAL, poll_interval);
 
         cx.spawn(async move |this, cx| {
             if cfg!(target_os = "windows") {
@@ -1208,6 +1211,18 @@ mod tests {
             cx.set_global(store);
             assert!(AutoUpdateSetting::get_global(cx).0);
         });
+    }
+
+    #[test]
+    fn test_update_poll_intervals() {
+        assert_eq!(
+            poll_interval(ReleaseChannel::Nightly),
+            Duration::from_secs(6 * 60 * 60)
+        );
+        assert_eq!(
+            poll_interval(ReleaseChannel::Stable),
+            Duration::from_secs(24 * 60 * 60)
+        );
     }
 
     #[gpui::test]

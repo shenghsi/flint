@@ -16,10 +16,10 @@ curl -f https://flint.dev/install.sh | sh
 The installation script is the supported Linux install path for official builds
 because it keeps Flint on the auto-update path.
 
-We also offer a preview build of Flint which receives updates about a week ahead of stable. You can install it with:
+To install the latest Nightly build:
 
 ```sh
-curl -f https://flint.dev/install.sh | ZED_CHANNEL=preview sh
+curl -f https://flint.dev/install.sh | ZED_CHANNEL=nightly sh
 ```
 
 The Flint installed by the script works best on systems that:

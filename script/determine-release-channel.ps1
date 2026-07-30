@@ -22,9 +22,6 @@ switch ($channel) {
     "stable" {
         $expectedTagName = "v$version"
     }
-    "preview" {
-        $expectedTagName = "v$version-pre"
-    }
     "dev" {
         $expectedTagName = "v$version-dev"
     }

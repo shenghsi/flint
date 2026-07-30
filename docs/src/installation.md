@@ -9,7 +9,9 @@ description: Download and install Flint on macOS, Linux, or Windows. Includes Ho
 
 ### macOS
 
-Get the latest stable builds via [the download page](https://flint.dev/download). If you want to download our preview build, you can find it on its [releases page](https://flint.dev/releases/preview). After the first manual installation, Flint will periodically check for install updates.
+Get the latest stable build via the
+[download page](https://flint.dev/download). After the first manual
+installation, Flint periodically checks for updates.
 
 You can also install Flint stable via Homebrew:
 
@@ -17,15 +19,11 @@ You can also install Flint stable via Homebrew:
 brew install --cask flint
 ```
 
-As well as Flint preview:
-
-```sh
-brew install --cask flint@preview
-```
-
 ### Windows
 
-Get the latest stable builds via [the download page](https://flint.dev/download). If you want to download our preview build, you can find it on its [releases page](https://flint.dev/releases/preview). After the first manual installation, Flint will periodically check for install updates.
+Get the latest stable build via the
+[download page](https://flint.dev/download). After the first manual
+installation, Flint periodically checks for updates.
 
 Additionally, you can install Flint using winget:
 
@@ -51,10 +49,10 @@ curl -f https://flint.dev/install.sh | sh
 curl -f https://flint.dev/install.sh | ZED_VERSION=0.216.0 sh
 ```
 
-To install the preview build, which receives updates about a week ahead of stable:
+To install the latest Nightly build:
 
 ```sh
-curl -f https://flint.dev/install.sh | ZED_CHANNEL=preview sh
+curl -f https://flint.dev/install.sh | ZED_CHANNEL=nightly sh
 ```
 
 This script supports `x86_64` and `AArch64`, as well as common Linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, Fedora, and more.
@@ -69,7 +67,7 @@ If this script is insufficient for your use case, you run into problems running 
 
 Flint supports the following macOS releases:
 
-| Version       | Codename | Apple Status   | Flint Status          |
+| Version       | Codename | Apple Status   | Flint Status        |
 | ------------- | -------- | -------------- | ------------------- |
 | macOS 26.x    | Tahoe    | Supported      | Supported           |
 | macOS 15.x    | Sequoia  | Supported      | Supported           |
@@ -107,10 +105,11 @@ Flint requires a Vulkan 1.3 driver and the following desktop portals:
 ### Windows
 
 Flint supports the following Windows releases:
-| Version | Flint Status |
-| ------------------------- | ------------------- |
-| Windows 11, version 22H2 and later | Supported |
-| Windows 10, version 1903 and later | Supported |
+
+| Version                            | Flint Status |
+| ---------------------------------- | ------------ |
+| Windows 11, version 22H2 and later | Supported    |
+| Windows 10, version 1903 and later | Supported    |
 
 A 64-bit operating system is required to run Flint.
 
