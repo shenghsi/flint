@@ -7,9 +7,11 @@
 
 **Completed stable reconciliation:** Zed v1.6.3 through v1.12.1
 
-**Historical exception:** selected v1.13.0-pre entries approved before the
-stable-only review boundary remain recorded, but preview releases are no longer
-discovery inputs.
+**Historical exception:** selected Zed v1.13.0-pre entries approved before the
+stable-only review boundary remain recorded, but Zed preview releases are no
+longer discovery inputs. This is unrelated to Flint's own release channels:
+Flint cut `-pre` tags for its own now-retired preview channel, but no longer
+does ([see Releases in `.rules`](../../.rules)).
 **Program design:**
 `docs/superpowers/specs/2026-07-27-upstream-domain-wave-design.md`
 **Implementation plan:**
@@ -99,8 +101,9 @@ interfaces and are not covered by these exclusions.
 ## Recurring stable-release review
 
 The owner is [@shenghsi](https://github.com/shenghsi), the Flint maintainer.
-Review every new Zed stable release within seven days of publication. Preview
-release notes and tags ending in `-pre` are excluded.
+Review every new Zed stable release within seven days of publication. Zed's own
+preview release notes and its tags ending in `-pre` are excluded — Zed still
+ships a preview channel upstream even though Flint's fork does not.
 
 For each stable release:
 
