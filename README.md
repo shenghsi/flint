@@ -41,7 +41,10 @@ Flint does not ship Zed's native agent and chat interface, hosted AI models, mod
 
 ## Try Flint
 
-Download the latest stable build for macOS, Linux, or Windows from [GitHub Releases](https://github.com/shenghsi/flint/releases/latest), or a preview build from the [Releases page](https://github.com/shenghsi/flint/releases) (preview builds are marked as pre-releases and ship ahead of stable).
+Download the latest stable build for macOS, Linux, or Windows from
+[GitHub Releases](https://github.com/shenghsi/flint/releases/latest). Nightly
+builds are available from the moving
+[`nightly` release](https://github.com/shenghsi/flint/releases/tag/nightly).
 
 ### macOS
 
@@ -59,13 +62,16 @@ Install Flint into `~/.local` (no root required, and in-app auto-update works):
 curl -f https://raw.githubusercontent.com/shenghsi/flint/main/script/install.sh | sh
 ```
 
-To install the preview channel instead of stable, set `ZED_CHANNEL=preview`:
+To install the Nightly channel instead of Stable, set `ZED_CHANNEL=nightly`:
 
 ```sh
-curl -f https://raw.githubusercontent.com/shenghsi/flint/main/script/install.sh | ZED_CHANNEL=preview sh
+curl -f https://raw.githubusercontent.com/shenghsi/flint/main/script/install.sh | ZED_CHANNEL=nightly sh
 ```
 
-This installs the app bundle alongside a stable install (as `~/.local/flint-preview.app`, which auto-updates only within the preview channel), but the `flint` command in `~/.local/bin` always points at whichever channel you installed most recently.
+This installs the app bundle alongside a Stable install as
+`~/.local/flint-nightly.app`. Nightly checks the moving `nightly` release for
+updates every six hours. The `flint` command in `~/.local/bin` points at
+whichever channel you installed most recently.
 
 If `~/.local/bin` isn't already on your `PATH`, add it so you can launch Flint with `flint`.
 
