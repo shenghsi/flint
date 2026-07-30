@@ -234,9 +234,7 @@ fn register_existing_path(
     let parent_rename_watch = None;
     let root_path = SanitizedPath::new_arc(path.as_ref());
     let path_for_callback = path.clone();
-    let registration = global_watcher().add(path.clone(), mode, case_insensitive, {
-        let tx = tx.clone();
-        let pending_path_events = pending_path_events.clone();
+    let registration = global_watcher().add(path, mode, case_insensitive, {
         move |event: &notify::Event| {
             log::trace!("watcher received event: {event:?}");
             push_notify_event(
