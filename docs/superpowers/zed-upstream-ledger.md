@@ -7,9 +7,11 @@
 
 **Completed stable reconciliation:** Zed v1.6.3 through v1.12.1
 
-**Historical exception:** selected v1.13.0-pre entries approved before the
-stable-only review boundary remain recorded, but preview releases are no longer
-discovery inputs.
+**Historical exception:** selected Zed v1.13.0-pre entries approved before the
+stable-only review boundary remain recorded, but Zed preview releases are no
+longer discovery inputs. This is unrelated to Flint's own release channels:
+Flint cut `-pre` tags for its own now-retired preview channel, but no longer
+does ([see Releases in `.rules`](../../.rules)).
 **Program design:**
 `docs/superpowers/specs/2026-07-27-upstream-domain-wave-design.md`
 **Implementation plan:**
@@ -22,6 +24,33 @@ Before implementation, prove that the final upstream commit is absent from the
 fork-point ancestry, inspect later corrections on Zed main, reproduce the
 missing behavior in current Flint, and choose the integration strategy from
 current code rather than patch applicability.
+
+## Local upstream remote setup
+
+Zed's own repository has no dedicated stable/release branch; its releases are
+tags (`vX.Y.Z` / `vX.Y.Z-pre`) cut from `main`. A contributor's `upstream`
+remote (`https://github.com/zed-industries/zed.git`) therefore only needs to
+track `main` — fetching every upstream head (Zed has 1,500+ open branches at
+any time) is unnecessary and slows every `git fetch upstream` for no benefit
+to the ledger process, which reasons about specific commits and tags, not
+arbitrary in-flight branches.
+
+Point the remote at only `main`:
+
+```sh
+git config remote.upstream.fetch '+refs/heads/main:refs/remotes/upstream/main'
+```
+
+If the remote was previously fetched with the default `+refs/heads/*` refspec,
+drop the now out-of-scope cached branches by fetching with `--prune` — pruning
+is computed from the *configured* refspec, not from what currently exists on
+the remote, so this alone removes every cached branch besides `main` even
+though those branches still exist upstream — then repack:
+
+```sh
+git fetch upstream --prune
+git gc --prune=now
+```
 
 ## Status definitions
 
@@ -72,8 +101,9 @@ interfaces and are not covered by these exclusions.
 ## Recurring stable-release review
 
 The owner is [@shenghsi](https://github.com/shenghsi), the Flint maintainer.
-Review every new Zed stable release within seven days of publication. Preview
-release notes and tags ending in `-pre` are excluded.
+Review every new Zed stable release within seven days of publication. Zed's own
+preview release notes and its tags ending in `-pre` are excluded — Zed still
+ships a preview channel upstream even though Flint's fork does not.
 
 For each stable release:
 
