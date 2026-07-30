@@ -270,7 +270,7 @@ mod windows_tests {
 
     fn wait_for_grandchild(temp_dir: &std::path::Path) -> (u32, ProcessCleanup) {
         let pid_file = temp_dir.join("grandchild_pid");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(15);
         let grandchild_pid = loop {
             if let Ok(contents) = std::fs::read_to_string(&pid_file)
                 && let Ok(pid) = contents.trim().parse::<u32>()

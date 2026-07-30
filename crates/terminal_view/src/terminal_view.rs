@@ -3255,11 +3255,19 @@ mod tests {
         // A task-backed terminal (e.g. an agent-thread session) is relaunched
         // by its own restore path, so it must not be recorded in the pane
         // layout or it resurfaces as a ghost shell terminal on the next start.
+        #[cfg(windows)]
+        let (command, args) = (
+            Some("cmd.exe".to_string()),
+            vec!["/S".to_string(), "/C".to_string(), "exit 0".to_string()],
+        );
+        #[cfg(not(windows))]
+        let (command, args) = (Some("true".to_string()), Vec::new());
         let task = project
             .update(cx, |project, cx| {
                 project.create_terminal_task(
                     task::SpawnInTerminal {
-                        command: Some("true".to_string()),
+                        command,
+                        args,
                         ..task::SpawnInTerminal::default()
                     },
                     cx,
