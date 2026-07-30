@@ -23,6 +23,32 @@ fork-point ancestry, inspect later corrections on Zed main, reproduce the
 missing behavior in current Flint, and choose the integration strategy from
 current code rather than patch applicability.
 
+## Local upstream remote setup
+
+Zed's own repository has no dedicated stable/release branch; its releases are
+tags (`vX.Y.Z` / `vX.Y.Z-pre`) cut from `main`. A contributor's `upstream`
+remote (`https://github.com/zed-industries/zed.git`) therefore only needs to
+track `main` — fetching every upstream head (Zed has 1,500+ open branches at
+any time) is unnecessary and slows every `git fetch upstream` for no benefit
+to the ledger process, which reasons about specific commits and tags, not
+arbitrary in-flight branches.
+
+Point the remote at only `main`:
+
+```sh
+git config remote.upstream.fetch '+refs/heads/main:refs/remotes/upstream/main'
+```
+
+If the remote was previously fetched with the default `+refs/heads/*` refspec,
+drop the stale cached branches and repack:
+
+```sh
+git for-each-ref --format='%(refname)' refs/remotes/upstream \
+  | grep -vE '^refs/remotes/upstream/(main|HEAD)$' \
+  | xargs -n1 git update-ref -d
+git gc --prune=now
+```
+
 ## Status definitions
 
 - `proposed`: accepted into the program but not yet investigated against
