@@ -42,7 +42,11 @@ enum HistoricalState {
 
 struct SectionState {
     collapsed: bool,
-    show_all: bool,
+    /// Number of rows to show, overriding the default cap. `None` means
+    /// "show the default cap". Doubled by "Show more" and halved by "Show
+    /// less", rather than jumping straight to showing everything or
+    /// resetting straight back to the cap.
+    visible_override: Option<usize>,
     historical: HistoricalState,
 }
 
@@ -50,24 +54,27 @@ impl Default for SectionState {
     fn default() -> Self {
         Self {
             collapsed: false,
-            show_all: false,
+            visible_override: None,
             historical: HistoricalState::Loading,
         }
     }
 }
 
-/// Truncates `rows` to `cap` unless `show_all` has been toggled, returning
-/// whether truncation happened (so the caller knows to render "Show more").
-fn apply_visible_cap(
-    mut rows: Vec<AgentThreadRow>,
-    cap: usize,
-    show_all: bool,
-) -> (Vec<AgentThreadRow>, bool) {
-    let truncated = !show_all && rows.len() > cap;
-    if truncated {
-        rows.truncate(cap);
+/// Resolves how many rows should currently be visible, clamped between the
+/// default cap (or `total` if smaller) and `total`.
+fn resolve_visible_count(cap: usize, total: usize, visible_override: Option<usize>) -> usize {
+    let min_visible = cap.min(total);
+    visible_override
+        .map(|count| count.clamp(min_visible, total))
+        .unwrap_or(min_visible)
+}
+
+/// Truncates `rows` to `visible_count`.
+fn apply_visible_cap(mut rows: Vec<AgentThreadRow>, visible_count: usize) -> Vec<AgentThreadRow> {
+    if rows.len() > visible_count {
+        rows.truncate(visible_count);
     }
-    (rows, truncated)
+    rows
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -895,9 +902,21 @@ impl AgentThreadsPanel {
         }
     }
 
-    fn toggle_show_all_for_section(&mut self, kind_id: &'static str) {
+    /// Doubles the number of visible rows in the section, up to `total`.
+    fn expand_section_visible_count(&mut self, kind_id: &'static str, cap: usize, total: usize) {
         if let Some(section) = self.sections.get_mut(kind_id) {
-            section.show_all = !section.show_all;
+            let current = resolve_visible_count(cap, total, section.visible_override);
+            let next = current.saturating_mul(2).min(total);
+            section.visible_override = Some(next);
+        }
+    }
+
+    /// Halves the number of visible rows in the section, down to `cap`.
+    fn collapse_section_visible_count(&mut self, kind_id: &'static str, cap: usize) {
+        if let Some(section) = self.sections.get_mut(kind_id) {
+            let current = section.visible_override.unwrap_or(cap);
+            let next = current / 2;
+            section.visible_override = (next > cap).then_some(next);
         }
     }
 
@@ -1067,7 +1086,7 @@ impl AgentThreadsPanel {
             .live_threads_for_project(kind.id, project_roots);
         let section = self.sections.entry(kind.id).or_default();
         let collapsed = section.collapsed;
-        let show_all = section.show_all;
+        let visible_override = section.visible_override;
         let (historical, scan_status) = match &section.historical {
             HistoricalState::Loaded(threads) => (Some(threads.clone()), None),
             HistoricalState::Loading => (None, Some("Scanning history…")),
@@ -1082,8 +1101,10 @@ impl AgentThreadsPanel {
         );
         let cap = AgentThreadSettings::get_global(cx).max_visible_threads_per_agent;
         let total = rows.len();
-        let can_toggle_visible_count = total > cap;
-        let (rows, _truncated) = apply_visible_cap(rows, cap, show_all);
+        let visible_count = resolve_visible_count(cap, total, visible_override);
+        let can_show_more = visible_count < total;
+        let can_show_less = visible_count > cap.min(total);
+        let rows = apply_visible_cap(rows, visible_count);
         let new_thread_launch_option_label = new_thread_launch_option_label(cx, kind);
         let new_thread_launch_option_visual = new_thread_launch_option_visual(cx, kind);
         let agent_route = self.workspace.upgrade().and_then(|workspace| {
@@ -1239,25 +1260,42 @@ impl AgentThreadsPanel {
                 for row in rows {
                     body_children.push(self.render_row(kind, row, cx));
                 }
-                if can_toggle_visible_count {
-                    let label = if show_all {
-                        "Show less".to_string()
-                    } else {
-                        format!("Show {} more", total - cap)
-                    };
-                    body_children.push(
-                        Button::new(
-                            SharedString::from(format!("agent-thread-show-more-{kind_id}")),
-                            label,
-                        )
-                        .size(ButtonSize::Compact)
-                        .label_size(LabelSize::Small)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.toggle_show_all_for_section(kind_id);
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                    );
+                if can_show_more || can_show_less {
+                    let mut controls = h_flex().gap_1();
+                    if can_show_more {
+                        let more_count = visible_count.saturating_mul(2).min(total) - visible_count;
+                        controls = controls.child(
+                            Button::new(
+                                SharedString::from(format!("agent-thread-show-more-{kind_id}")),
+                                format!("Show {more_count} more"),
+                            )
+                            .size(ButtonSize::Compact)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.expand_section_visible_count(kind_id, cap, total);
+                                    cx.notify();
+                                },
+                            )),
+                        );
+                    }
+                    if can_show_less {
+                        controls = controls.child(
+                            Button::new(
+                                SharedString::from(format!("agent-thread-show-less-{kind_id}")),
+                                "Show less",
+                            )
+                            .size(ButtonSize::Compact)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.collapse_section_visible_count(kind_id, cap);
+                                    cx.notify();
+                                },
+                            )),
+                        );
+                    }
+                    body_children.push(controls.into_any_element());
                 }
             }
         }
@@ -2379,7 +2417,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_visible_cap_truncates_until_show_all_is_set() {
+    fn apply_visible_cap_truncates_to_visible_count() {
         let rows = vec![
             AgentThreadRow::Historical {
                 thread: HistoricalThread {
@@ -2410,17 +2448,54 @@ mod tests {
             },
         ];
 
-        let (capped, truncated) = apply_visible_cap(rows.clone(), 2, false);
+        let capped = apply_visible_cap(rows.clone(), 2);
         assert_eq!(capped.len(), 2);
-        assert!(truncated);
 
-        let (all, truncated) = apply_visible_cap(rows, 2, true);
+        let all = apply_visible_cap(rows, 3);
         assert_eq!(all.len(), 3);
-        assert!(!truncated);
+    }
+
+    #[test]
+    fn expand_and_collapse_section_visible_count_double_and_halve() {
+        let cap = 5;
+        let total = 20;
+        let mut section = SectionState::default();
+
+        section.visible_override = Some(
+            resolve_visible_count(cap, total, section.visible_override)
+                .saturating_mul(2)
+                .min(total),
+        );
+        assert_eq!(section.visible_override, Some(10));
+
+        section.visible_override = Some(
+            resolve_visible_count(cap, total, section.visible_override)
+                .saturating_mul(2)
+                .min(total),
+        );
+        assert_eq!(section.visible_override, Some(20));
+
+        // Already showing everything: doubling again is a no-op.
+        section.visible_override = Some(
+            resolve_visible_count(cap, total, section.visible_override)
+                .saturating_mul(2)
+                .min(total),
+        );
+        assert_eq!(section.visible_override, Some(20));
+
+        let current = section.visible_override.unwrap_or(cap);
+        let next = current / 2;
+        section.visible_override = (next > cap).then_some(next);
+        assert_eq!(section.visible_override, Some(10));
+
+        let current = section.visible_override.unwrap_or(cap);
+        let next = current / 2;
+        section.visible_override = (next > cap).then_some(next);
+        assert_eq!(section.visible_override, None);
     }
 
     #[gpui::test]
-    async fn toggling_section_collapsed_and_show_all_updates_state(cx: &mut TestAppContext) {
+    async fn toggling_section_collapsed_and_visible_count_updates_state(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
         configure_echo_threads(cx, "/root", 5);
@@ -2434,32 +2509,48 @@ mod tests {
             })
             .expect("failed to create panel");
 
-        let (collapsed_before, show_all_before) = panel.update(cx, |panel, _| {
+        let (collapsed_before, visible_override_before) = panel.update(cx, |panel, _| {
             let section = panel.sections.get("codex").unwrap();
-            (section.collapsed, section.show_all)
+            (section.collapsed, section.visible_override)
         });
         assert!(!collapsed_before);
-        assert!(!show_all_before);
+        assert_eq!(visible_override_before, None);
 
         panel.update(cx, |panel, _| {
             panel.toggle_section_collapsed("codex");
-            panel.toggle_show_all_for_section("codex");
+            panel.expand_section_visible_count("codex", 5, 20);
         });
 
-        let (collapsed_after, show_all_after) = panel.update(cx, |panel, _| {
+        let (collapsed_after, visible_override_after) = panel.update(cx, |panel, _| {
             let section = panel.sections.get("codex").unwrap();
-            (section.collapsed, section.show_all)
+            (section.collapsed, section.visible_override)
         });
         assert!(collapsed_after);
-        assert!(show_all_after);
+        assert_eq!(visible_override_after, Some(10));
 
         panel.update(cx, |panel, _| {
-            panel.toggle_show_all_for_section("codex");
+            panel.expand_section_visible_count("codex", 5, 20);
         });
+        let visible_override_after_second_expand = panel.update(cx, |panel, _| {
+            panel.sections.get("codex").unwrap().visible_override
+        });
+        assert_eq!(visible_override_after_second_expand, Some(20));
 
-        let show_all_after_second_toggle =
-            panel.update(cx, |panel, _| panel.sections.get("codex").unwrap().show_all);
-        assert!(!show_all_after_second_toggle);
+        panel.update(cx, |panel, _| {
+            panel.collapse_section_visible_count("codex", 5);
+        });
+        let visible_override_after_collapse = panel.update(cx, |panel, _| {
+            panel.sections.get("codex").unwrap().visible_override
+        });
+        assert_eq!(visible_override_after_collapse, Some(10));
+
+        panel.update(cx, |panel, _| {
+            panel.collapse_section_visible_count("codex", 5);
+        });
+        let visible_override_after_second_collapse = panel.update(cx, |panel, _| {
+            panel.sections.get("codex").unwrap().visible_override
+        });
+        assert_eq!(visible_override_after_second_collapse, None);
     }
 
     #[gpui::test]
