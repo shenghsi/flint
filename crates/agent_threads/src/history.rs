@@ -444,7 +444,7 @@ fn path_for_style(path: &Path, path_style: PathStyle) -> Result<String> {
 fn normalize_path_for_style(path: &str, path_style: PathStyle) -> String {
     let path = match path_style {
         PathStyle::Posix => path.replace('\\', "/"),
-        PathStyle::Windows => path.to_string(),
+        PathStyle::Windows => path.replace('/', "\\"),
     };
     path_style.normalize(&path)
 }
@@ -848,7 +848,8 @@ pub async fn resolve_history_base_dir(
     base_dir_from_env(&env_map, env_var_name, default_dir_name, path_style)
 }
 
-/// Picks `$<env_var_name>` when set, otherwise `$HOME/<default_dir_name>`.
+/// Picks `$<env_var_name>` when set, otherwise the platform home directory
+/// joined with `<default_dir_name>`.
 /// Pulled out of `resolve_history_host` so it's testable without needing a
 /// real `Project`/environment resolution round trip.
 fn base_dir_from_env(
@@ -865,8 +866,14 @@ fn base_dir_from_env(
     } else {
         let home = env_map
             .get("HOME")
-            .ok_or_else(|| anyhow!("no HOME in the project's resolved environment"))?;
-        path_style.join_path(home, default_dir_name)
+            .or_else(|| {
+                path_style
+                    .is_windows()
+                    .then(|| env_map.get("USERPROFILE"))
+                    .flatten()
+            })
+            .ok_or_else(|| anyhow!("no home directory in the project's resolved environment"))?;
+        path_style.join_path(home, normalize_path_for_style(default_dir_name, path_style))
     }
 }
 
@@ -1081,6 +1088,42 @@ mod tests {
         let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Windows).unwrap();
 
         assert_eq!(base_dir.to_string_lossy(), "C:\\Users\\alice\\.codex");
+    }
+
+    #[test]
+    fn windows_agent_base_dirs_fall_back_to_user_profile() {
+        let mut env = HashMap::default();
+        env.insert("USERPROFILE".to_string(), "C:\\Users\\alice".to_string());
+
+        for (environment_variable, default_directory, expected) in [
+            ("CODEX_HOME", ".codex", "C:\\Users\\alice\\.codex"),
+            ("CLAUDE_CONFIG_DIR", ".claude", "C:\\Users\\alice\\.claude"),
+            (
+                "PI_CODING_AGENT_DIR",
+                ".pi/agent",
+                "C:\\Users\\alice\\.pi\\agent",
+            ),
+        ] {
+            let base_dir = base_dir_from_env(
+                &env,
+                environment_variable,
+                default_directory,
+                PathStyle::Windows,
+            )
+            .unwrap();
+
+            assert_eq!(base_dir.to_string_lossy(), expected);
+        }
+    }
+
+    #[test]
+    fn posix_base_dir_does_not_use_user_profile() {
+        let mut env = HashMap::default();
+        env.insert("USERPROFILE".to_string(), "/home/alice".to_string());
+
+        let result = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix);
+
+        assert!(result.is_err());
     }
 
     #[gpui::test]
