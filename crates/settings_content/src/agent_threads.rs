@@ -14,6 +14,8 @@ pub struct AgentThreadSettingsContent {
     pub claude: Option<AgentThreadCommandContent>,
     /// Command used for new Pi agent threads.
     pub pi: Option<AgentThreadCommandContent>,
+    /// Command used for new OpenCode agent threads.
+    pub opencode: Option<AgentThreadCommandContent>,
     /// Maximum number of threads shown per agent section before a "Show
     /// more" control is offered.
     ///
@@ -112,5 +114,28 @@ mod tests {
             serialized["codex"]["initialization_command"],
             "source ~/.profile"
         );
+    }
+
+    #[test]
+    fn opencode_agent_thread_settings_round_trip() {
+        let content: AgentThreadSettingsContent = serde_json::from_str(
+            r#"{"opencode":{"command":"custom-opencode","hidden":true,"initialization_command":"source ~/.profile"}}"#,
+        )
+        .expect("valid OpenCode agent thread settings");
+
+        let opencode = content
+            .opencode
+            .as_ref()
+            .expect("OpenCode settings should be present");
+        assert_eq!(opencode.command.as_deref(), Some("custom-opencode"));
+        assert_eq!(opencode.hidden, Some(true));
+        assert_eq!(
+            opencode.initialization_command.as_deref(),
+            Some("source ~/.profile")
+        );
+
+        let serialized = serde_json::to_value(content).expect("serializable agent thread settings");
+        assert_eq!(serialized["opencode"]["command"], "custom-opencode");
+        assert_eq!(serialized["opencode"]["hidden"], true);
     }
 }

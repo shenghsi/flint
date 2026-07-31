@@ -269,8 +269,8 @@ fn proto_snapshot_threads(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HistoryFileIdentity {
-    modified_at: fs::MTime,
-    length: u64,
+    pub(crate) modified_at: fs::MTime,
+    pub(crate) length: u64,
 }
 
 #[derive(Default)]
@@ -337,6 +337,10 @@ pub trait HistoryFs: Send + Sync {
     async fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn metadata(&self, path: &Path) -> Result<Option<HistoryFileIdentity>>;
+
+    fn local_path(&self, _path: &Path) -> Option<PathBuf> {
+        None
+    }
 }
 
 pub(crate) struct LocalHistoryFs(pub(crate) Arc<dyn fs::Fs>);
@@ -365,6 +369,10 @@ impl HistoryFs for LocalHistoryFs {
                 modified_at: metadata.mtime,
                 length: metadata.len,
             }))
+    }
+
+    fn local_path(&self, path: &Path) -> Option<PathBuf> {
+        (!self.0.is_fake()).then(|| path.to_path_buf())
     }
 }
 
@@ -826,6 +834,7 @@ pub(crate) fn history_host_for_resolved_base_dir(
 pub async fn resolve_history_base_dir(
     project: &Entity<Project>,
     env_var_name: &str,
+    env_child: Option<&str>,
     default_dir_name: &str,
     cx: &mut AsyncApp,
 ) -> Result<PathBuf> {
@@ -845,7 +854,13 @@ pub async fn resolve_history_base_dir(
         .await
         .ok_or_else(|| anyhow!("couldn't resolve the project's environment"))?;
 
-    base_dir_from_env(&env_map, env_var_name, default_dir_name, path_style)
+    base_dir_from_env(
+        &env_map,
+        env_var_name,
+        env_child,
+        default_dir_name,
+        path_style,
+    )
 }
 
 /// Picks `$<env_var_name>` when set, otherwise the platform home directory
@@ -855,14 +870,20 @@ pub async fn resolve_history_base_dir(
 fn base_dir_from_env(
     env_map: &HashMap<String, String>,
     env_var_name: &str,
+    env_child: Option<&str>,
     default_dir_name: &str,
     path_style: PathStyle,
 ) -> Result<PathBuf> {
     if let Some(override_dir) = env_map.get(env_var_name) {
-        Ok(PathBuf::from(normalize_path_for_style(
-            override_dir,
-            path_style,
-        )))
+        let override_dir = normalize_path_for_style(override_dir, path_style);
+        if let Some(env_child) = env_child {
+            path_style.join_path(
+                override_dir,
+                normalize_path_for_style(env_child, path_style),
+            )
+        } else {
+            Ok(PathBuf::from(override_dir))
+        }
     } else {
         let home = env_map
             .get("HOME")
@@ -1046,7 +1067,8 @@ mod tests {
         env.insert("CODEX_HOME".to_string(), "/custom/codex-home".to_string());
         env.insert("HOME".to_string(), "/home/alice".to_string());
 
-        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix).unwrap();
+        let base_dir =
+            base_dir_from_env(&env, "CODEX_HOME", None, ".codex", PathStyle::Posix).unwrap();
 
         assert_eq!(base_dir, PathBuf::from("/custom/codex-home"));
     }
@@ -1056,16 +1078,34 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("HOME".to_string(), "/home/alice".to_string());
 
-        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix).unwrap();
+        let base_dir =
+            base_dir_from_env(&env, "CODEX_HOME", None, ".codex", PathStyle::Posix).unwrap();
 
         assert_eq!(base_dir, PathBuf::from("/home/alice/.codex"));
+    }
+
+    #[test]
+    fn base_dir_appends_agent_child_to_xdg_override() {
+        let mut env = HashMap::default();
+        env.insert("XDG_DATA_HOME".to_string(), "/custom/share".to_string());
+
+        let base_dir = base_dir_from_env(
+            &env,
+            "XDG_DATA_HOME",
+            Some("opencode"),
+            ".local/share/opencode",
+            PathStyle::Posix,
+        )
+        .expect("OpenCode XDG history directory");
+
+        assert_eq!(base_dir, PathBuf::from("/custom/share/opencode"));
     }
 
     #[test]
     fn base_dir_errors_when_home_and_override_both_unset() {
         let env = HashMap::default();
 
-        let result = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix);
+        let result = base_dir_from_env(&env, "CODEX_HOME", None, ".codex", PathStyle::Posix);
 
         assert!(result.is_err());
     }
@@ -1075,7 +1115,8 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("HOME".to_string(), "/home/alice".to_string());
 
-        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix).unwrap();
+        let base_dir =
+            base_dir_from_env(&env, "CODEX_HOME", None, ".codex", PathStyle::Posix).unwrap();
 
         assert_eq!(base_dir.to_string_lossy(), "/home/alice/.codex");
     }
@@ -1085,7 +1126,8 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("HOME".to_string(), "C:\\Users\\alice".to_string());
 
-        let base_dir = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Windows).unwrap();
+        let base_dir =
+            base_dir_from_env(&env, "CODEX_HOME", None, ".codex", PathStyle::Windows).unwrap();
 
         assert_eq!(base_dir.to_string_lossy(), "C:\\Users\\alice\\.codex");
     }
@@ -1095,18 +1137,31 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("USERPROFILE".to_string(), "C:\\Users\\alice".to_string());
 
-        for (environment_variable, default_directory, expected) in [
-            ("CODEX_HOME", ".codex", "C:\\Users\\alice\\.codex"),
-            ("CLAUDE_CONFIG_DIR", ".claude", "C:\\Users\\alice\\.claude"),
+        for (environment_variable, environment_child, default_directory, expected) in [
+            ("CODEX_HOME", None, ".codex", "C:\\Users\\alice\\.codex"),
+            (
+                "CLAUDE_CONFIG_DIR",
+                None,
+                ".claude",
+                "C:\\Users\\alice\\.claude",
+            ),
             (
                 "PI_CODING_AGENT_DIR",
+                None,
                 ".pi/agent",
                 "C:\\Users\\alice\\.pi\\agent",
+            ),
+            (
+                "XDG_DATA_HOME",
+                Some("opencode"),
+                ".local/share/opencode",
+                "C:\\Users\\alice\\.local\\share\\opencode",
             ),
         ] {
             let base_dir = base_dir_from_env(
                 &env,
                 environment_variable,
+                environment_child,
                 default_directory,
                 PathStyle::Windows,
             )
@@ -1121,7 +1176,7 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("USERPROFILE".to_string(), "/home/alice".to_string());
 
-        let result = base_dir_from_env(&env, "CODEX_HOME", ".codex", PathStyle::Posix);
+        let result = base_dir_from_env(&env, "CODEX_HOME", None, ".codex", PathStyle::Posix);
 
         assert!(result.is_err());
     }
@@ -1852,7 +1907,7 @@ mod tests {
         let result = cx
             .update(|cx| {
                 cx.spawn(async move |cx| {
-                    resolve_history_base_dir(&project, "CODEX_HOME", ".codex", cx).await
+                    resolve_history_base_dir(&project, "CODEX_HOME", None, ".codex", cx).await
                 })
             })
             .await;

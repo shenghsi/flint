@@ -1,6 +1,6 @@
 # Flint
 
-Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed) built for developers who use tools such as Codex, Claude Code, and Pi from the command line.
+Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed) built for developers who use tools such as Codex, Claude Code, Pi, and OpenCode from the command line.
 
 It keeps Zed's fast, GPU-accelerated editor, language support, Git tooling, and extension ecosystem while replacing the built-in AI product with a focused workspace for terminal-based coding agents.
 
@@ -23,7 +23,7 @@ Flint is for developers who want the project awareness and visual review tools o
 ### Added
 
 - **First-class terminals:** New terminals open as tabs in the center workspace by default, alongside files and diffs.
-- **Codex, Claude Code, and Pi threads:** Launch any supported CLI directly in a terminal-backed thread using its existing authentication and configuration.
+- **Codex, Claude Code, Pi, and OpenCode threads:** Launch any supported CLI directly in a terminal-backed thread using its existing authentication and configuration.
 - **Agent Threads panel:** Organize sessions, discover recent threads on the local machine or connected remote host, and resume work using titles from each agent's history.
 - **Agent status and continuity:** See Codex and Claude Code plan usage and reset countdowns, receive desktop notifications when a thread needs attention, and optionally reopen resumable sessions after restarting Flint.
 - **Cross-agent handoff:** Preview a bounded handoff document from a live local thread, then continue the work in a fresh thread with another supported agent.
@@ -81,7 +81,7 @@ The `.deb` and `.rpm` packages install Flint system-wide under `/usr/lib/flint`.
 
 Flint supports SSH and WSL remote development while keeping the editor UI local. Files, terminals, tasks, language servers, and agent threads run on the remote host.
 
-Remote agent threads can use either the remote host's own network (`Direct`) or a Flint-managed route (`Tunneled`). With `Tunneled`, Flint can provision pinned Codex, Claude Code, and Pi binaries on the remote host and route supported provider traffic back through the local Flint connection, which helps when a remote machine has restricted internet (VPN) access. Flint marks tunneled SSH projects in the title bar and project picker.
+Remote agent threads can use either the remote host's own network (`Direct`) or a Flint-managed route (`Tunneled`). With `Tunneled`, Flint can provision pinned Codex, Claude Code, Pi, and OpenCode binaries on the remote host and route supported provider traffic back through the local Flint connection, which helps when a remote machine has restricted internet (VPN) access. Flint marks tunneled SSH projects in the title bar and project picker.
 
 See [Remote Development](./docs/src/remote-development.md) for setup, SSH connection settings, port forwarding, and the `agent_route` option.
 

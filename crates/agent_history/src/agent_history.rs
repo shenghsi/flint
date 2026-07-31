@@ -12,6 +12,7 @@
 
 mod claude;
 mod codex;
+mod opencode;
 mod pi;
 mod transcript;
 
@@ -33,6 +34,7 @@ use util::paths::PathStyle;
 
 pub use claude::ClaudeHistoryProvider;
 pub use codex::CodexHistoryProvider;
+pub use opencode::OpenCodeHistoryProvider;
 pub use pi::PiHistoryProvider;
 pub use transcript::{DEFAULT_BUDGET, ExcerptBudget, ExtractionRefusal, TranscriptExcerpt};
 
@@ -50,6 +52,7 @@ pub enum HistoryKind {
     Codex,
     Claude,
     Pi,
+    OpenCode,
 }
 
 impl HistoryKind {
@@ -58,6 +61,7 @@ impl HistoryKind {
             HistoryKind::Codex => "codex",
             HistoryKind::Claude => "claude",
             HistoryKind::Pi => "pi",
+            HistoryKind::OpenCode => "opencode",
         }
     }
 
@@ -66,6 +70,7 @@ impl HistoryKind {
             "codex" => Some(HistoryKind::Codex),
             "claude" => Some(HistoryKind::Claude),
             "pi" => Some(HistoryKind::Pi),
+            "opencode" => Some(HistoryKind::OpenCode),
             _ => None,
         }
     }
@@ -75,17 +80,23 @@ impl HistoryKind {
             HistoryKind::Codex => Arc::new(CodexHistoryProvider),
             HistoryKind::Claude => Arc::new(ClaudeHistoryProvider),
             HistoryKind::Pi => Arc::new(PiHistoryProvider),
+            HistoryKind::OpenCode => Arc::new(OpenCodeHistoryProvider),
         }
     }
 
     /// Classifies a raw session transcript into the shared, provider-neutral
     /// event stream for handoff extraction.
-    fn classify_transcript(self, content: &str) -> transcript::Classified {
-        match self {
+    fn classify_transcript(self, content: &str) -> Result<transcript::Classified> {
+        Ok(match self {
             HistoryKind::Codex => codex::classify_transcript(content),
             HistoryKind::Claude => claude::classify_transcript(content),
             HistoryKind::Pi => pi::classify_transcript(content),
-        }
+            HistoryKind::OpenCode => {
+                return Err(anyhow!(
+                    "OpenCode transcripts must be extracted from its history database"
+                ));
+            }
+        })
     }
 
     /// Whether the projection collapses multiple index rows that share a
@@ -95,7 +106,7 @@ impl HistoryKind {
     fn dedup_by_session(self) -> bool {
         match self {
             HistoryKind::Codex => false,
-            HistoryKind::Claude | HistoryKind::Pi => true,
+            HistoryKind::Claude | HistoryKind::Pi | HistoryKind::OpenCode => true,
         }
     }
 }
@@ -129,6 +140,10 @@ pub trait HistoryFs: Send + Sync {
     async fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn metadata(&self, path: &Path) -> Result<Option<FileIdentity>>;
+
+    fn local_path(&self, _path: &Path) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// A [`HistoryFs`] backed by a real (host-local) filesystem.
@@ -156,6 +171,10 @@ impl HistoryFs for LocalHistoryFs {
             .await?
             .as_ref()
             .and_then(FileIdentity::from_metadata))
+    }
+
+    fn local_path(&self, path: &Path) -> Option<PathBuf> {
+        (!self.0.is_fake()).then(|| path.to_path_buf())
     }
 }
 
@@ -243,6 +262,30 @@ pub trait HistoryProvider: Send + Sync {
         host: &HistoryHost,
         previous: Option<&serde_json::Value>,
     ) -> Result<ProviderRefresh>;
+
+    async fn extract(
+        &self,
+        host: &HistoryHost,
+        session: &IndexedSession,
+        budget: &ExcerptBudget,
+    ) -> Result<Extraction> {
+        let source_path = session.source_path.clone().with_context(|| {
+            format!(
+                "session {:?} has no extractable transcript file",
+                session.session_id
+            )
+        })?;
+        extract_transcript(
+            host,
+            &TranscriptLocator {
+                kind: self.kind(),
+                source_path: PathBuf::from(source_path),
+                expected_identity: session.source_identity,
+            },
+            budget,
+        )
+        .await
+    }
 }
 
 /// Identifies one source transcript to extract for a cross-agent handoff. The
@@ -296,7 +339,7 @@ pub async fn extract_transcript(
     let after = host.fs.metadata(&locator.source_path).await?;
     let possibly_incomplete = before != after;
 
-    let classified = locator.kind.classify_transcript(&content);
+    let classified = locator.kind.classify_transcript(&content)?;
     match transcript::select_and_render(classified, budget, possibly_incomplete) {
         Ok(excerpt) => Ok(Extraction::Excerpt(excerpt)),
         Err(refusal) => Ok(Extraction::Refused(refusal)),
@@ -454,15 +497,7 @@ impl IndexService {
                 (matches_dir, session.last_activity())
             })
             .with_context(|| format!("no indexed session {session_id:?}"))?;
-        let source_path = session.source_path.clone().with_context(|| {
-            format!("session {session_id:?} has no extractable transcript file")
-        })?;
-        let locator = TranscriptLocator {
-            kind,
-            source_path: PathBuf::from(source_path),
-            expected_identity: session.source_identity,
-        };
-        extract_transcript(host, &locator, budget).await
+        kind.provider().extract(host, session, budget).await
     }
 
     fn refresh_index(
@@ -805,6 +840,15 @@ mod tests {
 
     fn rollout(meta: &str, message: &str) -> String {
         format!("{meta}\n{message}\n")
+    }
+
+    #[test]
+    fn history_kind_ids_include_opencode() {
+        assert_eq!(
+            HistoryKind::from_id("opencode"),
+            Some(HistoryKind::OpenCode)
+        );
+        assert_eq!(HistoryKind::OpenCode.id(), "opencode");
     }
 
     #[gpui::test]

@@ -8,6 +8,7 @@ mod handoff;
 mod history;
 pub mod managed_agent;
 mod managed_agent_progress;
+mod opencode_history;
 mod panel;
 mod pi_history;
 mod plan_usage;
@@ -32,11 +33,12 @@ pub use store::{
 
 use agent_release::{
     AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy, CLAUDE_RELEASES, CODEX_RELEASES,
-    PI_RELEASES,
+    OPENCODE_RELEASES, PI_RELEASES,
 };
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
 use history::AgentHistoryProvider;
+use opencode_history::OpenCodeHistoryProvider;
 use pi_history::PiHistoryProvider;
 
 actions!(
@@ -48,6 +50,8 @@ actions!(
         NewClaudeThread,
         /// Starts a new Pi agent thread.
         NewPiThread,
+        /// Starts a new OpenCode agent thread.
+        NewOpenCodeThread,
     ]
 );
 
@@ -72,6 +76,8 @@ pub enum InitialPromptStrategy {
     /// Append the prompt as the final positional argument, after every other
     /// flag (including the session-id flag).
     TrailingPositionalArg,
+    /// Pass the prompt as the value of this CLI flag.
+    Flag(&'static str),
     /// No known way to seed a first prompt; the caller must show it to the
     /// user for manual paste instead.
     Unsupported,
@@ -88,14 +94,20 @@ pub(crate) fn seed_launch_command_with_prompt(
     kind: &AgentKindDefinition,
     prompt: &str,
 ) -> bool {
-    if kind.initial_prompt_strategy != InitialPromptStrategy::TrailingPositionalArg {
-        return false;
-    }
     let prompt = prompt.trim();
     if prompt.is_empty() || prompt.starts_with('-') {
         return false;
     }
-    command.args.push(prompt.to_string());
+    match kind.initial_prompt_strategy {
+        InitialPromptStrategy::TrailingPositionalArg => {
+            command.args.push(prompt.to_string());
+        }
+        InitialPromptStrategy::Flag(flag) => {
+            command.args.push(flag.to_string());
+            command.args.push(prompt.to_string());
+        }
+        InitialPromptStrategy::Unsupported => return false,
+    }
     true
 }
 
@@ -153,10 +165,13 @@ pub struct AgentKindDefinition {
     pub label: SharedString,
     pub icon: IconName,
     pub default_command: &'static str,
-    /// `CLAUDE_CONFIG_DIR`-style env var honored when resolving this
-    /// kind's config directory, and the directory name under `$HOME`
-    /// used when that override is unset.
+    /// Environment variable honored when resolving this kind's history
+    /// directory, and the directory name under `$HOME` used when that override
+    /// is unset.
     pub home_env_var: &'static str,
+    /// Optional path appended to the environment override. Used for XDG base
+    /// directories whose value is shared by multiple applications.
+    pub home_env_child: Option<&'static str>,
     pub home_dir_name: &'static str,
     pub history_provider: Option<Arc<dyn AgentHistoryProvider>>,
     pub resume_options: Vec<ResumeOption>,
@@ -222,6 +237,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             icon: IconName::AiOpenAi,
             default_command: "codex",
             home_env_var: "CODEX_HOME",
+            home_env_child: None,
             home_dir_name: ".codex",
             history_provider: Some(Arc::new(CodexHistoryProvider)),
             resume_options: vec![ResumeOption {
@@ -257,6 +273,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             icon: IconName::AiClaude,
             default_command: "claude",
             home_env_var: "CLAUDE_CONFIG_DIR",
+            home_env_child: None,
             home_dir_name: ".claude",
             history_provider: Some(Arc::new(ClaudeHistoryProvider)),
             resume_options: vec![ResumeOption {
@@ -287,6 +304,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             icon: IconName::AiPi,
             default_command: "pi",
             home_env_var: "PI_CODING_AGENT_DIR",
+            home_env_child: None,
             home_dir_name: ".pi/agent",
             history_provider: Some(Arc::new(PiHistoryProvider)),
             resume_options: Vec::new(),
@@ -353,6 +371,88 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             credential_policy: None,
             supports_plan_usage: false,
         },
+        AgentKindDefinition {
+            id: "opencode",
+            label: SharedString::new_static("OpenCode"),
+            icon: IconName::AiOpenCode,
+            default_command: "opencode",
+            home_env_var: "XDG_DATA_HOME",
+            home_env_child: Some("opencode"),
+            home_dir_name: ".local/share/opencode",
+            history_provider: Some(Arc::new(OpenCodeHistoryProvider)),
+            resume_options: vec![ResumeOption {
+                id: "auto-approve-permissions",
+                label: SharedString::new_static("Auto-approve permissions"),
+                args: vec!["--auto".to_string()],
+            }],
+            // OpenCode's `--session` flag only resumes an existing session; it
+            // cannot assign the id of a fresh session.
+            session_id_flag: None,
+            initial_prompt_strategy: InitialPromptStrategy::Flag("--prompt"),
+            official_source_prefixes: &[
+                "https://github.com/anomalyco/opencode/releases/download/",
+                "https://release-assets.githubusercontent.com/",
+            ],
+            releases: OPENCODE_RELEASES,
+            self_update_policy: AgentSelfUpdatePolicy {
+                environment: &[("OPENCODE_DISABLE_AUTOUPDATE", "1")],
+                arguments: &[],
+            },
+            egress_hosts: &[
+                "ai-gateway.vercel.sh",
+                "api.ant-ling.com",
+                "api.anthropic.com",
+                "api.cerebras.ai",
+                "api.cloudflare.com",
+                "api.deepseek.com",
+                "api.fireworks.ai",
+                "api.github.com",
+                "api.groq.com",
+                "api.individual.githubcopilot.com",
+                "api.kimi.com",
+                "api.minimax.io",
+                "api.minimaxi.com",
+                "api.mistral.ai",
+                "api.moonshot.ai",
+                "api.moonshot.cn",
+                "api.openai.com",
+                "api.opencode.ai",
+                "api.together.ai",
+                "api.x.ai",
+                "api.xiaomimimo.com",
+                "api.z.ai",
+                "auth.openai.com",
+                "auth.x.ai",
+                "chatgpt.com",
+                "claude.ai",
+                "gateway.ai.cloudflare.com",
+                "generativelanguage.googleapis.com",
+                "github.com",
+                "huggingface.co",
+                "integrate.api.nvidia.com",
+                "models.dev",
+                "open.bigmodel.cn",
+                "opencode.ai",
+                "openrouter.ai",
+                "platform.claude.com",
+                "router.huggingface.co",
+                "token-plan-ams.xiaomimimo.com",
+                "token-plan-cn.xiaomimimo.com",
+                "token-plan-sgp.xiaomimimo.com",
+                "token-plan.ap-southeast-1.maas.aliyuncs.com",
+                "token-plan.cn-beijing.maas.aliyuncs.com",
+                "*.amazonaws.com",
+                "*.amazonaws.com.cn",
+                "*.githubcopilot.com",
+                "*.googleapis.com",
+                "*.openai.azure.com",
+                "*.services.ai.azure.com",
+            ],
+            // OpenCode manages credentials for many providers interactively,
+            // so there is no single non-interactive logout or provider page.
+            credential_policy: None,
+            supports_plan_usage: false,
+        },
     ]
 }
 
@@ -361,6 +461,7 @@ pub struct AgentThreadSettings {
     pub codex: AgentLaunchCommand,
     pub claude: AgentLaunchCommand,
     pub pi: AgentLaunchCommand,
+    pub opencode: AgentLaunchCommand,
     pub max_visible_threads_per_agent: usize,
     pub show_plan_usage: bool,
     pub notify_when_finished: bool,
@@ -420,6 +521,7 @@ impl AgentThreadSettings {
             "codex" => &self.codex,
             "claude" => &self.claude,
             "pi" => &self.pi,
+            "opencode" => &self.opencode,
             _ => &self.claude,
         }
     }
@@ -432,6 +534,7 @@ impl Settings for AgentThreadSettings {
             codex: launch_command_from_content(content.codex, "codex"),
             claude: launch_command_from_content(content.claude, "claude"),
             pi: launch_command_from_content(content.pi, "pi"),
+            opencode: launch_command_from_content(content.opencode, "opencode"),
             max_visible_threads_per_agent: content.max_visible_threads_per_agent.unwrap_or(5),
             show_plan_usage: content.show_plan_usage.unwrap_or(true),
             notify_when_finished: content.notify_when_finished.unwrap_or(true),
@@ -468,6 +571,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(new_codex_thread);
         workspace.register_action(new_claude_thread);
         workspace.register_action(new_pi_thread);
+        workspace.register_action(new_opencode_thread);
     })
     .detach();
 }
@@ -564,19 +668,95 @@ fn new_pi_thread(
     }
 }
 
+fn new_opencode_thread(
+    workspace: &mut Workspace,
+    _: &NewOpenCodeThread,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if let Some(kind) = kind_by_id("opencode") {
+        launch_new_thread_with_default(workspace, &kind, window, cx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::TestAppContext;
 
     #[test]
-    fn registry_orders_pi_after_codex_and_claude() {
+    fn registry_orders_opencode_after_existing_agents() {
         assert_eq!(
             agent_kind_registry()
                 .into_iter()
                 .map(|kind| kind.id)
                 .collect::<Vec<_>>(),
-            ["codex", "claude", "pi"]
+            ["codex", "claude", "pi", "opencode"]
+        );
+    }
+
+    #[test]
+    fn opencode_registers_all_supported_capabilities() {
+        let opencode = kind_by_id("opencode").expect("OpenCode should be registered");
+
+        assert_eq!(opencode.label.as_ref(), "OpenCode");
+        assert_eq!(opencode.icon, IconName::AiOpenCode);
+        assert_eq!(opencode.default_command, "opencode");
+        assert!(opencode.history_provider.is_some());
+        assert_eq!(opencode.session_id_flag, None);
+        assert_eq!(
+            opencode.initial_prompt_strategy,
+            InitialPromptStrategy::Flag("--prompt")
+        );
+        assert!(opencode.credential_policy().is_none());
+        assert!(!opencode.supports_plan_usage());
+        assert_eq!(
+            opencode.self_update_policy().environment,
+            [("OPENCODE_DISABLE_AUTOUPDATE", "1")]
+        );
+        assert!(
+            opencode
+                .release_for(remote::RemotePlatform {
+                    os: remote::RemoteOs::MacOs,
+                    arch: remote::RemoteArch::Aarch64,
+                    libc: None,
+                })
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn opencode_resume_uses_session_flag_and_project_directory() {
+        let opencode = kind_by_id("opencode").expect("OpenCode should be registered");
+        let provider = opencode
+            .history_provider
+            .as_ref()
+            .expect("OpenCode should provide history");
+        let base = AgentLaunchCommand {
+            command: Some("custom-opencode".to_string()),
+            env: HashMap::from_iter([("EXISTING".to_string(), "value".to_string())]),
+            initialization_command: Some("source ~/.profile".to_string()),
+            ..Default::default()
+        };
+        let thread = HistoricalThread {
+            session_id: "ses_test".into(),
+            title: "OpenCode task".into(),
+            project_root: PathBuf::from("/work/project"),
+            last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+
+        let command = provider.resume_command(&base, &thread, &["--auto".to_string()]);
+
+        assert_eq!(command.command.as_deref(), Some("custom-opencode"));
+        assert_eq!(command.args, ["--session", "ses_test", "--auto"]);
+        assert_eq!(command.cwd, Some(PathBuf::from("/work/project")));
+        assert_eq!(
+            command.env.get("EXISTING").map(String::as_str),
+            Some("value")
+        );
+        assert_eq!(
+            command.initialization_command.as_deref(),
+            Some("source ~/.profile")
         );
     }
 
@@ -622,8 +802,11 @@ mod tests {
     }
 
     #[test]
-    fn all_registered_kinds_support_trailing_positional_prompt() {
-        for kind in agent_kind_registry() {
+    fn registered_kinds_use_their_supported_initial_prompt_form() {
+        for kind in agent_kind_registry()
+            .into_iter()
+            .filter(|kind| kind.id != "opencode")
+        {
             assert_eq!(
                 kind.initial_prompt_strategy,
                 InitialPromptStrategy::TrailingPositionalArg,
@@ -631,6 +814,21 @@ mod tests {
                 kind.id
             );
         }
+
+        let opencode = kind_by_id("opencode").expect("OpenCode should be registered");
+        let mut command = AgentLaunchCommand {
+            args: vec!["--auto".to_string()],
+            ..Default::default()
+        };
+        assert!(seed_launch_command_with_prompt(
+            &mut command,
+            &opencode,
+            "continue from the handoff"
+        ));
+        assert_eq!(
+            command.args,
+            ["--auto", "--prompt", "continue from the handoff"]
+        );
     }
 
     #[test]
@@ -704,6 +902,14 @@ mod tests {
         assert!(pi.egress_hosts().contains(&"*.amazonaws.com"));
         assert!(pi.egress_hosts().contains(&"*.googleapis.com"));
         assert!(pi.egress_hosts().contains(&"pi.dev"));
+
+        let opencode = kind_by_id("opencode").expect("OpenCode should be registered");
+        assert!(opencode.egress_hosts().contains(&"api.anthropic.com"));
+        assert!(opencode.egress_hosts().contains(&"api.openai.com"));
+        assert!(opencode.egress_hosts().contains(&"api.opencode.ai"));
+        assert!(opencode.egress_hosts().contains(&"models.dev"));
+        assert!(opencode.egress_hosts().contains(&"*.amazonaws.com"));
+        assert!(opencode.egress_hosts().contains(&"*.googleapis.com"));
     }
 
     #[test]
@@ -806,6 +1012,16 @@ mod tests {
         assert_eq!(
             settings.command_for_kind("pi").command.as_deref(),
             Some("pi")
+        );
+    }
+
+    #[test]
+    fn opencode_command_defaults_to_opencode_when_settings_are_absent() {
+        let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
+
+        assert_eq!(
+            settings.command_for_kind("opencode").command.as_deref(),
+            Some("opencode")
         );
     }
 

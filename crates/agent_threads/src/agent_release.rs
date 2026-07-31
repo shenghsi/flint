@@ -27,6 +27,7 @@ pub enum AgentVersionMatcher {
     Codex { version: &'static str },
     Claude { version: &'static str },
     Pi { version: &'static str },
+    OpenCode { version: &'static str },
 }
 
 impl AgentVersionMatcher {
@@ -49,6 +50,7 @@ impl AgentVersionMatcher {
                 )
             }
             Self::Pi { version } => output.trim() == version,
+            Self::OpenCode { version } => output.trim() == version,
         }
     }
 }
@@ -386,6 +388,122 @@ pub const PI_RELEASES: &[AgentRelease] = &[
     ),
 ];
 
+macro_rules! opencode_tar_release {
+    ($arch:expr, $libc:expr, $asset:literal, $source_digest:literal, $executable_digest:literal) => {
+        AgentRelease {
+            version: "1.18.10",
+            target: RemotePlatform {
+                os: remote::RemoteOs::Linux,
+                arch: $arch,
+                libc: Some($libc),
+            },
+            source_url: concat!(
+                "https://github.com/anomalyco/opencode/releases/download/v1.18.10/",
+                $asset
+            ),
+            source_sha256: $source_digest,
+            source_verification: AgentSourceVerification::Sha256,
+            executable_sha256: $executable_digest,
+            artifact: AgentArtifactFormat::TarGz {
+                executable_path: "opencode",
+            },
+            executable_name: "opencode",
+            version_matcher: AgentVersionMatcher::OpenCode { version: "1.18.10" },
+            self_update_environment: &[("OPENCODE_DISABLE_AUTOUPDATE", "1")],
+        }
+    };
+}
+
+macro_rules! opencode_zip_release {
+    ($os:expr, $arch:expr, $asset:literal, $executable:literal, $source_digest:literal, $executable_digest:literal) => {
+        AgentRelease {
+            version: "1.18.10",
+            target: RemotePlatform {
+                os: $os,
+                arch: $arch,
+                libc: None,
+            },
+            source_url: concat!(
+                "https://github.com/anomalyco/opencode/releases/download/v1.18.10/",
+                $asset
+            ),
+            source_sha256: $source_digest,
+            source_verification: AgentSourceVerification::Sha256,
+            executable_sha256: $executable_digest,
+            artifact: AgentArtifactFormat::ZipBundle {
+                root_path: "",
+                executable_path: $executable,
+            },
+            executable_name: $executable,
+            version_matcher: AgentVersionMatcher::OpenCode { version: "1.18.10" },
+            self_update_environment: &[("OPENCODE_DISABLE_AUTOUPDATE", "1")],
+        }
+    };
+}
+
+pub const OPENCODE_RELEASES: &[AgentRelease] = &[
+    opencode_zip_release!(
+        remote::RemoteOs::MacOs,
+        remote::RemoteArch::Aarch64,
+        "opencode-darwin-arm64.zip",
+        "opencode",
+        "641fe2e65e42db76c2d32db5f85573c3682a8c72f82d01568a922a8feccc4658",
+        "7f488b3f084de90a638785b3116d5e05449a584694aa81c9a757da49139857c1"
+    ),
+    opencode_zip_release!(
+        remote::RemoteOs::MacOs,
+        remote::RemoteArch::X86_64,
+        "opencode-darwin-x64-baseline.zip",
+        "opencode",
+        "db723500eda1d36f726748c0ba972f40a5029c3feec73f39478074ecc53a6096",
+        "1149cc71d4bac2317d93566a8fc602c254ec12120b979c345601742600bf9ebb"
+    ),
+    opencode_tar_release!(
+        remote::RemoteArch::Aarch64,
+        remote::RemoteLibc::Glibc,
+        "opencode-linux-arm64.tar.gz",
+        "41ae3041e91b894e4c0dc06a73a9a2796254bf390ffb99626a43af5e2912d170",
+        "5b6411fcdc22f96f966d328c61c22a709a333c2c3a3de9c8188d43c709487ea0"
+    ),
+    opencode_tar_release!(
+        remote::RemoteArch::Aarch64,
+        remote::RemoteLibc::Musl,
+        "opencode-linux-arm64-musl.tar.gz",
+        "cc5f2670b4ba833cccc4b6c532adcffba8731bbe21c697c6b0309c359ac38366",
+        "e911eb46fbb7a90855243cc8470641794d35f4d73e39b3dd9f005a6a8c4bb0bd"
+    ),
+    opencode_tar_release!(
+        remote::RemoteArch::X86_64,
+        remote::RemoteLibc::Glibc,
+        "opencode-linux-x64-baseline.tar.gz",
+        "e2841f720dee95855524cd8c8aad45438e9e7e13f6f043e85c246f2907bc2cf9",
+        "2735f786be499db50c823d961fb8627dfb74f920e2320686b67e6c5c81c66f16"
+    ),
+    opencode_tar_release!(
+        remote::RemoteArch::X86_64,
+        remote::RemoteLibc::Musl,
+        "opencode-linux-x64-baseline-musl.tar.gz",
+        "2497531ff8ae90232d40c4b2ebee967434673ff6b921d1b9096b398996e4aa03",
+        "4e67327e2c4c0c47bdfb27e0ee9e4f45e3c5b1039ab4cbde73e4850921118876"
+    ),
+    opencode_zip_release!(
+        remote::RemoteOs::Windows,
+        remote::RemoteArch::Aarch64,
+        "opencode-windows-arm64.zip",
+        "opencode.exe",
+        "0ef987b43df4ff427f55b805f6d44231313ef098296fa154d2043837656e092f",
+        "24f1b3475262a19c5eb97b989aee60623756043f028c0a472fd0739c2d075c4f"
+    ),
+    opencode_zip_release!(
+        remote::RemoteOs::Windows,
+        remote::RemoteArch::X86_64,
+        "opencode-windows-x64-baseline.zip",
+        "opencode.exe",
+        "d92a23aa6981d573d7e0f920cea82ace553a7d3d4a42da08c5ecaf00ed5b0c4a",
+        "ba4c44cd79640031f809a6bcb6de95bcff936caf407ef4da7bbec699fb517846"
+    ),
+];
+
 impl<'a> AgentReleaseCatalog<'a> {
     pub fn new(
         agent_id: &'static str,
@@ -716,6 +834,15 @@ mod tests {
     }
 
     #[test]
+    fn opencode_version_matcher_accepts_exact_version_only() {
+        let matcher = AgentVersionMatcher::OpenCode { version: "1.18.10" };
+
+        assert!(matcher.matches("1.18.10\n"));
+        assert!(!matcher.matches("1.18.9"));
+        assert!(!matcher.matches("opencode 1.18.10"));
+    }
+
+    #[test]
     fn every_registered_agent_suppresses_self_updates_per_process() {
         for kind in agent_kind_registry() {
             let policy = kind.self_update_policy();
@@ -784,6 +911,33 @@ mod tests {
                     libc: Some(RemoteLibc::Musl),
                 })
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn pinned_opencode_release_catalog_is_valid_and_covers_supported_targets() {
+        let catalog = AgentReleaseCatalog::new(
+            "opencode",
+            &[
+                "https://github.com/anomalyco/opencode/releases/download/",
+                "https://release-assets.githubusercontent.com/",
+            ],
+            OPENCODE_RELEASES,
+        );
+
+        catalog
+            .validate()
+            .expect("pinned OpenCode release catalog should be valid");
+        assert_eq!(OPENCODE_RELEASES.len(), 8);
+        assert!(catalog.release_for(linux_glibc_target()).is_some());
+        assert!(
+            catalog
+                .release_for(RemotePlatform {
+                    os: RemoteOs::Linux,
+                    arch: RemoteArch::X86_64,
+                    libc: Some(RemoteLibc::Musl),
+                })
+                .is_some()
         );
     }
 }
