@@ -49,10 +49,13 @@ jobs:
           git push -f origin nightly
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Ensure nightly release exists
+      - name: Ensure nightly release exists and is published
         run: |
-          gh release view nightly || \
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --draft=false
+          else
             gh release create nightly --title "Nightly" --notes "Automated nightly builds" --prerelease
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
