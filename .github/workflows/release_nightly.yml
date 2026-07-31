@@ -304,6 +304,11 @@ jobs:
           mv ./artifacts/flint-remote-server-windows-aarch64.zip/flint-remote-server-windows-aarch64.zip release-artifacts/flint-remote-server-windows-aarch64.zip
           mv ./artifacts/flint-remote-server-windows-x86_64.zip/flint-remote-server-windows-x86_64.zip release-artifacts/flint-remote-server-windows-x86_64.zip
 
+          if gh release view nightly --json assets --jq '.assets[].name' --repo ${{ github.repository }} | grep -Fxq latest-sha; then
+            gh release delete-asset nightly latest-sha --yes --repo ${{ github.repository }}
+          fi
           gh release upload nightly release-artifacts/* --clobber --repo ${{ github.repository }}
+          printf '%s' "$GITHUB_SHA" > release-artifacts/latest-sha
+          gh release upload nightly release-artifacts/latest-sha --clobber --repo ${{ github.repository }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

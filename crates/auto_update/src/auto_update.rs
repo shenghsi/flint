@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs;
 use smol::fs::File;
+use smol::io::AsyncReadExt as _;
 use std::mem;
 use std::{
     env::{
@@ -714,52 +715,36 @@ impl AutoUpdater {
         fetched_version: String,
         status: AutoUpdateStatus,
     ) -> Result<Option<VersionCheckType>> {
-        // GitHub release tag names are conventionally prefixed with "v" (e.g. "v1.0.0"),
-        // which the semver crate's strict parser rejects.
-        let parsed_fetched_version = fetched_version
-            .trim_start_matches(['v', 'V'])
-            .parse::<Version>();
-
-        if let AutoUpdateStatus::Updated { version, .. } = status {
-            match version {
-                VersionCheckType::Sha(cached_version) => {
-                    let should_download =
-                        parsed_fetched_version.as_ref().ok().is_none_or(|version| {
-                            version.build.as_str().rsplit('.').next()
-                                != Some(&cached_version.full())
-                        });
-                    let newer_version = should_download
-                        .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
-                    return Ok(newer_version);
-                }
-                VersionCheckType::Semantic(cached_version) => {
-                    return Self::check_if_fetched_version_is_newer_non_nightly(
-                        cached_version,
-                        parsed_fetched_version?,
-                    );
-                }
-            }
-        }
-
         match release_channel {
             ReleaseChannel::Nightly => {
-                let should_download = app_commit_sha
-                    .ok()
-                    .flatten()
-                    .map(|sha| {
-                        parsed_fetched_version.as_ref().ok().is_none_or(|version| {
-                            version.build.as_str().rsplit('.').next() != Some(&sha)
-                        })
-                    })
-                    .unwrap_or(true);
-                let newer_version = should_download
-                    .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
+                let fetched_sha = AppCommitSha::new(fetched_version);
+                let current_sha = match status {
+                    AutoUpdateStatus::Updated {
+                        version: VersionCheckType::Sha(cached_sha),
+                    } => Some(cached_sha),
+                    _ => app_commit_sha.ok().flatten().map(AppCommitSha::new),
+                };
+                let newer_version = (current_sha.as_ref() != Some(&fetched_sha))
+                    .then(|| VersionCheckType::Sha(fetched_sha));
                 Ok(newer_version)
             }
-            _ => Self::check_if_fetched_version_is_newer_non_nightly(
-                installed_version,
-                parsed_fetched_version?,
-            ),
+            _ => {
+                // GitHub release tag names are conventionally prefixed with "v" (e.g. "v1.0.0"),
+                // which the semver crate's strict parser rejects.
+                let fetched_version = fetched_version
+                    .trim_start_matches(['v', 'V'])
+                    .parse::<Version>()?;
+                let current_version = match status {
+                    AutoUpdateStatus::Updated {
+                        version: VersionCheckType::Semantic(cached_version),
+                    } => cached_version,
+                    _ => installed_version,
+                };
+                Self::check_if_fetched_version_is_newer_non_nightly(
+                    current_version,
+                    fetched_version,
+                )
+            }
         }
     }
 
@@ -873,8 +858,19 @@ async fn get_release_from_github(
         }
         _ => {
             let tag = format!("v{version}");
-            http_client::github::get_release_by_tag_name(REPO, &tag, http_client).await?
+            http_client::github::get_release_by_tag_name(REPO, &tag, http_client.clone()).await?
         }
+    };
+
+    let version = if release_channel == ReleaseChannel::Nightly {
+        let version_asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == "latest-sha")
+            .context("no asset named latest-sha in nightly release")?;
+        download_release_version(&version_asset.browser_download_url, http_client).await?
+    } else {
+        release.tag_name.clone()
     };
 
     let asset = release
@@ -889,9 +885,24 @@ async fn get_release_from_github(
         })?;
 
     Ok(ReleaseAsset {
-        version: release.tag_name.clone(),
+        version,
         url: asset.browser_download_url.clone(),
     })
+}
+
+async fn download_release_version(url: &str, http_client: Arc<dyn HttpClient>) -> Result<String> {
+    let mut response = http_client.get(url, Default::default(), true).await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "failed to download release version: {:?}",
+        response.status()
+    );
+
+    let mut version = String::new();
+    response.body_mut().read_to_string(&mut version).await?;
+    let version = version.trim();
+    anyhow::ensure!(!version.is_empty(), "downloaded release version is empty");
+    Ok(version.to_owned())
 }
 
 async fn download_remote_server_binary(
@@ -1362,6 +1373,65 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_nightly_release_uses_latest_sha(_cx: &mut TestAppContext) {
+        let asset_name = match OS {
+            "macos" => format!("Flint-{ARCH}.dmg"),
+            "linux" => format!("flint-linux-{ARCH}.tar.gz"),
+            "windows" => format!("Flint-{ARCH}.exe"),
+            other => panic!("unsupported os in test: {other}"),
+        };
+        let expected_asset_name = asset_name.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            let asset_name = expected_asset_name.clone();
+            async move {
+                match request.uri().path() {
+                    "/repos/shenghsi/flint/releases/tags/nightly" => Ok(Response::builder()
+                        .status(200)
+                        .body(
+                            serde_json::json!({
+                                "tag_name": "nightly",
+                                "prerelease": true,
+                                "assets": [
+                                    {
+                                        "name": asset_name,
+                                        "browser_download_url": "https://test.example/download",
+                                        "digest": null,
+                                    },
+                                    {
+                                        "name": "latest-sha",
+                                        "browser_download_url": "https://test.example/latest-sha",
+                                        "digest": null,
+                                    }
+                                ],
+                                "tarball_url": "https://test.example/tarball",
+                                "zipball_url": "https://test.example/zipball",
+                            })
+                            .to_string()
+                            .into(),
+                        )
+                        .expect("valid response")),
+                    "/latest-sha" => Ok(Response::builder()
+                        .status(200)
+                        .body("0123456789abcdef\n".into())
+                        .expect("valid response")),
+                    _ => Ok(Response::builder()
+                        .status(404)
+                        .body("".into())
+                        .expect("valid response")),
+                }
+            }
+        });
+
+        let release =
+            get_release_from_github(ReleaseChannel::Nightly, "latest", &asset_name, http_client)
+                .await
+                .expect("nightly release should be available");
+
+        assert_eq!(release.version, "0123456789abcdef");
+        assert_eq!(release.url, "https://test.example/download");
+    }
+
     #[test]
     fn release_notes_urls_point_to_flint_github() {
         let version = Version::parse("1.2.3-pre.1+build").expect("valid test version");
@@ -1474,10 +1544,9 @@ mod tests {
     fn test_nightly_does_not_update_when_fetched_sha_is_same() {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let mut installed_version = semver::Version::new(1, 0, 0);
-        installed_version.build = semver::BuildMetadata::new("a").unwrap();
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Idle;
-        let fetched_sha = "1.0.0+a".to_string();
+        let fetched_sha = "a".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
@@ -1516,12 +1585,11 @@ mod tests {
     fn test_nightly_does_not_update_when_fetched_version_is_same_as_cached() {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let mut installed_version = semver::Version::new(1, 0, 0);
-        installed_version.build = semver::BuildMetadata::new("a").unwrap();
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
-        let fetched_sha = "1.0.0+b".to_string();
+        let fetched_sha = "b".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
@@ -1538,12 +1606,11 @@ mod tests {
     fn test_nightly_does_update_when_fetched_sha_is_not_same_as_cached() {
         let release_channel = ReleaseChannel::Nightly;
         let app_commit_sha = Ok(Some("a".to_string()));
-        let mut installed_version = semver::Version::new(1, 0, 0);
-        installed_version.build = semver::BuildMetadata::new("a").unwrap();
+        let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
-        let fetched_sha = "1.0.0+c".to_string();
+        let fetched_sha = "c".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
@@ -1590,7 +1657,7 @@ mod tests {
         let status = AutoUpdateStatus::Updated {
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
-        let fetched_sha = "1.0.0+b".to_string();
+        let fetched_sha = "b".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
