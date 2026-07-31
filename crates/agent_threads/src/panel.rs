@@ -647,6 +647,13 @@ impl AgentThreadsPanel {
             .collect()
     }
 
+    fn handoff_targets(&self, source_kind_id: &str, cx: &App) -> Vec<AgentKindDefinition> {
+        self.visible_registry(cx)
+            .into_iter()
+            .filter(|kind| kind.id != source_kind_id)
+            .collect()
+    }
+
     fn launch_new(
         &mut self,
         kind: &AgentKindDefinition,
@@ -1017,12 +1024,7 @@ impl AgentThreadsPanel {
         let fs = self.fs.clone();
         let history_index = self.history_index.clone();
         let store = self.store.clone();
-        let targets: Vec<AgentKindDefinition> = self
-            .registry
-            .iter()
-            .filter(|kind| kind.id != source_kind.id)
-            .cloned()
-            .collect();
+        let targets = self.handoff_targets(source_kind.id, cx);
         let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
             for target_kind in &targets {
                 let workspace = workspace.clone();
@@ -2298,6 +2300,35 @@ mod tests {
 
         set_agent_hidden(cx, "opencode", true);
         assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude", "pi"]);
+    }
+
+    #[gpui::test]
+    async fn handoff_targets_exclude_hidden_agents(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_agent_hidden(cx, "pi", true);
+        let window_handle = init_workspace(cx, root).await;
+
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
+            })
+            .expect("failed to create panel");
+        cx.run_until_parked();
+
+        let target_ids = panel.read_with(cx, |panel, cx| {
+            panel
+                .handoff_targets("claude", cx)
+                .iter()
+                .map(|kind| kind.id)
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(target_ids, vec!["codex", "opencode"]);
     }
 
     #[gpui::test]
