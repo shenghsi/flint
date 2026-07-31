@@ -47,6 +47,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Agent Threads", flint_actions::agent_threads::ToggleFocus),
         MenuItem::action("New Codex Thread", agent_threads::NewCodexThread),
         MenuItem::action("New Claude Thread", agent_threads::NewClaudeThread),
+        MenuItem::action("New Pi Thread", agent_threads::NewPiThread),
+        MenuItem::action("New OpenCode Thread", agent_threads::NewOpenCodeThread),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),
@@ -364,5 +366,24 @@ mod tests {
         assert!(labels.iter().any(|label| label == "Project Panel"));
         assert!(labels.iter().any(|label| label == "Open Settings File"));
         assert!(labels.iter().any(|label| label == "Find in Project"));
+    }
+
+    #[gpui::test]
+    fn view_menu_exposes_every_agent_thread_action(cx: &mut gpui::TestAppContext) {
+        let menus = cx.update(app_menus);
+        let mut labels = Vec::new();
+        collect_menu_labels(&menus, &mut labels);
+
+        for label in [
+            "New Codex Thread",
+            "New Claude Thread",
+            "New Pi Thread",
+            "New OpenCode Thread",
+        ] {
+            assert!(
+                labels.iter().any(|candidate| candidate == label),
+                "missing first-class agent action {label:?}"
+            );
+        }
     }
 }

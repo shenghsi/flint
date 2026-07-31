@@ -146,6 +146,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "smol",
+ "sqlez",
+ "tempfile",
  "util",
 ]
 
@@ -13138,6 +13140,7 @@ dependencies = [
  "parking_lot",
  "pollster 0.4.0",
  "sqlformat",
+ "tempfile",
  "thread_local",
  "util",
  "uuid",

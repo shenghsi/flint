@@ -57,6 +57,16 @@ impl Connection {
         Self::open(uri, true).unwrap_or_else(|_| Self::open_memory(Some(uri)))
     }
 
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        let uri = path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("SQLite path is not valid UTF-8: {path:?}"))?;
+        let connection =
+            Self::open_with_flags(uri, true, SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_READONLY)?;
+        *connection.write.borrow_mut() = false;
+        Ok(connection)
+    }
+
     pub fn open_memory(uri: Option<&str>) -> Self {
         if let Some(uri) = uri {
             let in_memory_path = format!("file:{}?mode=memory&cache=shared", uri);
@@ -343,6 +353,31 @@ mod test {
             Some(text.to_string())
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn read_only_open_rejects_missing_database() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let missing = directory.path().join("missing.sqlite");
+
+        assert!(Connection::open_read_only(&missing).is_err());
+    }
+
+    #[test]
+    fn read_only_open_queries_existing_database() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("existing.sqlite");
+        {
+            let connection = Connection::open_file(path.to_string_lossy().as_ref());
+            connection.exec("CREATE TABLE values_table(value TEXT NOT NULL)")?()?;
+            connection.exec("INSERT INTO values_table VALUES ('present')")?()?;
+        }
+
+        let connection = Connection::open_read_only(&path)?;
+        let values = connection.select::<String>("SELECT value FROM values_table")?()?;
+
+        assert_eq!(values, ["present"]);
         Ok(())
     }
 

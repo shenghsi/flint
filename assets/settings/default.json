@@ -1473,7 +1473,7 @@
     "active_encoding_button": "non_utf8",
   },
   // Agent thread panel: launch commands and per-section display limits for
-  // Codex, Claude, and Pi terminal threads.
+  // Codex, Claude, Pi, and OpenCode terminal threads.
   "agent_threads": {
     "codex": {
       "command": "codex",
@@ -1491,6 +1491,13 @@
     },
     "pi": {
       "command": "pi",
+      "args": [],
+      "env": {},
+      "initialization_command": "",
+      "hidden": false,
+    },
+    "opencode": {
+      "command": "opencode",
       "args": [],
       "env": {},
       "initialization_command": "",

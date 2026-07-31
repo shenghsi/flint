@@ -460,6 +460,7 @@ impl AgentThreadsPanel {
             }
         }
         let env_var = kind.home_env_var;
+        let env_child = kind.home_env_child;
         let dir_name = kind.home_dir_name;
         let indexed_kind = agent_history::HistoryKind::from_id(kind_id);
         let history_index = self.history_index.clone();
@@ -492,7 +493,8 @@ impl AgentThreadsPanel {
             }
             let preparation = async {
                 let base_dir =
-                    history::resolve_history_base_dir(&project, env_var, dir_name, cx).await?;
+                    history::resolve_history_base_dir(&project, env_var, env_child, dir_name, cx)
+                        .await?;
                 let project_roots =
                     project.read_with(cx, |project, cx| project_worktree_roots(project, cx));
                 let legacy_host = history::history_host_for_resolved_base_dir(
@@ -612,11 +614,12 @@ impl AgentThreadsPanel {
             return;
         }
         let env_var = kind.home_env_var;
+        let env_child = kind.home_env_child;
         let dir_name = kind.home_dir_name;
         let fs = self.fs.clone();
         let task = cx.spawn(async move |this, cx| {
             let Ok(base_dir) =
-                history::resolve_history_base_dir(&project, env_var, dir_name, cx).await
+                history::resolve_history_base_dir(&project, env_var, env_child, dir_name, cx).await
             else {
                 return;
             };
@@ -1582,6 +1585,7 @@ fn start_handoff(
             let base_dir = history::resolve_history_base_dir(
                 &project,
                 source_kind.home_env_var,
+                source_kind.home_env_child,
                 source_kind.home_dir_name,
                 cx,
             )
@@ -1597,7 +1601,7 @@ fn start_handoff(
 
             let session_id = match &source_metadata.resumed_session_id {
                 Some(id) => id.to_string(),
-                None if source_kind.id == "codex" => {
+                None if source_kind.session_id_flag.is_none() => {
                     let snapshot = history_index
                         .refresh(
                             indexed_kind,
@@ -1609,7 +1613,7 @@ fn start_handoff(
                     let already_bound: collections::HashSet<SharedString> = store
                         .read_with(cx, |store, _| {
                             store.live_threads_for_project(
-                                "codex",
+                                source_kind.id,
                                 std::slice::from_ref(&source_metadata.project_root),
                             )
                         })
@@ -1619,19 +1623,21 @@ fn start_handoff(
                         })
                         .filter_map(|metadata| metadata.resumed_session_id)
                         .collect();
-                    match store::resolve_discovered_codex_session(
+                    match store::resolve_discovered_session(
                         source_metadata.launched_at,
                         &indexed,
                         &already_bound,
                     ) {
-                        store::DiscoveredCodexSession::Resolved(id) => id.to_string(),
-                        store::DiscoveredCodexSession::Ambiguous(_) => anyhow::bail!(
-                            "Multiple new Codex sessions started around the same time; \
-                             Flint can't tell which one is this thread yet."
+                        store::DiscoveredSession::Resolved(id) => id.to_string(),
+                        store::DiscoveredSession::Ambiguous(_) => anyhow::bail!(
+                            "Multiple new {} sessions started around the same time; \
+                             Flint can't tell which one is this thread yet.",
+                            source_kind.label
                         ),
-                        store::DiscoveredCodexSession::NotFound => anyhow::bail!(
-                            "Codex hasn't written a session file for this thread yet. \
-                             Try again in a moment."
+                        store::DiscoveredSession::NotFound => anyhow::bail!(
+                            "{} hasn't recorded a session for this thread yet. \
+                             Try again in a moment.",
+                            source_kind.label
                         ),
                     }
                 }
@@ -1929,6 +1935,7 @@ mod tests {
                     codex: Some(echo_command("codex", root_path)),
                     claude: Some(echo_command("claude", root_path)),
                     pi: Some(echo_command("pi", root_path)),
+                    opencode: Some(echo_command("opencode", root_path)),
                     max_visible_threads_per_agent: Some(max_visible_threads_per_agent),
                     show_plan_usage: None,
                     ..Default::default()
@@ -2025,6 +2032,7 @@ mod tests {
                     "codex" => content.codex.get_or_insert_default(),
                     "claude" => content.claude.get_or_insert_default(),
                     "pi" => content.pi.get_or_insert_default(),
+                    "opencode" => content.opencode.get_or_insert_default(),
                     _ => panic!("unknown kind_id {kind_id}"),
                 };
                 command.default_launch_option = option;
@@ -2040,6 +2048,7 @@ mod tests {
                     "codex" => content.codex.get_or_insert_default(),
                     "claude" => content.claude.get_or_insert_default(),
                     "pi" => content.pi.get_or_insert_default(),
+                    "opencode" => content.opencode.get_or_insert_default(),
                     _ => panic!("unknown kind_id {kind_id}"),
                 };
                 command.hidden = Some(hidden);
@@ -2059,6 +2068,7 @@ mod tests {
                     "codex" => content.codex.get_or_insert_default(),
                     "claude" => content.claude.get_or_insert_default(),
                     "pi" => content.pi.get_or_insert_default(),
+                    "opencode" => content.opencode.get_or_insert_default(),
                     _ => panic!("unknown kind_id {kind_id}"),
                 };
                 command.initialization_command = Some(initialization_command.to_string());
@@ -2272,12 +2282,21 @@ mod tests {
             })
         }
 
-        assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude", "pi"]);
+        assert_eq!(
+            visible_ids(&panel, cx),
+            vec!["codex", "claude", "pi", "opencode"]
+        );
 
         set_agent_hidden(cx, "codex", true);
-        assert_eq!(visible_ids(&panel, cx), vec!["claude", "pi"]);
+        assert_eq!(visible_ids(&panel, cx), vec!["claude", "pi", "opencode"]);
 
         set_agent_hidden(cx, "codex", false);
+        assert_eq!(
+            visible_ids(&panel, cx),
+            vec!["codex", "claude", "pi", "opencode"]
+        );
+
+        set_agent_hidden(cx, "opencode", true);
         assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude", "pi"]);
     }
 

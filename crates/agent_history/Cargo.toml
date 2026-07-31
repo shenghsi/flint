@@ -24,6 +24,7 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sqlez.workspace = true
 util.workspace = true
 
 [dev-dependencies]
@@ -31,3 +32,4 @@ fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 smol.workspace = true
+tempfile.workspace = true

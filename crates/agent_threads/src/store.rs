@@ -121,7 +121,7 @@ pub fn merge_threads(
 /// The outcome of trying to discover which indexed session a fresh, not-yet-
 /// resumable live thread turned into.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DiscoveredCodexSession {
+pub enum DiscoveredSession {
     /// Exactly one session appeared after launch and isn't bound to another
     /// live terminal; safe to attach automatically.
     Resolved(SharedString),
@@ -131,8 +131,8 @@ pub enum DiscoveredCodexSession {
     NotFound,
 }
 
-/// Resolves which (if any) newly indexed Codex session belongs to a fresh live
-/// thread that has no Flint-assigned session id (Codex has no
+/// Resolves which (if any) newly indexed session belongs to a fresh live
+/// thread that has no Flint-assigned session id (some CLIs have no
 /// `session_id_flag`, see `AgentKindDefinition::session_id_flag`). A session is
 /// a candidate when its recorded activity is at or after the thread's
 /// `launched_at` -- the same signal `merge_threads` already uses to suppress
@@ -140,11 +140,11 @@ pub enum DiscoveredCodexSession {
 /// already bound to another live terminal. Both `indexed_sessions` and
 /// `already_bound` must already be scoped to the thread's kind and project,
 /// matching `merge_threads`'s contract.
-pub fn resolve_discovered_codex_session(
+pub fn resolve_discovered_session(
     launched_at: SystemTime,
     indexed_sessions: &[HistoricalThread],
     already_bound: &HashSet<SharedString>,
-) -> DiscoveredCodexSession {
+) -> DiscoveredSession {
     let candidates: Vec<SharedString> = indexed_sessions
         .iter()
         .filter(|thread| {
@@ -153,9 +153,9 @@ pub fn resolve_discovered_codex_session(
         .map(|thread| thread.session_id.clone())
         .collect();
     match candidates.len() {
-        0 => DiscoveredCodexSession::NotFound,
-        1 => DiscoveredCodexSession::Resolved(candidates[0].clone()),
-        _ => DiscoveredCodexSession::Ambiguous(candidates),
+        0 => DiscoveredSession::NotFound,
+        1 => DiscoveredSession::Resolved(candidates[0].clone()),
+        _ => DiscoveredSession::Ambiguous(candidates),
     }
 }
 
@@ -2043,34 +2043,40 @@ mod tests {
     }
 
     #[test]
-    fn initialization_preserves_direct_and_tunneled_executable_selection() {
-        let kind = agent_kind_registry()
-            .into_iter()
-            .find(|kind| kind.id == "codex")
-            .expect("Codex should be registered");
-        let base = AgentLaunchCommand {
-            command: Some("ambient-codex".to_string()),
-            initialization_command: Some("source ~/.profile".to_string()),
-            ..AgentLaunchCommand::default()
-        };
+    fn every_agent_preserves_direct_and_tunneled_executable_selection() {
+        for kind in agent_kind_registry() {
+            let ambient_command = format!("ambient-{}", kind.id);
+            let base = AgentLaunchCommand {
+                command: Some(ambient_command.clone()),
+                initialization_command: Some("source ~/.profile".to_string()),
+                ..AgentLaunchCommand::default()
+            };
 
-        let direct = build_new_thread_launch(&kind, &base, &[], None);
-        assert_eq!(direct.command.command.as_deref(), Some("ambient-codex"));
-        assert_eq!(
-            direct.command.initialization_command.as_deref(),
-            Some("source ~/.profile")
-        );
+            let direct = build_new_thread_launch(&kind, &base, &[], None);
+            assert_eq!(
+                direct.command.command.as_deref(),
+                Some(ambient_command.as_str()),
+                "{} Direct route should use the configured ambient executable",
+                kind.id
+            );
+            assert_eq!(
+                direct.command.initialization_command.as_deref(),
+                Some("source ~/.profile")
+            );
 
-        let managed_executable = std::path::Path::new("/managed/codex");
-        let tunneled = build_new_thread_launch(&kind, &base, &[], Some(managed_executable));
-        assert_eq!(
-            tunneled.command.command.as_deref(),
-            managed_executable.to_str()
-        );
-        assert_eq!(
-            tunneled.command.initialization_command.as_deref(),
-            Some("source ~/.profile")
-        );
+            let managed_executable = PathBuf::from(format!("/managed/{}/cli", kind.id));
+            let tunneled = build_new_thread_launch(&kind, &base, &[], Some(&managed_executable));
+            assert_eq!(
+                tunneled.command.command.as_deref(),
+                managed_executable.to_str(),
+                "{} Tunneled route should use its pinned managed executable",
+                kind.id
+            );
+            assert_eq!(
+                tunneled.command.initialization_command.as_deref(),
+                Some("source ~/.profile")
+            );
+        }
     }
 
     #[test]
@@ -2464,7 +2470,7 @@ mod tests {
 
     #[test]
     fn discovery_resolves_a_single_post_launch_session() {
-        let result = resolve_discovered_codex_session(
+        let result = resolve_discovered_session(
             at(100),
             &[
                 historical("session-before", 50),
@@ -2474,13 +2480,13 @@ mod tests {
         );
         assert_eq!(
             result,
-            DiscoveredCodexSession::Resolved(SharedString::from("session-after"))
+            DiscoveredSession::Resolved(SharedString::from("session-after"))
         );
     }
 
     #[test]
     fn discovery_is_ambiguous_with_multiple_post_launch_candidates() {
-        let result = resolve_discovered_codex_session(
+        let result = resolve_discovered_session(
             at(100),
             &[
                 historical("session-a", 150),
@@ -2490,7 +2496,7 @@ mod tests {
             &HashSet::default(),
         );
         match result {
-            DiscoveredCodexSession::Ambiguous(mut ids) => {
+            DiscoveredSession::Ambiguous(mut ids) => {
                 ids.sort();
                 assert_eq!(
                     ids,
@@ -2506,31 +2512,31 @@ mod tests {
 
     #[test]
     fn discovery_finds_nothing_before_launch_or_already_bound_elsewhere() {
-        let not_found = resolve_discovered_codex_session(
+        let not_found = resolve_discovered_session(
             at(100),
             &[historical("session-before", 50)],
             &HashSet::default(),
         );
-        assert_eq!(not_found, DiscoveredCodexSession::NotFound);
+        assert_eq!(not_found, DiscoveredSession::NotFound);
 
         let mut bound = HashSet::default();
         bound.insert(SharedString::from("session-after"));
         let excluded =
-            resolve_discovered_codex_session(at(100), &[historical("session-after", 150)], &bound);
-        assert_eq!(excluded, DiscoveredCodexSession::NotFound);
+            resolve_discovered_session(at(100), &[historical("session-after", 150)], &bound);
+        assert_eq!(excluded, DiscoveredSession::NotFound);
     }
 
     #[test]
     fn discovery_includes_a_session_exactly_at_launch_time() {
         // Matches merge_threads's own `>=` boundary for "at or after launch".
-        let result = resolve_discovered_codex_session(
+        let result = resolve_discovered_session(
             at(100),
             &[historical("session-at-launch", 100)],
             &HashSet::default(),
         );
         assert_eq!(
             result,
-            DiscoveredCodexSession::Resolved(SharedString::from("session-at-launch"))
+            DiscoveredSession::Resolved(SharedString::from("session-at-launch"))
         );
     }
 

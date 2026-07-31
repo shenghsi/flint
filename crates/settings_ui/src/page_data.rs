@@ -5083,7 +5083,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 12] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 14] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5275,6 +5275,35 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "OpenCode Initialization Command",
+                description: "Shell command to run before OpenCode starts. OpenCode starts only when the command succeeds.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.opencode.initialization_command"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .opencode
+                            .as_ref()?
+                            .initialization_command
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .opencode
+                            .get_or_insert_default()
+                            .initialization_command = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("source ~/.profile"),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Hide Codex",
                 description: "Hide the Codex section from the Agent Threads panel.",
                 field: Box::new(SettingField {
@@ -5345,6 +5374,32 @@ fn panels_page() -> SettingsPage {
                             .agent_threads
                             .get_or_insert_default()
                             .pi
+                            .get_or_insert_default()
+                            .hidden = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hide OpenCode",
+                description: "Hide the OpenCode section from the Agent Threads panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.opencode.hidden"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .opencode
+                            .as_ref()?
+                            .hidden
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .opencode
                             .get_or_insert_default()
                             .hidden = value;
                     },
@@ -8938,9 +8993,14 @@ mod tests {
                 "Pi Initialization Command",
                 "agent_threads.pi.initialization_command",
             ),
+            (
+                "OpenCode Initialization Command",
+                "agent_threads.opencode.initialization_command",
+            ),
             ("Hide Codex", "agent_threads.codex.hidden"),
             ("Hide Claude", "agent_threads.claude.hidden"),
             ("Hide Pi", "agent_threads.pi.hidden"),
+            ("Hide OpenCode", "agent_threads.opencode.hidden"),
         ] {
             assert_eq!(
                 setting_item_by_title(&pages, title).field.json_path(),
