@@ -267,7 +267,7 @@ impl TextExample {
 }
 
 const FONT_FAMILIES: [&str; 5] = [
-    ".FlintMono",
+    ".ZedMono",
     ".SystemUIFont",
     "Menlo",
     "Monaco",
@@ -382,7 +382,7 @@ fn run_example() {
                 |_window, cx| {
                     cx.new(|_cx| TextExample {
                         next_id: 0,
-                        font_family: ".FlintMono".into(),
+                        font_family: ".ZedMono".into(),
                     })
                 },
             )

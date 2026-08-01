@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn test_mermaid_font_family_resolves_flint_virtual_fonts() {
         assert_eq!(
-            super::mermaid_font_family(".FlintSans"),
+            super::mermaid_font_family(".ZedSans"),
             "IBM Plex Sans, sans-serif"
         );
         assert_eq!(
@@ -681,7 +681,7 @@ mod tests {
             "IBM Plex Sans, sans-serif"
         );
         assert_eq!(
-            super::mermaid_font_family(".FlintMono"),
+            super::mermaid_font_family(".ZedMono"),
             "Lilex, sans-serif"
         );
         assert_eq!(

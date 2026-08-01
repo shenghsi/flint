@@ -146,7 +146,7 @@ harder to follow than the call sites it replaced.
 The visual is the `⇄` form: a rightward arrow above a leftward arrow. An SVG is
 used rather than the U+21C4 text character because `ui_font_family` is
 user-configurable (`assets/settings/default.json:57`). The character is present
-in the bundled IBM Plex Sans — `.FlintSans` maps to it at
+in the bundled IBM Plex Sans — `.ZedSans` maps to it at
 `crates/gpui/src/text_system.rs:1185`, and cmap inspection of
 `IBMPlexSans-Regular.ttf` and `-SemiBold.ttf` finds `0x21C4` — but a user on a
 different UI font would get GPUI's fallback, which can differ in weight or
