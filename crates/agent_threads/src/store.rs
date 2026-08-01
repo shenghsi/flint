@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -207,6 +207,16 @@ struct ThreadShutdown {
     remote_process: Option<RemoteAgentProcess>,
     egress: Option<AgentEgressLease>,
     workspace: WeakEntity<Workspace>,
+}
+
+fn notification_project_name(project_root: &Path) -> String {
+    let project_root = project_root.to_string_lossy();
+    project_root
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .find(|component| !component.is_empty())
+        .unwrap_or(project_root.as_ref())
+        .to_string()
 }
 
 const AGENT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
@@ -510,6 +520,7 @@ impl AgentThreadStore {
     ) {
         let terminal_item_id = terminal_view.entity_id();
         let terminal = terminal_view.read(cx).terminal().clone();
+        let project_name = notification_project_name(&project_root);
         let metadata = AgentThreadMetadata {
             terminal_item_id,
             kind_id,
@@ -560,7 +571,12 @@ impl AgentThreadStore {
                     .update(cx, |_, window, _| window.request_attention())
                     .log_err();
             }
-            cx.show_desktop_notification(&title, Some(&format!("{kind_label} is waiting for you")));
+            cx.show_desktop_notification(
+                &title,
+                Some(&format!(
+                    "{kind_label} is waiting for you in {project_name}"
+                )),
+            );
         });
         self.subscriptions.insert(
             terminal_item_id,

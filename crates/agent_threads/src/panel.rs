@@ -2805,14 +2805,43 @@ mod tests {
 
         let notifications = cx.shown_notifications();
         assert_eq!(notifications.len(), 1);
-        assert_eq!(
-            notifications[0].1.as_deref(),
-            Some("Codex is waiting for you")
-        );
         assert_eq!(cx.window_attention_request_count(window_handle.into()), 1);
         assert_eq!(
             cx.window_attention_request_count(active_window_handle.into()),
             0
+        );
+    }
+
+    #[gpui::test]
+    async fn bell_notification_identifies_the_project(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let temporary_directory =
+            tempfile::tempdir().expect("failed to create temporary directory");
+        let project_root = temporary_directory.path().join("notification-project");
+        std::fs::create_dir(&project_root).expect("failed to create project directory");
+        let project_root = project_root
+            .to_str()
+            .expect("temporary project path should be valid UTF-8")
+            .to_string()
+            .leak();
+        configure_echo_threads(cx, project_root, 5);
+        let window_handle = init_workspace(cx, project_root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_views = terminal_views(&window_handle, cx);
+        assert_eq!(terminal_views.len(), 1);
+        let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        let notifications = cx.shown_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(
+            notifications[0].1.as_deref(),
+            Some("Codex is waiting for you in notification-project")
         );
     }
 
