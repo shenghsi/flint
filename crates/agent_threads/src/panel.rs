@@ -105,6 +105,7 @@ fn show_remote_credential_menu(remote_available: bool, tunneled: bool) -> bool {
 pub struct AgentThreadsPanel {
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
+    remote_project: bool,
     fs: Arc<dyn Fs>,
     store: Entity<AgentThreadStore>,
     registry: Vec<AgentKindDefinition>,
@@ -299,6 +300,7 @@ impl AgentThreadsPanel {
             index
         };
         let http_client = workspace.app_state().http_client.clone();
+        let remote_project = workspace.project().read(cx).remote_client().is_some();
         cx.new(|cx| {
             let store = AgentThreadStore::global(cx);
             let store_subscription =
@@ -332,6 +334,7 @@ impl AgentThreadsPanel {
             let panel = Self {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace_handle,
+                remote_project,
                 fs,
                 store,
                 registry,
@@ -355,19 +358,10 @@ impl AgentThreadsPanel {
     fn sync_plan_usage_polling(&mut self, cx: &mut Context<Self>) {
         self.plan_usage_task.take();
         self.plan_usage.clear();
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let remote_project = workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .remote_client()
-            .is_some();
         if !should_poll_plan_usage(
             self.active,
             AgentThreadSettings::get_global(cx).show_plan_usage,
-            remote_project,
+            self.remote_project,
         ) {
             return;
         }
