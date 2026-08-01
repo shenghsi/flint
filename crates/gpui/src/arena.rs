@@ -53,11 +53,13 @@ impl Chunk {
     }
 
     fn allocate(&mut self, layout: alloc::Layout) -> Option<NonNull<u8>> {
-        let aligned = unsafe { self.offset.add(self.offset.align_offset(layout.align())) };
-        let next = unsafe { aligned.add(layout.size()) };
+        let base_address = self.offset.addr();
+        let aligned_address = base_address.checked_add(self.offset.align_offset(layout.align()))?;
+        let next_address = aligned_address.checked_add(layout.size())?;
 
-        if next <= self.end {
-            self.offset = next;
+        if next_address <= self.end.addr() {
+            let aligned = self.offset.with_addr(aligned_address);
+            self.offset = self.offset.with_addr(next_address);
             NonNull::new(aligned)
         } else {
             None
@@ -75,11 +77,12 @@ pub struct Arena {
     valid: Rc<Cell<bool>>,
     current_chunk_index: usize,
     chunk_size: NonZeroUsize,
+    scope_depth: usize,
 }
 
 impl Drop for Arena {
     fn drop(&mut self) {
-        self.clear();
+        self.force_clear();
     }
 }
 
@@ -92,6 +95,7 @@ impl Arena {
             valid: Rc::new(Cell::new(true)),
             current_chunk_index: 0,
             chunk_size,
+            scope_depth: 0,
         }
     }
 
@@ -99,7 +103,25 @@ impl Arena {
         self.chunks.len() * self.chunk_size.get()
     }
 
+    pub fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    pub fn end_scope(&mut self) {
+        self.scope_depth = self
+            .scope_depth
+            .checked_sub(1)
+            .expect("Arena::end_scope called without a matching begin_scope");
+    }
+
     pub fn clear(&mut self) {
+        if self.scope_depth > 0 {
+            return;
+        }
+        self.force_clear();
+    }
+
+    fn force_clear(&mut self) {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
         self.elements.clear();
@@ -285,5 +307,42 @@ mod tests {
 
         arena.clear();
         let _read_value = *value;
+    }
+
+    #[test]
+    fn test_clear_is_deferred_while_a_scope_is_active() {
+        struct DropCounter(Rc<Cell<usize>>);
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let drops = Rc::new(Cell::new(0));
+        let mut arena = Arena::new(1024);
+        arena.begin_scope();
+        let outer = arena.alloc(|| 42_u64);
+        arena.alloc({
+            let drops = drops.clone();
+            || DropCounter(drops)
+        });
+
+        arena.begin_scope();
+        let inner = arena.alloc(|| 7_u64);
+        arena.alloc({
+            let drops = drops.clone();
+            || DropCounter(drops)
+        });
+        arena.end_scope();
+        arena.clear();
+
+        assert_eq!(*outer, 42);
+        assert_eq!(*inner, 7);
+        assert_eq!(drops.get(), 0);
+
+        arena.end_scope();
+        arena.clear();
+        assert_eq!(drops.get(), 2);
     }
 }
