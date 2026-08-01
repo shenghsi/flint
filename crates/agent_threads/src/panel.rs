@@ -105,6 +105,7 @@ fn show_remote_credential_menu(remote_available: bool, tunneled: bool) -> bool {
 pub struct AgentThreadsPanel {
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
+    remote_project: bool,
     fs: Arc<dyn Fs>,
     store: Entity<AgentThreadStore>,
     registry: Vec<AgentKindDefinition>,
@@ -164,6 +165,10 @@ fn usage_color(percent: u8, cx: &App) -> Color {
         UsageColorBand::Orange => status.warning.blend(status.error.opacity(0.5)),
         UsageColorBand::Red => status.error,
     })
+}
+
+fn should_poll_plan_usage(active: bool, show_plan_usage: bool, remote_project: bool) -> bool {
+    active && show_plan_usage && !remote_project
 }
 
 fn launch_option_visual(effective_id: Option<&str>) -> Color {
@@ -295,6 +300,7 @@ impl AgentThreadsPanel {
             index
         };
         let http_client = workspace.app_state().http_client.clone();
+        let remote_project = workspace.project().read(cx).remote_client().is_some();
         cx.new(|cx| {
             let store = AgentThreadStore::global(cx);
             let store_subscription =
@@ -328,6 +334,7 @@ impl AgentThreadsPanel {
             let panel = Self {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace_handle,
+                remote_project,
                 fs,
                 store,
                 registry,
@@ -351,7 +358,11 @@ impl AgentThreadsPanel {
     fn sync_plan_usage_polling(&mut self, cx: &mut Context<Self>) {
         self.plan_usage_task.take();
         self.plan_usage.clear();
-        if !self.active || !AgentThreadSettings::get_global(cx).show_plan_usage {
+        if !should_poll_plan_usage(
+            self.active,
+            AgentThreadSettings::get_global(cx).show_plan_usage,
+            self.remote_project,
+        ) {
             return;
         }
         let settings = AgentThreadSettings::get_global(cx);
@@ -1908,6 +1919,12 @@ mod tests {
             Some(LabelSize::Small)
         );
         assert_eq!(remote_credential_menu_label_size(false), None);
+    }
+
+    #[test]
+    fn plan_usage_polling_is_disabled_for_remote_projects() {
+        assert!(should_poll_plan_usage(true, true, false));
+        assert!(!should_poll_plan_usage(true, true, true));
     }
 
     fn init_test(cx: &mut TestAppContext) {
