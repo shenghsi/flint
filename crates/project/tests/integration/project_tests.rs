@@ -24,7 +24,7 @@ use buffer_diff::{
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
 use fs::{FakeFs, PathEventKind};
-use futures::{StreamExt, future};
+use futures::{FutureExt as _, StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
@@ -99,6 +99,91 @@ fn project_id_round_trips_through_the_protocol_value() {
     let project_id = ProjectId(42);
 
     assert_eq!(project_id.to_proto(), 42);
+}
+
+#[gpui::test]
+async fn test_workspace_diagnostics_refresh_is_answered_before_pulling(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let document_pulls_received = Arc::new(atomic::AtomicUsize::new(0));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-refresh-response-first".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let document_pulls_received = document_pulls_received.clone();
+                move |fake_server| {
+                    fake_server
+                        .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>({
+                            let document_pulls_received = document_pulls_received.clone();
+                            move |_, _| {
+                                document_pulls_received.fetch_add(1, atomic::Ordering::Release);
+                                async move {
+                                    future::pending::<()>().await;
+                                    Err(anyhow::anyhow!("should never respond"))
+                                }
+                            }
+                        });
+                    fake_server
+                        .set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+                            move |_, _| async move {
+                                future::pending::<()>().await;
+                                Err(anyhow::anyhow!("should never respond"))
+                            },
+                        );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .expect("open buffer");
+
+    let fake_server = fake_servers.next().await.expect("fake language server");
+    cx.executor().run_until_parked();
+
+    let refresh_response = cx.executor().spawn(async move {
+        fake_server
+            .request::<lsp::request::WorkspaceDiagnosticRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+    });
+    cx.executor().run_until_parked();
+
+    refresh_response
+        .now_or_never()
+        .expect("workspace/diagnostic/refresh must be answered before diagnostic pulls")
+        .into_response()
+        .expect("workspace/diagnostic/refresh should succeed");
+    assert_eq!(
+        document_pulls_received.load(atomic::Ordering::Acquire),
+        1,
+        "the refresh should still trigger document diagnostics for the open buffer"
+    );
 }
 
 #[gpui::test]

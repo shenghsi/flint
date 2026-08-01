@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::atomic::Ordering};
+use std::{cell::Cell, rc::Rc, sync::atomic::Ordering};
 
 use ::util::ResultExt;
 use anyhow::Context as _;
@@ -30,6 +30,37 @@ pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
+
+pub(crate) struct DrawCoordinator {
+    drawing: Cell<bool>,
+}
+
+impl DrawCoordinator {
+    pub(crate) fn new() -> Self {
+        Self {
+            drawing: Cell::new(false),
+        }
+    }
+
+    fn try_begin_draw(&self) -> Option<DrawWindowGuard<'_>> {
+        if self.drawing.get() {
+            None
+        } else {
+            self.drawing.set(true);
+            Some(DrawWindowGuard { coordinator: self })
+        }
+    }
+}
+
+struct DrawWindowGuard<'a> {
+    coordinator: &'a DrawCoordinator,
+}
+
+impl Drop for DrawWindowGuard<'_> {
+    fn drop(&mut self) {
+        self.coordinator.drawing.set(false);
+    }
+}
 
 impl WindowsWindowInner {
     pub(crate) fn handle_msg(
@@ -1218,6 +1249,13 @@ impl WindowsWindowInner {
 
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
+        let Some(_guard) = self.state.draw_coordinator.try_begin_draw() else {
+            if force_render {
+                self.state.force_render_after_recovery.set(true);
+            }
+            unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+            return Some(0);
+        };
         let mut request_frame = self.state.callbacks.request_frame.take()?;
 
         self.state.direct_manipulation.update();
@@ -1333,6 +1371,20 @@ impl WindowsWindowInner {
         let result = f(&mut input_handler, scale_factor);
         self.state.input_handler.set(Some(input_handler));
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DrawCoordinator;
+
+    #[test]
+    fn draw_coordinator_defers_nested_draws_until_the_outer_draw_finishes() {
+        let coordinator = DrawCoordinator::new();
+        let outer_draw = coordinator.try_begin_draw().expect("begin outer draw");
+        assert!(coordinator.try_begin_draw().is_none());
+        drop(outer_draw);
+        assert!(coordinator.try_begin_draw().is_some());
     }
 }
 

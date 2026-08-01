@@ -2,10 +2,10 @@
 
 **Flint fork point:** `6e9465a4288c332208643892e23b9d35d7be5c79`
 
-**Latest observed Zed stable release:** [v1.12.1](https://github.com/zed-industries/zed/releases/tag/v1.12.1)
-(`2a37601c02a32b22e7700835c04b89ff75ffcd5d`), published 2026-07-27
+**Latest observed Zed stable release:** [v1.13.1](https://github.com/zed-industries/zed/releases/tag/v1.13.1)
+(`00bd72e7838f4b875a913cd112b47a0ebe1ca62b`), published 2026-07-29
 
-**Completed stable reconciliation:** Zed v1.6.3 through v1.12.1
+**Completed stable reconciliation:** Zed v1.6.3 through v1.13.1
 
 **Historical exception:** selected Zed v1.13.0-pre entries approved before the
 stable-only review boundary remain recorded, but Zed preview releases are no
@@ -347,3 +347,20 @@ Completion requires:
 - an upstream baseline recorded by commit and release tags; and
 - an owner and cadence for recurring stable-release and later-main correction
   review.
+
+## Wave 9: Zed v1.13.1 stable safety reconciliation
+
+The v1.13.1 review classifies all 100 pull requests cited by the stable release
+notes. The full one-disposition inventory, immutable tag-diff method, explicit
+product-boundary exclusions, and elevated safety review are in the
+[v1.13.1 stable reconciliation report](specs/2026-08-01-zed-v1.13.1-stable-reconciliation.md).
+
+| Priority | Upstream PR | Stable commit | Provenance | Baseline ancestry | Flint paths | Strategy | Prerequisites | Required tests | Status | Flint PR | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| P0 | [#60295](https://github.com/zed-industries/zed/pull/60295) | `ec3d887507f272119d9fe146c685f0a941d0e798` | v1.13.1 notes | Absent | `crates/gpui`, `crates/gpui_windows` | `adapt` | None | Nested window draw and arena-clear deferral; Windows draw-coordinator test | `implementing` | [#168](https://github.com/shenghsi/flint/pull/168) | Prevent nested draws from clearing live arena allocations and defer cross-window Windows draws. |
+| P0 | [#61024](https://github.com/zed-industries/zed/pull/61024) | `914e1c9873b6b85bfeedc5b58e8270885bdd532e` | v1.13.1 notes | Absent | `crates/gpui_macos` | `adapt` | None | Custom pasteboard types survive their creation autorelease pool | `implementing` | [#168](https://github.com/shenghsi/flint/pull/168) | Retain pasteboard and custom type objects and copy autoreleased data before returning it. |
+| P0 | [#61130](https://github.com/zed-industries/zed/pull/61130) | `aa42d3adce0f85abec817d99124b4cedb6d5f359` | v1.13.1 notes | Absent | `crates/languages` | `adapt` | None | Rust completion label with a tabstop nested inside a replacement placeholder | `implementing` | [#168](https://github.com/shenghsi/flint/pull/168) | Close nested placeholder ranges in snippet-text order instead of slicing backward. |
+| P0 | [#61336](https://github.com/zed-industries/zed/pull/61336) | `339f4237c4c8080ad46411f73f2640dca32d6c12` | v1.13.1 notes | Absent | `crates/workspace` | `adapt` | None | Closing a pinned tab while the workspace entity is leased | `implementing` | [#168](https://github.com/shenghsi/flint/pull/168) | Defer cross-pane activation until the enclosing workspace update finishes. |
+| P0 | [#61772](https://github.com/zed-industries/zed/pull/61772) | `16cb1e3cdbac6e2ef0f36ca73802f1421699fffb` | v1.13.1 stable cherry-pick | Absent | `crates/project` | `adapt` | None | Refresh response completes before a blocked document-diagnostics pull | `implementing` | [#168](https://github.com/shenghsi/flint/pull/168) | Acknowledge `workspace/diagnostic/refresh` before waiting on requests to the same server. |
+| P0 | [#61079](https://github.com/zed-industries/zed/pull/61079) | `5079b33d657593ffd8a2d2978534988a8b40867e` | v1.13.1 notes | Absent | `crates/gpui_linux` | `audit` | KDE Wayland and Fcitx5 environment | text-input-v3 cursor-rectangle feedback-loop coverage | `deferred` | — | The macOS review host cannot execute the compositor-specific path; require a Linux test-first adaptation. |
+| P1 | [#61447](https://github.com/zed-industries/zed/pull/61447) | `54c5db834609bab961478ee523c2b6d906632e49` | v1.13.1 notes | Absent | `crates/project`, `crates/editor` | `audit` | Product behavior decision | Large single-line file plus language-feature compatibility fixtures | `deferred` | — | Disabling LSP features above a line-length threshold changes editor behavior and needs isolated approval and coverage. |
