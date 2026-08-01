@@ -45,13 +45,13 @@ If you would like to use distinct themes for light mode/dark mode that can be se
 
 ```json [settings]
   // UI Font. Use ".SystemUIFont" to use the default system font (SF Pro on macOS),
-  // or ".FlintSans" for the bundled default (currently IBM Plex)
+  // or ".ZedSans" for the bundled default (currently IBM Plex)
   "ui_font_family": ".SystemUIFont",
   "ui_font_weight": 400, // Font weight in standard CSS units from 100 to 900.
   "ui_font_size": 16,
 
   // Buffer Font - Used by editor buffers
-  // use ".FlintMono" for the bundled default monospace (currently Lilex)
+  // use ".ZedMono" for the bundled default monospace (currently Lilex)
   "buffer_font_family": "Berkeley Mono", // Font name for editor buffers
   "buffer_font_size": 15,                 // Font size for editor buffers
   "buffer_font_weight": 400,              // Font weight in CSS units [100-900]

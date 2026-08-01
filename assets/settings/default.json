@@ -24,9 +24,9 @@
   // 6. "TextMate"
   "base_keymap": "VSCode",
   // The name of a font to use for rendering text in the editor
-  // ".FlintMono" currently aliases to Lilex
+  // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.
-  "buffer_font_family": ".FlintMono",
+  "buffer_font_family": ".ZedMono",
   // Set the buffer text's font fallbacks, this will be merged with
   // the platform's default fallbacks.
   "buffer_font_fallbacks": null,
@@ -52,9 +52,9 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
-  // ".FlintSans" currently aliases to "IBM Plex Sans", but this may
+  // ".ZedSans" currently aliases to "IBM Plex Sans", but this may
   // change in the future
-  "ui_font_family": ".FlintSans",
+  "ui_font_family": ".ZedSans",
   // Set the UI's font fallbacks, this will be merged with the platform's
   // default font fallbacks.
   "ui_font_fallbacks": null,
@@ -1678,7 +1678,7 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": ".FlintMono",
+    // "font_family": ".ZedMono",
     // Set the terminal's font fallbacks. If this option is not included,
     // the terminal will default to matching the buffer's font fallbacks.
     // This will be merged with the platform's default font fallbacks
