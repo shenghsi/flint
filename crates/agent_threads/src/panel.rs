@@ -166,6 +166,10 @@ fn usage_color(percent: u8, cx: &App) -> Color {
     })
 }
 
+fn should_poll_plan_usage(active: bool, show_plan_usage: bool, remote_project: bool) -> bool {
+    active && show_plan_usage && !remote_project
+}
+
 fn launch_option_visual(effective_id: Option<&str>) -> Color {
     if effective_id.is_some() {
         Color::Warning
@@ -351,7 +355,20 @@ impl AgentThreadsPanel {
     fn sync_plan_usage_polling(&mut self, cx: &mut Context<Self>) {
         self.plan_usage_task.take();
         self.plan_usage.clear();
-        if !self.active || !AgentThreadSettings::get_global(cx).show_plan_usage {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let remote_project = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .remote_client()
+            .is_some();
+        if !should_poll_plan_usage(
+            self.active,
+            AgentThreadSettings::get_global(cx).show_plan_usage,
+            remote_project,
+        ) {
             return;
         }
         let settings = AgentThreadSettings::get_global(cx);
@@ -1908,6 +1925,12 @@ mod tests {
             Some(LabelSize::Small)
         );
         assert_eq!(remote_credential_menu_label_size(false), None);
+    }
+
+    #[test]
+    fn plan_usage_polling_is_disabled_for_remote_projects() {
+        assert!(should_poll_plan_usage(true, true, false));
+        assert!(!should_poll_plan_usage(true, true, true));
     }
 
     fn init_test(cx: &mut TestAppContext) {
