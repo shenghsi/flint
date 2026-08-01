@@ -574,7 +574,7 @@ impl AgentThreadStore {
             cx.show_desktop_notification(
                 &title,
                 Some(&format!(
-                    "{kind_label} is waiting for you in {project_name}"
+                    "{kind_label} is waiting for you · Project: {project_name}"
                 )),
             );
         });

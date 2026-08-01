@@ -2813,7 +2813,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn bell_notification_identifies_the_project(cx: &mut TestAppContext) {
+    async fn bell_notification_labels_the_project(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
         let temporary_directory =
@@ -2841,7 +2841,7 @@ mod tests {
         assert_eq!(notifications.len(), 1);
         assert_eq!(
             notifications[0].1.as_deref(),
-            Some("Codex is waiting for you in notification-project")
+            Some("Codex is waiting for you · Project: notification-project")
         );
     }
 
