@@ -1018,7 +1018,12 @@ impl Fs for RealFs {
         let inode = metadata.ino();
 
         #[cfg(windows)]
-        let inode = file_id(path).await?;
+        let inode = {
+            let path_buf = path.to_path_buf();
+            self.executor
+                .spawn(async move { file_id(path_buf) })
+                .await?
+        };
 
         #[cfg(windows)]
         let is_fifo = false;
@@ -3344,10 +3349,11 @@ fn read_recursive<'a>(
 // can we get file id not open the file twice?
 // https://github.com/rust-lang/rust/issues/63010
 #[cfg(target_os = "windows")]
-async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
+fn file_id(path: impl AsRef<Path>) -> Result<u64> {
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
 
-    use smol::fs::windows::OpenOptionsExt;
     use windows::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
@@ -3355,21 +3361,17 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
         },
     };
 
-    let file = smol::fs::OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
-        .open(path)
-        .await?;
+        .open(path)?;
 
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
     // This function supports Windows XP+
-    smol::unblock(move || {
-        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle() as _), &mut info)? };
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle() as _), &mut info)? };
 
-        Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
-    })
-    .await
+    Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
 }
 
 #[cfg(target_os = "windows")]
