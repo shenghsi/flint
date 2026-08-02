@@ -427,16 +427,20 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 
     // Persist the agent-thread restore snapshot whenever a thread opens or
     // closes, not only in the `Quit` action handler: restarts
-    // (`workspace::reload`), dock quits, and crashes never run that handler,
-    // leaving `reopen_sessions_on_startup` with nothing to restore. The
-    // quitting flag keeps app teardown -- which releases every thread --
-    // from erasing the snapshot the quit handler just wrote.
+    // (`workspace::reload`) and dock quits never run that handler. Snapshot
+    // again in `on_app_quit` and await the write because a detached write may
+    // be cancelled when the process exits during an update restart.
     let quitting_for_snapshot = Arc::new(AtomicBool::new(false));
     cx.on_app_quit({
         let quitting_for_snapshot = quitting_for_snapshot.clone();
-        move |_| {
+        let app_state = app_state.clone();
+        move |cx| {
             quitting_for_snapshot.store(true, atomic::Ordering::Release);
-            std::future::ready(())
+            let session_id = app_state.session.read(cx).id().to_string();
+            let snapshot = agent_threads::snapshot_live_agent_threads(session_id, cx);
+            async move {
+                snapshot.await.log_err();
+            }
         }
     })
     .detach();
