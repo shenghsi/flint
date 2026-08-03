@@ -4253,7 +4253,7 @@ dependencies = [
 
 [[package]]
 name = "flint"
-version = "0.8.9"
+version = "0.8.10"
 dependencies = [
  "activity_indicator",
  "agent_threads",
