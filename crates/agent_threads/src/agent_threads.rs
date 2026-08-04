@@ -27,7 +27,8 @@ use workspace::Workspace;
 pub use history::HistoricalThread;
 pub use panel::AgentThreadsPanel;
 pub use store::{
-    AgentThreadStore, AgentThreadStoreEvent, restore_threads_for_workspace,
+    AgentThreadStore, AgentThreadStoreEvent, checkpoint_live_agent_threads,
+    prune_stale_session_restore_snapshots, restore_threads_for_workspace,
     snapshot_live_agent_threads,
 };
 

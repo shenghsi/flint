@@ -107,6 +107,14 @@ impl ScopedKeyValueStore<'_> {
         .context("Failed to read from scoped_kv_store")
     }
 
+    pub fn keys(&self) -> anyhow::Result<Vec<String>> {
+        self.store
+            .select_bound::<&str, String>("SELECT key FROM scoped_kv_store WHERE namespace = (?)")?(
+            self.namespace,
+        )
+        .context("Failed to list keys from scoped_kv_store")
+    }
+
     pub async fn write(&self, key: String, value: String) -> anyhow::Result<()> {
         let namespace = self.namespace.to_owned();
         self.store
@@ -199,6 +207,10 @@ mod tests {
         assert_eq!(scope_a.read("key-1").unwrap(), Some("value-a1".to_string()));
         assert_eq!(scope_b.read("key-1").unwrap(), Some("value-b1".to_string()));
 
+        // keys lists only the keys in its own namespace
+        assert_eq!(scope_a.keys().unwrap(), vec!["key-1".to_string()]);
+        assert_eq!(scope_b.keys().unwrap(), vec!["key-1".to_string()]);
+
         // delete removes a single key without affecting others in the namespace
         scope_a
             .write("key-2".to_string(), "value-a2".to_string())
@@ -208,6 +220,7 @@ mod tests {
         assert_eq!(scope_a.read("key-1").unwrap(), None);
         assert_eq!(scope_a.read("key-2").unwrap(), Some("value-a2".to_string()));
         assert_eq!(scope_b.read("key-1").unwrap(), Some("value-b1".to_string()));
+        assert_eq!(scope_a.keys().unwrap(), vec!["key-2".to_string()]);
 
         // delete_all removes all keys in a namespace without affecting other namespaces
         scope_a
