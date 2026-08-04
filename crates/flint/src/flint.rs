@@ -63,7 +63,9 @@ use settings::{
 
 use std::{
     borrow::Cow,
+    cell::RefCell,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     sync::atomic::{self, AtomicBool},
 };
@@ -93,6 +95,7 @@ use workspace::{Pane, notifications::DetachAndPromptErr};
 
 const DOCS_URL: &str = "https://github.com/shenghsi/flint/tree/main/docs/src";
 const STATUS_URL: &str = "https://github.com/shenghsi/flint";
+const AGENT_THREAD_SNAPSHOT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub struct CrashHandler(pub Arc<crashes::Client>);
 
@@ -263,26 +266,54 @@ pub fn init(cx: &mut App) {
     });
 }
 
-fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
+fn quit_after_last_window_closed(
+    cx: &mut App,
+    app_state: &Arc<AppState>,
+    quitting_for_snapshot: &Arc<AtomicBool>,
+    pending_snapshot: &Rc<RefCell<Option<Task<anyhow::Result<()>>>>>,
+) {
+    if !cx.windows().is_empty() {
+        return;
+    }
+
+    quitting_for_snapshot.store(true, atomic::Ordering::Release);
+    let session_id = app_state.session.read(cx).id().to_string();
+    *pending_snapshot.borrow_mut() =
+        Some(agent_threads::snapshot_live_agent_threads(session_id, cx));
+    cx.quit();
+}
+
+fn bind_on_window_closed(
+    app_state: Arc<AppState>,
+    quitting_for_snapshot: Arc<AtomicBool>,
+    pending_snapshot: Rc<RefCell<Option<Task<anyhow::Result<()>>>>>,
+    cx: &mut App,
+) -> Option<gpui::Subscription> {
     #[cfg(target_os = "macos")]
     {
         WorkspaceSettings::get_global(cx)
             .on_last_window_closed
             .is_quit_app()
             .then(|| {
-                cx.on_window_closed(|cx, _window_id| {
-                    if cx.windows().is_empty() {
-                        cx.quit();
-                    }
+                cx.on_window_closed(move |cx, _window_id| {
+                    quit_after_last_window_closed(
+                        cx,
+                        &app_state,
+                        &quitting_for_snapshot,
+                        &pending_snapshot,
+                    );
                 })
             })
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Some(cx.on_window_closed(|cx, _window_id| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
+        Some(cx.on_window_closed(move |cx, _window_id| {
+            quit_after_last_window_closed(
+                cx,
+                &app_state,
+                &quitting_for_snapshot,
+                &pending_snapshot,
+            );
         }))
     }
 }
@@ -429,15 +460,21 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     // closes, not only in the `Quit` action handler: restarts
     // (`workspace::reload`) and dock quits never run that handler. Snapshot
     // again in `on_app_quit` and await the write because a detached write may
-    // be cancelled when the process exits during an update restart.
+    // be cancelled when the process exits during an update restart. Closing
+    // the last window releases its terminals before app shutdown, so capture
+    // that snapshot in the window-closed callback and await it on quit.
     let quitting_for_snapshot = Arc::new(AtomicBool::new(false));
+    let pending_snapshot = Rc::new(RefCell::new(None));
     cx.on_app_quit({
         let quitting_for_snapshot = quitting_for_snapshot.clone();
+        let pending_snapshot = pending_snapshot.clone();
         let app_state = app_state.clone();
         move |cx| {
             quitting_for_snapshot.store(true, atomic::Ordering::Release);
-            let session_id = app_state.session.read(cx).id().to_string();
-            let snapshot = agent_threads::snapshot_live_agent_threads(session_id, cx);
+            let snapshot = pending_snapshot.borrow_mut().take().unwrap_or_else(|| {
+                let session_id = app_state.session.read(cx).id().to_string();
+                agent_threads::snapshot_live_agent_threads(session_id, cx)
+            });
             async move {
                 snapshot.await.log_err();
             }
@@ -446,6 +483,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     .detach();
     cx.subscribe(&agent_threads::AgentThreadStore::global(cx), {
         let app_state = app_state.clone();
+        let quitting_for_snapshot = quitting_for_snapshot.clone();
         move |_store, _event: &agent_threads::AgentThreadStoreEvent, cx| {
             if quitting_for_snapshot.load(atomic::Ordering::Acquire) {
                 return;
@@ -455,12 +493,45 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         }
     })
     .detach();
+    cx.spawn({
+        let app_state = app_state.clone();
+        let quitting_for_snapshot = quitting_for_snapshot.clone();
+        async move |cx| loop {
+            cx.background_executor()
+                .timer(AGENT_THREAD_SNAPSHOT_INTERVAL)
+                .await;
+            if quitting_for_snapshot.load(atomic::Ordering::Acquire) {
+                return;
+            }
+            let snapshot = cx.update(|cx| {
+                let session_id = app_state.session.read(cx).id().to_string();
+                agent_threads::checkpoint_live_agent_threads(session_id, cx)
+            });
+            if let Some(snapshot) = snapshot {
+                snapshot.await.log_err();
+            }
+        }
+    })
+    .detach();
 
-    let mut _on_close_subscription = bind_on_window_closed(cx);
-    cx.observe_global::<SettingsStore>(move |cx| {
-        // A 1.92 regression causes unused-assignment to trigger on this variable.
-        _ = _on_close_subscription.is_some();
-        _on_close_subscription = bind_on_window_closed(cx);
+    let mut _on_close_subscription = bind_on_window_closed(
+        app_state.clone(),
+        quitting_for_snapshot.clone(),
+        pending_snapshot.clone(),
+        cx,
+    );
+    cx.observe_global::<SettingsStore>({
+        let app_state = app_state.clone();
+        move |cx| {
+            // A 1.92 regression causes unused-assignment to trigger on this variable.
+            _ = _on_close_subscription.is_some();
+            _on_close_subscription = bind_on_window_closed(
+                app_state.clone(),
+                quitting_for_snapshot.clone(),
+                pending_snapshot.clone(),
+                cx,
+            );
+        }
     })
     .detach();
 

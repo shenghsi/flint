@@ -4,7 +4,10 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
-use futures::StreamExt as _;
+use futures::{
+    StreamExt as _,
+    channel::{mpsc, oneshot},
+};
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, Global, PromptLevel,
     SharedString, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
@@ -176,6 +179,29 @@ pub struct AgentThreadSessionRestoreRecord {
 
 const SESSION_RESTORE_NAMESPACE: &str = "agent-thread-session-restore";
 
+struct SnapshotRequest {
+    session_id: String,
+    records_json: String,
+    completion: oneshot::Sender<Result<()>>,
+}
+
+async fn run_snapshot_writer<Persist, PersistFuture>(
+    mut receiver: mpsc::UnboundedReceiver<SnapshotRequest>,
+    mut persist: Persist,
+) where
+    Persist: FnMut(String, String) -> PersistFuture,
+    PersistFuture: std::future::Future<Output = Result<()>>,
+{
+    while let Some(request) = receiver.next().await {
+        let result = persist(request.session_id, request.records_json).await;
+        if let Err(result) = request.completion.send(result)
+            && let Err(error) = result
+        {
+            log::error!("Failed to persist agent thread restore snapshot: {error:#}");
+        }
+    }
+}
+
 pub struct AgentThreadStore {
     threads: HashMap<EntityId, ThreadEntry>,
     subscriptions: HashMap<EntityId, Vec<Subscription>>,
@@ -190,6 +216,7 @@ pub struct AgentThreadStore {
     agent_artifact_cache: Option<Arc<AgentArtifactCache>>,
     managed_provisioning:
         ManagedAgentProvisioningCoordinator<Entity<ManagedAgentProgressNotification>>,
+    snapshot_sender: mpsc::UnboundedSender<SnapshotRequest>,
 }
 
 struct ThreadEntry {
@@ -302,6 +329,21 @@ impl AgentThreadStore {
         if cx.has_global::<GlobalAgentThreadStore>() {
             return;
         }
+        let (snapshot_sender, snapshot_receiver) = mpsc::unbounded();
+        let key_value_store = db::kvp::KeyValueStore::global(cx);
+        cx.background_spawn(run_snapshot_writer(
+            snapshot_receiver,
+            move |session_id, records_json| {
+                let key_value_store = key_value_store.clone();
+                async move {
+                    key_value_store
+                        .scoped(SESSION_RESTORE_NAMESPACE)
+                        .write(session_id, records_json)
+                        .await
+                }
+            },
+        ))
+        .detach();
         let store = cx.new(|_| Self {
             threads: HashMap::default(),
             subscriptions: HashMap::default(),
@@ -310,6 +352,7 @@ impl AgentThreadStore {
             route_changes: HashSet::default(),
             agent_artifact_cache: None,
             managed_provisioning: ManagedAgentProvisioningCoordinator::default(),
+            snapshot_sender,
         });
         cx.set_global(GlobalAgentThreadStore(store));
     }
@@ -1729,13 +1772,43 @@ fn spawn_thread_task_inner(
 pub fn snapshot_live_agent_threads(session_id: String, cx: &mut App) -> Task<Result<()>> {
     let store = AgentThreadStore::global(cx);
     let records = store.read(cx).session_restore_records(cx);
-    let key_value_store = db::kvp::KeyValueStore::global(cx);
+    enqueue_session_restore_snapshot(session_id, records, &store, cx)
+}
+
+pub fn checkpoint_live_agent_threads(session_id: String, cx: &mut App) -> Option<Task<Result<()>>> {
+    let store = AgentThreadStore::global(cx);
+    let records = store.read(cx).session_restore_records(cx);
+    (!records.is_empty()).then(|| enqueue_session_restore_snapshot(session_id, records, &store, cx))
+}
+
+fn enqueue_session_restore_snapshot(
+    session_id: String,
+    records: Vec<AgentThreadSessionRestoreRecord>,
+    store: &Entity<AgentThreadStore>,
+    cx: &App,
+) -> Task<Result<()>> {
+    let records_json = match serde_json::to_string(&records) {
+        Ok(records_json) => records_json,
+        Err(error) => return Task::ready(Err(error.into())),
+    };
+    let (completion, receiver) = oneshot::channel();
+    let request = SnapshotRequest {
+        session_id,
+        records_json,
+        completion,
+    };
+    if store
+        .read(cx)
+        .snapshot_sender
+        .unbounded_send(request)
+        .is_err()
+    {
+        return Task::ready(Err(anyhow!("agent thread snapshot writer stopped")));
+    }
     cx.background_spawn(async move {
-        let records_json = serde_json::to_string(&records)?;
-        key_value_store
-            .scoped(SESSION_RESTORE_NAMESPACE)
-            .write(session_id, records_json)
+        receiver
             .await
+            .map_err(|_| anyhow!("agent thread snapshot writer stopped"))?
     })
 }
 
@@ -2212,6 +2285,57 @@ mod tests {
         release_tx.send(()).await.expect("release shutdown");
         task.await.expect("shutdown result");
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[gpui::test]
+    async fn snapshot_writer_persists_requests_in_order(cx: &mut gpui::TestAppContext) {
+        let (sender, receiver) = mpsc::unbounded();
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let writer = cx.background_executor.spawn(run_snapshot_writer(receiver, {
+            let writes = writes.clone();
+            move |session_id, records_json| {
+                let writes = writes.clone();
+                async move {
+                    writes.lock().push((session_id, records_json));
+                    Ok(())
+                }
+            }
+        }));
+
+        let (first_completion, first_result) = oneshot::channel();
+        sender
+            .unbounded_send(SnapshotRequest {
+                session_id: "session".to_string(),
+                records_json: "first".to_string(),
+                completion: first_completion,
+            })
+            .expect("snapshot writer should accept first request");
+        let (second_completion, second_result) = oneshot::channel();
+        sender
+            .unbounded_send(SnapshotRequest {
+                session_id: "session".to_string(),
+                records_json: "second".to_string(),
+                completion: second_completion,
+            })
+            .expect("snapshot writer should accept second request");
+        drop(sender);
+
+        writer.await;
+        first_result
+            .await
+            .expect("first snapshot response")
+            .expect("first snapshot write");
+        second_result
+            .await
+            .expect("second snapshot response")
+            .expect("second snapshot write");
+        assert_eq!(
+            *writes.lock(),
+            vec![
+                ("session".to_string(), "first".to_string()),
+                ("session".to_string(), "second".to_string())
+            ]
+        );
     }
 
     #[test]
