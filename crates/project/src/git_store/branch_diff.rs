@@ -333,7 +333,11 @@ impl BranchDiff {
     }
 
     #[instrument(skip_all)]
-    pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBuffer> {
+    pub fn load_buffers(
+        &mut self,
+        paths: Option<&HashSet<RepoPath>>,
+        cx: &mut Context<Self>,
+    ) -> Vec<DiffBuffer> {
         let mut output = Vec::default();
         let Some(repo) = self.repo.clone() else {
             return output;
@@ -347,6 +351,9 @@ impl BranchDiff {
 
             for item in repo.read(cx).cached_status() {
                 seen.insert(item.repo_path.clone());
+                if paths.is_some_and(|paths| !paths.contains(&item.repo_path)) {
+                    continue;
+                }
                 let branch_diff = self
                     .tree_diff
                     .as_ref()
@@ -388,6 +395,9 @@ impl BranchDiff {
 
             for (path, branch_diff) in tree_diff.entries.iter() {
                 if seen.contains(&path) {
+                    continue;
+                }
+                if paths.is_some_and(|paths| !paths.contains(path)) {
                     continue;
                 }
 

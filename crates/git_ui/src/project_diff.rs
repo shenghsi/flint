@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
@@ -87,6 +87,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    displayed_paths: Option<HashSet<RepoPath>>,
     applied_view_options: ProjectDiffViewOptions,
     review_comment_count: usize,
     _task: Task<Result<()>>,
@@ -334,6 +335,9 @@ impl ProjectDiff {
         cx: &mut Context<Workspace>,
     ) {
         let intended_repo = workspace.project().read(cx).active_repository(cx);
+        let displayed_paths = entry
+            .as_ref()
+            .map(|entry| [entry.repo_path.clone()].into_iter().collect());
         let existing = workspace
             .items_of_type::<Self>(cx)
             .find(|item| item.read(cx).diff_base(cx) == &diff_base);
@@ -348,7 +352,14 @@ impl ProjectDiff {
             let workspace_handle = cx.entity();
             let project = workspace.project().clone();
             let project_diff = cx.new(|cx| {
-                Self::new_with_diff_base(diff_base, project, workspace_handle, window, cx)
+                Self::new_with_diff_base(
+                    diff_base,
+                    project,
+                    workspace_handle,
+                    displayed_paths.clone(),
+                    window,
+                    cx,
+                )
             });
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
@@ -375,6 +386,10 @@ impl ProjectDiff {
                 });
             }
         }
+
+        project_diff.update(cx, |project_diff, cx| {
+            project_diff.set_displayed_paths(displayed_paths, window, cx);
+        });
 
         if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
@@ -451,7 +466,7 @@ impl ProjectDiff {
                 branch_diff
             })?;
             cx.new_window_entity(|window, cx| {
-                Self::new_impl(branch_diff, project, workspace, window, cx)
+                Self::new_impl(branch_diff, project, workspace, None, window, cx)
             })
         })
     }
@@ -476,7 +491,7 @@ impl ProjectDiff {
                 branch_diff
             })?;
             cx.new_window_entity(|window, cx| {
-                Self::new_impl(branch_diff, project, workspace, window, cx)
+                Self::new_impl(branch_diff, project, workspace, None, window, cx)
             })
         })
     }
@@ -487,25 +502,27 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_with_diff_base(DiffBase::Head, project, workspace, window, cx)
+        Self::new_with_diff_base(DiffBase::Head, project, workspace, None, window, cx)
     }
 
     fn new_with_diff_base(
         diff_base: DiffBase,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
+        displayed_paths: Option<HashSet<RepoPath>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let branch_diff =
             cx.new(|cx| branch_diff::BranchDiff::new(diff_base, project.clone(), window, cx));
-        Self::new_impl(branch_diff, project, workspace, window, cx)
+        Self::new_impl(branch_diff, project, workspace, displayed_paths, window, cx)
     }
 
     fn new_impl(
         branch_diff: Entity<branch_diff::BranchDiff>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
+        displayed_paths: Option<HashSet<RepoPath>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -639,6 +656,7 @@ impl ProjectDiff {
             multibuffer,
             buffer_subscriptions: Default::default(),
             pending_scroll: None,
+            displayed_paths,
             applied_view_options: ProjectDiffViewOptions::current(cx),
             review_comment_count: 0,
             _task: task,
@@ -651,6 +669,12 @@ impl ProjectDiff {
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
+    }
+
+    pub(crate) fn is_displaying_only(&self, repo_path: &RepoPath) -> bool {
+        self.displayed_paths
+            .as_ref()
+            .is_some_and(|paths| paths.len() == 1 && paths.contains(repo_path))
     }
 
     pub fn move_to_entry(
@@ -684,6 +708,7 @@ impl ProjectDiff {
         else {
             return;
         };
+        self.set_displayed_paths(Some([repo_path.clone()].into_iter().collect()), window, cx);
         let status = git_repo
             .read(cx)
             .status_for_path(&repo_path)
@@ -701,6 +726,23 @@ impl ProjectDiff {
                     s.select_ranges(vec![multi_buffer::Anchor::Min..multi_buffer::Anchor::Min]);
                 });
             });
+        });
+    }
+
+    fn set_displayed_paths(
+        &mut self,
+        displayed_paths: Option<HashSet<RepoPath>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.displayed_paths == displayed_paths {
+            return;
+        }
+
+        self.displayed_paths = displayed_paths;
+        self._task = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::refresh(this, cx).await
         });
     }
 
@@ -1153,7 +1195,7 @@ impl ProjectDiff {
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         let entries = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                let load_buffers = branch_diff.load_buffers(cx);
+                let load_buffers = branch_diff.load_buffers(this.displayed_paths.as_ref(), cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
             let mut previous_paths = this
@@ -1866,9 +1908,9 @@ impl SerializableItem for ProjectDiff {
                 let branch_diff = cx
                     .new(|cx| branch_diff::BranchDiff::new(diff_base, project.clone(), window, cx));
                 let workspace = workspace.upgrade().context("workspace gone")?;
-                anyhow::Ok(
-                    cx.new(|cx| ProjectDiff::new_impl(branch_diff, project, workspace, window, cx)),
-                )
+                anyhow::Ok(cx.new(|cx| {
+                    ProjectDiff::new_impl(branch_diff, project, workspace, None, window, cx)
+                }))
             })??;
 
             Ok(diff)

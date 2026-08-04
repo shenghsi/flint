@@ -1604,6 +1604,7 @@ impl GitPanel {
                         .read(cx)
                         .project_path_to_repo_path(&project_path, cx)
                         .as_ref()
+                && project_diff.read(cx).is_displaying_only(&entry.repo_path)
             {
                 project_diff.focus_handle(cx).focus(window, cx);
                 project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
@@ -9489,8 +9490,53 @@ mod tests {
         })
         .await;
 
-        // Confirm that `Open Diff` still works for the untracked file, updating
-        // the Project Diff's active path.
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(0);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, _window, cx| {
+            assert_eq!(
+                workspace
+                    .item_of_type::<ProjectDiff>(cx)
+                    .expect("ProjectDiff should exist")
+                    .read(cx)
+                    .excerpt_paths(cx),
+                vec![rel_path("tracked").into_arc()]
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(0);
+            panel.next_entry(&NextEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, _window, cx| {
+            assert_eq!(
+                workspace
+                    .item_of_type::<ProjectDiff>(cx)
+                    .expect("ProjectDiff should exist")
+                    .read(cx)
+                    .excerpt_paths(cx),
+                vec![
+                    rel_path("tracked").into_arc(),
+                    rel_path("untracked").into_arc()
+                ]
+            );
+        });
+
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_entry = Some(1);
             panel.open_diff(&menu::Confirm, window, cx);
@@ -9506,6 +9552,15 @@ mod tests {
                 .expect("active_project_path should exist");
 
             assert_eq!(active_path.path, rel_path("untracked").into_arc());
+
+            assert_eq!(
+                workspace
+                    .item_of_type::<ProjectDiff>(cx)
+                    .expect("ProjectDiff should exist")
+                    .read(cx)
+                    .excerpt_paths(cx),
+                vec![rel_path("untracked").into_arc()]
+            );
         });
     }
 
