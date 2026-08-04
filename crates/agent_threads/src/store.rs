@@ -1812,6 +1812,40 @@ fn enqueue_session_restore_snapshot(
     })
 }
 
+/// Each app launch persists its live snapshot under a fresh session id
+/// (see `Session::new`), and only the immediately preceding session's
+/// snapshot is ever read again (by startup restore). Older sessions'
+/// snapshots are dead the moment a second-newer session starts, so without
+/// this they accumulate in the database forever, one row per launch.
+pub fn prune_stale_session_restore_snapshots(
+    current_session_id: String,
+    previous_session_id: Option<String>,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let key_value_store = db::kvp::KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        let scoped = key_value_store.scoped(SESSION_RESTORE_NAMESPACE);
+        let keys = scoped.keys()?;
+        let keep: HashSet<&str> = [
+            Some(current_session_id.as_str()),
+            previous_session_id.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for key in stale_session_restore_keys(keys, &keep) {
+            scoped.delete(key).await?;
+        }
+        Ok(())
+    })
+}
+
+fn stale_session_restore_keys(keys: Vec<String>, keep: &HashSet<&str>) -> Vec<String> {
+    keys.into_iter()
+        .filter(|key| !keep.contains(key.as_str()))
+        .collect()
+}
+
 pub fn restore_threads_for_workspace(
     workspace: &mut Workspace,
     last_session_id: &str,
@@ -2335,6 +2369,32 @@ mod tests {
                 ("session".to_string(), "first".to_string()),
                 ("session".to_string(), "second".to_string())
             ]
+        );
+    }
+
+    #[test]
+    fn stale_session_restore_keys_keeps_current_and_previous_only() {
+        let keys = vec![
+            "session-1".to_string(),
+            "session-2".to_string(),
+            "session-3".to_string(),
+        ];
+        let keep = HashSet::from_iter(["session-2", "session-3"]);
+
+        assert_eq!(
+            stale_session_restore_keys(keys, &keep),
+            vec!["session-1".to_string()]
+        );
+    }
+
+    #[test]
+    fn stale_session_restore_keys_with_no_previous_session_keeps_only_current() {
+        let keys = vec!["session-1".to_string(), "session-2".to_string()];
+        let keep = HashSet::from_iter(["session-2"]);
+
+        assert_eq!(
+            stale_session_restore_keys(keys, &keep),
+            vec!["session-1".to_string()]
         );
     }
 

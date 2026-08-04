@@ -436,6 +436,24 @@ fn restore_agent_threads_for_added_workspace(
 pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     agent_threads::init(cx);
 
+    // Each launch snapshots under a fresh session id and only the previous
+    // launch's snapshot is ever read again, so older ones are already dead;
+    // prune them once at startup so they don't accumulate forever.
+    {
+        let current_session_id = app_state.session.read(cx).id().to_string();
+        let previous_session_id = app_state
+            .session
+            .read(cx)
+            .last_session_id()
+            .map(str::to_string);
+        agent_threads::prune_stale_session_restore_snapshots(
+            current_session_id,
+            previous_session_id,
+            cx,
+        )
+        .detach_and_log_err(cx);
+    }
+
     // Startup restore only materializes a window's *active* workspace; the
     // rest stay sidebar entries until first activated. Restore each such
     // workspace's agent threads the moment it actually loads.
