@@ -33,7 +33,7 @@ pub struct AgentThreadSettingsContent {
     pub notify_when_finished: Option<bool>,
     /// When to reopen live agent sessions from the previous app session.
     ///
-    /// Default: never
+    /// Default: matching_workspace
     pub reopen_sessions_on_startup: Option<AgentThreadReopenSessionsOnStartup>,
     /// Where to dock the agent threads panel.
     ///
@@ -58,11 +58,9 @@ pub struct AgentThreadSettingsContent {
 #[serde(rename_all = "snake_case")]
 pub enum AgentThreadReopenSessionsOnStartup {
     /// Do not reopen agent sessions.
-    #[default]
     Never,
-    /// Reopen sessions only when restoring workspaces from the previous app session.
-    StartupRestore,
     /// Reopen sessions when any matching workspace from the previous app session opens.
+    #[default]
     MatchingWorkspace,
 }
 

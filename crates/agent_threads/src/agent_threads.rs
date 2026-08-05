@@ -1071,21 +1071,21 @@ mod tests {
     }
 
     #[test]
-    fn reopen_sessions_on_startup_is_never_by_default() {
+    fn reopen_sessions_on_startup_is_matching_workspace_by_default() {
         let settings = AgentThreadSettings::from_settings(&settings::SettingsContent::default());
 
         assert_eq!(
             settings.reopen_sessions_on_startup,
-            settings::AgentThreadReopenSessionsOnStartup::Never
+            settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace
         );
     }
 
     #[test]
-    fn reopen_sessions_on_startup_reads_matching_workspace_value() {
+    fn reopen_sessions_on_startup_reads_never_value() {
         let settings = AgentThreadSettings::from_settings(&settings::SettingsContent {
             agent_threads: Some(settings::AgentThreadSettingsContent {
                 reopen_sessions_on_startup: Some(
-                    settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace,
+                    settings::AgentThreadReopenSessionsOnStartup::Never,
                 ),
                 ..Default::default()
             }),
@@ -1094,7 +1094,7 @@ mod tests {
 
         assert_eq!(
             settings.reopen_sessions_on_startup,
-            settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace
+            settings::AgentThreadReopenSessionsOnStartup::Never
         );
     }
 }
