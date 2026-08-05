@@ -1616,7 +1616,25 @@ impl Terminal {
         } = hyperlink;
         let prev_hovered_word = self.last_content.last_hovered_word.take();
 
-        let target = if is_url {
+        let target = Self::navigation_target_for_hyperlink(
+            is_url,
+            maybe_url_or_path.clone(),
+            self.working_directory(),
+        );
+
+        if open {
+            cx.emit(Event::Open(target));
+        } else {
+            self.update_selected_word(prev_hovered_word, range, maybe_url_or_path, target, cx);
+        }
+    }
+
+    fn navigation_target_for_hyperlink(
+        is_url: bool,
+        maybe_url_or_path: String,
+        terminal_dir: Option<PathBuf>,
+    ) -> MaybeNavigationTarget {
+        if is_url {
             if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
                 let decoded_path = urlencoding::decode(path)
                     .map(|decoded| decoded.into_owned())
@@ -1624,22 +1642,16 @@ impl Terminal {
 
                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                     maybe_path: decoded_path,
-                    terminal_dir: self.working_directory(),
+                    terminal_dir,
                 })
             } else {
-                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+                MaybeNavigationTarget::Url(maybe_url_or_path)
             }
         } else {
             MaybeNavigationTarget::PathLike(PathLikeTarget {
-                maybe_path: maybe_url_or_path.clone(),
-                terminal_dir: self.working_directory(),
+                maybe_path: maybe_url_or_path,
+                terminal_dir,
             })
-        };
-
-        if open {
-            cx.emit(Event::Open(target));
-        } else {
-            self.update_selected_word(prev_hovered_word, range, maybe_url_or_path, target, cx);
         }
     }
 
@@ -1651,6 +1663,28 @@ impl Terminal {
             &mut self.hyperlink_regex_searches,
             self.path_style,
         )
+    }
+
+    /// Resolves the navigation target (if any) for a hyperlink or file-like path
+    /// under the given window position, without mutating hover/selection state.
+    /// Used to populate the right-click context menu with an explicit choice
+    /// between opening in Flint and opening with the system's default app.
+    pub fn navigation_target_at_position(
+        &mut self,
+        position: GpuiPoint<Pixels>,
+    ) -> Option<MaybeNavigationTarget> {
+        let position = position - self.last_content.terminal_bounds.bounds.origin;
+        let point = grid_point(
+            position,
+            self.last_content.terminal_bounds,
+            self.last_content.display_offset,
+        );
+        let hyperlink = self.find_hyperlink_at_point(point)?;
+        Some(Self::navigation_target_for_hyperlink(
+            hyperlink.is_url,
+            hyperlink.text,
+            self.working_directory(),
+        ))
     }
 
     fn update_selected_word(

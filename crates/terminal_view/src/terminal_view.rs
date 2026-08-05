@@ -41,7 +41,9 @@ use terminal::{
 };
 use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
-use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
+use terminal_path_like_target::{
+    hover_path_like_target, open_path_like_target, open_path_like_target_from_menu,
+};
 use terminal_scrollbar::TerminalScrollHandle;
 use ui::{
     ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
@@ -588,8 +590,22 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let hovered_path_like_target = self.terminal.update(cx, |terminal, _| {
+            match terminal.navigation_target_at_position(position) {
+                Some(MaybeNavigationTarget::PathLike(path_like_target)) => Some(path_like_target),
+                _ => None,
+            }
+        });
+        let can_open_with_system = hovered_path_like_target.is_some()
+            && self.project.upgrade().is_some_and(|project| {
+                let project = project.read(cx);
+                project.is_local() || project.is_via_wsl_with_host_interop(cx)
+            });
+        let workspace = self.workspace.clone();
+
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            menu.context(self.focus_handle.clone())
+            let menu = menu
+                .context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal::default()))
                 .action("New Terminal Item", Box::new(NewCenterTerminal::default()))
                 .separator()
@@ -597,15 +613,49 @@ impl TerminalView {
                 .action("Paste", Box::new(Paste))
                 .action("Paste Text", Box::new(PasteText))
                 .action("Select All", Box::new(SelectAll))
-                .action("Clear", Box::new(Clear))
-                .separator()
-                .action(
-                    "Close Terminal Tab",
-                    Box::new(CloseActiveItem {
-                        save_intent: None,
-                        close_pinned: true,
-                    }),
-                )
+                .action("Clear", Box::new(Clear));
+
+            let menu = menu.when_some(
+                hovered_path_like_target.clone(),
+                |menu, path_like_target| {
+                    let menu = menu.separator().entry("Open in Flint", None, {
+                        let workspace = workspace.clone();
+                        let path_like_target = path_like_target.clone();
+                        move |window, cx| {
+                            open_path_like_target_from_menu(
+                                workspace.clone(),
+                                path_like_target.clone(),
+                                false,
+                                window,
+                                cx,
+                            );
+                        }
+                    });
+                    menu.when(can_open_with_system, |menu| {
+                        menu.entry("Open with Default App", None, {
+                            let workspace = workspace.clone();
+                            let path_like_target = path_like_target.clone();
+                            move |window, cx| {
+                                open_path_like_target_from_menu(
+                                    workspace.clone(),
+                                    path_like_target.clone(),
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                    })
+                },
+            );
+
+            menu.separator().action(
+                "Close Terminal Tab",
+                Box::new(CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: true,
+                }),
+            )
         });
 
         window.focus(&context_menu.focus_handle(cx), cx);
