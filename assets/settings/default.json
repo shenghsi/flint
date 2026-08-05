@@ -1414,8 +1414,8 @@
       // there overwrites "command" and "args" below. Hand-editing "command"/"args" for a
       // different tool works too and doesn't require setting this.
       "agent": "claude",
-      // Command executable. Use "claude", "codex", or another command that reads a prompt on
-      // stdin and writes the message to stdout.
+      // Command executable. Use "claude", "codex", "pi", or another command that reads a prompt
+      // on stdin and writes the message to stdout.
       "command": "claude",
       // Arguments passed to the command. "-p"/"--print" runs Claude Code non-interactively,
       // reading the prompt from stdin and writing only the final response to stdout.

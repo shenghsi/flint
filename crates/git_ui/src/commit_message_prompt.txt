@@ -15,3 +15,11 @@ Follow good Git style:
 - Use the imperative mood in the subject line
 - Wrap the body at 72 characters
 - Keep the body short and concise (omit it entirely if not useful)
+
+Output exactly this template and nothing else — no headers, no code fences, no quotes around it:
+
+<subject line>
+
+<body paragraph, only if it adds useful information not already in the subject line>
+
+If the body is omitted, output only the subject line with no trailing blank line.

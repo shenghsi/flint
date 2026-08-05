@@ -3021,6 +3021,10 @@ impl GitPanel {
                     args.push("-m".to_string());
                     args.push(model.to_string());
                 }
+                Some(CommitMessageGeneratorAgent::Pi) => {
+                    args.push("--model".to_string());
+                    args.push(model.to_string());
+                }
                 None => {}
             }
         }
@@ -9934,6 +9938,25 @@ mod tests {
             .expect("generator should succeed");
 
         assert_eq!(result, "args=-m gpt-5.6-luna");
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_message_generator_appends_pi_model_flag(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut generator = test_generator(
+            "sh",
+            &["-c", "printf 'args=%s\\n' \"$*\"", "--"],
+            Duration::from_secs(5),
+        );
+        generator.agent = Some(settings::CommitMessageGeneratorAgent::Pi);
+        generator.model = Some("zai-coding-cn/glm-4.5-air".to_string());
+
+        let result = run_generator_for_test(cx, generator, "prompt".to_string())
+            .await
+            .expect("generator should succeed");
+
+        assert_eq!(result, "args=--model zai-coding-cn/glm-4.5-air");
     }
 
     #[cfg(unix)]

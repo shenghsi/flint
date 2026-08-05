@@ -7221,6 +7221,19 @@ fn version_control_page() -> SettingsPage {
                                 ],
                                 "gpt-5.6-luna",
                             ),
+                            settings::CommitMessageGeneratorAgent::Pi => (
+                                "pi",
+                                vec![
+                                    "-p".to_string(),
+                                    "--no-tools".to_string(),
+                                    "--no-context-files".to_string(),
+                                    "--no-extensions".to_string(),
+                                    "--no-skills".to_string(),
+                                    "--no-themes".to_string(),
+                                    "--no-prompt-templates".to_string(),
+                                ],
+                                "zai-coding-cn/glm-4.5-air",
+                            ),
                         };
                         generator.command = Some(command.to_string());
                         generator.args = Some(args);
@@ -7232,7 +7245,7 @@ fn version_control_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Model",
-                description: "Model passed to the generator: as \"--model <value>\" for the Claude agent, or \"-m <value>\" for the Codex agent. Leave blank to use the command's own default model.",
+                description: "Model passed to the generator: as \"--model <value>\" for the Claude and Pi agents, or \"-m <value>\" for the Codex agent. Leave blank to use the command's own default model.",
                 field: Box::new(SettingField {
                     json_path: Some("git.commit_message_generator.model"),
                     pick: |settings_content| {

@@ -458,6 +458,8 @@ pub enum CommitMessageGeneratorAgent {
     Claude,
     /// Codex, run non-interactively via `codex exec`.
     Codex,
+    /// Pi, run non-interactively via `pi -p`.
+    Pi,
 }
 
 #[with_fallible_options]
