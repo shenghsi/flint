@@ -1409,26 +1409,48 @@
     "worktree_directory": "../worktrees",
     // External command used to generate commit messages. The prompt and compressed diff are sent on stdin.
     "commit_message_generator": {
+      // Preset agent used to fill in "command" and "args" with tested defaults. Set via the
+      // Settings UI's "Agent" dropdown (Version Control > Commit Message Generator); changing it
+      // there overwrites "command" and "args" below. Hand-editing "command"/"args" for a
+      // different tool works too and doesn't require setting this.
+      "agent": "claude",
       // Command executable. Use "claude", "codex", or another command that reads a prompt on
       // stdin and writes the message to stdout.
       "command": "claude",
       // Arguments passed to the command. "-p"/"--print" runs Claude Code non-interactively,
       // reading the prompt from stdin and writing only the final response to stdout.
+      // "--safe-mode" disables Claude Code's own CLAUDE.md/skills/plugins/hooks auto-discovery,
+      // so the commit message prompt stays limited to what git_panel sends on stdin. Auth, model
+      // selection, and permissions still work normally under "--safe-mode" — unlike "--bare",
+      // which also restricts auth to ANTHROPIC_API_KEY/apiKeyHelper and skips OAuth/keychain
+      // reads, breaking generation for anyone logged in interactively.
       // "--disallowedTools" keeps it from reaching for tools when it only needs to turn a diff
       // into a commit message. (For "codex", use ["exec", "-s", "read-only", "--color", "never"]
       // instead — plain "codex" launches its interactive TUI, which hangs until the generator
-      // times out.)
-      "args": ["-p", "--disallowedTools", "Bash,Edit,Write,Read,WebFetch,WebSearch"],
+      // times out. Selecting "codex" as the agent above sets this automatically.)
+      "args": [
+        "-p",
+        "--safe-mode",
+        "--disallowedTools",
+        "Bash,Edit,Write,Read,WebFetch,WebSearch"
+      ],
+      // Model passed to the command: as "--model <value>" for the "claude" agent, or
+      // "-m <value>" for the "codex" agent, appended automatically when this is non-empty.
+      // "haiku" keeps commit message generation cheap and fast; without it Claude Code falls
+      // back to whichever model is configured as the CLI's own default. Switching the agent
+      // above to "codex" requires updating this to a Codex-compatible model (e.g. a
+      // "gpt-5.x-codex" or "gpt-5.x-mini" model), since "haiku" is a Claude-only model name.
+      "model": "haiku",
       // Environment variables added to the command.
       "env": {},
       // Working directory for the command. Defaults to the repository root.
-      // "cwd": null,
+      "cwd": null,
       // Timeout in seconds before the command is killed.
       "timeout_seconds": 30,
       // Maximum diff bytes included in the prompt before compression.
       "max_diff_bytes": 20000,
       // Additional user instructions for commit message generation.
-      // "instructions": null,
+      "instructions": "",
     },
   },
   // The list of custom Git hosting providers.
