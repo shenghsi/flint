@@ -4,14 +4,16 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
+use fs::Fs;
 use futures::{
     StreamExt as _,
     channel::{mpsc, oneshot},
 };
 use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, EventEmitter, Global, PromptLevel,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, PromptLevel,
     SharedString, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
 };
+use project::Project;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use task::{RevealStrategy, RevealTarget, Shell, SpawnInTerminal};
@@ -25,6 +27,7 @@ use crate::{
     RemoteAgentRoutingSettings, agent_kind_registry,
     artifact_cache::AgentArtifactCache,
     egress::{AgentEgressLease, AgentEgressManager},
+    history,
     managed_agent::{
         CachedAgentArtifactSource, ManagedAgentInstallation, ManagedAgentProvisioner,
         RemoteClientAgentHost,
@@ -159,6 +162,107 @@ pub fn resolve_discovered_session(
         0 => DiscoveredSession::NotFound,
         1 => DiscoveredSession::Resolved(candidates[0].clone()),
         _ => DiscoveredSession::Ambiguous(candidates),
+    }
+}
+
+/// How often the background loop retries turning not-yet-restorable live
+/// threads (kinds with no `session_id_flag`, e.g. Codex/OpenCode) into
+/// restorable ones, by checking whether their CLI has since recorded a
+/// session file `resolve_discovered_session` can match against.
+const SESSION_DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
+
+struct SessionDiscoveryCandidate {
+    terminal_item_id: EntityId,
+    kind: AgentKindDefinition,
+    project_root: PathBuf,
+    launched_at: SystemTime,
+    project: Entity<Project>,
+    fs: Arc<dyn Fs>,
+}
+
+fn spawn_session_discovery_loop(store: Entity<AgentThreadStore>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor()
+                .timer(SESSION_DISCOVERY_INTERVAL)
+                .await;
+            let candidates =
+                store.read_with(cx, |store, cx| store.session_discovery_candidates(cx));
+            for candidate in candidates {
+                discover_one_session(&store, candidate, cx).await;
+            }
+        }
+    })
+    .detach();
+}
+
+async fn discover_one_session(
+    store: &Entity<AgentThreadStore>,
+    candidate: SessionDiscoveryCandidate,
+    cx: &mut AsyncApp,
+) {
+    let SessionDiscoveryCandidate {
+        terminal_item_id,
+        kind,
+        project_root,
+        launched_at,
+        project,
+        fs,
+    } = candidate;
+    let discovered: Result<DiscoveredSession> = async {
+        let indexed_kind = agent_history::HistoryKind::from_id(kind.id)
+            .ok_or_else(|| anyhow!("unsupported agent history kind"))?;
+        let base_dir = history::resolve_history_base_dir(
+            &project,
+            kind.home_env_var,
+            kind.home_env_child,
+            kind.home_dir_name,
+            cx,
+        )
+        .await?;
+        let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
+        let host = agent_history::HistoryHost {
+            fs: Arc::new(agent_history::LocalHistoryFs(fs.clone())),
+            base_dir,
+            path_style,
+        };
+        let history_index = cx.update(|cx| history::global_history_index(&fs, cx));
+        let snapshot = history_index
+            .refresh(indexed_kind, &host, std::slice::from_ref(&project_root))
+            .await?;
+        let indexed = history::indexed_snapshot_threads(snapshot);
+        let already_bound: HashSet<SharedString> = store
+            .read_with(cx, |store, _| {
+                store.live_threads_for_project(kind.id, std::slice::from_ref(&project_root))
+            })
+            .into_iter()
+            .filter(|metadata| metadata.terminal_item_id != terminal_item_id)
+            .filter_map(|metadata| metadata.resumed_session_id)
+            .collect();
+        Ok(resolve_discovered_session(
+            launched_at,
+            &indexed,
+            &already_bound,
+        ))
+    }
+    .await;
+
+    match discovered {
+        Ok(DiscoveredSession::Resolved(session_id)) => {
+            store.update(cx, |store, cx| {
+                store.attach_discovered_session_id(terminal_item_id, session_id, cx)
+            });
+        }
+        // Ambiguous and NotFound are the ordinary state of a thread the CLI
+        // hasn't recorded (or hasn't uniquely recorded) yet; the next tick
+        // retries rather than treating either as an error.
+        Ok(DiscoveredSession::Ambiguous(_) | DiscoveredSession::NotFound) => {}
+        Err(error) => {
+            log::debug!(
+                "agent_threads: session discovery failed for {}: {error:#}",
+                kind.id
+            );
+        }
     }
 }
 
@@ -354,6 +458,7 @@ impl AgentThreadStore {
             managed_provisioning: ManagedAgentProvisioningCoordinator::default(),
             snapshot_sender,
         });
+        spawn_session_discovery_loop(store.clone(), cx);
         cx.set_global(GlobalAgentThreadStore(store));
     }
 
@@ -406,6 +511,60 @@ impl AgentThreadStore {
             })
             .cloned()
             .collect()
+    }
+
+    /// Live threads eligible for background session discovery: no
+    /// Flint-assigned id (the kind has no `session_id_flag`), a history
+    /// provider that can index one, and a local (non-remote) workspace,
+    /// matching the existing on-demand handoff discovery's constraints.
+    fn session_discovery_candidates(&self, cx: &App) -> Vec<SessionDiscoveryCandidate> {
+        self.threads
+            .values()
+            .filter(|entry| entry.metadata.resumed_session_id.is_none())
+            .filter_map(|entry| {
+                let kind = agent_kind_registry()
+                    .into_iter()
+                    .find(|kind| kind.id == entry.metadata.kind_id)?;
+                if kind.session_id_flag.is_some() || kind.history_provider.is_none() {
+                    return None;
+                }
+                let workspace = entry.workspace.upgrade()?;
+                let workspace = workspace.read(cx);
+                if workspace.project().read(cx).remote_client().is_some() {
+                    return None;
+                }
+                Some(SessionDiscoveryCandidate {
+                    terminal_item_id: entry.metadata.terminal_item_id,
+                    kind,
+                    project_root: entry.metadata.project_root.clone(),
+                    launched_at: entry.metadata.launched_at,
+                    project: workspace.project().clone(),
+                    fs: workspace.app_state().fs.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// Attaches a session id discovered after the fact (see
+    /// `resolve_discovered_session`, run periodically by
+    /// `spawn_session_discovery_loop`) to a live thread that launched without
+    /// one. Once attached, the thread becomes eligible for session-restore
+    /// snapshots, the same as if the CLI had supported `session_id_flag` from
+    /// the start.
+    fn attach_discovered_session_id(
+        &mut self,
+        terminal_item_id: EntityId,
+        session_id: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self.threads.get_mut(&terminal_item_id) else {
+            return;
+        };
+        if entry.metadata.resumed_session_id.is_some() {
+            return;
+        }
+        entry.metadata.resumed_session_id = Some(session_id);
+        cx.notify();
     }
 
     pub fn active_thread_count_for_connection(
