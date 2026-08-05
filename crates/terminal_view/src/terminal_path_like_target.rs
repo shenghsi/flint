@@ -1,7 +1,7 @@
 use super::{HoverTarget, HoveredWord, TerminalView};
 use anyhow::{Context as _, Result};
 use editor::Editor;
-use gpui::{Context, Task, TaskExt, WeakEntity, Window};
+use gpui::{App, Context, Task, TaskExt, WeakEntity, Window};
 use std::path::PathBuf;
 use terminal::PathLikeTarget;
 use util::{ResultExt, debug_panic};
@@ -200,6 +200,123 @@ fn possibly_open_target(
         }
         Ok(None)
     })
+}
+
+/// Resolves a path-like target detected in the terminal and opens it either as a
+/// project item inside Flint, or by handing it to the OS's default application,
+/// per the user's explicit choice from the terminal's right-click context menu.
+/// Unlike `open_path_like_target`, this doesn't require a pre-existing hover
+/// state, since it's driven by a menu selection rather than a click-to-open.
+pub(super) fn open_path_like_target_from_menu(
+    workspace: WeakEntity<Workspace>,
+    path_like_target: PathLikeTarget,
+    open_with_system: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    #[cfg(not(test))]
+    {
+        resolve_and_open_from_menu(workspace, path_like_target, open_with_system, window, cx)
+    }
+    #[cfg(test)]
+    {
+        resolve_and_open_from_menu(
+            workspace,
+            path_like_target,
+            open_with_system,
+            window,
+            cx,
+            BackgroundPathChecks::LocalFileSystem,
+        )
+    }
+}
+
+fn resolve_and_open_from_menu(
+    workspace: WeakEntity<Workspace>,
+    path_like_target: PathLikeTarget,
+    open_with_system: bool,
+    window: &mut Window,
+    cx: &mut App,
+    #[cfg(test)] background_path_checks: BackgroundPathChecks,
+) {
+    window
+        .spawn(cx, async move |cx| {
+            let Some(open_target) = cx
+                .update(|_, cx| {
+                    #[cfg(not(test))]
+                    {
+                        possible_open_target(
+                            &workspace,
+                            &path_like_target.maybe_path,
+                            path_like_target.terminal_dir.as_deref(),
+                            cx,
+                        )
+                    }
+                    #[cfg(test)]
+                    {
+                        possible_open_target_with_fs_checks(
+                            &workspace,
+                            &path_like_target.maybe_path,
+                            path_like_target.terminal_dir.as_deref(),
+                            cx,
+                            background_path_checks,
+                        )
+                    }
+                })?
+                .await
+            else {
+                return anyhow::Ok(());
+            };
+
+            let path_to_open = open_target.path().clone();
+
+            if open_with_system {
+                cx.update(|_, cx| cx.open_with_system(&path_to_open.path))?;
+                return anyhow::Ok(());
+            }
+
+            let opened_items = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_paths(
+                        vec![path_to_open.path.clone()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::OnlyDirectories),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })?
+                .await;
+
+            if open_target.is_file()
+                && let Some(Some(Ok(opened_item))) = opened_items.first()
+                && let Some(row) = path_to_open.row
+                && let Some(active_editor) = opened_item.downcast::<Editor>()
+            {
+                let col = path_to_open.column.unwrap_or(0);
+                active_editor
+                    .downgrade()
+                    .update_in(cx, |editor, window, cx| {
+                        editor.go_to_singleton_buffer_point(
+                            language::Point::new(row.saturating_sub(1), col.saturating_sub(1)),
+                            window,
+                            cx,
+                        )
+                    })
+                    .log_err();
+            } else if open_target.is_dir() {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.project().update(cx, |_, cx| {
+                        cx.emit(project::Event::ActivateProjectPanel);
+                    })
+                })?;
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 }
 
 #[cfg(test)]
