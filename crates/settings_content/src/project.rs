@@ -438,13 +438,44 @@ pub struct GitSettings {
     pub commit_message_generator: Option<GitCommitMessageGeneratorSettings>,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitMessageGeneratorAgent {
+    /// Claude Code, run non-interactively via `claude -p`.
+    #[default]
+    Claude,
+    /// Codex, run non-interactively via `codex exec`.
+    Codex,
+    /// Pi, run non-interactively via `pi -p`.
+    Pi,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitCommitMessageGeneratorSettings {
+    /// Preset agent used to fill in `command` and `args` with tested defaults. Selecting an
+    /// agent in the Settings UI overwrites `command` and `args`; hand-editing `command`/`args`
+    /// in settings.json for a different tool works too and doesn't require setting this.
+    pub agent: Option<CommitMessageGeneratorAgent>,
     /// Command executable used to generate commit messages.
     pub command: Option<String>,
     /// Arguments passed to the generator command.
     pub args: Option<Vec<String>>,
+    /// Model passed to the generator command: as `--model <value>` for the "claude" agent, or
+    /// `-m <value>` for the "codex" agent. Leave blank to use the command's own default model.
+    pub model: Option<String>,
     /// Environment variables added to the generator command.
     pub env: Option<HashMap<String, String>>,
     /// Working directory for the generator command. Defaults to the repository root.

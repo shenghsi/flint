@@ -60,7 +60,10 @@ use project::{
 };
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{GitPanelSortBy, Settings, SettingsStore, StatusStyle, update_settings_file};
+use settings::{
+    CommitMessageGeneratorAgent, GitPanelSortBy, Settings, SettingsStore, StatusStyle,
+    update_settings_file,
+};
 use smallvec::SmallVec;
 use std::cell::Cell;
 use std::future::Future;
@@ -79,25 +82,13 @@ use ui::{
 };
 use util::command::{Stdio, new_command};
 use util::paths::PathStyle;
-use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
+use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Item, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyTaskExt},
 };
-
-const RULES_FILE_NAMES: &[&str] = &[
-    ".rules",
-    ".cursorrules",
-    ".windsurfrules",
-    ".clinerules",
-    ".github/copilot-instructions.md",
-    "AGENT.md",
-    "AGENTS.md",
-    "CLAUDE.md",
-    "GEMINI.md",
-];
 
 actions!(
     git_panel,
@@ -2839,76 +2830,12 @@ impl GitPanel {
         compressed
     }
 
-    async fn load_project_rules(
-        project: &Entity<Project>,
-        repo_work_dir: &Arc<Path>,
-        cx: &mut AsyncApp,
-    ) -> Option<String> {
-        let rules_path = cx.update(|cx| {
-            for worktree in project.read(cx).worktrees(cx) {
-                let worktree_abs_path = worktree.read(cx).abs_path();
-                if !worktree_abs_path.starts_with(&repo_work_dir) {
-                    continue;
-                }
-
-                let worktree_snapshot = worktree.read(cx).snapshot();
-                for rules_name in RULES_FILE_NAMES {
-                    if let Ok(rel_path) = RelPath::unix(rules_name) {
-                        if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
-                            if entry.is_file() {
-                                return Some(ProjectPath {
-                                    worktree_id: worktree.read(cx).id(),
-                                    path: entry.path.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            None
-        })?;
-
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(rules_path, cx))
-            .await
-            .ok()?;
-
-        let content = buffer
-            .read_with(cx, |buffer, _| buffer.text())
-            .trim()
-            .to_string();
-
-        if content.is_empty() {
-            None
-        } else {
-            Some(content)
-        }
-    }
-
     fn build_commit_message_prompt(
         prompt: &str,
-        user_agents_md: Option<&str>,
-        rules_content: Option<&str>,
         instructions: Option<&str>,
         subject: &str,
         diff_text: &str,
     ) -> String {
-        let user_agents_md_section = match user_agents_md {
-            Some(user_agents_md) => format!(
-                "\n\nThe user has provided the following rules that you should follow when writing the commit message. Project-specific rules may override these instructions when they conflict:\n\
-                <rules>\n{user_agents_md}\n</rules>\n"
-            ),
-            None => String::new(),
-        };
-
-        let rules_section = match rules_content {
-            Some(rules) => format!(
-                "\n\nThe user has provided the following rules specific to this project that you should follow when writing the commit message:\n\
-                <project_rules>\n{rules}\n</project_rules>\n"
-            ),
-            None => String::new(),
-        };
-
         let instructions_section = match instructions {
             Some(instructions) if !instructions.trim().is_empty() => format!(
                 "\n\nThe user has provided the following instructions for writing commit messages that you should follow:\n\
@@ -2924,7 +2851,7 @@ impl GitPanel {
         };
 
         format!(
-            "{prompt}{user_agents_md_section}{rules_section}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+            "{prompt}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
         )
     }
 
@@ -2954,7 +2881,6 @@ impl GitPanel {
         });
 
         let instructions = generator.instructions.clone();
-        let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
@@ -2979,9 +2905,6 @@ impl GitPanel {
 
                 diff_text = Self::compress_commit_diff(&diff_text, generator.max_diff_bytes);
 
-                let rules_content =
-                    Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
-
                 let prompt = include_str!("../src/commit_message_prompt.txt");
 
                 let subject = this.update(cx, |this, cx| {
@@ -2998,8 +2921,6 @@ impl GitPanel {
 
                 let content = Self::build_commit_message_prompt(
                     &prompt,
-                    None,
-                    rules_content.as_deref(),
                     instructions.as_deref(),
                     &subject,
                     &diff_text,
@@ -3084,9 +3005,33 @@ impl GitPanel {
             .context("commit message generator command is not configured")?
             .to_string();
 
+        let mut args = generator.args.clone();
+        if let Some(model) = generator
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
+            match generator.agent {
+                Some(CommitMessageGeneratorAgent::Claude) => {
+                    args.push("--model".to_string());
+                    args.push(model.to_string());
+                }
+                Some(CommitMessageGeneratorAgent::Codex) => {
+                    args.push("-m".to_string());
+                    args.push(model.to_string());
+                }
+                Some(CommitMessageGeneratorAgent::Pi) => {
+                    args.push("--model".to_string());
+                    args.push(model.to_string());
+                }
+                None => {}
+            }
+        }
+
         let mut command = new_command(&command_name);
         command
-            .args(&generator.args)
+            .args(&args)
             .envs(&generator.env)
             .current_dir(generator.cwd.as_deref().unwrap_or(repo_work_dir.as_ref()))
             .stdin(Stdio::piped())
@@ -8081,7 +8026,7 @@ mod tests {
     use settings::SettingsStore;
     use theme::LoadThemes;
     use util::path;
-    use util::rel_path::rel_path;
+    use util::rel_path::{RelPath, rel_path};
 
     use workspace::MultiWorkspace;
 
@@ -9849,35 +9794,27 @@ mod tests {
     }
 
     #[test]
-    fn test_commit_message_prompt_includes_user_agents_md_before_project_rules() {
+    fn test_commit_message_prompt_includes_instructions_and_subject() {
         let prompt = GitPanel::build_commit_message_prompt(
             "Write a commit message.",
-            Some("Use terse commit messages."),
-            Some("Use the git_ui prefix."),
             Some("Follow the configured commit message format."),
             "Update generated message",
             "diff --git a/file b/file",
         );
 
-        assert!(prompt.contains("Use terse commit messages."));
-        assert!(prompt.contains("Use the git_ui prefix."));
         assert!(prompt.contains("Follow the configured commit message format."));
         assert!(prompt.contains("Update generated message"));
         assert!(prompt.contains("diff --git a/file b/file"));
 
-        let user_agents_md_index = prompt.find("<rules>").unwrap();
-        let project_rules_index = prompt.find("<project_rules>").unwrap();
         let instructions_index = prompt.find("<commit_message_instructions>").unwrap();
-        assert!(user_agents_md_index < project_rules_index);
-        assert!(project_rules_index < instructions_index);
+        let diff_index = prompt.find("diff --git a/file b/file").unwrap();
+        assert!(instructions_index < diff_index);
     }
 
     #[test]
     fn test_commit_message_prompt_omits_blank_instructions() {
         let prompt = GitPanel::build_commit_message_prompt(
             "Write a commit message.",
-            None,
-            None,
             Some("   \n  "),
             "",
             "diff --git a/file b/file",
@@ -9909,8 +9846,10 @@ mod tests {
         env.insert("COMMIT_STYLE".to_string(), "terse".to_string());
         content.git = Some(settings::GitSettings {
             commit_message_generator: Some(settings::GitCommitMessageGeneratorSettings {
+                agent: Some(settings::CommitMessageGeneratorAgent::Codex),
                 command: Some("codex".to_string()),
                 args: Some(vec!["--quiet".to_string()]),
+                model: Some("gpt-5.6-luna".to_string()),
                 env: Some(env.clone()),
                 cwd: Some(PathBuf::from("/repo")),
                 timeout_seconds: Some(45),
@@ -9922,8 +9861,13 @@ mod tests {
 
         let settings = CommitMessageGeneratorSettings::from_settings(&content);
 
+        assert_eq!(
+            settings.agent,
+            Some(settings::CommitMessageGeneratorAgent::Codex)
+        );
         assert_eq!(settings.command, Some("codex".to_string()));
         assert_eq!(settings.args, vec!["--quiet".to_string()]);
+        assert_eq!(settings.model, Some("gpt-5.6-luna".to_string()));
         assert_eq!(settings.env, env);
         assert_eq!(settings.cwd, Some(PathBuf::from("/repo")));
         assert_eq!(settings.timeout, Duration::from_secs(45));
@@ -9956,6 +9900,81 @@ mod tests {
         .expect("generator should succeed");
 
         assert_eq!(result, "Generated message");
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_message_generator_appends_claude_model_flag(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut generator = test_generator(
+            "sh",
+            &["-c", "printf 'args=%s\\n' \"$*\"", "--"],
+            Duration::from_secs(5),
+        );
+        generator.agent = Some(settings::CommitMessageGeneratorAgent::Claude);
+        generator.model = Some("haiku".to_string());
+
+        let result = run_generator_for_test(cx, generator, "prompt".to_string())
+            .await
+            .expect("generator should succeed");
+
+        assert_eq!(result, "args=--model haiku");
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_message_generator_appends_codex_model_flag(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut generator = test_generator(
+            "sh",
+            &["-c", "printf 'args=%s\\n' \"$*\"", "--"],
+            Duration::from_secs(5),
+        );
+        generator.agent = Some(settings::CommitMessageGeneratorAgent::Codex);
+        generator.model = Some("gpt-5.6-luna".to_string());
+
+        let result = run_generator_for_test(cx, generator, "prompt".to_string())
+            .await
+            .expect("generator should succeed");
+
+        assert_eq!(result, "args=-m gpt-5.6-luna");
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_message_generator_appends_pi_model_flag(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut generator = test_generator(
+            "sh",
+            &["-c", "printf 'args=%s\\n' \"$*\"", "--"],
+            Duration::from_secs(5),
+        );
+        generator.agent = Some(settings::CommitMessageGeneratorAgent::Pi);
+        generator.model = Some("zai-coding-cn/glm-4.5-air".to_string());
+
+        let result = run_generator_for_test(cx, generator, "prompt".to_string())
+            .await
+            .expect("generator should succeed");
+
+        assert_eq!(result, "args=--model zai-coding-cn/glm-4.5-air");
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_message_generator_omits_model_flag_when_unset(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut generator = test_generator(
+            "sh",
+            &["-c", "printf 'args=%s\\n' \"$*\"", "--"],
+            Duration::from_secs(5),
+        );
+        generator.agent = Some(settings::CommitMessageGeneratorAgent::Claude);
+
+        let result = run_generator_for_test(cx, generator, "prompt".to_string())
+            .await
+            .expect("generator should succeed");
+
+        assert_eq!(result, "args=");
     }
 
     #[cfg(unix)]
@@ -10014,8 +10033,10 @@ mod tests {
         timeout: Duration,
     ) -> CommitMessageGeneratorSettings {
         CommitMessageGeneratorSettings {
+            agent: None,
             command: Some(command.to_string()),
             args: args.iter().map(|arg| arg.to_string()).collect(),
+            model: None,
             env: HashMap::default(),
             cwd: None,
             timeout,

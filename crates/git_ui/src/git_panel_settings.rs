@@ -3,7 +3,10 @@ use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{GitPanelGroupBy, GitPanelSortBy, RegisterSetting, Settings, StatusStyle};
+use settings::{
+    CommitMessageGeneratorAgent, GitPanelGroupBy, GitPanelSortBy, RegisterSetting, Settings,
+    StatusStyle,
+};
 use std::{path::PathBuf, time::Duration};
 use ui::{
     px,
@@ -38,8 +41,10 @@ pub struct GitPanelSettings {
 
 #[derive(Clone, Debug, PartialEq, RegisterSetting)]
 pub struct CommitMessageGeneratorSettings {
+    pub agent: Option<CommitMessageGeneratorAgent>,
     pub command: Option<String>,
     pub args: Vec<String>,
+    pub model: Option<String>,
     pub env: HashMap<String, String>,
     pub cwd: Option<PathBuf>,
     pub timeout: Duration,
@@ -123,8 +128,10 @@ impl Settings for CommitMessageGeneratorSettings {
             .unwrap_or_default();
 
         Self {
+            agent: generator.agent,
             command: generator.command,
             args: generator.args.unwrap_or_default(),
+            model: generator.model,
             env: generator.env.unwrap_or_default().into_iter().collect(),
             cwd: generator.cwd,
             timeout: Duration::from_secs(generator.timeout_seconds.unwrap_or(30).max(1)),

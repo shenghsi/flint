@@ -7172,6 +7172,271 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
+    fn commit_message_generator_section() -> [SettingsPageItem; 9] {
+        [
+            SettingsPageItem::SectionHeader("Commit Message Generator"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent",
+                description: "Which coding agent generates commit messages. Selecting one fills Command, Arguments, and Model with the preset tested for that agent, overwriting any custom values.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.commit_message_generator.agent"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .commit_message_generator
+                            .as_ref()?
+                            .agent
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        let generator = settings_content
+                            .git
+                            .get_or_insert_default()
+                            .commit_message_generator
+                            .get_or_insert_default();
+                        generator.agent = value;
+                        let Some(agent) = value else {
+                            return;
+                        };
+                        let (command, args, model) = match agent {
+                            settings::CommitMessageGeneratorAgent::Claude => (
+                                "claude",
+                                vec![
+                                    "-p".to_string(),
+                                    "--safe-mode".to_string(),
+                                    "--disallowedTools".to_string(),
+                                    "Bash,Edit,Write,Read,WebFetch,WebSearch".to_string(),
+                                ],
+                                "haiku",
+                            ),
+                            settings::CommitMessageGeneratorAgent::Codex => (
+                                "codex",
+                                vec![
+                                    "exec".to_string(),
+                                    "-s".to_string(),
+                                    "read-only".to_string(),
+                                    "--color".to_string(),
+                                    "never".to_string(),
+                                ],
+                                "gpt-5.6-luna",
+                            ),
+                            settings::CommitMessageGeneratorAgent::Pi => (
+                                "pi",
+                                vec![
+                                    "-p".to_string(),
+                                    "--no-tools".to_string(),
+                                    "--no-context-files".to_string(),
+                                    "--no-extensions".to_string(),
+                                    "--no-skills".to_string(),
+                                    "--no-themes".to_string(),
+                                    "--no-prompt-templates".to_string(),
+                                ],
+                                "zai-coding-cn/glm-4.5-air",
+                            ),
+                        };
+                        generator.command = Some(command.to_string());
+                        generator.args = Some(args);
+                        generator.model = Some(model.to_string());
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Model",
+                description: "Model passed to the generator: as \"--model <value>\" for the Claude and Pi agents, or \"-m <value>\" for the Codex agent. Leave blank to use the command's own default model.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.commit_message_generator.model"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .commit_message_generator
+                            .as_ref()?
+                            .model
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .commit_message_generator
+                            .get_or_insert_default()
+                            .model = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Instructions",
+                description: "Additional user instructions for commit message generation.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.commit_message_generator.instructions"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .commit_message_generator
+                            .as_ref()?
+                            .instructions
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .commit_message_generator
+                            .get_or_insert_default()
+                            .instructions = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Timeout (Seconds)",
+                description: "Timeout in seconds before the generator command is killed.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.commit_message_generator.timeout_seconds"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .commit_message_generator
+                            .as_ref()?
+                            .timeout_seconds
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .commit_message_generator
+                            .get_or_insert_default()
+                            .timeout_seconds = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Max Diff Bytes",
+                description: "Maximum diff bytes included in the prompt before compression.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.commit_message_generator.max_diff_bytes"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .commit_message_generator
+                            .as_ref()?
+                            .max_diff_bytes
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .commit_message_generator
+                            .get_or_insert_default()
+                            .max_diff_bytes = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Arguments",
+                description: "Arguments passed to the generator command.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("git.commit_message_generator.args"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .commit_message_generator
+                                .as_ref()?
+                                .args
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .commit_message_generator
+                                .get_or_insert_default()
+                                .args = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Environment Variables",
+                description: "Environment variables added to the generator command.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("git.commit_message_generator.env"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .commit_message_generator
+                                .as_ref()?
+                                .env
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .commit_message_generator
+                                .get_or_insert_default()
+                                .env = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Working Directory",
+                description: "Working directory for the generator command. Defaults to the repository root.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("git.commit_message_generator.cwd"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .commit_message_generator
+                                .as_ref()?
+                                .cwd
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .commit_message_generator
+                                .get_or_insert_default()
+                                .cwd = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "Version Control",
         items: concat_sections![
@@ -7181,6 +7446,7 @@ fn version_control_page() -> SettingsPage {
             git_blame_view_section(),
             branch_picker_section(),
             git_hunks_section(),
+            commit_message_generator_section(),
         ],
     }
 }
