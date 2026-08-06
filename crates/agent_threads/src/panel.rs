@@ -126,10 +126,6 @@ pub struct AgentThreadsPanel {
     active: bool,
 }
 
-struct GlobalAgentHistoryIndex(agent_history::IndexService);
-
-impl gpui::Global for GlobalAgentHistoryIndex {}
-
 /// Debounce window for history filesystem watch events. Coalesces the burst of
 /// writes an agent makes while a session is active into a single rescan.
 const HISTORY_WATCH_LATENCY: Duration = Duration::from_millis(250);
@@ -291,14 +287,7 @@ impl AgentThreadsPanel {
     ) -> Entity<Self> {
         let workspace_handle = cx.entity().downgrade();
         let fs = workspace.app_state().fs.clone();
-        let history_index = if let Some(index) = cx.try_global::<GlobalAgentHistoryIndex>() {
-            index.0.clone()
-        } else {
-            let index =
-                agent_history::IndexService::new(fs.clone(), history::history_index_cache_root());
-            cx.set_global(GlobalAgentHistoryIndex(index.clone()));
-            index
-        };
+        let history_index = history::global_history_index(&fs, cx);
         let http_client = workspace.app_state().http_client.clone();
         let remote_project = workspace.project().read(cx).remote_client().is_some();
         cx.new(|cx| {

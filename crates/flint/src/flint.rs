@@ -31,10 +31,10 @@ use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
 use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
 use gpui::{
     Action, App, AppContext as _, ClipboardItem, Context, DismissEvent, Element, Entity,
-    FocusHandle, Focusable, Global, Image, ImageFormat, KeyBinding, ParentElement,
-    PathPromptOptions, PromptLevel, SharedString, Size, Task, TaskExt, TitlebarOptions,
-    UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowId, WindowKind,
-    WindowOptions, actions, image_cache, img, point, px, retain_all,
+    FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement, PathPromptOptions,
+    PromptLevel, SharedString, Size, Task, TaskExt, TitlebarOptions, UpdateGlobal, WeakEntity,
+    Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, image_cache, img,
+    point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -381,21 +381,6 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
     }
 }
 
-/// Windows created by startup workspace restore, so the `WorkspaceAdded`
-/// hook below can tell lazily-loaded members of a restored window (eligible
-/// under `reopen_sessions_on_startup: "startup_restore"`) apart from
-/// workspaces opened fresh later (eligible only under "matching_workspace").
-#[derive(Default)]
-struct StartupRestoredWindows(collections::HashSet<WindowId>);
-
-impl Global for StartupRestoredWindows {}
-
-pub fn mark_window_startup_restored(window: impl Into<gpui::AnyWindowHandle>, cx: &mut App) {
-    cx.default_global::<StartupRestoredWindows>()
-        .0
-        .insert(window.into().window_id());
-}
-
 fn restore_agent_threads_for_added_workspace(
     workspace: &Entity<Workspace>,
     window: &mut Window,
@@ -403,16 +388,6 @@ fn restore_agent_threads_for_added_workspace(
 ) {
     match agent_threads::AgentThreadSettings::get_global(cx).reopen_sessions_on_startup {
         settings::AgentThreadReopenSessionsOnStartup::Never => return,
-        settings::AgentThreadReopenSessionsOnStartup::StartupRestore => {
-            let window_id = window.window_handle().window_id();
-            if !cx
-                .default_global::<StartupRestoredWindows>()
-                .0
-                .contains(&window_id)
-            {
-                return;
-            }
-        }
         settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace => {}
     }
     let Some(app_state) = AppState::try_global(cx) else {

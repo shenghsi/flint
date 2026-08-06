@@ -1018,13 +1018,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         cx,
                     )
                     .await?;
-                    restore_agent_threads_for_multiworkspace(
-                        workspace,
-                        app_state.clone(),
-                        false,
-                        cx,
-                    )
-                    .await;
+                    restore_agent_threads_for_multiworkspace(workspace, app_state.clone(), cx)
+                        .await;
 
                     workspace
                         .update(cx, |multi_workspace, window, cx| {
@@ -1076,7 +1071,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 cx,
             )
             .await?;
-            restore_agent_threads_for_multiworkspace(window, app_state, false, cx).await;
+            restore_agent_threads_for_multiworkspace(window, app_state, cx).await;
             anyhow::Ok(window)
         })
         .detach_and_log_err(cx);
@@ -1107,7 +1102,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 cx,
             )
             .await?;
-            restore_agent_threads_for_multiworkspace(window, app_state, false, cx).await;
+            restore_agent_threads_for_multiworkspace(window, app_state, cx).await;
             for result in results.into_iter().flatten() {
                 if let Err(err) = result {
                     log::error!("Error opening path: {err:#}");
@@ -1139,9 +1134,7 @@ pub(crate) async fn restore_or_create_workspace(
                 SerializedWorkspaceLocation::Local => {
                     let window =
                         restore_multiworkspace(multi_workspace, app_state.clone(), cx).await?;
-                    cx.update(|cx| flint::mark_window_startup_restored(window, cx));
-                    restore_agent_threads_for_multiworkspace(window, app_state.clone(), true, cx)
-                        .await;
+                    restore_agent_threads_for_multiworkspace(window, app_state.clone(), cx).await;
                     Ok(())
                 }
                 SerializedWorkspaceLocation::Remote(connection_options) => {
@@ -1177,14 +1170,8 @@ pub(crate) async fn restore_or_create_workspace(
                             cx,
                         )
                         .await;
-                        cx.update(|cx| flint::mark_window_startup_restored(window, cx));
-                        restore_agent_threads_for_multiworkspace(
-                            window,
-                            app_state.clone(),
-                            true,
-                            cx,
-                        )
-                        .await;
+                        restore_agent_threads_for_multiworkspace(window, app_state.clone(), cx)
+                            .await;
                         Ok::<(), anyhow::Error>(())
                     }
                     .await
@@ -1300,7 +1287,6 @@ pub(crate) async fn restore_or_create_workspace(
 async fn restore_agent_threads_for_multiworkspace(
     window: WindowHandle<MultiWorkspace>,
     app_state: Arc<AppState>,
-    startup_restore: bool,
     cx: &mut AsyncApp,
 ) {
     let (last_session_id, restore_mode) = cx.update(|cx| {
@@ -1319,9 +1305,7 @@ async fn restore_agent_threads_for_multiworkspace(
     };
     match restore_mode {
         settings::AgentThreadReopenSessionsOnStartup::Never => return,
-        settings::AgentThreadReopenSessionsOnStartup::StartupRestore if !startup_restore => return,
-        settings::AgentThreadReopenSessionsOnStartup::StartupRestore
-        | settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace => {}
+        settings::AgentThreadReopenSessionsOnStartup::MatchingWorkspace => {}
     }
 
     let Some(tasks) = window

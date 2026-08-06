@@ -130,6 +130,26 @@ pub(crate) fn history_index_cache_root() -> PathBuf {
         .join("agent_threads")
 }
 
+struct GlobalAgentHistoryIndex(agent_history::IndexService);
+
+impl gpui::Global for GlobalAgentHistoryIndex {}
+
+/// Returns the app-wide history index service, creating it on first use.
+/// Shared by the agent threads panel and the background session-discovery
+/// loop so both hit the same on-disk cache instead of scanning independently.
+pub(crate) fn global_history_index(
+    fs: &Arc<dyn fs::Fs>,
+    cx: &mut App,
+) -> agent_history::IndexService {
+    if let Some(index) = cx.try_global::<GlobalAgentHistoryIndex>() {
+        index.0.clone()
+    } else {
+        let index = agent_history::IndexService::new(fs.clone(), history_index_cache_root());
+        cx.set_global(GlobalAgentHistoryIndex(index.clone()));
+        index
+    }
+}
+
 /// A rendered handoff excerpt returned to the client, independent of whether it
 /// was produced locally or on a remote host.
 #[derive(Clone, Debug, PartialEq)]
