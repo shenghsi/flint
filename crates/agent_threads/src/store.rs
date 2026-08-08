@@ -442,6 +442,13 @@ struct ThreadEntry {
     egress: Option<AgentEgressLease>,
 }
 
+/// See `AgentThreadStore::live_terminal_worktree_roots`.
+pub(crate) struct LiveTerminalWorktree {
+    pub(crate) terminal_item_id: EntityId,
+    pub(crate) tied_worktree_root: PathBuf,
+    pub(crate) kind_id: &'static str,
+}
+
 struct ThreadShutdown {
     terminal: Entity<terminal::Terminal>,
     remote_process: Option<RemoteAgentProcess>,
@@ -1057,6 +1064,30 @@ impl AgentThreadStore {
             .filter_map(|(terminal_item_id, entry)| {
                 let pid = entry.terminal.read(cx).pid()?;
                 Some((pid.as_u32(), *terminal_item_id))
+            })
+            .collect()
+    }
+
+    /// Every live local thread's tied worktree root and agent kind, for the
+    /// control server's peer-credential resolution -- a fallback identity
+    /// signal used when `live_terminal_pids`'s ancestry walk can't find a
+    /// match. Some agent CLIs (Codex, notably) delegate tool-call shell
+    /// execution to a separate, already-running daemon rather than forking
+    /// it as a child of the interactive session, so no ancestor PID is
+    /// ever one Flint tracks -- the delegated shell's cwd is still reliably
+    /// the session's own cwd, though, since the CLI's own file operations
+    /// depend on it being correct. `kind_id` disambiguates two threads tied
+    /// to the same worktree, which cwd alone can't. Remote threads are
+    /// excluded: their tied worktree is a path on a different machine,
+    /// never a local caller's cwd.
+    pub(crate) fn live_terminal_worktree_roots(&self) -> Vec<LiveTerminalWorktree> {
+        self.threads
+            .iter()
+            .filter(|(_, entry)| entry.remote_process.is_none())
+            .map(|(terminal_item_id, entry)| LiveTerminalWorktree {
+                terminal_item_id: *terminal_item_id,
+                tied_worktree_root: entry.metadata.tied_worktree_root.clone(),
+                kind_id: entry.metadata.kind_id,
             })
             .collect()
     }

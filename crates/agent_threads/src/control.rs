@@ -35,7 +35,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::agent_kind_registry;
-use crate::store::{self, AgentThreadStore};
+use crate::store::{self, AgentThreadStore, LiveTerminalWorktree};
 
 /// How far up a connecting process's parent chain to look for a match
 /// before giving up. Generous relative to the shallow real-world case (the
@@ -223,28 +223,93 @@ fn get_peer_pid(_stream: &UnixStream) -> Result<u32> {
     anyhow::bail!("peer-credential resolution is not supported on this platform")
 }
 
-/// Walks up from `peer_pid`'s own process looking for a PID present in
-/// `tracked` (see `AgentThreadStore::live_terminal_pids`). `None` if no
-/// tracked PID appears within `MAX_ANCESTRY_DEPTH` hops -- including the
-/// common, harmless case where the ancestry walk starts before the walk
-/// even has a `tracked` entry to find, i.e. the caller connected before its
-/// own thread finished registering.
-fn resolve_caller_thread(peer_pid: u32, tracked: &HashMap<u32, EntityId>) -> Option<EntityId> {
-    if tracked.is_empty() {
+/// Resolves which live thread (if any) is the peer on the other end of an
+/// agent-control connection.
+///
+/// First walks up from `peer_pid`'s own process looking for a PID present
+/// in `tracked_pids` (see `AgentThreadStore::live_terminal_pids`) -- this
+/// is the strong signal, and covers the common case where the CLI's
+/// tool-call shell is a direct (or one-hop) descendant of the thread's own
+/// terminal process.
+///
+/// Falls back to matching `peer_pid`'s own current working directory
+/// against each entry in `tracked_worktrees` (see
+/// `AgentThreadStore::live_terminal_worktree_roots`) when ancestry finds
+/// nothing within `MAX_ANCESTRY_DEPTH` hops. This matters for CLIs whose
+/// tool-call shells are NOT descendants of the interactive session at all
+/// -- Codex CLI, for instance, delegates shell execution to a separate,
+/// already-running `codex app-server` daemon rather than forking it as its
+/// own child, so no ancestor PID is ever one Flint tracks. A tool-invoked
+/// shell's cwd is still reliably the session's own cwd (otherwise the
+/// CLI's own file operations would be broken), so it survives that
+/// indirection even though the process tree doesn't.
+///
+/// A cwd can match more than one tracked thread -- two threads tied to the
+/// same worktree is a real case, not just hypothetical. When that happens,
+/// `resolve_by_cwd` narrows using the connecting process's own ancestry
+/// process names: even though none of them is a tracked *pid* (that's why
+/// we're in this fallback at all), the delegating daemon's own ancestry
+/// still usually includes the CLI's own process name (e.g. "codex"),
+/// which is reliably equal to its `kind_id`. Still-ambiguous or
+/// no-match-at-all cases are reported as unresolved rather than guessed at.
+///
+/// Logs on failure, including the walked ancestry chain and the cwd
+/// candidates considered. This has turned out to be load-bearing for
+/// diagnosing real-world agent CLIs whose process topology doesn't match
+/// what a synthetic test can model.
+fn resolve_caller_thread(
+    peer_pid: u32,
+    tracked_pids: &HashMap<u32, EntityId>,
+    tracked_worktrees: &[LiveTerminalWorktree],
+) -> Option<EntityId> {
+    if tracked_pids.is_empty() && tracked_worktrees.is_empty() {
+        log::warn!(
+            "agent_threads: agent control caller {peer_pid} could not be resolved: no threads are tracked yet"
+        );
         return None;
     }
+    let refresh = sysinfo::ProcessRefreshKind::nothing()
+        .with_cmd(sysinfo::UpdateKind::Always)
+        .with_exe(sysinfo::UpdateKind::Always)
+        .with_cwd(sysinfo::UpdateKind::Always);
     let mut system = sysinfo::System::new_with_specifics(
-        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+        sysinfo::RefreshKind::nothing().with_processes(refresh),
     );
-    system.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        true,
-        sysinfo::ProcessRefreshKind::nothing(),
-    );
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, refresh);
 
+    if let Some(terminal_item_id) = walk_ancestry_for_match(peer_pid, &system, tracked_pids) {
+        return Some(terminal_item_id);
+    }
+    if let Some(terminal_item_id) = resolve_by_cwd(peer_pid, &system, tracked_worktrees) {
+        return Some(terminal_item_id);
+    }
+
+    log::warn!(
+        "agent_threads: agent control caller {peer_pid} could not be resolved: ancestry {:?} \
+         matched none of the tracked pids {:?}, and its cwd/kind matched none (or more than one) \
+         of the tracked worktrees {:?}",
+        ancestry_chain(peer_pid, &system),
+        tracked_pids.keys().collect::<Vec<_>>(),
+        tracked_worktrees
+            .iter()
+            .map(|candidate| (
+                candidate.terminal_item_id,
+                &candidate.tied_worktree_root,
+                candidate.kind_id
+            ))
+            .collect::<Vec<_>>(),
+    );
+    None
+}
+
+fn walk_ancestry_for_match(
+    peer_pid: u32,
+    system: &sysinfo::System,
+    tracked_pids: &HashMap<u32, EntityId>,
+) -> Option<EntityId> {
     let mut current = sysinfo::Pid::from_u32(peer_pid);
     for _ in 0..MAX_ANCESTRY_DEPTH {
-        if let Some(&terminal_item_id) = tracked.get(&current.as_u32()) {
+        if let Some(&terminal_item_id) = tracked_pids.get(&current.as_u32()) {
             return Some(terminal_item_id);
         }
         let parent = system.process(current)?.parent()?;
@@ -254,6 +319,72 @@ fn resolve_caller_thread(peer_pid: u32, tracked: &HashMap<u32, EntityId>) -> Opt
         current = parent;
     }
     None
+}
+
+/// Matched against `peer_pid` itself, not an ancestor -- the delegated
+/// shell's own cwd is the signal, and it's the leaf of the chain, closest
+/// to where the command actually runs. Ancestors further up (a shared
+/// daemon, a login shell, `launchd`) have no reason to share the session's
+/// cwd.
+fn resolve_by_cwd(
+    peer_pid: u32,
+    system: &sysinfo::System,
+    tracked_worktrees: &[LiveTerminalWorktree],
+) -> Option<EntityId> {
+    let cwd = system.process(sysinfo::Pid::from_u32(peer_pid))?.cwd()?;
+    let cwd_matches: Vec<&LiveTerminalWorktree> = tracked_worktrees
+        .iter()
+        .filter(|candidate| {
+            cwd == candidate.tied_worktree_root.as_path()
+                || cwd.starts_with(&candidate.tied_worktree_root)
+        })
+        .collect();
+
+    match cwd_matches.as_slice() {
+        [] => None,
+        [only] => Some(only.terminal_item_id),
+        multiple => {
+            let ancestry_names = ancestry_chain(peer_pid, system)
+                .into_iter()
+                .map(|(_, name)| name.to_lowercase())
+                .collect::<Vec<_>>();
+            let by_kind: Vec<&&LiveTerminalWorktree> = multiple
+                .iter()
+                .filter(|candidate| {
+                    let kind = candidate.kind_id.to_lowercase();
+                    ancestry_names.iter().any(|name| name.contains(&kind))
+                })
+                .collect();
+            match by_kind.as_slice() {
+                [only] => Some(only.terminal_item_id),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// Walks up from `peer_pid` through its process ancestry (closest first),
+/// returning each hop's pid and process name. Used both for
+/// `resolve_by_cwd`'s same-kind disambiguation and for diagnostic logging
+/// on failure.
+fn ancestry_chain(peer_pid: u32, system: &sysinfo::System) -> Vec<(u32, String)> {
+    let mut chain = Vec::new();
+    let mut current = sysinfo::Pid::from_u32(peer_pid);
+    for _ in 0..MAX_ANCESTRY_DEPTH {
+        let Some(process) = system.process(current) else {
+            chain.push((current.as_u32(), "<gone>".to_string()));
+            break;
+        };
+        chain.push((
+            current.as_u32(),
+            process.name().to_string_lossy().into_owned(),
+        ));
+        match process.parent() {
+            Some(parent) if parent != current => current = parent,
+            _ => break,
+        }
+    }
+    chain
 }
 
 async fn dispatch(
@@ -268,8 +399,14 @@ async fn dispatch(
         return error_response("agent_threads.agent_control is disabled");
     }
 
-    let tracked = store.read_with(cx, |store, cx| store.live_terminal_pids(cx));
-    let terminal_item_id = match resolve_caller_thread(peer_pid, &tracked) {
+    let (tracked_pids, tracked_worktrees) = store.read_with(cx, |store, cx| {
+        (
+            store.live_terminal_pids(cx),
+            store.live_terminal_worktree_roots(),
+        )
+    });
+    let terminal_item_id = match resolve_caller_thread(peer_pid, &tracked_pids, &tracked_worktrees)
+    {
         Some(terminal_item_id) => terminal_item_id,
         None => return ControlResponse::NotReady,
     };
@@ -626,7 +763,7 @@ mod tests {
 
         let tracked: HashMap<u32, EntityId> = HashMap::from_iter([(this_pid, EntityId::from(42))]);
 
-        let resolved = resolve_caller_thread(child_pid, &tracked);
+        let resolved = resolve_caller_thread(child_pid, &tracked, &[]);
         child.kill().log_err();
 
         assert_eq!(
@@ -642,15 +779,167 @@ mod tests {
         // `tracked` map; walking from it should terminate (not hang) and
         // report no match.
         let tracked: HashMap<u32, EntityId> = HashMap::from_iter([(999_999, EntityId::from(1))]);
-        assert_eq!(resolve_caller_thread(1, &tracked), None);
+        assert_eq!(resolve_caller_thread(1, &tracked, &[]), None);
     }
 
     #[test]
     fn resolve_caller_thread_short_circuits_on_an_empty_tracked_map() {
         assert_eq!(
-            resolve_caller_thread(std::process::id(), &HashMap::default()),
+            resolve_caller_thread(std::process::id(), &HashMap::default(), &[]),
             None
         );
+    }
+
+    /// `std::env::temp_dir()` is `/var/...` on macOS, a symlink to
+    /// `/private/var/...` -- the kernel reports a spawned process's cwd
+    /// already resolved, so comparing against the unresolved path would
+    /// spuriously fail. Real worktree roots aren't normally under a
+    /// symlinked prefix like this, so `resolve_by_cwd` itself doesn't
+    /// canonicalize; only these tests need to.
+    fn canonical_temp_dir() -> PathBuf {
+        std::fs::canonicalize(std::env::temp_dir())
+            .expect("failed to canonicalize the system temp dir")
+    }
+
+    fn live_terminal_worktree(
+        terminal_item_id: EntityId,
+        tied_worktree_root: PathBuf,
+        kind_id: &'static str,
+    ) -> LiveTerminalWorktree {
+        LiveTerminalWorktree {
+            terminal_item_id,
+            tied_worktree_root,
+            kind_id,
+        }
+    }
+
+    /// Models Codex CLI's real-world topology: the connecting process's
+    /// ancestry never reaches a tracked PID (it's delegated through a
+    /// daemon that isn't a descendant of any tracked terminal), but its cwd
+    /// is still the tracked thread's own tied worktree root.
+    #[test]
+    fn resolve_caller_thread_falls_back_to_cwd_when_ancestry_has_no_match() {
+        let worktree_root = canonical_temp_dir();
+        let mut child = smol::process::Command::new("sleep")
+            .arg("5")
+            .current_dir(&worktree_root)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn a real child process for the cwd test");
+        let child_pid = child.id();
+
+        let no_pids: HashMap<u32, EntityId> = HashMap::default();
+        let worktrees = [live_terminal_worktree(
+            EntityId::from(7),
+            worktree_root,
+            "codex",
+        )];
+
+        let resolved = resolve_caller_thread(child_pid, &no_pids, &worktrees);
+        child.kill().log_err();
+
+        assert_eq!(
+            resolved,
+            Some(EntityId::from(7)),
+            "ancestry has nothing to match, but the child's own cwd is the tracked worktree root"
+        );
+    }
+
+    /// Two threads of the *same* kind tied to the same worktree root is a
+    /// real, if rare, case (e.g. two Codex sessions in the same worktree)
+    /// -- neither cwd nor kind can tell them apart, so this must report
+    /// unresolved rather than pick one.
+    #[test]
+    fn resolve_caller_thread_refuses_an_ambiguous_cwd_match() {
+        let worktree_root = canonical_temp_dir();
+        let mut child = smol::process::Command::new("sleep")
+            .arg("5")
+            .current_dir(&worktree_root)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn a real child process for the cwd test");
+        let child_pid = child.id();
+
+        let no_pids: HashMap<u32, EntityId> = HashMap::default();
+        let worktrees = [
+            live_terminal_worktree(EntityId::from(7), worktree_root.clone(), "codex"),
+            live_terminal_worktree(EntityId::from(8), worktree_root, "codex"),
+        ];
+
+        let resolved = resolve_caller_thread(child_pid, &no_pids, &worktrees);
+        child.kill().log_err();
+
+        assert_eq!(resolved, None);
+    }
+
+    /// The real bug this fallback exists for: a Codex thread and a
+    /// different-kind thread (here modeled as "claude") both tied to the
+    /// same worktree. cwd alone is ambiguous between them, but the
+    /// connecting process's own ancestry contains "sleep" standing in for
+    /// the CLI's name -- narrowing to the one candidate whose `kind_id`
+    /// appears there.
+    #[test]
+    fn resolve_caller_thread_disambiguates_same_worktree_by_kind() {
+        let worktree_root = canonical_temp_dir();
+        let mut child = smol::process::Command::new("sleep")
+            .arg("5")
+            .current_dir(&worktree_root)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn a real child process for the kind-disambiguation test");
+        let child_pid = child.id();
+
+        let no_pids: HashMap<u32, EntityId> = HashMap::default();
+        // "zzz-decoy-kind" (rather than a real registered kind id like
+        // "claude") avoids colliding with this *test's own* ancestry --
+        // running under `cargo test` inside a real agent thread terminal
+        // means a real kind name can genuinely appear as a live ancestor,
+        // which would make this assertion flaky depending on what spawned
+        // the test run.
+        let worktrees = [
+            live_terminal_worktree(EntityId::from(7), worktree_root.clone(), "sleep"),
+            live_terminal_worktree(EntityId::from(8), worktree_root, "zzz-decoy-kind"),
+        ];
+
+        let resolved = resolve_caller_thread(child_pid, &no_pids, &worktrees);
+        child.kill().log_err();
+
+        assert_eq!(
+            resolved,
+            Some(EntityId::from(7)),
+            "the connecting process's own name is \"sleep\", matching only the first candidate's kind_id"
+        );
+    }
+
+    /// A matching ancestry PID must win even when a (spurious) cwd
+    /// candidate is also present, so ancestry stays the authoritative
+    /// signal whenever it's available.
+    #[test]
+    fn resolve_caller_thread_prefers_ancestry_over_cwd() {
+        let this_pid = std::process::id();
+        let decoy_root = canonical_temp_dir();
+        let mut child = smol::process::Command::new("sleep")
+            .arg("5")
+            .current_dir(&decoy_root)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn a real child process for the ancestry test");
+        let child_pid = child.id();
+
+        let tracked: HashMap<u32, EntityId> = HashMap::from_iter([(this_pid, EntityId::from(42))]);
+        // A decoy that WOULD resolve via the cwd fallback, to a different
+        // thread, if ancestry didn't take priority -- the child's actual
+        // cwd is `decoy_root`.
+        let worktrees = [live_terminal_worktree(
+            EntityId::from(99),
+            decoy_root,
+            "sleep",
+        )];
+
+        let resolved = resolve_caller_thread(child_pid, &tracked, &worktrees);
+        child.kill().log_err();
+
+        assert_eq!(resolved, Some(EntityId::from(42)));
     }
 
     #[gpui::test]
