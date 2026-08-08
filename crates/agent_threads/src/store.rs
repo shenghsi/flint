@@ -311,6 +311,19 @@ pub struct AgentThreadSessionRestoreRecord {
     pub session_id: String,
     pub title: String,
     pub project_root: PathBuf,
+    /// The thread's tied worktree at snapshot time. `#[serde(default)]` so
+    /// pre-existing serialized records (written before this field existed)
+    /// still deserialize as `None`. `None` means "no resolved tie was
+    /// recorded" -- legacy records only, since every *new* snapshot always
+    /// populates this -- and routes by `workspace_id` instead of by tie;
+    /// see `records_to_restore_for_workspace`. Never treat `None` as
+    /// "derive from `project_root`": `project_root` is a launch cwd that
+    /// can be a subdirectory rather than a worktree root (e.g.
+    /// `terminal.working_directory = current_file_directory`), so a
+    /// path-equality fallback against it is a different, wrong behavior,
+    /// not "unchanged".
+    #[serde(default)]
+    pub tied_worktree_root: Option<PathBuf>,
     pub last_activity_at: u64,
 }
 
@@ -2519,7 +2532,11 @@ pub fn restore_threads_for_workspace(
     };
 
     let live_threads = store.read(cx).live_threads_for_workspace(workspace_id, cx);
-    let records = records_to_restore_for_workspace(workspace_id, &records, &live_threads);
+    let own_project_roots = workspace.project().read_with(cx, |project, cx| {
+        history::project_worktree_roots(project, cx)
+    });
+    let records =
+        records_to_restore_for_workspace(workspace_id, &own_project_roots, &records, &live_threads);
     let settings = AgentThreadSettings::get_global(cx).clone();
     let mut restores = Vec::new();
 
@@ -2620,20 +2637,50 @@ fn snapshot_records_for_workspace(
                 session_id: session_id.to_string(),
                 title: thread.title.to_string(),
                 project_root: thread.project_root,
+                // Always populated, not only for retied threads: every
+                // *new* snapshot carries a resolved tie, so restore routing
+                // never has to fall back to path-comparing project_root
+                // (which can be a subdirectory, not a worktree root) for a
+                // record written after this field existed.
+                tied_worktree_root: Some(thread.tied_worktree_root),
                 last_activity_at: system_time_to_millis(thread.launched_at),
             })
         })
         .collect()
 }
 
+/// Selects the records `workspace_id` (whose own worktree roots are
+/// `own_project_roots`) should restore. Routes by effective tie for records
+/// that carry one (every record written since `tied_worktree_root` was
+/// added); legacy records (`None`, written before) fall back to their
+/// original `workspace_id`-based routing, exactly as before this field
+/// existed -- never by comparing `own_project_roots` against `project_root`,
+/// which is a launch cwd, not necessarily a worktree root.
+///
+/// Once a record is selected here, the actual resume launches into *this*
+/// restoring workspace via the normal `spawn_thread_task_inner` path, which
+/// re-derives `tied_worktree_root` fresh via `resolve_tied_worktree` rather
+/// than being handed the record's tie directly -- deliberately not plumbed
+/// through as an explicit override. For the common single-root-workspace
+/// case (this filter already guarantees the workspace's own root matches
+/// the tie) the two always agree, so this is not a behavior gap in the
+/// case that matters; a multi-root workspace whose `active_repository`
+/// picks a different one of its own roots than the specific one that was
+/// tied is the only case where they could diverge, left as a known,
+/// narrow gap rather than threading an override through the whole launch
+/// pipeline for it.
 fn records_to_restore_for_workspace(
     workspace_id: WorkspaceId,
+    own_project_roots: &[PathBuf],
     records: &[AgentThreadSessionRestoreRecord],
     live_threads: &[AgentThreadMetadata],
 ) -> Vec<AgentThreadSessionRestoreRecord> {
     records
         .iter()
-        .filter(|record| record.workspace_id == workspace_id)
+        .filter(|record| match &record.tied_worktree_root {
+            Some(tied_root) => own_project_roots.contains(tied_root),
+            None => record.workspace_id == workspace_id,
+        })
         .filter(|record| {
             !live_threads.iter().any(|thread| {
                 thread.kind_id == record.kind_id
@@ -3591,26 +3638,90 @@ mod tests {
                 session_id: "session-a".to_string(),
                 title: "live".to_string(),
                 project_root: PathBuf::from("/root"),
+                tied_worktree_root: Some(PathBuf::from("/root")),
                 last_activity_at: 100_000,
             }]
         );
+    }
+
+    fn restore_record(
+        workspace_id: i64,
+        tied_worktree_root: Option<&str>,
+    ) -> AgentThreadSessionRestoreRecord {
+        AgentThreadSessionRestoreRecord {
+            workspace_id: workspace::WorkspaceId::from_i64(workspace_id),
+            kind_id: "codex".to_string(),
+            session_id: "session-a".to_string(),
+            title: "Restored".to_string(),
+            project_root: PathBuf::from("/root"),
+            tied_worktree_root: tied_worktree_root.map(PathBuf::from),
+            last_activity_at: 100_000,
+        }
     }
 
     #[test]
     fn restore_records_skip_live_resumed_sessions() {
         let records = records_to_restore_for_workspace(
             workspace::WorkspaceId::from_i64(7),
-            &[AgentThreadSessionRestoreRecord {
-                workspace_id: workspace::WorkspaceId::from_i64(7),
-                kind_id: "codex".to_string(),
-                session_id: "session-a".to_string(),
-                title: "Restored".to_string(),
-                project_root: PathBuf::from("/root"),
-                last_activity_at: 100_000,
-            }],
+            &[PathBuf::from("/root")],
+            &[restore_record(7, Some("/root"))],
             &[live_with_kind(1, "codex", Some("session-a"))],
         );
 
         assert!(records.is_empty());
+    }
+
+    #[test]
+    fn restore_records_route_new_records_by_effective_tie_not_workspace_id() {
+        // The record's original workspace_id (7) never reopens; only
+        // workspace 9, whose own root matches the tie, does. A tie-based
+        // record must still restore there.
+        let records = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(9),
+            &[PathBuf::from("/root-b")],
+            &[restore_record(7, Some("/root-b"))],
+            &[],
+        );
+
+        assert_eq!(records, vec![restore_record(7, Some("/root-b"))]);
+    }
+
+    #[test]
+    fn restore_records_do_not_route_new_records_to_a_workspace_with_a_different_root() {
+        let records = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(9),
+            &[PathBuf::from("/unrelated")],
+            &[restore_record(7, Some("/root-b"))],
+            &[],
+        );
+
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn restore_records_route_legacy_records_by_workspace_id_only() {
+        // No tied_worktree_root at all (a record written before this field
+        // existed) -- must not be compared against project_root by path,
+        // only workspace_id routing applies.
+        let legacy = restore_record(7, None);
+
+        let matches_original_workspace = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(7),
+            &[PathBuf::from("/somewhere-else")],
+            std::slice::from_ref(&legacy),
+            &[],
+        );
+        assert_eq!(matches_original_workspace, vec![legacy.clone()]);
+
+        let different_workspace_with_matching_root = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(9),
+            &[PathBuf::from("/root")],
+            &[legacy],
+            &[],
+        );
+        assert!(
+            different_workspace_with_matching_root.is_empty(),
+            "a legacy record must not restore into a different workspace even if its root matches project_root"
+        );
     }
 }
