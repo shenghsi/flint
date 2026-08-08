@@ -312,7 +312,8 @@ impl AgentThreadsPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
-        let workspace_handle = cx.entity().downgrade();
+        let workspace_entity = cx.entity();
+        let workspace_handle = workspace_entity.downgrade();
         let fs = workspace.app_state().fs.clone();
         let history_index = history::global_history_index(&fs, cx);
         let http_client = workspace.app_state().http_client.clone();
@@ -337,6 +338,18 @@ impl AgentThreadsPanel {
                 cx.subscribe(&store, |this: &mut AgentThreadsPanel, _, event, cx| {
                     this.handle_store_event(event, cx);
                 });
+            // Deriving the active row from the workspace's active item (rather
+            // than tracking a separate "selected row" field) means there is no
+            // second source of truth to drift; this subscription just triggers
+            // the re-render that picks the fresh value up.
+            let active_item_subscription = cx.subscribe(
+                &workspace_entity,
+                |_this: &mut AgentThreadsPanel, _, event, cx| {
+                    if let workspace::Event::ActiveItemChanged = event {
+                        cx.notify();
+                    }
+                },
+            );
             let settings = AgentThreadSettings::get_global(cx);
             let mut plan_usage_settings = (
                 settings.show_plan_usage,
@@ -370,7 +383,11 @@ impl AgentThreadsPanel {
                 registry,
                 sections,
                 context_menu: None,
-                _subscriptions: vec![store_subscription, settings_subscription],
+                _subscriptions: vec![
+                    store_subscription,
+                    settings_subscription,
+                    active_item_subscription,
+                ],
                 history_tasks: HashMap::default(),
                 history_index,
                 history_caches: HashMap::default(),
@@ -1157,6 +1174,7 @@ impl AgentThreadsPanel {
         kind: &AgentKindDefinition,
         project_roots: &[PathBuf],
         tie_resolution: &TieResolution,
+        active_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let usage = self.plan_usage.get(kind.id).copied();
@@ -1338,7 +1356,7 @@ impl AgentThreadsPanel {
                 );
             } else {
                 for row in rows {
-                    body_children.push(self.render_row(kind, row, cx));
+                    body_children.push(self.render_row(kind, row, active_terminal_item_id, cx));
                 }
                 if can_show_more || can_show_less {
                     let mut controls = h_flex().gap_1();
@@ -1408,24 +1426,35 @@ impl AgentThreadsPanel {
         &mut self,
         kind: &AgentKindDefinition,
         row: AgentThreadRow,
+        active_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match row {
-            AgentThreadRow::FreshLive(metadata) => self.render_live_row(metadata, cx),
+            AgentThreadRow::FreshLive(metadata) => {
+                self.render_live_row(metadata, active_terminal_item_id, cx)
+            }
             AgentThreadRow::Historical {
                 thread,
                 live_terminal_item_id,
-            } => self.render_historical_row(kind, thread, live_terminal_item_id, cx),
+            } => self.render_historical_row(
+                kind,
+                thread,
+                live_terminal_item_id,
+                active_terminal_item_id,
+                cx,
+            ),
         }
     }
 
     fn render_live_row(
         &mut self,
         metadata: AgentThreadMetadata,
+        active_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let terminal_item_id = metadata.terminal_item_id;
         let menu_metadata = metadata.clone();
+        let is_active = active_terminal_item_id == Some(terminal_item_id);
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
             .w_full()
@@ -1433,6 +1462,9 @@ impl AgentThreadsPanel {
             .px_2()
             .py_1()
             .rounded_sm()
+            .when(is_active, |row| {
+                row.bg(cx.theme().colors().element_selected)
+            })
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.focus_live_thread(terminal_item_id, window, cx);
@@ -1476,6 +1508,7 @@ impl AgentThreadsPanel {
         kind: &AgentKindDefinition,
         thread: HistoricalThread,
         live_terminal_item_id: Option<gpui::EntityId>,
+        active_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let row_id =
@@ -1489,6 +1522,8 @@ impl AgentThreadsPanel {
         let menu_kind_for_button = kind.clone();
         let menu_thread_for_button = thread.clone();
         let is_live = live_terminal_item_id.is_some();
+        let is_active =
+            live_terminal_item_id.is_some() && live_terminal_item_id == active_terminal_item_id;
         let resume_option_label = thread_resume_option_label(cx, kind, &thread.session_id);
         let resume_option_visual = thread_resume_option_visual(cx, kind, &thread.session_id);
         h_flex()
@@ -1500,6 +1535,9 @@ impl AgentThreadsPanel {
             .px_2()
             .py_1()
             .rounded_sm()
+            .when(is_active, |row| {
+                row.bg(cx.theme().colors().element_selected)
+            })
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .when_some(live_terminal_item_id, |row, terminal_item_id| {
                 let handoff_kind = kind.clone();
@@ -1812,6 +1850,19 @@ fn start_handoff(
     .detach();
 }
 
+impl AgentThreadsPanel {
+    /// The terminal item id of the panel's own workspace's currently active
+    /// item, if that item is a terminal -- used to highlight the matching
+    /// row. Derived fresh from `Workspace::active_item` rather than tracked
+    /// as separate panel state, so there is no second source of truth that
+    /// can drift from what the workspace actually shows.
+    fn active_terminal_item_id(&self, cx: &App) -> Option<gpui::EntityId> {
+        let workspace = self.workspace.upgrade()?;
+        let item = workspace.read(cx).active_item(cx)?;
+        Some(item.item_id())
+    }
+}
+
 impl Focusable for AgentThreadsPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -1917,11 +1968,18 @@ impl Render for AgentThreadsPanel {
             .unwrap_or_default();
         let tie_resolution =
             TieResolution::new(project.read(cx), open_workspace_roots, self.git_ready, cx);
+        let active_terminal_item_id = self.active_terminal_item_id(cx);
 
         let registry = self.visible_registry(cx);
         let mut sections = Vec::new();
         for kind in &registry {
-            sections.push(self.render_section(kind, &project_roots, &tie_resolution, cx));
+            sections.push(self.render_section(
+                kind,
+                &project_roots,
+                &tie_resolution,
+                active_terminal_item_id,
+                cx,
+            ));
         }
 
         v_flex()
@@ -2358,6 +2416,68 @@ mod tests {
 
         assert_eq!(active_item_id(&window_handle, cx), terminal_item_id);
         assert_eq!(terminal_views(&window_handle, cx).len(), 1);
+    }
+
+    #[gpui::test]
+    async fn active_row_tracks_the_workspace_active_item(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
+            })
+            .expect("failed to create panel");
+        cx.run_until_parked();
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_live_count(cx, root, 1).await;
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                AgentThreadStore::global(cx).update(cx, |store, cx| {
+                    store.focus_thread(terminal_item_id, window, cx)
+                })
+            })
+            .expect("failed to focus thread")
+            .expect("focus_thread should succeed");
+
+        assert_eq!(
+            panel.read_with(cx, |panel, cx| panel.active_terminal_item_id(cx)),
+            Some(terminal_item_id)
+        );
+
+        // Switching the active tab away from the terminal moves the derived
+        // active id with it -- there's no separate "selected row" state left
+        // pointing at the old row.
+        let editor_item = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor_item =
+                        cx.new(|cx| workspace::item::test::TestItem::new(cx).with_label("editor"));
+                    workspace.add_item_to_active_pane(
+                        Box::new(editor_item.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                    editor_item
+                })
+            })
+            .expect("failed to add editor item");
+        cx.run_until_parked();
+
+        assert_eq!(
+            panel.read_with(cx, |panel, cx| panel.active_terminal_item_id(cx)),
+            Some(editor_item.entity_id())
+        );
     }
 
     #[gpui::test]
