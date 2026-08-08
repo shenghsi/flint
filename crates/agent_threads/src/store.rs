@@ -288,8 +288,20 @@ async fn discover_one_session(
 }
 
 pub enum AgentThreadStoreEvent {
-    ThreadOpened { kind_id: &'static str },
-    ThreadClosed { kind_id: &'static str },
+    ThreadOpened {
+        kind_id: &'static str,
+    },
+    ThreadClosed {
+        kind_id: &'static str,
+    },
+    /// A live thread's tie or ownership changed without opening or closing
+    /// it (currently: a retie). Panels handle this like `ThreadOpened` --
+    /// `cx.notify()` and re-run their own queries -- so a retie taking
+    /// effect in one panel and disappearing from another happens for free
+    /// via the existing per-panel query architecture.
+    ThreadUpdated {
+        kind_id: &'static str,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,6 +315,59 @@ pub struct AgentThreadSessionRestoreRecord {
 }
 
 const SESSION_RESTORE_NAMESPACE: &str = "agent-thread-session-restore";
+
+/// Persisted retie overrides, keyed by `(kind_id, session_id)` rather than
+/// bare session_id: session ids are only unique per provider, not globally.
+/// See the design doc's "Session ids cannot be the primary key" section.
+const SESSION_TIE_NAMESPACE: &str = "agent-thread-session-tie";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistedTieOverride {
+    tied_worktree_root: PathBuf,
+    repo_main_root: Option<PathBuf>,
+}
+
+fn session_tie_key(kind_id: &str, session_id: &str) -> String {
+    format!("{kind_id}:{session_id}")
+}
+
+/// Reads the persisted tie override for a resumed session, if this session
+/// was ever retied. `None` is the common case (never retied) and is not an
+/// error -- logged and treated as absent either way.
+pub(crate) fn read_tie_override(cx: &App, kind_id: &str, session_id: &str) -> Option<TiedWorktree> {
+    let json = db::kvp::KeyValueStore::global(cx)
+        .scoped(SESSION_TIE_NAMESPACE)
+        .read(&session_tie_key(kind_id, session_id))
+        .log_err()
+        .flatten()?;
+    let parsed: PersistedTieOverride = serde_json::from_str(&json).log_err()?;
+    Some(TiedWorktree {
+        root: parsed.tied_worktree_root,
+        repo_main_root: parsed.repo_main_root,
+    })
+}
+
+/// Persists `tie` as the override for a resumed session. Awaited by design
+/// (not `db::write_and_log`'s fire-and-forget pattern used elsewhere in this
+/// file): the retie orchestration's response needs to distinguish a
+/// truthful "persisted" from "in_memory_only", which a detached write can't
+/// back.
+async fn write_tie_override(
+    cx: &mut AsyncApp,
+    kind_id: &str,
+    session_id: &str,
+    tie: &TiedWorktree,
+) -> Result<()> {
+    let value = serde_json::to_string(&PersistedTieOverride {
+        tied_worktree_root: tie.root.clone(),
+        repo_main_root: tie.repo_main_root.clone(),
+    })?;
+    let store = cx.update(|cx| db::kvp::KeyValueStore::global(cx));
+    store
+        .scoped(SESSION_TIE_NAMESPACE)
+        .write(session_tie_key(kind_id, session_id), value)
+        .await
+}
 
 struct SnapshotRequest {
     session_id: String,
@@ -342,6 +407,12 @@ pub struct AgentThreadStore {
     managed_provisioning:
         ManagedAgentProvisioningCoordinator<Entity<ManagedAgentProgressNotification>>,
     snapshot_sender: mpsc::UnboundedSender<SnapshotRequest>,
+    /// Entries retied before their session id was known (so the persisted
+    /// tie override, keyed by `(kind_id, session_id)`, couldn't be written
+    /// yet). `attach_discovered_session_id` persists the entry's current
+    /// tie and clears the marker once the id becomes known. See the design
+    /// doc's "Session ids cannot be the primary key" section.
+    pending_tie_persistence: HashSet<EntityId>,
 }
 
 struct ThreadEntry {
@@ -478,6 +549,7 @@ impl AgentThreadStore {
             agent_artifact_cache: None,
             managed_provisioning: ManagedAgentProvisioningCoordinator::default(),
             snapshot_sender,
+            pending_tie_persistence: HashSet::default(),
         });
         spawn_session_discovery_loop(store.clone(), cx);
         cx.set_global(GlobalAgentThreadStore(store));
@@ -593,6 +665,18 @@ impl AgentThreadStore {
         }
         entry.metadata.resumed_session_id = Some(session_id);
         cx.notify();
+
+        // Migrate a retie that happened before this thread's session id was
+        // known: the persisted override table is keyed by (kind_id,
+        // session_id), so it couldn't be written until now. Fire-and-forget
+        // is fine here (unlike the retie orchestration's own write, nothing
+        // is waiting on this to report success/failure back to a caller).
+        if self.pending_tie_persistence.remove(&terminal_item_id)
+            && let Some((kind_id, session_id, tie)) = self.tie_override_to_persist(terminal_item_id)
+        {
+            cx.spawn(async move |_, cx| write_tie_override(cx, kind_id, &session_id, &tie).await)
+                .detach_and_log_err(cx);
+        }
     }
 
     pub fn active_thread_count_for_connection(
@@ -732,6 +816,89 @@ impl AgentThreadStore {
         })?;
 
         Ok(())
+    }
+
+    /// The synchronous, infallible-once-called part of a retie: updates
+    /// `entry.workspace` and the metadata's tie fields, and emits
+    /// `ThreadUpdated`. No IO, no workspace resolution -- those happen
+    /// first, in the async `retie_thread` orchestration, which only calls
+    /// this once the checked move into `new_workspace` has already
+    /// succeeded (so `entry.workspace` here is not a promise, it is
+    /// already true).
+    ///
+    /// Marks the entry for later persistence (via `pending_tie_persistence`)
+    /// when its session id isn't known yet -- session ids are the
+    /// persisted-override table's key, and a `retie-thread` request can
+    /// easily arrive before discovery has assigned one. See the design
+    /// doc's "Session ids cannot be the primary key" section.
+    // Reachable only from `retie_thread` today, which is itself only called
+    // from tests -- Stage 2's control.rs is its production caller.
+    #[allow(dead_code)]
+    pub(crate) fn commit_retie(
+        &mut self,
+        terminal_item_id: EntityId,
+        new_workspace: Entity<Workspace>,
+        new_tie: TiedWorktree,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let entry = self
+            .threads
+            .get_mut(&terminal_item_id)
+            .ok_or_else(|| anyhow!("agent thread no longer exists"))?;
+        entry.workspace = new_workspace.downgrade();
+        entry.metadata.tied_worktree_root = new_tie.root;
+        entry.metadata.tied_repo_main_root = new_tie.repo_main_root;
+        let kind_id = entry.metadata.kind_id;
+        if entry.metadata.resumed_session_id.is_none() {
+            self.pending_tie_persistence.insert(terminal_item_id);
+        }
+        cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
+        cx.notify();
+        Ok(())
+    }
+
+    /// The tie override to persist for `terminal_item_id` right now, if its
+    /// session id is already known -- `None` when it isn't (the caller
+    /// should leave `pending_tie_persistence`'s marker in place instead;
+    /// `attach_discovered_session_id` will persist it once the id arrives).
+    pub(crate) fn tie_override_to_persist(
+        &self,
+        terminal_item_id: EntityId,
+    ) -> Option<(&'static str, SharedString, TiedWorktree)> {
+        let entry = self.threads.get(&terminal_item_id)?;
+        let session_id = entry.metadata.resumed_session_id.clone()?;
+        Some((
+            entry.metadata.kind_id,
+            session_id,
+            TiedWorktree {
+                root: entry.metadata.tied_worktree_root.clone(),
+                repo_main_root: entry.metadata.tied_repo_main_root.clone(),
+            },
+        ))
+    }
+
+    /// The workspace and terminal item a live thread currently lives in --
+    /// the source side of a retie's move. Mirrors `focus_thread`'s own
+    /// resolution of these two handles.
+    // Reachable only from `retie_thread` today; see its own dead_code note.
+    #[allow(dead_code)]
+    pub(crate) fn thread_workspace_and_terminal(
+        &self,
+        terminal_item_id: EntityId,
+    ) -> Result<(Entity<Workspace>, Entity<TerminalView>)> {
+        let entry = self
+            .threads
+            .get(&terminal_item_id)
+            .ok_or_else(|| anyhow!("agent thread no longer exists"))?;
+        let workspace = entry
+            .workspace
+            .upgrade()
+            .ok_or_else(|| anyhow!("agent thread workspace closed"))?;
+        let terminal_view = entry
+            .terminal_view
+            .upgrade()
+            .ok_or_else(|| anyhow!("agent thread terminal closed"))?;
+        Ok((workspace, terminal_view))
     }
 
     fn register(
@@ -1834,6 +2001,7 @@ fn apply_self_update_policy(command: &mut AgentLaunchCommand, kind: &AgentKindDe
 /// worktree set there is no longer any current state from which to
 /// rediscover which repository it used to belong to -- see the design doc's
 /// "Deleted worktrees fall back to the main worktree" section.
+#[derive(Clone)]
 pub(crate) struct TiedWorktree {
     pub root: PathBuf,
     pub repo_main_root: Option<PathBuf>,
@@ -2006,6 +2174,111 @@ fn repo_main_root_for_worktree(
             .flatten()
             .map(|path| path.to_path_buf())
     })
+}
+
+/// Whether `retie_thread`'s persisted-tie write actually happened. A thread
+/// with no session id yet legitimately reports `InMemoryOnly` -- not a
+/// failure, see `AgentThreadStore::commit_retie` -- the tie is fully in
+/// effect for the live thread either way; only the persisted-override
+/// table's write is what's deferred.
+// Only constructed by `retie_thread` today; see its own dead_code note --
+// Stage 2's control.rs is the pending production caller.
+#[allow(dead_code)]
+pub(crate) enum RetiePersistence {
+    Persisted,
+    InMemoryOnly,
+}
+
+/// Re-ties a live thread to the worktree at `target_path`, moving its
+/// terminal into that worktree's workspace (creating a background workspace
+/// for it if none is open yet) so tie and ownership never diverge. See the
+/// design doc's "Retie moves the terminal" and "Commit ordering" sections
+/// for the invariants this implements.
+// Exercised end-to-end by tests (panel.rs's retie_thread_* tests) but has
+// no production caller yet -- that's Stage 2's control.rs, not yet built.
+#[allow(dead_code)]
+pub(crate) async fn retie_thread(
+    terminal_item_id: EntityId,
+    target_path: PathBuf,
+    window_handle: WindowHandle<MultiWorkspace>,
+    cx: &mut AsyncApp,
+) -> Result<RetiePersistence> {
+    // Step 1: resolve-or-create the destination background workspace.
+    // Never activates -- see find_or_create_background_local_workspace's
+    // own doc comment for why this, and not the picker's activating
+    // counterpart, is used here.
+    let destination_workspace = window_handle
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.find_or_create_background_local_workspace(
+                util::path_list::PathList::new(&[target_path]),
+                None,
+                &[],
+                None,
+                window,
+                cx,
+            )
+        })?
+        .await?;
+
+    // The committed tie is derived from the destination workspace's own
+    // resolved worktree root, never the raw caller-supplied path: `..`
+    // segments, symlinks, and platform case/spelling differences would all
+    // fail the exact path-equality checks TieResolution performs.
+    let new_tie = destination_workspace
+        .update(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
+        .ok_or_else(|| anyhow!("could not resolve a worktree root for the retie target"))?;
+
+    // Step 2: checked move into the destination workspace's active pane.
+    let store = cx.update(|cx| AgentThreadStore::global(cx));
+    let (source_workspace, terminal_view) = store
+        .read_with(cx, |store, _| {
+            store.thread_workspace_and_terminal(terminal_item_id)
+        })
+        .log_err()
+        .ok_or_else(|| anyhow!("agent thread is no longer live"))?;
+    let source_pane = source_workspace
+        .read_with(cx, |workspace, _| {
+            workspace.pane_for_item_id(terminal_item_id)
+        })
+        .ok_or_else(|| anyhow!("agent thread pane closed"))?;
+    let destination_pane =
+        destination_workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+    if source_pane != destination_pane {
+        window_handle.update(cx, |_, window, cx| {
+            workspace::move_item_checked(
+                &source_pane,
+                &destination_pane,
+                terminal_item_id,
+                destination_pane.read(cx).items_len(),
+                false,
+                window,
+                cx,
+            )
+        })??;
+    }
+    // `move_item_checked` (when it ran) triggered `TerminalView::added_to_workspace`
+    // as a side effect of the pane-add, which already called `reparent` --
+    // `self.workspace`/`self.project`/`_terminal_subscriptions` on the
+    // terminal view are already correct by this point. Nothing left to do
+    // for ownership beyond the store-side commit below.
+    let _ = terminal_view;
+
+    // Step 3: commit in-memory (infallible now that the move succeeded).
+    let store = cx.update(|cx| AgentThreadStore::global(cx));
+    store.update(cx, |store, cx| {
+        store.commit_retie(terminal_item_id, destination_workspace, new_tie, cx)
+    })?;
+
+    // Step 4: persist, awaited -- so this function's return value is a
+    // truthful account of what happened, not an assumption.
+    let Some((kind_id, session_id, tie)) = store.read_with(cx, |store, _| {
+        store.tie_override_to_persist(terminal_item_id)
+    }) else {
+        return Ok(RetiePersistence::InMemoryOnly);
+    };
+    write_tie_override(cx, kind_id, &session_id, &tie).await?;
+    Ok(RetiePersistence::Persisted)
 }
 
 fn prepare_remote_thread_process(
