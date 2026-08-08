@@ -4,52 +4,71 @@
 //! dependency-free of GPUI/terminal so the CLI binary stays small.
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
-/// Path, relative to a spawned agent thread's own working directory, of the
-/// marker file Flint writes so the thread's CLI process can discover its
-/// control channel without relying on environment variables.
-///
-/// Env vars were the original design, but some coding-agent CLIs run their
-/// own shell commands through a sandboxed subprocess exec that silently
-/// strips custom environment variables (observed with Codex CLI's shell
-/// execution path, independent of its documented `shell_environment_policy`
-/// setting -- explicit `inherit = "all"` did not fix it). A plain file read
-/// and command-line arguments are not subject to that filtering, so this
-/// marker file plus explicit `--socket`/`--token` flags on the CLI replace
-/// the env-var handoff entirely.
-///
-/// Written fresh before each thread's terminal spawns and removed when the
-/// thread closes (see `AgentThreadStore::begin_shutdown`); the containing
-/// `.flint/` directory is created if needed but never removed, so it can
-/// hold other per-worktree marker files later without every write racing a
-/// directory-cleanup. A worktree shared by two simultaneously-live threads
-/// is the one known collision case: the second spawn's marker file
-/// overwrites the first's, breaking the older thread's control channel
-/// until it's respawned.
-pub const MARKER_FILE_PATH: &str = ".flint/flint-agent-control.json";
+/// `stable` | `dev` | `nightly` | `preview`. A local re-derivation of
+/// `release_channel::RELEASE_CHANNEL_NAME`'s own logic, not a dependency on
+/// that crate: `release_channel` itself depends on `gpui`, which would drag
+/// the entire GPUI/rendering stack into `agent_control_cli`, defeating this
+/// crate's whole purpose of keeping that binary small.
+static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
+    if cfg!(debug_assertions) {
+        std::env::var("ZED_RELEASE_CHANNEL").unwrap_or_else(|_| {
+            include_str!("../../flint/RELEASE_CHANNEL")
+                .trim()
+                .to_string()
+        })
+    } else {
+        include_str!("../../flint/RELEASE_CHANNEL")
+            .trim()
+            .to_string()
+    }
+});
 
-/// Contents of the marker file at `MARKER_FILE_PATH`, letting a thread's CLI
-/// process discover everything it needs (its own executable's resolved
-/// path, the control socket to connect to, and its per-thread token) with a
-/// single file read, immune to environment-variable filtering.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentControlHandoff {
-    pub executable: PathBuf,
-    pub socket: PathBuf,
-    pub token: String,
+/// The control socket's path, computed identically by the server
+/// (`agent_threads::control`) and the client (`agent_control_cli`) so
+/// neither needs to hand the other a value at runtime -- it's a pure
+/// function of the user's data directory and release channel, unaffected by
+/// whatever a coding agent's own subprocess exec strips from custom
+/// environment variables (the reason this crate exists at all: see
+/// `AgentControlLocation`'s doc comment for the env-var failure this
+/// replaced).
+pub fn socket_path() -> PathBuf {
+    paths::data_dir().join(format!("agent-control-{}.sock", *RELEASE_CHANNEL_NAME))
 }
 
-/// One request sent over the socket, wrapped with the token that identifies
-/// the calling thread. The token travels alongside the request rather than
-/// inside it so the server can reject an unknown/expired token before ever
-/// looking at the request body.
+/// Path to the marker file at which Flint records where its own
+/// `flint-agent-control` executable lives, so an agent's own CLI process can
+/// discover what command to run in the first place. One location per
+/// release channel; written once when Flint's control server starts (see
+/// `agent_threads::control::init`) and removed on quit -- not per-thread,
+/// since the executable's location is the same for every thread in one
+/// Flint session.
+pub fn executable_location_path() -> PathBuf {
+    paths::data_dir().join(format!(
+        "agent-control-{}-executable.json",
+        *RELEASE_CHANNEL_NAME
+    ))
+}
+
+/// Contents of the file at `executable_location_path()`.
+///
+/// This is the only handoff data left on disk. The control socket's path is
+/// independently computable (`socket_path()`), and caller identity is
+/// established by the server asking the kernel who actually connected
+/// (`SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS) rather than by a
+/// client-presented secret -- so there's no per-thread token to mint,
+/// deliver, or collide over. The original design used environment variables
+/// for all of this, but some coding-agent CLIs run their own shell commands
+/// through a subprocess exec that silently strips custom env vars (observed
+/// with Codex CLI's shell execution path, independent of its documented
+/// `shell_environment_policy` setting -- explicit `inherit = "all"` did not
+/// fix it); a plain file read is not subject to that filtering.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ControlEnvelope {
-    pub token: String,
-    #[serde(flatten)]
-    pub request: ControlRequest,
+pub struct AgentControlLocation {
+    pub executable: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,10 +108,14 @@ pub struct CreateThreadRequest {
     pub prompt: String,
 }
 
-/// The token was recognized but its thread registration hasn't landed yet
-/// (see `ControlTokenState::Reserved` on the server) -- distinct from an
-/// auth failure so the CLI knows to retry with bounded backoff instead of
-/// giving up immediately.
+/// The connecting process could not yet be matched to a registered thread --
+/// either because it hasn't finished registering (the terminal spawned very
+/// recently and `AgentThreadStore::register` hasn't run yet), or because it
+/// genuinely isn't one Flint is tracking. These two cases are indistinguishable
+/// from the server's side without extra bookkeeping this design deliberately
+/// avoids, so both get `NotReady` rather than a hard error: the CLI retries
+/// with bounded backoff, and a request that's never going to match simply
+/// exhausts its retries and reports failure like any other unauthorized call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum ControlResponse {
@@ -113,33 +136,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn agent_control_handoff_round_trips_through_json() {
-        let handoff = AgentControlHandoff {
+    fn agent_control_location_round_trips_through_json() {
+        let location = AgentControlLocation {
             executable: PathBuf::from("/Applications/Flint.app/Contents/MacOS/flint-agent-control"),
-            socket: PathBuf::from(
-                "/Users/example/Library/Application Support/Flint/agent-control-stable.sock",
-            ),
-            token: "abc123".to_string(),
         };
-        let json = serde_json::to_string(&handoff).expect("serialize");
-        let decoded: AgentControlHandoff = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(decoded.executable, handoff.executable);
-        assert_eq!(decoded.socket, handoff.socket);
-        assert_eq!(decoded.token, handoff.token);
+        let json = serde_json::to_string(&location).expect("serialize");
+        let decoded: AgentControlLocation = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.executable, location.executable);
     }
 
     #[test]
-    fn retie_thread_envelope_round_trips_through_json() {
-        let envelope = ControlEnvelope {
-            token: "abc123".to_string(),
-            request: ControlRequest::RetieThread(RetieThreadRequest {
-                worktree: PathBuf::from("/repo/worktrees/feature"),
-            }),
-        };
-        let json = serde_json::to_string(&envelope).expect("serialize");
-        let decoded: ControlEnvelope = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(decoded.token, "abc123");
-        match decoded.request {
+    fn retie_thread_request_round_trips_through_json() {
+        let request = ControlRequest::RetieThread(RetieThreadRequest {
+            worktree: PathBuf::from("/repo/worktrees/feature"),
+        });
+        let json = serde_json::to_string(&request).expect("serialize");
+        let decoded: ControlRequest = serde_json::from_str(&json).expect("deserialize");
+        match decoded {
             ControlRequest::RetieThread(request) => {
                 assert_eq!(request.worktree, PathBuf::from("/repo/worktrees/feature"));
             }
@@ -148,19 +161,16 @@ mod tests {
     }
 
     #[test]
-    fn create_thread_envelope_round_trips_through_json() {
-        let envelope = ControlEnvelope {
-            token: "xyz789".to_string(),
-            request: ControlRequest::CreateThread(CreateThreadRequest {
-                worktree: CreateThreadWorktree::New,
-                name: Some("feature-x".to_string()),
-                agent: "codex".to_string(),
-                prompt: "implement the thing".to_string(),
-            }),
-        };
-        let json = serde_json::to_string(&envelope).expect("serialize");
-        let decoded: ControlEnvelope = serde_json::from_str(&json).expect("deserialize");
-        match decoded.request {
+    fn create_thread_request_round_trips_through_json() {
+        let request = ControlRequest::CreateThread(CreateThreadRequest {
+            worktree: CreateThreadWorktree::New,
+            name: Some("feature-x".to_string()),
+            agent: "codex".to_string(),
+            prompt: "implement the thing".to_string(),
+        });
+        let json = serde_json::to_string(&request).expect("serialize");
+        let decoded: ControlRequest = serde_json::from_str(&json).expect("deserialize");
+        match decoded {
             ControlRequest::CreateThread(request) => {
                 assert_eq!(request.worktree, CreateThreadWorktree::New);
                 assert_eq!(request.name.as_deref(), Some("feature-x"));
@@ -182,11 +192,19 @@ mod tests {
             }),
             ControlResponse::NotReady,
             ControlResponse::Error {
-                message: "unknown token".to_string(),
+                message: "unrecognized caller".to_string(),
             },
         ] {
             let json = serde_json::to_string(&response).expect("serialize");
             let _decoded: ControlResponse = serde_json::from_str(&json).expect("deserialize");
         }
+    }
+
+    #[test]
+    fn socket_path_and_executable_location_path_are_release_channel_scoped_siblings() {
+        let socket = socket_path();
+        let executable_location = executable_location_path();
+        assert_eq!(socket.parent(), executable_location.parent());
+        assert_ne!(socket, executable_location);
     }
 }

@@ -10,9 +10,8 @@ use futures::{
     channel::{mpsc, oneshot},
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
-    Global, PromptLevel, SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
-    WindowHandle,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, PromptLevel,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
 };
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -427,9 +426,6 @@ pub struct AgentThreadStore {
     /// tie and clears the marker once the id becomes known. See the design
     /// doc's "Session ids cannot be the primary key" section.
     pending_tie_persistence: HashSet<EntityId>,
-    /// Per-thread agent-control tokens (see `ControlTokenState`), keyed by
-    /// the token string a spawned thread's terminal was given.
-    control_tokens: HashMap<String, ControlTokenState>,
     /// The agent-control server's accept-loop task (see `crate::control`),
     /// held here so its lifetime is the app's rather than any caller's.
     /// `None` on non-Unix hosts, where the control server doesn't exist.
@@ -444,26 +440,6 @@ struct ThreadEntry {
     window: Option<WindowHandle<MultiWorkspace>>,
     remote_process: Option<RemoteAgentProcess>,
     egress: Option<AgentEgressLease>,
-    /// This thread's agent-control token, if the control server minted one
-    /// at spawn time -- see `ControlTokenState`.
-    control_token: Option<String>,
-    /// Path to this thread's agent-control marker file (see
-    /// `agent_control_protocol::MARKER_FILE_PATH`), if one was written at
-    /// spawn time. Removed on shutdown.
-    control_marker_path: Option<PathBuf>,
-}
-
-/// Lifecycle of a per-thread agent-control token (see `crate::control`).
-/// Minted as `Reserved` synchronously before a thread's terminal spawns,
-/// since the child process is live with the token in its environment well
-/// before `register` runs and assigns the real `EntityId` -- promoted to
-/// `Bound` once that happens. A request against a `Reserved` token gets a
-/// distinct `NotReady` response rather than a generic auth failure, so the
-/// CLI knows to retry with bounded backoff instead of racing the spawn.
-#[derive(Clone, Copy)]
-pub(crate) enum ControlTokenState {
-    Reserved,
-    Bound(EntityId),
 }
 
 struct ThreadShutdown {
@@ -591,7 +567,6 @@ impl AgentThreadStore {
             managed_provisioning: ManagedAgentProvisioningCoordinator::default(),
             snapshot_sender,
             pending_tie_persistence: HashSet::default(),
-            control_tokens: HashMap::default(),
             _control_server_task: None,
         });
         spawn_session_discovery_loop(store.clone(), cx);
@@ -957,8 +932,6 @@ impl AgentThreadStore {
         window: Option<WindowHandle<MultiWorkspace>>,
         remote_process: Option<RemoteAgentProcess>,
         egress: Option<AgentEgressLease>,
-        control_token: Option<String>,
-        control_marker_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
         let terminal_item_id = terminal_view.entity_id();
@@ -975,10 +948,6 @@ impl AgentThreadStore {
             resumed_session_id,
         };
         let attention_window = window;
-        if let Some(token) = &control_token {
-            self.control_tokens
-                .insert(token.clone(), ControlTokenState::Bound(terminal_item_id));
-        }
         self.threads.insert(
             terminal_item_id,
             ThreadEntry {
@@ -989,8 +958,6 @@ impl AgentThreadStore {
                 window,
                 remote_process,
                 egress,
-                control_token,
-                control_marker_path,
             },
         );
 
@@ -1043,12 +1010,6 @@ impl AgentThreadStore {
     ) -> Option<Task<Result<()>>> {
         let entry = take_thread_for_shutdown(&mut self.threads, terminal_item_id)?;
         self.subscriptions.remove(&terminal_item_id);
-        if let Some(token) = &entry.control_token {
-            self.control_tokens.remove(token);
-        }
-        if let Some(marker_path) = &entry.control_marker_path {
-            std::fs::remove_file(marker_path).log_err();
-        }
         cx.emit(AgentThreadStoreEvent::ThreadClosed {
             kind_id: entry.metadata.kind_id,
         });
@@ -1061,25 +1022,6 @@ impl AgentThreadStore {
             }
             .run(cx),
         )
-    }
-
-    /// Mints a fresh agent-control token in the `Reserved` state, for a
-    /// thread whose terminal hasn't spawned yet -- see `ControlTokenState`.
-    pub(crate) fn reserve_control_token(&mut self) -> String {
-        let token = uuid::Uuid::new_v4().to_string();
-        self.control_tokens
-            .insert(token.clone(), ControlTokenState::Reserved);
-        token
-    }
-
-    /// Drops a token's reservation, e.g. because the spawn that reserved it
-    /// failed before `register` could promote it to `Bound`.
-    pub(crate) fn release_control_token(&mut self, token: &str) {
-        self.control_tokens.remove(token);
-    }
-
-    pub(crate) fn control_token_state(&self, token: &str) -> Option<ControlTokenState> {
-        self.control_tokens.get(token).copied()
     }
 
     /// The window a live thread's terminal lives in -- needed by the control
@@ -1102,23 +1044,21 @@ impl AgentThreadStore {
         self._control_server_task = Some(task);
     }
 
-    /// Test-only: mints and binds a control token directly onto a live
-    /// thread, bypassing the real spawn-time gate in
-    /// `write_agent_control_marker` (which requires resolving a real bundled
-    /// `flint-agent-control` executable -- never present under `cargo test`,
-    /// matching this codebase's established convention of never unit-testing
-    /// `get_flint_cli_path`-style bundle-layout resolution). This exercises
-    /// exactly the same `ControlTokenState::Bound` path `register` would
-    /// have produced had a real executable been resolvable.
-    #[cfg(all(test, unix))]
-    pub(crate) fn bind_control_token_for_test(&mut self, terminal_item_id: EntityId) -> String {
-        let token = self.reserve_control_token();
-        self.control_tokens
-            .insert(token.clone(), ControlTokenState::Bound(terminal_item_id));
-        if let Some(entry) = self.threads.get_mut(&terminal_item_id) {
-            entry.control_token = Some(token.clone());
-        }
-        token
+    /// Every live thread's underlying terminal process id, for the control
+    /// server's peer-credential resolution: it walks a connecting process's
+    /// ancestry looking for a PID in this map, so it knows which thread (if
+    /// any) is calling. A remote thread's terminal process runs on a
+    /// different machine, so it can never appear in this map or match a
+    /// local process's ancestry -- remote threads are excluded from the
+    /// control surface by construction, with no separate check needed.
+    pub(crate) fn live_terminal_pids(&self, cx: &App) -> HashMap<u32, EntityId> {
+        self.threads
+            .iter()
+            .filter_map(|(terminal_item_id, entry)| {
+                let pid = entry.terminal.read(cx).pid()?;
+                Some((pid.as_u32(), *terminal_item_id))
+            })
+            .collect()
     }
 }
 
@@ -2441,79 +2381,6 @@ fn prepare_remote_thread_process(
     RemoteAgentProcess::prepare(command, remote_connection, lifecycle_id).map(Some)
 }
 
-/// Mints a fresh agent-control token and writes the marker file (see
-/// `agent_control_protocol::MARKER_FILE_PATH`) into a new local thread's own
-/// working directory, if the control server is available for this launch --
-/// local project only, Unix host, and `agent_threads.agent_control` enabled.
-///
-/// A file rather than environment variables: some coding-agent CLIs run
-/// their own shell commands through a sandboxed subprocess exec that
-/// silently strips custom env vars (observed with Codex CLI, independent of
-/// its documented `shell_environment_policy` setting), which a plain file
-/// read is not subject to.
-///
-/// Returns the minted token (also needed by `register` to promote it from
-/// `Reserved` to `Bound`) and the marker file's path (needed to remove it on
-/// shutdown), or `None` if any gate fails or the write itself fails, in
-/// which case no token is minted.
-fn write_agent_control_marker(
-    cwd: &Path,
-    remote_client: Option<&Entity<remote::RemoteClient>>,
-    cx: &mut Context<Workspace>,
-) -> Option<(String, PathBuf)> {
-    #[cfg(unix)]
-    {
-        if remote_client.is_some() || !AgentThreadSettings::get_global(cx).agent_control {
-            return None;
-        }
-        let executable = util::get_flint_agent_control_path().log_err()?;
-        let store = AgentThreadStore::global(cx);
-        let token = store.update(cx, |store, _| store.reserve_control_token());
-        let handoff = agent_control_protocol::AgentControlHandoff {
-            executable,
-            socket: crate::control::socket_path(),
-            token: token.clone(),
-        };
-        let marker_path = cwd.join(agent_control_protocol::MARKER_FILE_PATH);
-        let Some(json) = serde_json::to_string_pretty(&handoff).log_err() else {
-            store.update(cx, |store, _| store.release_control_token(&token));
-            return None;
-        };
-        if let Some(marker_dir) = marker_path.parent()
-            && std::fs::create_dir_all(marker_dir).log_err().is_none()
-        {
-            store.update(cx, |store, _| store.release_control_token(&token));
-            return None;
-        }
-        if std::fs::write(&marker_path, json).log_err().is_none() {
-            store.update(cx, |store, _| store.release_control_token(&token));
-            return None;
-        }
-        Some((token, marker_path))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (cwd, remote_client, cx);
-        None
-    }
-}
-
-/// Drops an agent-control token's reservation after a spawn or registration
-/// failure -- the `?` paths in `spawn_thread_task_inner`'s async block below
-/// -- so a failed launch doesn't leave a permanently `Reserved` (never
-/// `Bound`, never removed) entry sitting in the store. Also removes the
-/// marker file already written for it, if any, so a failed launch doesn't
-/// leave a stale marker behind either.
-fn release_reserved_control(control: Option<&(String, PathBuf)>, cx: &mut AsyncWindowContext) {
-    let Some((token, marker_path)) = control else {
-        return;
-    };
-    if let Ok(store) = cx.update(|_, cx| AgentThreadStore::global(cx)) {
-        store.update(cx, |store, _| store.release_control_token(token));
-    }
-    std::fs::remove_file(marker_path).log_err();
-}
-
 fn spawn_thread_task_inner(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
@@ -2555,7 +2422,6 @@ fn spawn_thread_task_inner(
         Ok(remote_process) => remote_process,
         Err(error) => return Task::ready(Err(error)),
     };
-    let control = write_agent_control_marker(&cwd, remote_client.as_ref(), cx);
     let mut task = SpawnInTerminal {
         full_label: label.clone(),
         label,
@@ -2607,32 +2473,15 @@ fn spawn_thread_task_inner(
             project.create_terminal_task(task, cx)
         });
     cx.spawn_in(window, async move |_workspace, cx| {
-        let terminal_view = match terminal_view_task.await {
-            Ok((_, terminal_view)) => terminal_view,
-            Err(error) => {
-                release_reserved_control(control.as_ref(), cx);
-                return Err(error);
-            }
-        };
-        let Some(terminal_view) = terminal_view.upgrade() else {
-            release_reserved_control(control.as_ref(), cx);
-            return Err(anyhow!("agent thread terminal closed before registration"));
-        };
+        let (_, terminal_view) = terminal_view_task.await?;
+        let terminal_view = terminal_view
+            .upgrade()
+            .ok_or_else(|| anyhow!("agent thread terminal closed before registration"))?;
         terminal_view.update(cx, |terminal_view, cx| {
             terminal_view.set_tab_icon_override(Some(kind_icon), cx);
             terminal_view.set_agent_thread(true, cx);
         });
-        let store = match cx.update(|_, cx| AgentThreadStore::global(cx)) {
-            Ok(store) => store,
-            Err(error) => {
-                release_reserved_control(control.as_ref(), cx);
-                return Err(error);
-            }
-        };
-        let (control_token, control_marker_path) = match control {
-            Some((token, marker_path)) => (Some(token), Some(marker_path)),
-            None => (None, None),
-        };
+        let store = cx.update(|_, cx| AgentThreadStore::global(cx))?;
         store.update(cx, |store, cx| {
             store.register(
                 kind_id,
@@ -2646,8 +2495,6 @@ fn spawn_thread_task_inner(
                 window_handle,
                 remote_process,
                 egress,
-                control_token,
-                control_marker_path,
                 cx,
             );
         });

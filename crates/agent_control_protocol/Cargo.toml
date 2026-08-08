@@ -13,6 +13,7 @@ path = "src/agent_control_protocol.rs"
 doctest = false
 
 [dependencies]
+paths.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

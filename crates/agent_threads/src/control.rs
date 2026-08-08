@@ -1,10 +1,16 @@
 //! The local-only Unix socket server backing agent-initiated worktree
 //! control: a thread's own CLI process (Codex, Claude Code, etc.) invokes
 //! the `flint-agent-control` binary (`agent_control_cli`), which sends one
-//! JSON request over this socket per invocation. See the design doc's
-//! "Stage 2 -- Agent-initiated worktree creation/tying" section for the
-//! full rationale, especially the socket ownership/cleanup and token
-//! lifecycle requirements this module implements.
+//! JSON request over this socket per invocation.
+//!
+//! Caller identity is established by asking the kernel who actually
+//! connected -- `LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux -- and
+//! walking that process's parent-PID ancestry (via `sysinfo`) looking for a
+//! PID Flint recognizes as a live thread's own terminal process. There is
+//! no client-presented secret: nothing is minted, delivered, or can go
+//! stale by being overwritten. See `agent_control_protocol::AgentControlLocation`
+//! for why environment variables and a per-thread token were tried first
+//! and abandoned.
 //!
 //! Unix only: gated at the `mod control;` declaration in `agent_threads.rs`
 //! and at every cross-module call site, since the feature doesn't exist on
@@ -16,53 +22,63 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use agent_control_protocol::{
-    ControlEnvelope, ControlRequest, ControlResponse, ControlSuccess, CreateThreadRequest,
-    CreateThreadWorktree, RetieThreadRequest,
+    ControlRequest, ControlResponse, ControlSuccess, CreateThreadRequest, CreateThreadWorktree,
+    RetieThreadRequest,
 };
 use anyhow::{Context as _, Result};
+use collections::HashMap;
 use gpui::{App, AsyncApp, Entity, EntityId};
 use net::async_net::{UnixListener, UnixStream};
+use settings::Settings as _;
 use smol::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::agent_kind_registry;
-use crate::store::{self, AgentThreadStore, ControlTokenState};
+use crate::store::{self, AgentThreadStore};
 
-pub(crate) fn socket_path() -> PathBuf {
-    paths::data_dir().join(format!(
-        "agent-control-{}.sock",
-        *release_channel::RELEASE_CHANNEL_NAME
-    ))
-}
+/// How far up a connecting process's parent chain to look for a match
+/// before giving up. Generous relative to the shallow real-world case (the
+/// CLI is typically a direct child of the tracked terminal process, or one
+/// shell layer removed) without risking an unbounded walk.
+const MAX_ANCESTRY_DEPTH: usize = 32;
 
 /// Starts the accept-loop exactly once and stashes its `Task` on the
 /// `AgentThreadStore` global so its lifetime is the app's, not a caller's.
-/// Safe to call unconditionally at crate init: whether any thread actually
-/// gets a token is gated per-spawn by `agent_threads.agent_control` and the
-/// local/Unix checks in `store::spawn_thread_task_inner`, so an idle server
-/// with no live tokens is harmless.
 pub(crate) fn init(cx: &mut App) {
     let store = AgentThreadStore::global(cx);
-    let socket_path = socket_path();
+    let socket_path = agent_control_protocol::socket_path();
+    let executable_location_path = agent_control_protocol::executable_location_path();
     let owns_socket = Arc::new(AtomicBool::new(false));
     let task = cx.spawn({
         let socket_path = socket_path.clone();
+        let executable_location_path = executable_location_path.clone();
         let owns_socket = owns_socket.clone();
         async move |cx| {
-            if let Err(error) = run_server(socket_path, owns_socket, store, cx).await {
+            if let Err(error) = run_server(
+                socket_path,
+                executable_location_path,
+                owns_socket,
+                store,
+                cx,
+            )
+            .await
+            {
                 log::error!("agent_threads: agent control server did not start: {error:#}");
             }
         }
     });
     cx.on_app_quit(move |_cx| {
         let socket_path = socket_path.clone();
+        let executable_location_path = executable_location_path.clone();
         let owns_socket = owns_socket.clone();
         async move {
-            // Only remove the socket if this instance actually bound it --
+            // Only remove these if this instance actually bound the socket --
             // an instance that detected another live owner and disabled
-            // itself must never unlink a socket it doesn't own.
+            // itself must never unlink files it doesn't own.
             if owns_socket.load(Ordering::Acquire) {
                 std::fs::remove_file(&socket_path).ok();
+                std::fs::remove_file(&executable_location_path).ok();
             }
         }
     })
@@ -73,6 +89,7 @@ pub(crate) fn init(cx: &mut App) {
 
 async fn run_server(
     socket_path: PathBuf,
+    executable_location_path: PathBuf,
     owns_socket: Arc<AtomicBool>,
     store: Entity<AgentThreadStore>,
     cx: &mut AsyncApp,
@@ -111,6 +128,8 @@ async fn run_server(
         .with_context(|| format!("failed to set permissions on {socket_path:?}"))?;
     owns_socket.store(true, Ordering::Release);
 
+    write_executable_location(&executable_location_path);
+
     loop {
         let (stream, _) = listener
             .accept()
@@ -126,6 +145,30 @@ async fn run_server(
     }
 }
 
+/// Records where this Flint instance's own `flint-agent-control` executable
+/// lives, so an agent's CLI process can discover what command to run in the
+/// first place. Best-effort: if the executable can't be resolved (e.g. a
+/// dev build with no bundled binary alongside it), the server still starts
+/// -- an explicit `--socket` override or a PATH-installed binary can still
+/// reach it, just not via this file.
+fn write_executable_location(executable_location_path: &std::path::Path) {
+    let executable = match util::get_flint_agent_control_path() {
+        Ok(executable) => executable,
+        Err(error) => {
+            log::warn!(
+                "agent_threads: could not resolve flint-agent-control's own path, so agents \
+                 won't be able to discover it via the marker file: {error:#}"
+            );
+            return;
+        }
+    };
+    let location = agent_control_protocol::AgentControlLocation { executable };
+    let Some(json) = serde_json::to_string_pretty(&location).log_err() else {
+        return;
+    };
+    std::fs::write(executable_location_path, json).log_err();
+}
+
 async fn handle_connection(
     mut stream: UnixStream,
     store: Entity<AgentThreadStore>,
@@ -137,8 +180,13 @@ async fn handle_connection(
         .await
         .context("failed to read request")?;
 
-    let response = match serde_json::from_slice::<ControlEnvelope>(&request_bytes) {
-        Ok(envelope) => dispatch(&envelope, &store, cx).await,
+    let response = match serde_json::from_slice::<ControlRequest>(&request_bytes) {
+        Ok(request) => match get_peer_pid(&stream) {
+            Ok(peer_pid) => dispatch(peer_pid, &request, &store, cx).await,
+            Err(error) => error_response(format_args!(
+                "could not determine caller identity: {error:#}"
+            )),
+        },
         Err(error) => ControlResponse::Error {
             message: format!("malformed request: {error}"),
         },
@@ -153,23 +201,93 @@ async fn handle_connection(
     Ok(())
 }
 
+/// Returns the PID of whatever process is actually on the other end of
+/// `stream`, per the kernel -- not anything the client claims about itself.
+#[cfg(target_os = "macos")]
+fn get_peer_pid(stream: &UnixStream) -> Result<u32> {
+    let pid = nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::LocalPeerPid)
+        .context("failed to read the connecting process's PID (LOCAL_PEERPID)")?;
+    Ok(pid as u32)
+}
+
+#[cfg(target_os = "linux")]
+fn get_peer_pid(stream: &UnixStream) -> Result<u32> {
+    let credentials =
+        nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::PeerCredentials)
+            .context("failed to read the connecting process's credentials (SO_PEERCRED)")?;
+    Ok(credentials.pid() as u32)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn get_peer_pid(_stream: &UnixStream) -> Result<u32> {
+    anyhow::bail!("peer-credential resolution is not supported on this platform")
+}
+
+/// Walks up from `peer_pid`'s own process looking for a PID present in
+/// `tracked` (see `AgentThreadStore::live_terminal_pids`). `None` if no
+/// tracked PID appears within `MAX_ANCESTRY_DEPTH` hops -- including the
+/// common, harmless case where the ancestry walk starts before the walk
+/// even has a `tracked` entry to find, i.e. the caller connected before its
+/// own thread finished registering.
+fn resolve_caller_thread(peer_pid: u32, tracked: &HashMap<u32, EntityId>) -> Option<EntityId> {
+    if tracked.is_empty() {
+        return None;
+    }
+    let mut system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::nothing(),
+    );
+
+    let mut current = sysinfo::Pid::from_u32(peer_pid);
+    for _ in 0..MAX_ANCESTRY_DEPTH {
+        if let Some(&terminal_item_id) = tracked.get(&current.as_u32()) {
+            return Some(terminal_item_id);
+        }
+        let parent = system.process(current)?.parent()?;
+        if parent == current {
+            return None;
+        }
+        current = parent;
+    }
+    None
+}
+
 async fn dispatch(
-    envelope: &ControlEnvelope,
+    peer_pid: u32,
+    request: &ControlRequest,
     store: &Entity<AgentThreadStore>,
     cx: &mut AsyncApp,
 ) -> ControlResponse {
-    let resolution = store.read_with(cx, |store, _| store.control_token_state(&envelope.token));
-    let terminal_item_id = match resolution {
-        None => {
-            return ControlResponse::Error {
-                message: "unknown or expired control token".to_string(),
-            };
-        }
-        Some(ControlTokenState::Reserved) => return ControlResponse::NotReady,
-        Some(ControlTokenState::Bound(terminal_item_id)) => terminal_item_id,
+    let agent_control_enabled =
+        cx.update(|cx| crate::AgentThreadSettings::get_global(cx).agent_control);
+    if !agent_control_enabled {
+        return error_response("agent_threads.agent_control is disabled");
+    }
+
+    let tracked = store.read_with(cx, |store, cx| store.live_terminal_pids(cx));
+    let terminal_item_id = match resolve_caller_thread(peer_pid, &tracked) {
+        Some(terminal_item_id) => terminal_item_id,
+        None => return ControlResponse::NotReady,
     };
 
-    match &envelope.request {
+    dispatch_for_caller(terminal_item_id, request, store, cx).await
+}
+
+/// The authorization-independent core: everything past "which thread is
+/// this." Split out from `dispatch` so tests can exercise the retie/create
+/// business logic directly against a known thread, without needing a real
+/// peer-credentialed connection.
+async fn dispatch_for_caller(
+    terminal_item_id: EntityId,
+    request: &ControlRequest,
+    store: &Entity<AgentThreadStore>,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    match request {
         ControlRequest::RetieThread(request) => {
             handle_retie_thread(terminal_item_id, request, cx).await
         }
@@ -447,11 +565,13 @@ mod tests {
     }
 
     /// Spins up a workspace with one live, locally-spawned echo "codex"
-    /// thread and returns its real, store-minted control token -- the
-    /// fixture every dispatch-level test below builds on.
+    /// thread and returns its `terminal_item_id` -- the fixture every
+    /// `dispatch_for_caller`-level test below builds on, since that
+    /// function takes the caller's identity as a plain parameter rather
+    /// than resolving it itself.
     async fn spawn_live_codex_thread(
         cx: &mut TestAppContext,
-    ) -> (WindowHandle<MultiWorkspace>, EntityId, String) {
+    ) -> (WindowHandle<MultiWorkspace>, EntityId) {
         cx.executor().allow_parking();
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
@@ -462,75 +582,101 @@ mod tests {
         wait_for_live_count(cx, root, 1).await;
 
         let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
-        let token = cx.update(|cx| {
-            AgentThreadStore::global(cx).update(cx, |store, _| {
-                store.bind_control_token_for_test(terminal_item_id)
-            })
+        (window_handle, terminal_item_id)
+    }
+
+    #[test]
+    fn get_peer_pid_returns_the_actual_connecting_process() {
+        let temp_dir = tempfile::tempdir().expect("failed to create a temp dir for the socket");
+        let socket_path = temp_dir.path().join("get-peer-pid-test.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("failed to bind");
+
+        let accept_thread = std::thread::spawn(move || {
+            let (accepted, _) = listener.accept().expect("failed to accept");
+            accepted
         });
-        (window_handle, terminal_item_id, token)
+        let _client = std::os::unix::net::UnixStream::connect(&socket_path)
+            .expect("failed to connect to the test socket");
+        let accepted = accept_thread.join().expect("accept thread panicked");
+
+        // `get_peer_pid` takes our async `UnixStream`, not the std one used
+        // above to drive the synchronous accept -- convert via the same
+        // owned-fd path `net::async_net` itself uses.
+        let accepted: UnixStream = accepted
+            .try_into()
+            .expect("failed to wrap the accepted stream");
+        let peer_pid = get_peer_pid(&accepted).expect("failed to read the peer pid");
+        assert_eq!(
+            peer_pid,
+            std::process::id(),
+            "the peer should be this same test process, since it dialed the socket itself"
+        );
+    }
+
+    #[test]
+    fn resolve_caller_thread_walks_up_to_a_tracked_parent() {
+        let this_pid = std::process::id();
+        let mut child = smol::process::Command::new("sleep")
+            .arg("5")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn a real child process for the ancestry test");
+        let child_pid = child.id();
+
+        let tracked: HashMap<u32, EntityId> = HashMap::from_iter([(this_pid, EntityId::from(42))]);
+
+        let resolved = resolve_caller_thread(child_pid, &tracked);
+        child.kill().log_err();
+
+        assert_eq!(
+            resolved,
+            Some(EntityId::from(42)),
+            "the child's parent is this test process, which is the tracked PID"
+        );
+    }
+
+    #[test]
+    fn resolve_caller_thread_gives_up_after_the_depth_limit_or_no_match() {
+        // PID 1 (init/launchd) is never going to be in any realistic
+        // `tracked` map; walking from it should terminate (not hang) and
+        // report no match.
+        let tracked: HashMap<u32, EntityId> = HashMap::from_iter([(999_999, EntityId::from(1))]);
+        assert_eq!(resolve_caller_thread(1, &tracked), None);
+    }
+
+    #[test]
+    fn resolve_caller_thread_short_circuits_on_an_empty_tracked_map() {
+        assert_eq!(
+            resolve_caller_thread(std::process::id(), &HashMap::default()),
+            None
+        );
     }
 
     #[gpui::test]
-    async fn dispatch_rejects_an_unknown_token(cx: &mut TestAppContext) {
-        init_test(cx);
+    async fn dispatch_for_caller_rejects_a_nonexistent_retie_directory(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let envelope = ControlEnvelope {
-            token: "not-a-real-token".to_string(),
-            request: ControlRequest::RetieThread(RetieThreadRequest {
-                worktree: std::env::temp_dir(),
-            }),
-        };
+        let request = ControlRequest::RetieThread(RetieThreadRequest {
+            worktree: PathBuf::from("/definitely/does/not/exist/anywhere"),
+        });
         let mut async_cx = cx.to_async();
-        let response = dispatch(&envelope, &store, &mut async_cx).await;
+        let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
         assert!(matches!(response, ControlResponse::Error { .. }));
     }
 
     #[gpui::test]
-    async fn dispatch_reports_not_ready_for_a_reserved_token(cx: &mut TestAppContext) {
-        init_test(cx);
-        let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let token = store.update(cx, |store, _| store.reserve_control_token());
-        let envelope = ControlEnvelope {
-            token,
-            request: ControlRequest::RetieThread(RetieThreadRequest {
-                worktree: std::env::temp_dir(),
-            }),
-        };
-        let mut async_cx = cx.to_async();
-        let response = dispatch(&envelope, &store, &mut async_cx).await;
-        assert!(matches!(response, ControlResponse::NotReady));
-    }
-
-    #[gpui::test]
-    async fn handle_retie_thread_rejects_a_nonexistent_directory(cx: &mut TestAppContext) {
-        let (_window_handle, _terminal_item_id, token) = spawn_live_codex_thread(cx).await;
-        let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let envelope = ControlEnvelope {
-            token,
-            request: ControlRequest::RetieThread(RetieThreadRequest {
-                worktree: PathBuf::from("/definitely/does/not/exist/anywhere"),
-            }),
-        };
-        let mut async_cx = cx.to_async();
-        let response = dispatch(&envelope, &store, &mut async_cx).await;
-        assert!(matches!(response, ControlResponse::Error { .. }));
-    }
-
-    #[gpui::test]
-    async fn handle_retie_thread_moves_the_terminal_via_dispatch(cx: &mut TestAppContext) {
-        let (window_handle, terminal_item_id, token) = spawn_live_codex_thread(cx).await;
+    async fn dispatch_for_caller_moves_the_terminal_on_retie(cx: &mut TestAppContext) {
+        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let root_b = std::env::temp_dir().join("agent_control_dispatch_retie_test");
         std::fs::create_dir_all(&root_b).expect("failed to create the retie target directory");
 
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let envelope = ControlEnvelope {
-            token,
-            request: ControlRequest::RetieThread(RetieThreadRequest {
-                worktree: root_b.clone(),
-            }),
-        };
+        let request = ControlRequest::RetieThread(RetieThreadRequest {
+            worktree: root_b.clone(),
+        });
         let mut async_cx = cx.to_async();
-        let response = dispatch(&envelope, &store, &mut async_cx).await;
+        let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
         match response {
             ControlResponse::Ok(ControlSuccess::Retied { worktree }) => {
                 assert_eq!(worktree, root_b);
@@ -538,42 +684,36 @@ mod tests {
             other => panic!("expected a successful retie, got {other:?}"),
         }
         cx.run_until_parked();
-        let _ = (window_handle, terminal_item_id);
+        let _ = window_handle;
     }
 
     #[gpui::test]
-    async fn handle_create_thread_rejects_an_unknown_agent(cx: &mut TestAppContext) {
-        let (_window_handle, _terminal_item_id, token) = spawn_live_codex_thread(cx).await;
+    async fn dispatch_for_caller_rejects_an_unknown_agent(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let envelope = ControlEnvelope {
-            token,
-            request: ControlRequest::CreateThread(CreateThreadRequest {
-                worktree: CreateThreadWorktree::Current,
-                name: None,
-                agent: "not-a-real-agent".to_string(),
-                prompt: "do the thing".to_string(),
-            }),
-        };
+        let request = ControlRequest::CreateThread(CreateThreadRequest {
+            worktree: CreateThreadWorktree::Current,
+            name: None,
+            agent: "not-a-real-agent".to_string(),
+            prompt: "do the thing".to_string(),
+        });
         let mut async_cx = cx.to_async();
-        let response = dispatch(&envelope, &store, &mut async_cx).await;
+        let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
         assert!(matches!(response, ControlResponse::Error { .. }));
     }
 
     #[gpui::test]
-    async fn handle_create_thread_current_seeds_a_new_sibling_thread(cx: &mut TestAppContext) {
-        let (_window_handle, _terminal_item_id, token) = spawn_live_codex_thread(cx).await;
+    async fn dispatch_for_caller_seeds_a_new_sibling_thread(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let envelope = ControlEnvelope {
-            token,
-            request: ControlRequest::CreateThread(CreateThreadRequest {
-                worktree: CreateThreadWorktree::Current,
-                name: None,
-                agent: "codex".to_string(),
-                prompt: "do the thing".to_string(),
-            }),
-        };
+        let request = ControlRequest::CreateThread(CreateThreadRequest {
+            worktree: CreateThreadWorktree::Current,
+            name: None,
+            agent: "codex".to_string(),
+            prompt: "do the thing".to_string(),
+        });
         let mut async_cx = cx.to_async();
-        let response = dispatch(&envelope, &store, &mut async_cx).await;
+        let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
         match response {
             ControlResponse::Ok(ControlSuccess::ThreadCreated { worktree }) => {
                 assert_eq!(worktree, PathBuf::from(SPAWNING_TEST_ROOT.as_str()));
@@ -583,20 +723,41 @@ mod tests {
         wait_for_live_count(cx, SPAWNING_TEST_ROOT.as_str(), 2).await;
     }
 
+    #[gpui::test]
+    async fn dispatch_reports_not_ready_when_no_thread_is_tracked(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| AgentThreadStore::global(cx));
+        let request = ControlRequest::RetieThread(RetieThreadRequest {
+            worktree: std::env::temp_dir(),
+        });
+        let mut async_cx = cx.to_async();
+        // No thread has ever been spawned in this test, so no PID is
+        // tracked and any peer -- including this very test process -- gets
+        // NotReady rather than being matched to something it isn't.
+        let response = dispatch(std::process::id(), &request, &store, &mut async_cx).await;
+        assert!(matches!(response, ControlResponse::NotReady));
+    }
+
     /// The one real end-to-end test: talks to `run_server`/`handle_connection`
     /// over an actual Unix socket (a temp path, never the real
     /// `paths::data_dir()` one `control::init` binds), covering the wire
-    /// framing the dispatch-level tests above don't touch -- JSON encode on
-    /// the client, `read_to_end`-until-EOF plus decode on the server, and
-    /// the response written back. Also covers token rejection for an
-    /// unknown token over the real socket, not just via direct `dispatch`.
+    /// framing the `dispatch_for_caller`-level tests above don't touch --
+    /// JSON encode on the client, `read_to_end`-until-EOF plus decode on the
+    /// server, real peer-credential retrieval, and the response written
+    /// back. The connecting process here is the test binary itself, which
+    /// (correctly) can never resolve to the live thread's own tracked PID --
+    /// that thread's terminal process is a *child* of this test binary, not
+    /// an ancestor of it, so this exercises the NotReady/rejection path
+    /// rather than a successful match; `resolve_caller_thread`'s own tests
+    /// cover the match logic with a real ancestor relationship.
     #[gpui::test]
-    async fn control_server_round_trips_requests_over_a_real_socket(cx: &mut TestAppContext) {
-        let (_window_handle, _terminal_item_id, token) = spawn_live_codex_thread(cx).await;
+    async fn control_server_round_trips_a_request_over_a_real_socket(cx: &mut TestAppContext) {
+        let (_window_handle, _terminal_item_id) = spawn_live_codex_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
 
         let temp_dir = tempfile::tempdir().expect("failed to create a temp dir for the socket");
         let socket_path = temp_dir.path().join("agent-control-test.sock");
+        let executable_location_path = temp_dir.path().join("agent-control-test-executable.json");
         let owns_socket = Arc::new(AtomicBool::new(false));
 
         let server_cx = cx.to_async();
@@ -604,7 +765,15 @@ mod tests {
             let socket_path = socket_path.clone();
             let owns_socket = owns_socket.clone();
             async move |cx| {
-                run_server(socket_path, owns_socket, store, cx).await.ok();
+                run_server(
+                    socket_path,
+                    executable_location_path,
+                    owns_socket,
+                    store,
+                    cx,
+                )
+                .await
+                .ok();
             }
         });
 
@@ -622,61 +791,31 @@ mod tests {
             "the server should have bound the socket before the deadline"
         );
 
-        async fn round_trip(
-            socket_path: &std::path::Path,
-            envelope: &ControlEnvelope,
-        ) -> ControlResponse {
-            let mut stream = UnixStream::connect(socket_path)
-                .await
-                .expect("failed to connect to the test socket");
-            let payload = serde_json::to_vec(envelope).expect("failed to encode request");
-            stream
-                .write_all(&payload)
-                .await
-                .expect("failed to write request");
-            stream
-                .shutdown(std::net::Shutdown::Write)
-                .expect("failed to shut down the write half");
-            let mut response_bytes = Vec::new();
-            stream
-                .read_to_end(&mut response_bytes)
-                .await
-                .expect("failed to read response");
-            serde_json::from_slice(&response_bytes).expect("failed to decode response")
-        }
-
-        let retie_response = round_trip(
-            &socket_path,
-            &ControlEnvelope {
-                token: token.clone(),
-                request: ControlRequest::RetieThread(RetieThreadRequest {
-                    worktree: std::env::temp_dir(),
-                }),
-            },
-        )
-        .await;
-        cx.run_until_parked();
+        let mut stream = UnixStream::connect(&socket_path)
+            .await
+            .expect("failed to connect to the test socket");
+        let request = ControlRequest::RetieThread(RetieThreadRequest {
+            worktree: std::env::temp_dir(),
+        });
+        let payload = serde_json::to_vec(&request).expect("failed to encode request");
+        stream
+            .write_all(&payload)
+            .await
+            .expect("failed to write request");
+        stream
+            .shutdown(std::net::Shutdown::Write)
+            .expect("failed to shut down the write half");
+        let mut response_bytes = Vec::new();
+        stream
+            .read_to_end(&mut response_bytes)
+            .await
+            .expect("failed to read response");
+        let response: ControlResponse =
+            serde_json::from_slice(&response_bytes).expect("failed to decode response");
         assert!(
-            matches!(
-                retie_response,
-                ControlResponse::Ok(ControlSuccess::Retied { .. })
-            ),
-            "expected a successful retie over the real socket, got {retie_response:?}"
-        );
-
-        let unknown_token_response = round_trip(
-            &socket_path,
-            &ControlEnvelope {
-                token: "an-unknown-token".to_string(),
-                request: ControlRequest::RetieThread(RetieThreadRequest {
-                    worktree: std::env::temp_dir(),
-                }),
-            },
-        )
-        .await;
-        assert!(
-            matches!(unknown_token_response, ControlResponse::Error { .. }),
-            "expected an unknown token to be rejected over the real socket, got {unknown_token_response:?}"
+            matches!(response, ControlResponse::NotReady),
+            "this test process is a child, not an ancestor, of the tracked terminal's process, \
+             so it can never resolve -- got {response:?}"
         );
     }
 }

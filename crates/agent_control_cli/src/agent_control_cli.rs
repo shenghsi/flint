@@ -6,13 +6,14 @@
 //! (but does nothing) on Windows, where it participates in CI as a workspace
 //! member without ever being bundled.
 //!
-//! Discovers its socket and token from the marker file Flint writes into
-//! the thread's own working directory (`agent_control_protocol::MARKER_FILE_PATH`)
-//! rather than environment variables: some coding-agent CLIs run their own
-//! shell commands through a subprocess exec that silently strips custom env
-//! vars, which a plain file read isn't subject to. `--socket`/`--token`
-//! remain as explicit overrides for testing or an agent that already knows
-//! them another way.
+//! Sends bare, unauthenticated-looking requests on purpose: the server
+//! establishes caller identity itself, from the kernel-reported PID of
+//! whatever process actually connected to the socket (see
+//! `agent_threads::control`'s peer-credential resolution), not from
+//! anything this binary presents. There is nothing here to mint, deliver,
+//! or leak. `--socket` is computed the same way the server computes it
+//! (`agent_control_protocol::socket_path()`) and is only ever an override
+//! for testing.
 
 use std::path::PathBuf;
 
@@ -28,14 +29,10 @@ use clap::{Parser, Subcommand, ValueEnum};
     about = "Control Flint's agent threads panel from an agent's own CLI process"
 )]
 struct Cli {
-    /// Unix socket to connect to. Defaults to the `socket` field of the
-    /// marker file in the current directory.
+    /// Unix socket to connect to. Defaults to the same path Flint's control
+    /// server computes and binds -- only useful to override for testing.
     #[arg(long, global = true)]
     socket: Option<PathBuf>,
-    /// Per-thread token to authenticate with. Defaults to the `token` field
-    /// of the marker file in the current directory.
-    #[arg(long, global = true)]
-    token: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -86,7 +83,6 @@ impl From<WorktreeArg> for CreateThreadWorktree {
 fn main() {
     let cli = Cli::parse();
     let socket_override = cli.socket;
-    let token_override = cli.token;
     let (request, wants_json) = match cli.command {
         Command::RetieThread { worktree, json } => (
             ControlRequest::RetieThread(RetieThreadRequest { worktree }),
@@ -109,7 +105,7 @@ fn main() {
         ),
     };
 
-    match run(request, socket_override, token_override) {
+    match run(request, socket_override) {
         Ok(response) => std::process::exit(print_response(&response, wants_json)),
         Err(error) => {
             eprintln!("flint-agent-control: {error:#}");
@@ -122,16 +118,14 @@ fn main() {
 fn run(
     request: ControlRequest,
     socket_override: Option<PathBuf>,
-    token_override: Option<String>,
 ) -> anyhow::Result<ControlResponse> {
-    unix::run(request, socket_override, token_override)
+    unix::run(request, socket_override)
 }
 
 #[cfg(not(unix))]
 fn run(
     _request: ControlRequest,
     _socket_override: Option<PathBuf>,
-    _token_override: Option<String>,
 ) -> anyhow::Result<ControlResponse> {
     anyhow::bail!("flint-agent-control is not supported on this platform")
 }
@@ -152,7 +146,10 @@ fn print_response(response: &ControlResponse, wants_json: bool) -> i32 {
             println!("Created thread in {}", worktree.display());
         }
         ControlResponse::NotReady => {
-            eprintln!("flint-agent-control: thread registration did not complete in time");
+            eprintln!(
+                "flint-agent-control: Flint did not recognize this caller in time -- is this \
+                 running inside a Flint agent thread terminal?"
+            );
         }
         ControlResponse::Error { message } => {
             eprintln!("flint-agent-control: {message}");
@@ -176,15 +173,13 @@ mod unix {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use agent_control_protocol::{
-        AgentControlHandoff, ControlEnvelope, ControlRequest, ControlResponse, MARKER_FILE_PATH,
-    };
+    use agent_control_protocol::{ControlRequest, ControlResponse};
     use anyhow::Context as _;
 
-    /// Bounded backoff for a `NotReady` response, which means the server
-    /// recognized the token but the thread's registration hasn't landed yet
-    /// (see `ControlTokenState::Reserved`). Keeping the wait client-side
-    /// avoids parking requests inside the store.
+    /// Bounded backoff for a `NotReady` response, which means Flint hasn't
+    /// (yet, or ever will) matched the connecting process's PID ancestry to
+    /// a registered thread. Keeping the wait client-side avoids parking
+    /// requests inside the server.
     const RETRY_BACKOFFS: &[Duration] = &[
         Duration::from_millis(250),
         Duration::from_millis(500),
@@ -194,26 +189,12 @@ mod unix {
     pub(crate) fn run(
         request: ControlRequest,
         socket_override: Option<PathBuf>,
-        token_override: Option<String>,
     ) -> anyhow::Result<ControlResponse> {
-        let (socket_path, token) = match (socket_override, token_override) {
-            (Some(socket_path), Some(token)) => (socket_path, token),
-            (socket_override, token_override) => {
-                let handoff = read_marker_file().context(
-                    "could not determine the control socket or token -- pass --socket and \
-                     --token explicitly, or run this from the working directory of a thread \
-                     Flint launched (which should contain a marker file)",
-                )?;
-                (
-                    socket_override.unwrap_or(handoff.socket),
-                    token_override.unwrap_or(handoff.token),
-                )
-            }
-        };
+        let socket_path = socket_override.unwrap_or_else(agent_control_protocol::socket_path);
 
         let mut attempt = 0;
         loop {
-            let response = send_once(&socket_path, &token, &request)?;
+            let response = send_once(&socket_path, &request)?;
             if !matches!(response, ControlResponse::NotReady) || attempt >= RETRY_BACKOFFS.len() {
                 return Ok(response);
             }
@@ -222,18 +203,8 @@ mod unix {
         }
     }
 
-    fn read_marker_file() -> anyhow::Result<AgentControlHandoff> {
-        let cwd = std::env::current_dir().context("failed to determine the current directory")?;
-        let marker_path = cwd.join(MARKER_FILE_PATH);
-        let contents = std::fs::read_to_string(&marker_path)
-            .with_context(|| format!("failed to read {}", marker_path.display()))?;
-        serde_json::from_str(&contents)
-            .with_context(|| format!("failed to parse {}", marker_path.display()))
-    }
-
     fn send_once(
         socket_path: &std::path::Path,
-        token: &str,
         request: &ControlRequest,
     ) -> anyhow::Result<ControlResponse> {
         let mut stream = UnixStream::connect(socket_path).with_context(|| {
@@ -242,11 +213,7 @@ mod unix {
                 socket_path.display()
             )
         })?;
-        let envelope = ControlEnvelope {
-            token: token.to_string(),
-            request: request.clone(),
-        };
-        let payload = serde_json::to_vec(&envelope).context("failed to encode request")?;
+        let payload = serde_json::to_vec(request).context("failed to encode request")?;
         stream
             .write_all(&payload)
             .context("failed to send request")?;
