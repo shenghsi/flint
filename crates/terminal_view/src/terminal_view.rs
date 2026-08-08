@@ -393,6 +393,33 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Refreshes `self.workspace`/`self.project` and rebuilds
+    /// `_terminal_subscriptions` when this item's owning workspace has
+    /// genuinely changed. No-ops on the initial add (workspace already
+    /// matches), so a plain `move_item` between panes of the *same*
+    /// workspace never rebuilds subscriptions needlessly.
+    ///
+    /// Rebuilding the subscriptions is required, not optional:
+    /// `subscribe_for_terminal_events` captures `workspace: WeakEntity<Workspace>`
+    /// by value into a `move` closure at subscribe time, so reassigning
+    /// `self.workspace` alone does not update that already-captured copy --
+    /// terminal-originated navigation (`open_path_like_target`,
+    /// `hover_path_like_target`) would keep resolving against the old
+    /// workspace even after the tab visually moved to a new one. Dropping
+    /// the old `Subscription`s (by overwriting `_terminal_subscriptions`)
+    /// unsubscribes them immediately, so the stale closures can never fire
+    /// again regardless.
+    fn reparent(&mut self, workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace_handle = workspace.weak_handle();
+        if self.workspace == workspace_handle {
+            return;
+        }
+        self.workspace = workspace_handle.clone();
+        self.project = workspace.project().downgrade();
+        self._terminal_subscriptions =
+            subscribe_for_terminal_events(&self.terminal, workspace_handle, window, cx);
+    }
+
     pub fn is_agent_thread(&self) -> bool {
         self.agent_thread
     }
@@ -1911,9 +1938,15 @@ impl Item for TerminalView {
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Runs on every add, not only a move (the initial construction also
+        // triggers this, redundantly but harmlessly re-subscribing to the
+        // same workspace it was just built with) -- `reparent` no-ops
+        // unless the owning workspace actually changed.
+        self.reparent(workspace, window, cx);
+
         if self.terminal().read(cx).task().is_none() {
             if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
                 log::debug!(
@@ -2464,6 +2497,102 @@ mod tests {
     // Working directory calculation tests
 
     // No Worktrees in project -> home_dir()
+    #[gpui::test]
+    async fn reparent_updates_workspace_and_project_and_rebuilds_subscriptions(
+        cx: &mut TestAppContext,
+    ) {
+        let (project_a, workspace_a, window_handle) = init_test_with_window(cx).await;
+        let params = cx.update(AppState::test);
+        let project_b = Project::test(params.fs.clone(), [], cx).await;
+
+        let terminal_view = window_handle
+            .update(cx, |_, window, cx| {
+                let terminal = cx.new(|cx| {
+                    terminal::TerminalBuilder::new_display_only(
+                        CursorShape::default(),
+                        terminal::terminal_settings::AlternateScroll::On,
+                        None,
+                        0,
+                        cx.background_executor(),
+                        PathStyle::local(),
+                    )
+                    .subscribe(cx)
+                });
+                cx.new(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        workspace_a.downgrade(),
+                        None,
+                        project_a.downgrade(),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("window should be live");
+
+        terminal_view.read_with(cx, |view, _| {
+            assert_eq!(view.workspace, workspace_a.downgrade());
+            assert_eq!(view.project, project_a.downgrade());
+        });
+        let subscription_count_before =
+            terminal_view.read_with(cx, |view, _| view._terminal_subscriptions.len());
+
+        let workspace_b = window_handle
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| Workspace::test_new(project_b.clone(), window, cx))
+            })
+            .expect("window should be live");
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                workspace_b.update(cx, |workspace_b, cx| {
+                    terminal_view.update(cx, |view, cx| {
+                        view.reparent(workspace_b, window, cx);
+                    });
+                });
+            })
+            .expect("window should be live");
+
+        terminal_view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.workspace,
+                workspace_b.downgrade(),
+                "reparent should update the owning workspace"
+            );
+            assert_eq!(
+                view.project,
+                project_b.downgrade(),
+                "reparent should update the owning project"
+            );
+            assert_ne!(
+                view.workspace,
+                workspace_a.downgrade(),
+                "the terminal must no longer report itself as owned by the original workspace"
+            );
+            assert_eq!(
+                view._terminal_subscriptions.len(),
+                subscription_count_before,
+                "the subscription set should be rebuilt (same shape), not merely appended to"
+            );
+        });
+
+        // Reparenting to the same workspace again must no-op rather than
+        // needlessly rebuild subscriptions a second time.
+        window_handle
+            .update(cx, |_, window, cx| {
+                workspace_b.update(cx, |workspace_b, cx| {
+                    terminal_view.update(cx, |view, cx| {
+                        view.reparent(workspace_b, window, cx);
+                    });
+                });
+            })
+            .expect("window should be live");
+        terminal_view.read_with(cx, |view, _| {
+            assert_eq!(view.workspace, workspace_b.downgrade());
+        });
+    }
+
     #[gpui::test]
     async fn no_worktree(cx: &mut TestAppContext) {
         let (project, workspace) = init_test(cx).await;
