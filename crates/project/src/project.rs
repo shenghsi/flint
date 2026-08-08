@@ -4818,7 +4818,16 @@ impl Project {
         &self.git_store
     }
 
-    #[cfg(feature = "test-support")]
+    /// Resolves once every worktree's filesystem scan has completed and
+    /// every currently-known git repository's job queue has flushed at
+    /// least once past that point (via `Repository::barrier`) -- i.e. git
+    /// state (branches, worktrees, status) reflects reality rather than
+    /// construction-time defaults. Production-safe: despite the name and
+    /// its original test-only origin, nothing in the body depends on
+    /// test-support APIs (`Worktree::scan_complete`, `Repository::barrier`,
+    /// and `repositories`/`worktrees` are all plain production methods) --
+    /// every call site was simply a test, not a technical requirement, so
+    /// this was declassified rather than reimplemented with a new heuristic.
     pub fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
         use futures::future::join_all;
         cx.spawn(async move |this, cx| {

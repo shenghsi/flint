@@ -76,7 +76,38 @@ during planning (not the diverged working tree).
   (failed-to-seed) return — worth fixing when adding a caller that needs to report
   failure back to the calling CLI process.
 
-## Stage 0 — Prerequisite: a production git-readiness signal
+## Stage 0 — Prerequisite: a production git-readiness signal (IMPLEMENTED)
+
+**Implemented differently from the original plan below, after the original plan's own
+premise turned out to be wrong.** The plan was to add a new `initial_scan_complete` bit
+derived from `Repository.scan_id`, on the belief that the existing `scan_id > 2`
+convention in `handle_subscribe_self` marked "initial snapshot loaded". A real
+`#[gpui::test]` against a `FakeFs` repo disproved this immediately:
+`Project::git_scans_complete(cx)` (the trusted, extensively-used-in-tests reference
+definition of "git state has loaded") resolves at `scan_id == 2`, not `> 2` — so the
+borrowed threshold would have permanently waited one tick too long, some tests confirming
+readiness before my check would.
+
+Rather than chase a corrected magic number, traced why `git_scans_complete` was
+`#[cfg(feature = "test-support")]` in the first place: every one of its ~50 call sites
+across the codebase is a test, and its body (`Project::worktrees`, `Worktree::scan_complete`,
+`Project::repositories`, `Repository::barrier`) has **zero** test-only dependencies. The
+gate was a leftover visibility default, not a technical requirement. Fix: **removed the
+`#[cfg(feature = "test-support")]` attribute from `Project::git_scans_complete`
+(`project.rs:4821`)**, making the existing, already-correct, already-widely-tested
+implementation directly callable from production `agent_threads` code. Verified the full
+`project` test suite (`--lib` and the 226-test `--features test-support` integration
+suite) still passes unchanged.
+
+This covers the *async, awaitable* need (restore routing, which awaits readiness once
+before resolving ties). The *synchronous, per-render* need (`TieResolution.git_ready`) is
+still open and left to Stage 1: `git_scans_complete` returns a `Task<()>`, not a
+poll-able flag, so the panel will cache "has resolved once" in local state via a
+one-time-per-repository spawned task + `cx.notify()`, the standard GPUI pattern — not a
+new primitive on `GitStore`/`Repository`.
+
+<details>
+<summary>Original plan (kept for context; superseded by the above)</summary>
 
 Both tie-resolution consumers depend on knowing whether git state has loaded, and no
 production API provides that today (`Project::git_scans_complete` is
@@ -85,6 +116,8 @@ bit plus a corresponding `GitStoreEvent` to `GitStore`/`Repository`, so "loaded,
 repo has no linked worktrees" is distinguishable from "not loaded yet". Details and
 rationale in the "Ordering hazards" note under Stage 1. This lands first — the deleted-
 worktree fallback cannot be implemented correctly without it.
+
+</details>
 
 ## Stage 1 — Explicit worktree tie + single grouping mode + persistence
 
@@ -385,24 +418,22 @@ without them having asked for anything.
 
 > **Ordering hazards to respect during implementation.**
 >
-> *Git state not yet loaded — and there is no production API for this yet.* The liveness
-> check is only meaningful once git state has loaded. If restore routing runs first, the
-> worktree set is empty, *every* tie looks dangling, and all threads wrongly collapse into
-> the main worktree. **`Project::git_scans_complete` cannot be used for this**: it is
-> `#[cfg(feature = "test-support")]` (`project.rs:4821`), so production `agent_threads`
-> cannot call it. Nor does the current git API expose a readiness bit distinguishing
-> "loaded, and this repo genuinely has no linked worktrees" from "not loaded yet" — which
-> is exactly the distinction the `git_ready` flag in `TieResolution` requires.
+> *Git state not yet loaded.* The liveness check is only meaningful once git state has
+> loaded. If restore routing runs first, the worktree set is empty, *every* tie looks
+> dangling, and all threads wrongly collapse into the main worktree. **Resolved in
+> Stage 0**: `Project::git_scans_complete(cx)` is now a plain production `Task<()>`
+> (the `#[cfg(feature = "test-support")]` gate was removed — see Stage 0, it was a
+> visibility leftover, not a technical requirement). Restore routing awaits it for the
+> restoring workspace's project before resolving any tie for that workspace.
 >
-> **Prerequisite task, before either consumer can be implemented:** add a production
-> readiness signal to `GitStore`/`Repository` — an explicit `initial_scan_complete` bit
-> plus the corresponding `GitStoreEvent` (the event enum at `git_store.rs:491-501`
-> already carries `RepositoryAdded`/`RepositoryUpdated`, but neither means "the initial
-> enumeration finished"). `Worktree::scan_complete()` (`worktree.rs:1452`) is production
-> but only covers worktree scanning, not git repository enumeration, so it is not a
-> substitute. Restore then awaits that signal for the restoring workspace's repository,
-> and panel rendering feeds it into `git_ready` — treating "unloaded" as "keep the raw
-> tie", never as "deleted".
+> Panel rendering needs a *synchronous* per-render `git_ready` rather than something to
+> await. Since `git_scans_complete` is inherently a `Task`, not a poll-able flag, the
+> panel caches "has resolved once, for this repository" in local state: spawn
+> `project.git_scans_complete(cx)` once per repository the panel first observes, flip a
+> cached bool + `cx.notify()` when it resolves, and feed that cached bool into
+> `TieResolution.git_ready` on every subsequent render. Before the first resolution,
+> `git_ready` is `false` and the fallback is suppressed (raw tie kept) exactly as this
+> section requires.
 >
 > *Condition 2 is racy at restore, deliberately.* During startup, "a workspace is open at
 > this path" depends on how far workspace restoration has progressed, so the two consumers
