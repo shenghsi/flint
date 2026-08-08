@@ -82,7 +82,7 @@ if [[ "$(uname -m)" == "aarch64" ]]; then
 else
     export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
 fi
-cargo build --release --target "${target_triple}" --package flint --package cli
+cargo build --release --target "${target_triple}" --package flint --package cli --package agent_control_cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 if [[ "$remote_server_triple" == "$musl_triple" ]]; then
@@ -97,6 +97,7 @@ cargo build --release --target "${remote_server_triple}" --package remote_server
 # doesn't understand CREL sections produced by newer LLVM.
 llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/flint"
 llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
+llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/flint-agent-control"
 llvm-objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
@@ -122,6 +123,7 @@ flint_dir="${temp_dir}/flint$suffix.app"
 mkdir -p "${flint_dir}/bin" "${flint_dir}/libexec"
 cp "${target_dir}/${target_triple}/release/flint" "${flint_dir}/libexec/flint-editor"
 cp "${target_dir}/${target_triple}/release/cli" "${flint_dir}/bin/flint"
+cp "${target_dir}/${target_triple}/release/flint-agent-control" "${flint_dir}/libexec/flint-agent-control"
 
 # Libs
 # Bundle libstdc++ so older supported systems can run binaries built with our
