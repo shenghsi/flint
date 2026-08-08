@@ -1535,6 +1535,9 @@
     "reopen_sessions_on_startup": "matching_workspace",
     // Where to dock the Agent Threads panel. Can be `left` or `right`.
     "dock": "left",
+    // Allow a local agent thread's own CLI process to ask Flint to re-tie
+    // itself to a different worktree or spawn a sibling thread.
+    "agent_control": true,
   },
   // Settings specific to the terminal
   "terminal": {
