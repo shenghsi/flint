@@ -7,18 +7,39 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// Environment variable naming the Unix socket path a spawned agent thread's
-/// terminal should connect to.
-pub const SOCKET_ENV_VAR: &str = "FLINT_AGENT_CONTROL_SOCKET";
+/// Path, relative to a spawned agent thread's own working directory, of the
+/// marker file Flint writes so the thread's CLI process can discover its
+/// control channel without relying on environment variables.
+///
+/// Env vars were the original design, but some coding-agent CLIs run their
+/// own shell commands through a sandboxed subprocess exec that silently
+/// strips custom environment variables (observed with Codex CLI's shell
+/// execution path, independent of its documented `shell_environment_policy`
+/// setting -- explicit `inherit = "all"` did not fix it). A plain file read
+/// and command-line arguments are not subject to that filtering, so this
+/// marker file plus explicit `--socket`/`--token` flags on the CLI replace
+/// the env-var handoff entirely.
+///
+/// Written fresh before each thread's terminal spawns and removed when the
+/// thread closes (see `AgentThreadStore::begin_shutdown`); the containing
+/// `.flint/` directory is created if needed but never removed, so it can
+/// hold other per-worktree marker files later without every write racing a
+/// directory-cleanup. A worktree shared by two simultaneously-live threads
+/// is the one known collision case: the second spawn's marker file
+/// overwrites the first's, breaking the older thread's control channel
+/// until it's respawned.
+pub const MARKER_FILE_PATH: &str = ".flint/flint-agent-control.json";
 
-/// Environment variable naming the per-thread token a spawned agent thread's
-/// terminal should present when connecting. The token alone resolves caller
-/// identity server-side -- nothing else the client sends is trusted.
-pub const TOKEN_ENV_VAR: &str = "FLINT_AGENT_CONTROL_TOKEN";
-
-/// Environment variable naming the resolved path to the `flint-agent-control`
-/// executable itself, as injected into a spawned agent thread's terminal.
-pub const EXECUTABLE_ENV_VAR: &str = "FLINT_AGENT_CONTROL";
+/// Contents of the marker file at `MARKER_FILE_PATH`, letting a thread's CLI
+/// process discover everything it needs (its own executable's resolved
+/// path, the control socket to connect to, and its per-thread token) with a
+/// single file read, immune to environment-variable filtering.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentControlHandoff {
+    pub executable: PathBuf,
+    pub socket: PathBuf,
+    pub token: String,
+}
 
 /// One request sent over the socket, wrapped with the token that identifies
 /// the calling thread. The token travels alongside the request rather than
@@ -90,6 +111,22 @@ pub enum ControlSuccess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_control_handoff_round_trips_through_json() {
+        let handoff = AgentControlHandoff {
+            executable: PathBuf::from("/Applications/Flint.app/Contents/MacOS/flint-agent-control"),
+            socket: PathBuf::from(
+                "/Users/example/Library/Application Support/Flint/agent-control-stable.sock",
+            ),
+            token: "abc123".to_string(),
+        };
+        let json = serde_json::to_string(&handoff).expect("serialize");
+        let decoded: AgentControlHandoff = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.executable, handoff.executable);
+        assert_eq!(decoded.socket, handoff.socket);
+        assert_eq!(decoded.token, handoff.token);
+    }
 
     #[test]
     fn retie_thread_envelope_round_trips_through_json() {

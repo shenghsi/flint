@@ -444,9 +444,13 @@ struct ThreadEntry {
     window: Option<WindowHandle<MultiWorkspace>>,
     remote_process: Option<RemoteAgentProcess>,
     egress: Option<AgentEgressLease>,
-    /// This thread's agent-control token, if the control server injected one
+    /// This thread's agent-control token, if the control server minted one
     /// at spawn time -- see `ControlTokenState`.
     control_token: Option<String>,
+    /// Path to this thread's agent-control marker file (see
+    /// `agent_control_protocol::MARKER_FILE_PATH`), if one was written at
+    /// spawn time. Removed on shutdown.
+    control_marker_path: Option<PathBuf>,
 }
 
 /// Lifecycle of a per-thread agent-control token (see `crate::control`).
@@ -954,6 +958,7 @@ impl AgentThreadStore {
         remote_process: Option<RemoteAgentProcess>,
         egress: Option<AgentEgressLease>,
         control_token: Option<String>,
+        control_marker_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
         let terminal_item_id = terminal_view.entity_id();
@@ -985,6 +990,7 @@ impl AgentThreadStore {
                 remote_process,
                 egress,
                 control_token,
+                control_marker_path,
             },
         );
 
@@ -1039,6 +1045,9 @@ impl AgentThreadStore {
         self.subscriptions.remove(&terminal_item_id);
         if let Some(token) = &entry.control_token {
             self.control_tokens.remove(token);
+        }
+        if let Some(marker_path) = &entry.control_marker_path {
+            std::fs::remove_file(marker_path).log_err();
         }
         cx.emit(AgentThreadStoreEvent::ThreadClosed {
             kind_id: entry.metadata.kind_id,
@@ -1095,7 +1104,7 @@ impl AgentThreadStore {
 
     /// Test-only: mints and binds a control token directly onto a live
     /// thread, bypassing the real spawn-time gate in
-    /// `inject_agent_control_env` (which requires resolving a real bundled
+    /// `write_agent_control_marker` (which requires resolving a real bundled
     /// `flint-agent-control` executable -- never present under `cargo test`,
     /// matching this codebase's established convention of never unit-testing
     /// `get_flint_cli_path`-style bundle-layout resolution). This exercises
@@ -2409,43 +2418,59 @@ fn prepare_remote_thread_process(
     RemoteAgentProcess::prepare(command, remote_connection, lifecycle_id).map(Some)
 }
 
-/// Mints a fresh agent-control token and injects its env vars (executable
-/// path, socket path, token) into a new local thread's launch command, if
-/// the control server is available for this launch -- local project only,
-/// Unix host, and `agent_threads.agent_control` enabled. Returns the minted
-/// token (also needed by `register` to promote it from `Reserved` to
-/// `Bound`), or `None` if any gate fails, in which case no env vars are
-/// injected and no token is minted.
-fn inject_agent_control_env(
-    env: &mut HashMap<String, String>,
+/// Mints a fresh agent-control token and writes the marker file (see
+/// `agent_control_protocol::MARKER_FILE_PATH`) into a new local thread's own
+/// working directory, if the control server is available for this launch --
+/// local project only, Unix host, and `agent_threads.agent_control` enabled.
+///
+/// A file rather than environment variables: some coding-agent CLIs run
+/// their own shell commands through a sandboxed subprocess exec that
+/// silently strips custom env vars (observed with Codex CLI, independent of
+/// its documented `shell_environment_policy` setting), which a plain file
+/// read is not subject to.
+///
+/// Returns the minted token (also needed by `register` to promote it from
+/// `Reserved` to `Bound`) and the marker file's path (needed to remove it on
+/// shutdown), or `None` if any gate fails or the write itself fails, in
+/// which case no token is minted.
+fn write_agent_control_marker(
+    cwd: &Path,
     remote_client: Option<&Entity<remote::RemoteClient>>,
     cx: &mut Context<Workspace>,
-) -> Option<String> {
+) -> Option<(String, PathBuf)> {
     #[cfg(unix)]
     {
         if remote_client.is_some() || !AgentThreadSettings::get_global(cx).agent_control {
             return None;
         }
-        let executable_path = util::get_flint_agent_control_path().log_err()?;
+        let executable = util::get_flint_agent_control_path().log_err()?;
         let store = AgentThreadStore::global(cx);
         let token = store.update(cx, |store, _| store.reserve_control_token());
-        env.insert(
-            agent_control_protocol::EXECUTABLE_ENV_VAR.to_string(),
-            executable_path.display().to_string(),
-        );
-        env.insert(
-            agent_control_protocol::SOCKET_ENV_VAR.to_string(),
-            crate::control::socket_path().display().to_string(),
-        );
-        env.insert(
-            agent_control_protocol::TOKEN_ENV_VAR.to_string(),
-            token.clone(),
-        );
-        Some(token)
+        let handoff = agent_control_protocol::AgentControlHandoff {
+            executable,
+            socket: crate::control::socket_path(),
+            token: token.clone(),
+        };
+        let marker_path = cwd.join(agent_control_protocol::MARKER_FILE_PATH);
+        let Some(json) = serde_json::to_string_pretty(&handoff).log_err() else {
+            store.update(cx, |store, _| store.release_control_token(&token));
+            return None;
+        };
+        if let Some(marker_dir) = marker_path.parent()
+            && std::fs::create_dir_all(marker_dir).log_err().is_none()
+        {
+            store.update(cx, |store, _| store.release_control_token(&token));
+            return None;
+        }
+        if std::fs::write(&marker_path, json).log_err().is_none() {
+            store.update(cx, |store, _| store.release_control_token(&token));
+            return None;
+        }
+        Some((token, marker_path))
     }
     #[cfg(not(unix))]
     {
-        let _ = (env, remote_client, cx);
+        let _ = (cwd, remote_client, cx);
         None
     }
 }
@@ -2453,12 +2478,17 @@ fn inject_agent_control_env(
 /// Drops an agent-control token's reservation after a spawn or registration
 /// failure -- the `?` paths in `spawn_thread_task_inner`'s async block below
 /// -- so a failed launch doesn't leave a permanently `Reserved` (never
-/// `Bound`, never removed) entry sitting in the store.
-fn release_reserved_control_token(token: Option<&str>, cx: &mut AsyncWindowContext) {
-    let Some(token) = token else { return };
+/// `Bound`, never removed) entry sitting in the store. Also removes the
+/// marker file already written for it, if any, so a failed launch doesn't
+/// leave a stale marker behind either.
+fn release_reserved_control(control: Option<&(String, PathBuf)>, cx: &mut AsyncWindowContext) {
+    let Some((token, marker_path)) = control else {
+        return;
+    };
     if let Ok(store) = cx.update(|_, cx| AgentThreadStore::global(cx)) {
         store.update(cx, |store, _| store.release_control_token(token));
     }
+    std::fs::remove_file(marker_path).log_err();
 }
 
 fn spawn_thread_task_inner(
@@ -2502,7 +2532,7 @@ fn spawn_thread_task_inner(
         Ok(remote_process) => remote_process,
         Err(error) => return Task::ready(Err(error)),
     };
-    let control_token = inject_agent_control_env(&mut command.env, remote_client.as_ref(), cx);
+    let control = write_agent_control_marker(&cwd, remote_client.as_ref(), cx);
     let mut task = SpawnInTerminal {
         full_label: label.clone(),
         label,
@@ -2557,12 +2587,12 @@ fn spawn_thread_task_inner(
         let terminal_view = match terminal_view_task.await {
             Ok((_, terminal_view)) => terminal_view,
             Err(error) => {
-                release_reserved_control_token(control_token.as_deref(), cx);
+                release_reserved_control(control.as_ref(), cx);
                 return Err(error);
             }
         };
         let Some(terminal_view) = terminal_view.upgrade() else {
-            release_reserved_control_token(control_token.as_deref(), cx);
+            release_reserved_control(control.as_ref(), cx);
             return Err(anyhow!("agent thread terminal closed before registration"));
         };
         terminal_view.update(cx, |terminal_view, cx| {
@@ -2572,9 +2602,13 @@ fn spawn_thread_task_inner(
         let store = match cx.update(|_, cx| AgentThreadStore::global(cx)) {
             Ok(store) => store,
             Err(error) => {
-                release_reserved_control_token(control_token.as_deref(), cx);
+                release_reserved_control(control.as_ref(), cx);
                 return Err(error);
             }
+        };
+        let (control_token, control_marker_path) = match control {
+            Some((token, marker_path)) => (Some(token), Some(marker_path)),
+            None => (None, None),
         };
         store.update(cx, |store, cx| {
             store.register(
@@ -2590,6 +2624,7 @@ fn spawn_thread_task_inner(
                 remote_process,
                 egress,
                 control_token,
+                control_marker_path,
                 cx,
             );
         });

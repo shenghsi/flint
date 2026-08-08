@@ -13,6 +13,7 @@
 .claude/settings.local.json
 .envrc
 .flatpak-builder
+.flint/
 .idea
 .netrc
 *.pyc
