@@ -47,6 +47,13 @@ pub struct AgentThreadMetadata {
     pub kind_id: &'static str,
     pub title: SharedString,
     pub project_root: PathBuf,
+    /// The worktree this thread is grouped under in the Agent Threads panel.
+    /// Usually equal to `project_root`'s owning worktree, but can diverge:
+    /// `terminal.working_directory = current_file_directory` can put
+    /// `project_root` in a subdirectory rather than a worktree root, and a
+    /// retie (see `AgentThreadStore::commit_retie`) changes this field
+    /// without moving the process's real cwd.
+    pub tied_worktree_root: PathBuf,
     pub launched_at: SystemTime,
     /// The thread's CLI session id, when Flint knows it: either the id the
     /// thread was resumed from, or the id assigned at launch via the kind's
@@ -711,6 +718,7 @@ impl AgentThreadStore {
         kind_id: &'static str,
         title: SharedString,
         project_root: PathBuf,
+        tied_worktree_root: PathBuf,
         resumed_session_id: Option<SharedString>,
         launched_at: SystemTime,
         workspace: Entity<Workspace>,
@@ -728,6 +736,7 @@ impl AgentThreadStore {
             kind_id,
             title: title.clone(),
             project_root,
+            tied_worktree_root,
             launched_at,
             resumed_session_id,
         };
@@ -1797,6 +1806,35 @@ fn apply_self_update_policy(command: &mut AgentLaunchCommand, kind: &AgentKindDe
     }
 }
 
+/// Resolves the worktree a newly-launched thread should be tied to: prefer
+/// the worktree owning the project's active repository, else the first
+/// visible worktree ("default to main worktree" for a project with several
+/// roots and no active repository), else `None` for a worktree-less
+/// project. Mirrors `TitleBar::effective_active_worktree`
+/// (`crates/title_bar/src/title_bar.rs:403-419`) -- duplicated rather than
+/// shared, since pulling in a `title_bar` dependency for this one lookup
+/// would be a heavier coupling than the ~15 lines it saves.
+fn resolve_tied_worktree_root(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    let project = workspace.project().read(cx);
+
+    if let Some(repo) = project.active_repository(cx) {
+        let repo = repo.read(cx);
+        let repo_path = &repo.work_directory_abs_path;
+
+        for worktree in project.visible_worktrees(cx) {
+            let worktree_path = worktree.read(cx).abs_path();
+            if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
+                return Some(worktree_path.to_path_buf());
+            }
+        }
+    }
+
+    project
+        .visible_worktrees(cx)
+        .next()
+        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+}
+
 fn prepare_remote_thread_process(
     command: &mut AgentLaunchCommand,
     remote_connection: Option<Arc<dyn remote::RemoteConnection>>,
@@ -1832,6 +1870,8 @@ fn spawn_thread_task_inner(
             "agent thread working directory is unavailable"
         )));
     };
+    let tied_worktree_root =
+        resolve_tied_worktree_root(workspace, cx).unwrap_or_else(|| cwd.clone());
     let kind_id = kind.id;
     let kind_icon = kind.icon;
     let title = summary.clone();
@@ -1914,6 +1954,7 @@ fn spawn_thread_task_inner(
                 kind_id,
                 title,
                 cwd,
+                tied_worktree_root,
                 resumed_session_id,
                 launched_at,
                 workspace_entity,
@@ -2187,9 +2228,13 @@ pub fn init(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
+    use project::{FakeFs, Project};
+    use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+    use workspace::MultiWorkspace;
 
     struct DropProbe(Arc<AtomicBool>);
 
@@ -2203,12 +2248,65 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
     }
 
+    #[gpui::test]
+    async fn resolve_tied_worktree_root_falls_back_to_the_first_visible_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let resolved = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.read_with(cx, |workspace, cx| {
+                    resolve_tied_worktree_root(workspace, cx)
+                })
+            })
+            .expect("window should be live");
+
+        assert_eq!(resolved, Some(PathBuf::from("/root")));
+    }
+
+    #[gpui::test]
+    async fn resolve_tied_worktree_root_is_none_for_a_worktree_less_project(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let resolved = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.read_with(cx, |workspace, cx| {
+                    resolve_tied_worktree_root(workspace, cx)
+                })
+            })
+            .expect("window should be live");
+
+        assert_eq!(resolved, None);
+    }
+
     fn live(id: u64, launched_at: u64, resumed_session_id: Option<&str>) -> AgentThreadMetadata {
         AgentThreadMetadata {
             terminal_item_id: EntityId::from(id),
             kind_id: "codex",
             title: SharedString::from("live"),
             project_root: PathBuf::from("/root"),
+            tied_worktree_root: PathBuf::from("/root"),
             launched_at: at(launched_at),
             resumed_session_id: resumed_session_id.map(SharedString::from),
         }

@@ -1440,6 +1440,10 @@ impl AgentThreadsPanel {
                     kind_id: kind.id,
                     title: thread.title.clone(),
                     project_root: thread.project_root.clone(),
+                    // Synthetic metadata for the handoff menu only -- never
+                    // inserted into the store, so there's no real tie to
+                    // report; project_root is the closest honest value.
+                    tied_worktree_root: thread.project_root.clone(),
                     launched_at: thread.last_activity_at,
                     resumed_session_id: Some(thread.session_id.clone()),
                 };
@@ -2171,6 +2175,7 @@ mod tests {
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0].kind_id, "codex");
         assert!(metadata[0].resumed_session_id.is_none());
+        assert_eq!(metadata[0].tied_worktree_root, PathBuf::from(root));
 
         let terminal_views = terminal_views(&window_handle, cx);
         assert_eq!(terminal_views.len(), 1);
