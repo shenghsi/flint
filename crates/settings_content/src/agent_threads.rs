@@ -39,6 +39,12 @@ pub struct AgentThreadSettingsContent {
     ///
     /// Default: left
     pub dock: Option<crate::DockSide>,
+    /// Whether a local agent thread's own CLI process can ask Flint to
+    /// re-tie itself to a different worktree or spawn a sibling thread.
+    /// Local-only; has no effect on remote projects.
+    ///
+    /// Default: true
+    pub agent_control: Option<bool>,
 }
 
 #[derive(

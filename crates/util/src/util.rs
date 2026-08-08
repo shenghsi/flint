@@ -348,6 +348,47 @@ pub fn get_flint_cli_path() -> Result<PathBuf> {
         })
 }
 
+/// Returns a path for the `flint-agent-control` executable (the local-only
+/// agent worktree control CLI), mirroring `get_flint_cli_path` above. Unix
+/// only, matching that binary's own platform support.
+#[cfg(unix)]
+pub fn get_flint_agent_control_path() -> Result<PathBuf> {
+    use anyhow::Context as _;
+    let flint_path =
+        std::env::current_exe().context("Failed to determine current flint executable path.")?;
+    let parent = flint_path
+        .parent()
+        .context("Failed to determine parent directory of flint executable path.")?;
+
+    let possible_locations: &[&str] = if cfg!(target_os = "macos") {
+        // Both the app bundle's Contents/MacOS/ and the dev target/<triple>/debug/
+        // layout put flint-agent-control beside flint.
+        &["./flint-agent-control"]
+    } else if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {
+        // libexec is the standard installed layout, ./flint-agent-control is
+        // for the target directory in development builds.
+        &["../libexec/flint-agent-control", "./flint-agent-control"]
+    } else {
+        anyhow::bail!("unsupported platform for determining flint-agent-control path");
+    };
+
+    possible_locations
+        .iter()
+        .find_map(|p| {
+            parent
+                .join(p)
+                .canonicalize()
+                .ok()
+                .filter(|p| p != &flint_path)
+        })
+        .with_context(|| {
+            format!(
+                "could not find flint-agent-control from any of: {}",
+                possible_locations.join(", ")
+            )
+        })
+}
+
 #[cfg(unix)]
 pub async fn load_login_shell_environment() -> Result<()> {
     use anyhow::Context as _;

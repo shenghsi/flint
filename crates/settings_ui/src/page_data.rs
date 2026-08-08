@@ -5083,7 +5083,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 14] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 15] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5147,6 +5147,28 @@ fn panels_page() -> SettingsPage {
                             .agent_threads
                             .get_or_insert_default()
                             .notify_when_finished = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent Control",
+                description: "Allow a local agent thread's own CLI process to ask Flint to re-tie itself to a different worktree or spawn a sibling thread.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.agent_control"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .agent_control
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .agent_control = value;
                     },
                 }),
                 metadata: None,
@@ -9242,6 +9264,7 @@ mod tests {
             ),
             ("Show Plan Usage", "agent_threads.show_plan_usage"),
             ("Notify When Finished", "agent_threads.notify_when_finished"),
+            ("Agent Control", "agent_threads.agent_control"),
             (
                 "Reopen Sessions",
                 "agent_threads.reopen_sessions_on_startup",
