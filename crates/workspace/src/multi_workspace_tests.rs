@@ -982,3 +982,101 @@ async fn test_open_project_closes_empty_workspace_but_not_non_empty_ones(cx: &mu
         .unwrap();
     assert!(workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),);
 }
+
+#[gpui::test]
+async fn test_find_or_create_background_local_workspace_creates_without_activating(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    fs.insert_tree(path!("/root_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file.txt": "" }))
+        .await;
+    let project_a = Project::test(fs.clone(), [path!("/root_a").as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let workspace_b = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.find_or_create_background_local_workspace(
+                PathList::new(&[path!("/root_b")]),
+                None,
+                &[],
+                None,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("should create a new background workspace");
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.workspace(),
+            &workspace_a,
+            "creating a background workspace must not change which workspace is active"
+        );
+        assert_eq!(
+            mw.workspaces().count(),
+            2,
+            "the new workspace should be retained even though it was never activated"
+        );
+    });
+    assert_ne!(workspace_b, workspace_a);
+}
+
+#[gpui::test]
+async fn test_find_or_create_background_local_workspace_does_not_activate_an_existing_workspace(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file.txt": "" }))
+        .await;
+    let project_a = Project::test(fs.clone(), [path!("/root_a").as_ref()], cx).await;
+    let project_b = Project::test(fs.clone(), [path!("/root_b").as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        // Retained but deliberately not activated, so workspace_a stays
+        // active going into the call under test.
+        mw.add_background_workspace(
+            cx.new(|cx| Workspace::test_new(project_b, window, cx)),
+            window,
+            cx,
+        );
+        mw.retained_workspaces().last().unwrap().clone()
+    });
+
+    let found = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.find_or_create_background_local_workspace(
+                PathList::new(&[path!("/root_b")]),
+                None,
+                &[],
+                None,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("should find the existing workspace_b");
+
+    assert_eq!(found, workspace_b);
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.workspace(),
+            &workspace_a,
+            "finding an already-open background workspace must not activate it"
+        );
+    });
+}

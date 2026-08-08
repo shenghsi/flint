@@ -1385,6 +1385,110 @@ impl MultiWorkspace {
         })
     }
 
+    /// Non-activating counterpart to `find_or_create_local_workspace_with_source_workspace`.
+    /// That function calls `activate()` on both of its "found an existing
+    /// workspace" paths (verified: the immediate lookup here, and the
+    /// post-await race-check inside its spawned task), which is exactly
+    /// right for its own callers (the title-bar worktree picker, an
+    /// explicit user action that should switch to what it opens) but wrong
+    /// for something that opens a workspace the user did not ask to look
+    /// at -- e.g. an agent retying itself to a different worktree should
+    /// not yank the user's foreground window. This mirrors that function's
+    /// structure exactly but calls `add_background_workspace` instead of
+    /// `activate` on every path, matching `add_background_workspace`'s own
+    /// stated use case ("the agent's `create_thread` tool spawning a
+    /// sibling worktree in the background").
+    ///
+    /// `open_mode` is deliberately not a parameter, unlike the function this
+    /// mirrors: `Workspace::new_local` itself calls `multi_workspace.activate(...)`
+    /// internally when given `OpenMode::Activate` (its default), which would
+    /// silently defeat non-activation on the fresh-creation path no matter
+    /// what this function did afterward. `OpenMode::Add` is `Workspace::new_local`'s
+    /// own non-activating mode ("used during deserialization") and is hardcoded
+    /// here, so a caller cannot accidentally opt back into activation.
+    pub fn find_or_create_background_local_workspace(
+        &mut self,
+        path_list: PathList,
+        project_group: Option<ProjectGroupKey>,
+        excluding: &[Entity<Workspace>],
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
+        if let Some(workspace) = self.workspace_for_paths_excluding(&path_list, None, excluding, cx)
+        {
+            self.add_background_workspace(workspace.clone(), window, cx);
+            return Task::ready(Ok(workspace));
+        }
+
+        let paths = path_list.paths().to_vec();
+        let app_state = self.workspace().read(cx).app_state().clone();
+        let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
+        let fs = <dyn Fs>::global(cx);
+        let excluding = excluding.to_vec();
+
+        cx.spawn(async move |_this, cx| {
+            let effective_path_list = if let Some(project_group) = project_group {
+                let metadata_tasks: Vec<_> = paths
+                    .iter()
+                    .map(|path| fs.metadata(path.as_path()))
+                    .collect();
+                let metadata_results = futures::future::join_all(metadata_tasks).await;
+                let all_paths_missing = !paths.is_empty()
+                    && metadata_results
+                        .into_iter()
+                        .all(|result| matches!(result, Ok(None)));
+
+                if all_paths_missing {
+                    project_group.path_list().clone()
+                } else {
+                    PathList::new(&paths)
+                }
+            } else {
+                PathList::new(&paths)
+            };
+
+            if let Some(requesting_window) = requesting_window
+                && let Some(workspace) = requesting_window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace
+                            .workspace_for_paths_excluding(
+                                &effective_path_list,
+                                None,
+                                &excluding,
+                                cx,
+                            )
+                            .inspect(|workspace| {
+                                multi_workspace.add_background_workspace(
+                                    workspace.clone(),
+                                    window,
+                                    cx,
+                                );
+                            })
+                    })
+                    .ok()
+                    .flatten()
+            {
+                return Ok(workspace);
+            }
+
+            let result = cx
+                .update(|cx| {
+                    Workspace::new_local(
+                        effective_path_list.paths().to_vec(),
+                        app_state,
+                        requesting_window,
+                        None,
+                        init,
+                        OpenMode::Add,
+                        cx,
+                    )
+                })
+                .await?;
+            Ok(result.workspace)
+        })
+    }
+
     pub fn workspace(&self) -> &Entity<Workspace> {
         &self.active_workspace
     }
