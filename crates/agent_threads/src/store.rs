@@ -2365,6 +2365,18 @@ pub(crate) async fn retie_thread(
     let destination_pane =
         destination_workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
+    // Only follow the terminal into its new worktree if the user could
+    // already see it -- i.e. its source workspace was the window's
+    // foreground one. A background agent retying itself must not yank the
+    // user out of whatever worktree they're actually looking at; but a
+    // terminal the user was watching would otherwise just vanish from the
+    // window once its pane item moves below, with no visible explanation.
+    let source_was_active = window_handle
+        .read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace() == &source_workspace
+        })
+        .unwrap_or(false);
+
     if source_pane != destination_pane {
         window_handle.update(cx, |_, window, cx| {
             workspace::move_item_checked(
@@ -2384,6 +2396,17 @@ pub(crate) async fn retie_thread(
     // terminal view are already correct by this point. Nothing left to do
     // for ownership beyond the store-side commit below.
     let _ = terminal_view;
+
+    if source_was_active {
+        window_handle.update(cx, |multi_workspace, window, cx| {
+            multi_workspace.activate(
+                destination_workspace.clone(),
+                Some(source_workspace.downgrade()),
+                window,
+                cx,
+            );
+        })?;
+    }
 
     // Step 3: commit in-memory (infallible now that the move succeeded).
     let committed_tie = new_tie.clone();

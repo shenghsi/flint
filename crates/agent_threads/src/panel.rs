@@ -2624,10 +2624,13 @@ mod tests {
         );
         cx.run_until_parked();
 
-        // The terminal moved: no longer present in workspace A's own panes.
+        // Workspace A was the active workspace when the retie happened, so
+        // the window followed the terminal into workspace B rather than
+        // leaving it to silently vanish from the foreground.
         assert!(
-            terminal_views(&window_handle, cx).is_empty(),
-            "the terminal should no longer be in workspace A's panes after retying away from it"
+            !terminal_views(&window_handle, cx).is_empty(),
+            "the terminal should still be visible -- the window should have followed it into \
+             workspace B, since workspace A was active when the retie happened"
         );
 
         let metadata = live_codex_threads(cx, root_b.to_str().unwrap());
@@ -2657,6 +2660,83 @@ mod tests {
                 let _ = multi_workspace;
             })
             .expect("window should be live");
+    }
+
+    #[gpui::test]
+    async fn retie_thread_does_not_activate_the_destination_when_the_source_workspace_is_backgrounded(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+        let workspace_a = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .expect("window should be live");
+
+        // Add workspace B (a second project in the same window) and launch a
+        // codex thread there while it's briefly the active workspace.
+        let root_b = std::env::temp_dir().join("agent_threads_retie_background_source_b");
+        std::fs::create_dir_all(&root_b).expect("failed to create workspace B's directory");
+        let root_b = root_b.to_string_lossy().into_owned();
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let project_b = Project::test(fs, [Path::new(root_b.as_str())], cx).await;
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b, window, cx);
+            })
+            .expect("window should be live");
+
+        configure_echo_threads(cx, &root_b, 5);
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace
+                    .workspace()
+                    .clone()
+                    .update(cx, |workspace, cx| {
+                        crate::launch_new_thread_with_default(workspace, &codex_kind(), window, cx);
+                    });
+            })
+            .expect("failed to launch codex thread in workspace B");
+        wait_for_live_count(cx, &root_b, 1).await;
+        let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
+
+        // Switch back to workspace A: workspace B (the thread's source) is
+        // now backgrounded when the retie below happens.
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(workspace_a.clone(), None, window, cx);
+            })
+            .expect("window should be live");
+
+        let root_c = std::env::temp_dir().join("agent_threads_retie_background_dest_c");
+        std::fs::create_dir_all(&root_c).expect("failed to create the retie target directory");
+
+        let async_cx = cx.to_async();
+        store::retie_thread(
+            terminal_item_id,
+            root_c.clone(),
+            window_handle,
+            &mut async_cx.clone(),
+        )
+        .await
+        .expect("retie should succeed");
+        cx.run_until_parked();
+
+        let active_workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .expect("window should be live");
+        assert_eq!(
+            active_workspace, workspace_a,
+            "a backgrounded thread's retie must not yank the window's active workspace away \
+             from whatever the user was actually looking at"
+        );
     }
 
     #[gpui::test]
