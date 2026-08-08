@@ -173,6 +173,7 @@ dependencies = [
 name = "agent_threads"
 version = "0.1.0"
 dependencies = [
+ "agent_control_protocol",
  "agent_history",
  "anyhow",
  "async-channel 2.5.0",
@@ -189,16 +190,19 @@ dependencies = [
  "flint_actions",
  "fs",
  "futures 0.3.32",
+ "git_ui",
  "gpui",
  "hex",
  "hmac",
  "http_client",
  "log",
+ "net",
  "parking_lot",
  "paths",
  "pretty_assertions",
  "project",
  "proto",
+ "release_channel",
  "remote",
  "rpc",
  "schemars",
