@@ -1830,13 +1830,19 @@ fn start_handoff(
 
             window_handle.update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
-                    store::launch_seeded_thread(
+                    let seeded = store::launch_seeded_thread(
                         workspace,
                         &target_kind,
                         &bootstrap_prompt,
                         window,
                         cx,
                     );
+                    if !seeded {
+                        log::warn!(
+                            "agent_threads: handoff to {} launched without seeding the handoff prompt (unsupported initial-prompt strategy)",
+                            target_kind.id
+                        );
+                    }
                 });
             })?;
             Ok(())
@@ -2603,7 +2609,7 @@ mod tests {
         std::fs::create_dir_all(&root_b).expect("failed to create the retie target directory");
 
         let async_cx = cx.to_async();
-        let outcome = store::retie_thread(
+        let (tie, persistence) = store::retie_thread(
             terminal_item_id,
             root_b.clone(),
             window_handle,
@@ -2611,8 +2617,9 @@ mod tests {
         )
         .await
         .expect("retie should succeed");
+        assert_eq!(tie.root, root_b);
         assert!(
-            matches!(outcome, store::RetiePersistence::InMemoryOnly),
+            matches!(persistence, store::RetiePersistence::InMemoryOnly),
             "a freshly launched codex thread has no session id yet, so persistence must be deferred"
         );
         cx.run_until_parked();
@@ -2714,7 +2721,7 @@ mod tests {
         let root_b = std::env::temp_dir().join("agent_threads_retie_persist_test_b");
         std::fs::create_dir_all(&root_b).expect("failed to create the retie target directory");
         let async_cx = cx.to_async();
-        let outcome = store::retie_thread(
+        let (_tie, persistence) = store::retie_thread(
             terminal_item_id,
             root_b.clone(),
             window_handle,
@@ -2724,7 +2731,7 @@ mod tests {
         .expect("retie should succeed");
 
         assert!(
-            matches!(outcome, store::RetiePersistence::Persisted),
+            matches!(persistence, store::RetiePersistence::Persisted),
             "a thread with a known session id must persist the override immediately"
         );
 

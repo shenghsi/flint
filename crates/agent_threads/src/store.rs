@@ -1064,18 +1064,23 @@ pub fn launch_new_thread(
 /// turn, for cross-agent handoff. Only used on the configured (non-managed)
 /// route -- handoff does not support the managed/tunneled route yet, so
 /// callers must not reach this for a project using it.
+///
+/// Returns whether the prompt was actually seeded, so a caller that promised
+/// a seeded launch (e.g. `create-thread`'s command handler) can report a
+/// structured failure instead of silently spawning an unseeded thread when
+/// `kind.initial_prompt_strategy` is `Unsupported` or the prompt is empty.
 pub(crate) fn launch_seeded_thread(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
     initial_prompt: &str,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> bool {
     let extra_args = resolve_new_thread_launch_args(cx, kind);
     let settings = AgentThreadSettings::get_global(cx);
     let base = settings.command_for_kind(kind.id);
     let mut launch = build_new_thread_launch(kind, base, &extra_args, None);
-    crate::seed_launch_command_with_prompt(&mut launch.command, kind, initial_prompt);
+    let seeded = crate::seed_launch_command_with_prompt(&mut launch.command, kind, initial_prompt);
     spawn_thread(
         workspace,
         kind,
@@ -1085,6 +1090,7 @@ pub(crate) fn launch_seeded_thread(
         window,
         cx,
     );
+    seeded
 }
 
 fn launch_configured_thread(
@@ -2215,7 +2221,7 @@ pub(crate) async fn retie_thread(
     target_path: PathBuf,
     window_handle: WindowHandle<MultiWorkspace>,
     cx: &mut AsyncApp,
-) -> Result<RetiePersistence> {
+) -> Result<(TiedWorktree, RetiePersistence)> {
     // Step 1: resolve-or-create the destination background workspace.
     // Never activates -- see find_or_create_background_local_workspace's
     // own doc comment for why this, and not the picker's activating
@@ -2278,6 +2284,7 @@ pub(crate) async fn retie_thread(
     let _ = terminal_view;
 
     // Step 3: commit in-memory (infallible now that the move succeeded).
+    let committed_tie = new_tie.clone();
     let store = cx.update(|cx| AgentThreadStore::global(cx));
     store.update(cx, |store, cx| {
         store.commit_retie(terminal_item_id, destination_workspace, new_tie, cx)
@@ -2288,10 +2295,10 @@ pub(crate) async fn retie_thread(
     let Some((kind_id, session_id, tie)) = store.read_with(cx, |store, _| {
         store.tie_override_to_persist(terminal_item_id)
     }) else {
-        return Ok(RetiePersistence::InMemoryOnly);
+        return Ok((committed_tie, RetiePersistence::InMemoryOnly));
     };
     write_tie_override(cx, kind_id, &session_id, &tie).await?;
-    Ok(RetiePersistence::Persisted)
+    Ok((committed_tie, RetiePersistence::Persisted))
 }
 
 fn prepare_remote_thread_process(
