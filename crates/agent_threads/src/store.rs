@@ -54,6 +54,13 @@ pub struct AgentThreadMetadata {
     /// retie (see `AgentThreadStore::commit_retie`) changes this field
     /// without moving the process's real cwd.
     pub tied_worktree_root: PathBuf,
+    /// The main worktree of the repository `tied_worktree_root` belonged to
+    /// when the tie was assigned, if any. Used only as a fallback target if
+    /// `tied_worktree_root` is later removed from that repository's
+    /// worktree set -- see `TieResolution::effective_tie`. Captured at
+    /// assignment time because once the worktree is gone there is no
+    /// current state from which to rediscover which repository owned it.
+    pub tied_repo_main_root: Option<PathBuf>,
     pub launched_at: SystemTime,
     /// The thread's CLI session id, when Flint knows it: either the id the
     /// thread was resumed from, or the id assigned at launch via the kind's
@@ -240,7 +247,14 @@ async fn discover_one_session(
         let indexed = history::indexed_snapshot_threads(snapshot);
         let already_bound: HashSet<SharedString> = store
             .read_with(cx, |store, _| {
-                store.live_threads_for_project(kind.id, std::slice::from_ref(&project_root))
+                // Session-id dedup only, not the panel's display path -- the
+                // deleted-worktree fallback doesn't apply here, so raw ties
+                // are compared exactly as before `TieResolution` existed.
+                store.live_threads_for_project(
+                    kind.id,
+                    std::slice::from_ref(&project_root),
+                    &TieResolution::not_ready(),
+                )
             })
             .into_iter()
             .filter(|metadata| metadata.terminal_item_id != terminal_item_id)
@@ -502,19 +516,26 @@ impl AgentThreadStore {
             .contains(&remote::remote_connection_identity(connection_options))
     }
 
-    pub fn live_threads_for_project(
+    pub(crate) fn live_threads_for_project(
         &self,
         kind_id: &str,
         project_roots: &[PathBuf],
+        tie_resolution: &TieResolution,
     ) -> Vec<AgentThreadMetadata> {
         self.threads
             .values()
             .map(|entry| &entry.metadata)
             .filter(|metadata| {
-                metadata.kind_id == kind_id
-                    && project_roots
-                        .iter()
-                        .any(|root| root == &metadata.project_root)
+                if metadata.kind_id != kind_id {
+                    return false;
+                }
+                let Some(effective_tie) = tie_resolution.effective_tie(
+                    &metadata.tied_worktree_root,
+                    metadata.tied_repo_main_root.as_deref(),
+                ) else {
+                    return false;
+                };
+                project_roots.iter().any(|root| root == &effective_tie)
             })
             .cloned()
             .collect()
@@ -718,7 +739,7 @@ impl AgentThreadStore {
         kind_id: &'static str,
         title: SharedString,
         project_root: PathBuf,
-        tied_worktree_root: PathBuf,
+        tied_worktree: TiedWorktree,
         resumed_session_id: Option<SharedString>,
         launched_at: SystemTime,
         workspace: Entity<Workspace>,
@@ -736,7 +757,8 @@ impl AgentThreadStore {
             kind_id,
             title: title.clone(),
             project_root,
-            tied_worktree_root,
+            tied_worktree_root: tied_worktree.root,
+            tied_repo_main_root: tied_worktree.repo_main_root,
             launched_at,
             resumed_session_id,
         };
@@ -1806,15 +1828,27 @@ fn apply_self_update_policy(command: &mut AgentLaunchCommand, kind: &AgentKindDe
     }
 }
 
+/// A worktree a thread is tied to, plus the repository it belongs to (if
+/// any). `repo_main_root` is captured at tie-assignment time rather than
+/// re-derived later, because once `root` is removed from its repository's
+/// worktree set there is no longer any current state from which to
+/// rediscover which repository it used to belong to -- see the design doc's
+/// "Deleted worktrees fall back to the main worktree" section.
+pub(crate) struct TiedWorktree {
+    pub root: PathBuf,
+    pub repo_main_root: Option<PathBuf>,
+}
+
 /// Resolves the worktree a newly-launched thread should be tied to: prefer
 /// the worktree owning the project's active repository, else the first
 /// visible worktree ("default to main worktree" for a project with several
 /// roots and no active repository), else `None` for a worktree-less
-/// project. Mirrors `TitleBar::effective_active_worktree`
+/// project. The active-repository preference mirrors
+/// `TitleBar::effective_active_worktree`
 /// (`crates/title_bar/src/title_bar.rs:403-419`) -- duplicated rather than
 /// shared, since pulling in a `title_bar` dependency for this one lookup
 /// would be a heavier coupling than the ~15 lines it saves.
-fn resolve_tied_worktree_root(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+fn resolve_tied_worktree(workspace: &Workspace, cx: &App) -> Option<TiedWorktree> {
     let project = workspace.project().read(cx);
 
     if let Some(repo) = project.active_repository(cx) {
@@ -1824,15 +1858,154 @@ fn resolve_tied_worktree_root(workspace: &Workspace, cx: &App) -> Option<PathBuf
         for worktree in project.visible_worktrees(cx) {
             let worktree_path = worktree.read(cx).abs_path();
             if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
-                return Some(worktree_path.to_path_buf());
+                return Some(TiedWorktree {
+                    root: worktree_path.to_path_buf(),
+                    repo_main_root: repo.main_worktree_abs_path().map(|path| path.to_path_buf()),
+                });
             }
         }
     }
 
-    project
+    let root = project
         .visible_worktrees(cx)
         .next()
-        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())?;
+    Some(TiedWorktree {
+        repo_main_root: repo_main_root_for_worktree(project, &root, cx),
+        root,
+    })
+}
+
+/// Live-worktree state gathered once per use (a panel render, or a restore
+/// pass), used to resolve where a thread's tie should actually be
+/// considered to point right now -- see the design doc's "Deleted
+/// worktrees fall back to the main worktree" section. A flat `HashSet`
+/// rather than the design doc's original `HashMap<RepositoryId, _>`
+/// sketch: `effective_tie` doesn't need to discover *which* repository a
+/// dangling tie belonged to from current state, because that's exactly
+/// the state that's gone missing once a tie goes dangling -- callers
+/// instead pass each thread's own `tied_repo_main_root`, captured at
+/// tie-assignment time (see `TiedWorktree`/`AgentThreadMetadata`).
+pub(crate) struct TieResolution {
+    /// Every worktree path currently live across every repository the
+    /// caller passed in (condition 1).
+    live_worktree_roots: HashSet<PathBuf>,
+    /// Worktree paths with a currently-open workspace (condition 2). Left
+    /// empty for restore, which uses condition 1 only -- see the design
+    /// doc's "Condition 2 is racy at restore, deliberately" note.
+    open_workspace_roots: HashSet<PathBuf>,
+    /// False until git state has loaded; suppresses the fallback (keeps
+    /// the raw tie) rather than treating "not scanned yet" as "deleted".
+    git_ready: bool,
+}
+
+impl TieResolution {
+    /// A resolution that never applies the deleted-worktree fallback --
+    /// `effective_tie` always returns the raw tie unchanged, matching the
+    /// pre-fallback behavior. Useful for callers with no `Project` handy
+    /// (or, in tests, no git repository at all) where the fallback simply
+    /// doesn't apply.
+    pub(crate) fn not_ready() -> Self {
+        Self {
+            live_worktree_roots: HashSet::default(),
+            open_workspace_roots: HashSet::default(),
+            git_ready: false,
+        }
+    }
+
+    /// Gathers condition 1 from `project`'s visible worktrees plus every
+    /// repository's linked worktrees, condition 2 from
+    /// `open_workspace_roots`, and `git_ready` from the caller (see
+    /// `AgentThreadsPanel::git_ready`, cached from a one-time
+    /// `Project::git_scans_complete` task -- rebuilding this per render is
+    /// cheap; re-awaiting readiness per render would not be).
+    ///
+    /// Condition 1 must include plain visible worktrees, not only
+    /// git-repository worktrees: `resolve_tied_worktree`'s fallback path
+    /// (no active repository) ties a thread to `visible_worktrees(cx).next()`
+    /// even for a project with no git repository at all, and that same
+    /// project then has no repository to contribute a `repo_main_root`
+    /// either -- so without this, a plain (non-git) project's own threads
+    /// would look dangling with nowhere to fall back to the moment
+    /// `git_ready` turns true, and vanish from their own panel.
+    pub(crate) fn new(
+        project: &Project,
+        open_workspace_roots: HashSet<PathBuf>,
+        git_ready: bool,
+        cx: &App,
+    ) -> Self {
+        let mut live_worktree_roots: HashSet<PathBuf> = project
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect();
+        for repo in project.repositories(cx).values() {
+            let repo = repo.read(cx);
+            live_worktree_roots.insert(repo.work_directory_abs_path.to_path_buf());
+            live_worktree_roots.extend(
+                repo.linked_worktrees()
+                    .iter()
+                    .map(|worktree| worktree.path.clone()),
+            );
+        }
+        Self {
+            live_worktree_roots,
+            open_workspace_roots,
+            git_ready,
+        }
+    }
+
+    /// Resolves where `tied_worktree_root` should currently be considered
+    /// to point. `None` only when the tie is dangling and
+    /// `tied_repo_main_root` is also `None` (e.g. a `retie-thread` target
+    /// outside every repository) -- there is nowhere left to fall back to.
+    pub(crate) fn effective_tie(
+        &self,
+        tied_worktree_root: &Path,
+        tied_repo_main_root: Option<&Path>,
+    ) -> Option<PathBuf> {
+        if !self.git_ready
+            || self.live_worktree_roots.contains(tied_worktree_root)
+            || self.open_workspace_roots.contains(tied_worktree_root)
+        {
+            return Some(tied_worktree_root.to_path_buf());
+        }
+        tied_repo_main_root.map(|root| root.to_path_buf())
+    }
+
+    #[cfg(test)]
+    fn for_test(
+        live_worktree_roots: impl IntoIterator<Item = PathBuf>,
+        open_workspace_roots: impl IntoIterator<Item = PathBuf>,
+        git_ready: bool,
+    ) -> Self {
+        Self {
+            live_worktree_roots: live_worktree_roots.into_iter().collect(),
+            open_workspace_roots: open_workspace_roots.into_iter().collect(),
+            git_ready,
+        }
+    }
+}
+
+/// Finds the repository (if any) that owns `worktree_root` -- either as its
+/// main worktree or one of its linked worktrees -- and returns that
+/// repository's main worktree path.
+fn repo_main_root_for_worktree(
+    project: &Project,
+    worktree_root: &Path,
+    cx: &App,
+) -> Option<PathBuf> {
+    project.repositories(cx).values().find_map(|repo| {
+        let repo = repo.read(cx);
+        let owns_root = repo.work_directory_abs_path.as_ref() == worktree_root
+            || repo
+                .linked_worktrees()
+                .iter()
+                .any(|worktree| worktree.path.as_path() == worktree_root);
+        owns_root
+            .then(|| repo.main_worktree_abs_path())
+            .flatten()
+            .map(|path| path.to_path_buf())
+    })
 }
 
 fn prepare_remote_thread_process(
@@ -1870,8 +2043,10 @@ fn spawn_thread_task_inner(
             "agent thread working directory is unavailable"
         )));
     };
-    let tied_worktree_root =
-        resolve_tied_worktree_root(workspace, cx).unwrap_or_else(|| cwd.clone());
+    let tied_worktree = resolve_tied_worktree(workspace, cx).unwrap_or_else(|| TiedWorktree {
+        root: cwd.clone(),
+        repo_main_root: None,
+    });
     let kind_id = kind.id;
     let kind_icon = kind.icon;
     let title = summary.clone();
@@ -1954,7 +2129,7 @@ fn spawn_thread_task_inner(
                 kind_id,
                 title,
                 cwd,
-                tied_worktree_root,
+                tied_worktree,
                 resumed_session_id,
                 launched_at,
                 workspace_entity,
@@ -2249,7 +2424,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn resolve_tied_worktree_root_falls_back_to_the_first_visible_worktree(
+    async fn resolve_tied_worktree_falls_back_to_the_first_visible_worktree(
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {
@@ -2265,19 +2440,55 @@ mod tests {
         let resolved = window_handle
             .update(cx, |multi_workspace, _, cx| {
                 let workspace = multi_workspace.workspace().clone();
-                workspace.read_with(cx, |workspace, cx| {
-                    resolve_tied_worktree_root(workspace, cx)
-                })
+                workspace.read_with(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
             })
             .expect("window should be live");
+        let resolved = resolved.expect("a single-worktree project should resolve a tie");
 
-        assert_eq!(resolved, Some(PathBuf::from("/root")));
+        // No git repository in this fixture, so there's no repo to fall
+        // back to if this worktree later vanishes.
+        assert_eq!(resolved.root, PathBuf::from("/root"));
+        assert_eq!(resolved.repo_main_root, None);
     }
 
     #[gpui::test]
-    async fn resolve_tied_worktree_root_is_none_for_a_worktree_less_project(
+    async fn tie_resolution_keeps_a_plain_non_git_projects_own_worktree_live(
         cx: &mut TestAppContext,
     ) {
+        // Regression test: TieResolution::new used to seed live_worktree_roots
+        // only from project.repositories(cx). A project with no git
+        // repository at all has no repository to contribute either a live
+        // root or a repo_main_root fallback, so once git_ready turned true
+        // every thread in a plain (non-git) project would look dangling with
+        // nowhere to fall back to, and vanish from its own panel.
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let tied = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.read_with(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
+            })
+            .expect("window should be live")
+            .expect("a single-worktree project should resolve a tie");
+
+        let effective = cx.update(|cx| {
+            let resolution = TieResolution::new(project.read(cx), HashSet::default(), true, cx);
+            resolution.effective_tie(&tied.root, tied.repo_main_root.as_deref())
+        });
+
+        assert_eq!(effective, Some(PathBuf::from("/root")));
+    }
+
+    #[gpui::test]
+    async fn resolve_tied_worktree_is_none_for_a_worktree_less_project(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
@@ -2291,13 +2502,104 @@ mod tests {
         let resolved = window_handle
             .update(cx, |multi_workspace, _, cx| {
                 let workspace = multi_workspace.workspace().clone();
-                workspace.read_with(cx, |workspace, cx| {
-                    resolve_tied_worktree_root(workspace, cx)
-                })
+                workspace.read_with(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
             })
             .expect("window should be live");
 
-        assert_eq!(resolved, None);
+        assert!(resolved.is_none());
+    }
+
+    #[gpui::test]
+    async fn resolve_tied_worktree_prefers_the_active_repository_and_captures_its_main_root(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" },
+                },
+            }),
+        )
+        .await;
+
+        let project_root = PathBuf::from("/root/project");
+        let project = Project::test(fs, [project_root.as_path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let resolved = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.read_with(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
+            })
+            .expect("window should be live");
+        let resolved = resolved.expect("a git-repository project should resolve a tie");
+
+        assert_eq!(resolved.root, project_root);
+        assert_eq!(resolved.repo_main_root, Some(project_root));
+    }
+
+    #[test]
+    fn effective_tie_is_unchanged_while_the_worktree_is_live() {
+        let resolution = TieResolution::for_test([PathBuf::from("/repo/x")], [], true);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/repo/x"), None),
+            Some(PathBuf::from("/repo/x"))
+        );
+    }
+
+    #[test]
+    fn effective_tie_stays_put_when_a_workspace_is_open_even_if_the_repo_forgot_it() {
+        // Condition 2: the worktree isn't in the repo's own worktree set
+        // (as if it had just been externally removed), but a workspace is
+        // still open there -- the regression test for the divergence
+        // condition 2 exists to prevent (see the design doc).
+        let resolution = TieResolution::for_test([], [PathBuf::from("/repo/x")], true);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/repo/x"), Some(&PathBuf::from("/repo"))),
+            Some(PathBuf::from("/repo/x"))
+        );
+    }
+
+    #[test]
+    fn effective_tie_falls_back_to_the_repo_main_root_once_dangling() {
+        let resolution = TieResolution::for_test([], [], true);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/repo/x"), Some(&PathBuf::from("/repo"))),
+            Some(PathBuf::from("/repo"))
+        );
+    }
+
+    #[test]
+    fn effective_tie_is_none_when_dangling_with_no_repo_to_fall_back_to() {
+        let resolution = TieResolution::for_test([], [], true);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/elsewhere/x"), None),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_tie_keeps_the_raw_tie_while_git_state_is_not_ready() {
+        // git_ready: false must suppress the fallback entirely, even though
+        // the tie would otherwise look dangling -- "not scanned yet" must
+        // never be treated as "deleted".
+        let resolution = TieResolution::for_test([], [], false);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/repo/x"), Some(&PathBuf::from("/repo"))),
+            Some(PathBuf::from("/repo/x"))
+        );
     }
 
     fn live(id: u64, launched_at: u64, resumed_session_id: Option<&str>) -> AgentThreadMetadata {
@@ -2307,6 +2609,7 @@ mod tests {
             title: SharedString::from("live"),
             project_root: PathBuf::from("/root"),
             tied_worktree_root: PathBuf::from("/root"),
+            tied_repo_main_root: None,
             launched_at: at(launched_at),
             resumed_session_id: resumed_session_id.map(SharedString::from),
         }

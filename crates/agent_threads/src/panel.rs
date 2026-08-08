@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{
@@ -18,7 +18,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    Workspace,
+    MultiWorkspace, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -27,7 +27,7 @@ use crate::history::{self, HistoryParseCache, project_worktree_roots};
 use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
 use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
-    merge_threads,
+    TieResolution, merge_threads,
 };
 use crate::{
     AgentKindDefinition, AgentThreadSettings, HistoricalThread, RemoteAgentRoutingSettings,
@@ -124,6 +124,15 @@ pub struct AgentThreadsPanel {
     plan_usage_task: Option<Task<()>>,
     http_client: Arc<dyn http_client::HttpClient>,
     active: bool,
+    /// Whether this project's git state (branches, worktrees, status) has
+    /// completed its initial load at least once. Starts `false` and is
+    /// flipped by a one-time spawned task awaiting
+    /// `Project::git_scans_complete`; fed into `TieResolution.git_ready` so
+    /// the deleted-worktree fallback stays suppressed (raw tie kept) until
+    /// there's real data to judge liveness against, rather than treating
+    /// "not scanned yet" as "deleted".
+    git_ready: bool,
+    _git_ready_task: Task<()>,
 }
 
 /// Debounce window for history filesystem watch events. Coalesces the burst of
@@ -290,7 +299,21 @@ impl AgentThreadsPanel {
         let history_index = history::global_history_index(&fs, cx);
         let http_client = workspace.app_state().http_client.clone();
         let remote_project = workspace.project().read(cx).remote_client().is_some();
+        let project = workspace.project().clone();
         cx.new(|cx| {
+            let git_ready_task = cx.spawn({
+                let project = project.clone();
+                async move |this, cx| {
+                    let scan_complete =
+                        project.update(cx, |project, cx| project.git_scans_complete(cx));
+                    scan_complete.await;
+                    this.update(cx, |this: &mut Self, cx| {
+                        this.git_ready = true;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            });
             let store = AgentThreadStore::global(cx);
             let store_subscription =
                 cx.subscribe(&store, |this: &mut AgentThreadsPanel, _, event, cx| {
@@ -338,6 +361,8 @@ impl AgentThreadsPanel {
                 plan_usage_task: None,
                 http_client,
                 active: false,
+                git_ready: false,
+                _git_ready_task: git_ready_task,
             };
             let _ = window;
             panel
@@ -1089,13 +1114,14 @@ impl AgentThreadsPanel {
         &mut self,
         kind: &AgentKindDefinition,
         project_roots: &[PathBuf],
+        tie_resolution: &TieResolution,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let usage = self.plan_usage.get(kind.id).copied();
-        let live = self
-            .store
-            .read(cx)
-            .live_threads_for_project(kind.id, project_roots);
+        let live =
+            self.store
+                .read(cx)
+                .live_threads_for_project(kind.id, project_roots, tie_resolution);
         let section = self.sections.entry(kind.id).or_default();
         let collapsed = section.collapsed;
         let visible_override = section.visible_override;
@@ -1444,6 +1470,7 @@ impl AgentThreadsPanel {
                     // inserted into the store, so there's no real tie to
                     // report; project_root is the closest honest value.
                     tied_worktree_root: thread.project_root.clone(),
+                    tied_repo_main_root: None,
                     launched_at: thread.last_activity_at,
                     resumed_session_id: Some(thread.session_id.clone()),
                 };
@@ -1618,9 +1645,14 @@ fn start_handoff(
                     let indexed = history::indexed_snapshot_threads(snapshot);
                     let already_bound: collections::HashSet<SharedString> = store
                         .read_with(cx, |store, _| {
+                            // Session-id dedup only, not the panel's display
+                            // path -- the deleted-worktree fallback doesn't
+                            // apply here, so raw ties are compared exactly as
+                            // before `TieResolution` existed.
                             store.live_threads_for_project(
                                 source_kind.id,
                                 std::slice::from_ref(&source_metadata.project_root),
+                                &TieResolution::not_ready(),
                             )
                         })
                         .into_iter()
@@ -1821,17 +1853,33 @@ impl Panel for AgentThreadsPanel {
 }
 
 impl Render for AgentThreadsPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(workspace) = self.workspace.upgrade() else {
             return div().size_full().into_any_element();
         };
         let project = workspace.read(cx).project().clone();
         let project_roots = project_worktree_roots(project.read(cx), cx);
 
+        let open_workspace_roots: HashSet<PathBuf> = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .map(|multi_workspace| {
+                multi_workspace
+                    .read(cx)
+                    .retained_workspaces()
+                    .iter()
+                    .flat_map(|workspace| workspace.read(cx).root_paths(cx))
+                    .map(|path| path.to_path_buf())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let tie_resolution =
+            TieResolution::new(project.read(cx), open_workspace_roots, self.git_ready, cx);
+
         let registry = self.visible_registry(cx);
         let mut sections = Vec::new();
         for kind in &registry {
-            sections.push(self.render_section(kind, &project_roots, cx));
+            sections.push(self.render_section(kind, &project_roots, &tie_resolution, cx));
         }
 
         v_flex()
@@ -2092,7 +2140,11 @@ mod tests {
         cx.update(|cx| {
             AgentThreadStore::global(cx)
                 .read(cx)
-                .live_threads_for_project("codex", &[PathBuf::from(project_root)])
+                .live_threads_for_project(
+                    "codex",
+                    &[PathBuf::from(project_root)],
+                    &TieResolution::not_ready(),
+                )
         })
     }
 
@@ -2311,6 +2363,65 @@ mod tests {
 
         set_agent_hidden(cx, "opencode", true);
         assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude", "pi"]);
+    }
+
+    #[gpui::test]
+    async fn git_ready_flips_true_after_the_panel_settles_and_a_live_thread_survives_it(
+        cx: &mut TestAppContext,
+    ) {
+        // Regression coverage for the real render path (not just
+        // TieResolution's logic in isolation, see the store.rs test with a
+        // similar name): a launched thread's row must still be present
+        // after git_ready flips true, including for a plain project with no
+        // git repository at all.
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_live_count(cx, root, 1).await;
+
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
+            })
+            .expect("failed to create panel");
+        cx.run_until_parked();
+
+        assert!(
+            panel.read_with(cx, |panel, _| panel.git_ready),
+            "git_ready should flip true once git_scans_complete resolves for a FakeFs project"
+        );
+
+        let project_roots = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                project_worktree_roots(multi_workspace.workspace().read(cx).project().read(cx), cx)
+            })
+            .expect("window should be live");
+        let live = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let project = workspace.read(cx).project().clone();
+                let tie_resolution =
+                    TieResolution::new(project.read(cx), HashSet::default(), true, cx);
+                let _ = window;
+                panel.read(cx).store.read(cx).live_threads_for_project(
+                    "codex",
+                    &project_roots,
+                    &tie_resolution,
+                )
+            })
+            .expect("window should be live");
+
+        assert_eq!(
+            live.len(),
+            1,
+            "the live thread must survive git_ready flipping true"
+        );
     }
 
     #[gpui::test]
