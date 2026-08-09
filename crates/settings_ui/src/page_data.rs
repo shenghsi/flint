@@ -5085,7 +5085,7 @@ fn panels_page() -> SettingsPage {
 
     fn agent_threads_panel_section() -> [SettingsPageItem; 15] {
         [
-            SettingsPageItem::SectionHeader("Agent Threads Panel"),
+            SettingsPageItem::SectionHeader("Agent Threads"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Max Visible Threads Per Agent",
                 description: "How many threads each agent section shows before a \"Show more\" control is offered.",
@@ -5197,8 +5197,8 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Agent Threads Panel Dock",
-                description: "Where to dock the Agent Threads panel.",
+                title: "Agent Threads Dock",
+                description: "Where to dock Agent Threads.",
                 field: Box::new(SettingField {
                     json_path: Some("agent_threads.dock"),
                     pick: |settings_content| settings_content.agent_threads.as_ref()?.dock.as_ref(),
@@ -5327,7 +5327,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Hide Codex",
-                description: "Hide the Codex section from the Agent Threads panel.",
+                description: "Hide the Codex section from Agent Threads.",
                 field: Box::new(SettingField {
                     json_path: Some("agent_threads.codex.hidden"),
                     pick: |settings_content| {
@@ -5353,7 +5353,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Hide Claude",
-                description: "Hide the Claude section from the Agent Threads panel.",
+                description: "Hide the Claude section from Agent Threads.",
                 field: Box::new(SettingField {
                     json_path: Some("agent_threads.claude.hidden"),
                     pick: |settings_content| {
@@ -5379,7 +5379,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Hide Pi",
-                description: "Hide the Pi section from the Agent Threads panel.",
+                description: "Hide the Pi section from Agent Threads.",
                 field: Box::new(SettingField {
                     json_path: Some("agent_threads.pi.hidden"),
                     pick: |settings_content| {
@@ -5405,7 +5405,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Hide OpenCode",
-                description: "Hide the OpenCode section from the Agent Threads panel.",
+                description: "Hide the OpenCode section from Agent Threads.",
                 field: Box::new(SettingField {
                     json_path: Some("agent_threads.opencode.hidden"),
                     pick: |settings_content| {
@@ -9269,7 +9269,7 @@ mod tests {
                 "Reopen Sessions",
                 "agent_threads.reopen_sessions_on_startup",
             ),
-            ("Agent Threads Panel Dock", "agent_threads.dock"),
+            ("Agent Threads Dock", "agent_threads.dock"),
             (
                 "Codex Initialization Command",
                 "agent_threads.codex.initialization_command",

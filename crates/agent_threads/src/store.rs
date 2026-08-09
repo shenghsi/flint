@@ -47,7 +47,7 @@ pub struct AgentThreadMetadata {
     pub kind_id: &'static str,
     pub title: SharedString,
     pub project_root: PathBuf,
-    /// The worktree this thread is grouped under in the Agent Threads panel.
+    /// The worktree this thread is grouped under in Agent Threads.
     /// Usually equal to `project_root`'s owning worktree, but can diverge:
     /// `terminal.working_directory = current_file_directory` can put
     /// `project_root` in a subdirectory rather than a worktree root, and a

@@ -634,9 +634,9 @@ pub mod agent_threads {
     actions!(
         agent_threads,
         [
-            /// Toggles the agent threads panel.
+            /// Toggles Agent Threads.
             Toggle,
-            /// Toggles focus on the agent threads panel.
+            /// Toggles focus on Agent Threads.
             ToggleFocus
         ]
     );

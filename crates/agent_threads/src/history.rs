@@ -135,7 +135,7 @@ struct GlobalAgentHistoryIndex(agent_history::IndexService);
 impl gpui::Global for GlobalAgentHistoryIndex {}
 
 /// Returns the app-wide history index service, creating it on first use.
-/// Shared by the agent threads panel and the background session-discovery
+/// Shared by Agent Threads and the background session-discovery
 /// loop so both hit the same on-disk cache instead of scanning independently.
 pub(crate) fn global_history_index(
     fs: &Arc<dyn fs::Fs>,

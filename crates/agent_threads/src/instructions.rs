@@ -34,7 +34,7 @@ If it prints JSON with an \"executable\" field, run:
     \"<executable>\" retie-thread --worktree <path>
 
 using that value and the new worktree's full path. This moves the thread to
-the new worktree in Flint's Agent Threads panel. No output means Flint is
+the new worktree in Flint's Agent Threads. No output means Flint is
 not installed or running. A \"not recognized\" report means this terminal
 just is not a Flint-tracked one, even if Flint is running elsewhere. Skip
 this section either way.

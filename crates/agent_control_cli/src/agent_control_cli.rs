@@ -26,7 +26,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Parser)]
 #[command(
     name = "flint-agent-control",
-    about = "Control Flint's agent threads panel from an agent's own CLI process"
+    about = "Control Flint's Agent Threads from an agent's own CLI process"
 )]
 struct Cli {
     /// Unix socket to connect to. Defaults to the same path Flint's control

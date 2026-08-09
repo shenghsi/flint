@@ -169,7 +169,7 @@ pub struct SettingsContent {
 
     pub repl: Option<ReplSettingsContent>,
 
-    /// Agent thread panel launch commands and display limits for Codex and
+    /// Agent Threads launch commands and display limits for Codex and
     /// Claude.
     pub agent_threads: Option<AgentThreadSettingsContent>,
 

@@ -1494,7 +1494,7 @@
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
   },
-  // Agent thread panel: launch commands and per-section display limits for
+  // Agent Threads: launch commands and per-section display limits for
   // Codex, Claude, Pi, and OpenCode terminal threads.
   "agent_threads": {
     "codex": {
@@ -1533,7 +1533,7 @@
     // When to reopen live resumed agent sessions from the previous app session.
     // Can be `never` or `matching_workspace`.
     "reopen_sessions_on_startup": "matching_workspace",
-    // Where to dock the Agent Threads panel. Can be `left` or `right`.
+    // Where to dock Agent Threads. Can be `left` or `right`.
     "dock": "left",
     // Allow a local agent thread's own CLI process to ask Flint to re-tie
     // itself to a different worktree or spawn a sibling thread.

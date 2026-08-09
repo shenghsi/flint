@@ -197,7 +197,7 @@ pub struct TerminalView {
     needs_serialize: bool,
     custom_title: Option<String>,
     /// Overrides the tab icon, e.g. to show the originating agent's icon for
-    /// terminals launched from the agent threads panel.
+    /// terminals launched from Agent Threads.
     tab_icon_override: Option<IconName>,
     agent_thread: bool,
     hover: Option<HoverTarget>,

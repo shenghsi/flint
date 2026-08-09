@@ -4,7 +4,7 @@ Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed) b
 
 It keeps Zed's fast, GPU-accelerated editor, language support, Git tooling, and extension ecosystem while replacing the built-in AI product with a focused workspace for terminal-based coding agents.
 
-![Flint workspace with an agent thread panel and a Claude Code terminal session](assets/screenshots/flint-workspace.png)
+![Flint workspace with Agent Threads and a Claude Code terminal session](assets/screenshots/flint-workspace.png)
 
 ## Why Flint?
 
@@ -24,7 +24,7 @@ Flint is for developers who want the project awareness and visual review tools o
 
 - **First-class terminals:** New terminals open as tabs in the center workspace by default, alongside files and diffs.
 - **Codex, Claude Code, Pi, and OpenCode threads:** Launch any supported CLI directly in a terminal-backed thread using its existing authentication and configuration.
-- **Agent Threads panel:** Organize sessions, discover recent threads on the local machine or connected remote host, and resume work using titles from each agent's history.
+- **Agent Threads:** Organize sessions, discover recent threads on the local machine or connected remote host, and resume work using titles from each agent's history.
 - **Agent status and continuity:** See Codex and Claude Code plan usage and reset countdowns, receive desktop notifications when a thread needs attention, and optionally reopen resumable sessions after restarting Flint.
 - **Cross-agent handoff:** Preview a bounded handoff document from a live local thread, then continue the work in a fresh thread with another supported agent.
 - **Remote agent threads:** Run supported agents on SSH remotes using either the remote's configured CLI (`Direct`) or pinned Flint-managed binaries whose traffic is routed through local Flint (`Tunneled`).

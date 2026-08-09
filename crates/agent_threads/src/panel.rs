@@ -1879,7 +1879,7 @@ impl EventEmitter<PanelEvent> for AgentThreadsPanel {}
 
 impl Panel for AgentThreadsPanel {
     fn persistent_name() -> &'static str {
-        "Agent Threads Panel"
+        "Agent Threads"
     }
 
     fn panel_key() -> &'static str {
@@ -2033,6 +2033,11 @@ mod tests {
     // before the terminal is ever registered.
     static SPAWNING_TEST_ROOT: LazyLock<String> =
         LazyLock::new(|| std::env::temp_dir().to_string_lossy().into_owned());
+
+    #[test]
+    fn panel_uses_agent_threads_name() {
+        assert_eq!(AgentThreadsPanel::persistent_name(), "Agent Threads");
+    }
 
     #[test]
     fn codex_and_claude_remote_credential_menus_only_offer_sign_out() {

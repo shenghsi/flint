@@ -35,7 +35,7 @@ pub struct AgentThreadSettingsContent {
     ///
     /// Default: matching_workspace
     pub reopen_sessions_on_startup: Option<AgentThreadReopenSessionsOnStartup>,
-    /// Where to dock the agent threads panel.
+    /// Where to dock Agent Threads.
     ///
     /// Default: left
     pub dock: Option<crate::DockSide>,
@@ -86,7 +86,7 @@ pub struct AgentThreadCommandContent {
     ///
     /// Default: ""
     pub initialization_command: Option<String>,
-    /// Hide this agent's section from the Agent Threads panel.
+    /// Hide this agent's section from Agent Threads.
     ///
     /// Default: false
     pub hidden: Option<bool>,

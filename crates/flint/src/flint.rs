@@ -1111,7 +1111,7 @@ fn register_actions(
                 cx.spawn_in(window, async move |workspace_handle, cx| {
                     let panel = AgentThreadsPanel::load(workspace_handle.clone(), cx.clone())
                         .await
-                        .context("failed to load agent threads panel")?;
+                        .context("failed to load Agent Threads")?;
                     workspace_handle.update_in(cx, |workspace, window, cx| {
                         if workspace.panel::<AgentThreadsPanel>(cx).is_some() {
                             workspace.focus_panel::<AgentThreadsPanel>(window, cx);
@@ -5517,7 +5517,7 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             workspace
                 .panel::<AgentThreadsPanel>(cx)
-                .expect("agent threads panel should be loaded on startup");
+                .expect("Agent Threads should be loaded on startup");
         });
 
         cx.dispatch_action(
@@ -5533,7 +5533,7 @@ mod tests {
                         .left_dock()
                         .read(cx)
                         .panel::<AgentThreadsPanel>()
-                        .expect("agent threads panel should be in the left dock");
+                        .expect("Agent Threads should be in the left dock");
                     assert!(workspace.left_dock().read(cx).is_open());
                     assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
                 });
