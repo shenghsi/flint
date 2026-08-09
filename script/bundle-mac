@@ -87,7 +87,7 @@ script/generate-licenses
 rustup target add $target_triple
 
 echo "Compiling flint binaries"
-cargo build ${build_flag} --package flint --package cli --target $target_triple
+cargo build ${build_flag} --package flint --package cli --package agent_control_cli --target $target_triple
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 cargo build ${build_flag} --package remote_server --target $target_triple
@@ -209,6 +209,7 @@ function sign_app_binaries() {
         echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/flint-agent-control" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/flint/resources/flint.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/flint" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/flint/resources/flint.entitlements --sign "$IDENTITY" "${app_path}" -v
@@ -323,6 +324,7 @@ function sign_binary() {
 
 cp target/${target_triple}/${target_dir}/flint "${app_path}/Contents/MacOS/flint"
 cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
+cp target/${target_triple}/${target_dir}/flint-agent-control "${app_path}/Contents/MacOS/flint-agent-control"
 sign_app_binaries
 
 sign_binary "target/$target_triple/release/remote_server"

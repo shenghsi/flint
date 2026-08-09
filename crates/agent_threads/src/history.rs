@@ -932,6 +932,38 @@ pub fn project_worktree_roots(project: &Project, cx: &App) -> Vec<PathBuf> {
         .collect()
 }
 
+/// The union of `project_worktree_roots` with every worktree (main and
+/// linked) of every repository this project currently knows about -- the
+/// design doc's "project group's worktree roots" for historical scanning.
+///
+/// Wider on purpose: a session retied away from this workspace still has
+/// its on-disk history under its *original* worktree, since the process
+/// cwd never moves (see `AgentThreadStore::commit_retie`). Scanning only
+/// this workspace's own visible roots would never surface that session's
+/// history here even when its tie now points at this project group, so
+/// each panel scans every worktree of its repo(s) and lets effective-tie
+/// filtering (not root selection) decide which rows actually belong to it.
+/// Deliberately does *not* go through `MultiWorkspace`/`Window` to find
+/// sibling workspaces: `Repository::linked_worktrees()` already reflects
+/// every worktree on disk for this repo, independent of which of them
+/// currently have an open Flint workspace, which is the correct, wider
+/// scope for "could plausibly have this repo's agent thread history".
+pub fn project_group_worktree_roots(project: &Project, cx: &App) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = project_worktree_roots(project, cx);
+    for repo in project.repositories(cx).values() {
+        let repo = repo.read(cx);
+        roots.push(repo.work_directory_abs_path.to_path_buf());
+        roots.extend(
+            repo.linked_worktrees()
+                .iter()
+                .map(|worktree| worktree.path.clone()),
+        );
+    }
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

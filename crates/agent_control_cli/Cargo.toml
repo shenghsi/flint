@@ -1,0 +1,20 @@
+[package]
+name = "agent_control_cli"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "flint-agent-control"
+path = "src/agent_control_cli.rs"
+doctest = false
+
+[dependencies]
+agent_control_protocol.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true

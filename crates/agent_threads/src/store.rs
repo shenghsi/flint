@@ -47,6 +47,20 @@ pub struct AgentThreadMetadata {
     pub kind_id: &'static str,
     pub title: SharedString,
     pub project_root: PathBuf,
+    /// The worktree this thread is grouped under in the Agent Threads panel.
+    /// Usually equal to `project_root`'s owning worktree, but can diverge:
+    /// `terminal.working_directory = current_file_directory` can put
+    /// `project_root` in a subdirectory rather than a worktree root, and a
+    /// retie (see `AgentThreadStore::commit_retie`) changes this field
+    /// without moving the process's real cwd.
+    pub tied_worktree_root: PathBuf,
+    /// The main worktree of the repository `tied_worktree_root` belonged to
+    /// when the tie was assigned, if any. Used only as a fallback target if
+    /// `tied_worktree_root` is later removed from that repository's
+    /// worktree set -- see `TieResolution::effective_tie`. Captured at
+    /// assignment time because once the worktree is gone there is no
+    /// current state from which to rediscover which repository owned it.
+    pub tied_repo_main_root: Option<PathBuf>,
     pub launched_at: SystemTime,
     /// The thread's CLI session id, when Flint knows it: either the id the
     /// thread was resumed from, or the id assigned at launch via the kind's
@@ -233,7 +247,14 @@ async fn discover_one_session(
         let indexed = history::indexed_snapshot_threads(snapshot);
         let already_bound: HashSet<SharedString> = store
             .read_with(cx, |store, _| {
-                store.live_threads_for_project(kind.id, std::slice::from_ref(&project_root))
+                // Session-id dedup only, not the panel's display path -- the
+                // deleted-worktree fallback doesn't apply here, so raw ties
+                // are compared exactly as before `TieResolution` existed.
+                store.live_threads_for_project(
+                    kind.id,
+                    std::slice::from_ref(&project_root),
+                    &TieResolution::not_ready(),
+                )
             })
             .into_iter()
             .filter(|metadata| metadata.terminal_item_id != terminal_item_id)
@@ -267,8 +288,20 @@ async fn discover_one_session(
 }
 
 pub enum AgentThreadStoreEvent {
-    ThreadOpened { kind_id: &'static str },
-    ThreadClosed { kind_id: &'static str },
+    ThreadOpened {
+        kind_id: &'static str,
+    },
+    ThreadClosed {
+        kind_id: &'static str,
+    },
+    /// A live thread's tie or ownership changed without opening or closing
+    /// it (currently: a retie). Panels handle this like `ThreadOpened` --
+    /// `cx.notify()` and re-run their own queries -- so a retie taking
+    /// effect in one panel and disappearing from another happens for free
+    /// via the existing per-panel query architecture.
+    ThreadUpdated {
+        kind_id: &'static str,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,10 +311,76 @@ pub struct AgentThreadSessionRestoreRecord {
     pub session_id: String,
     pub title: String,
     pub project_root: PathBuf,
+    /// The thread's tied worktree at snapshot time. `#[serde(default)]` so
+    /// pre-existing serialized records (written before this field existed)
+    /// still deserialize as `None`. `None` means "no resolved tie was
+    /// recorded" -- legacy records only, since every *new* snapshot always
+    /// populates this -- and routes by `workspace_id` instead of by tie;
+    /// see `records_to_restore_for_workspace`. Never treat `None` as
+    /// "derive from `project_root`": `project_root` is a launch cwd that
+    /// can be a subdirectory rather than a worktree root (e.g.
+    /// `terminal.working_directory = current_file_directory`), so a
+    /// path-equality fallback against it is a different, wrong behavior,
+    /// not "unchanged".
+    #[serde(default)]
+    pub tied_worktree_root: Option<PathBuf>,
     pub last_activity_at: u64,
 }
 
 const SESSION_RESTORE_NAMESPACE: &str = "agent-thread-session-restore";
+
+/// Persisted retie overrides, keyed by `(kind_id, session_id)` rather than
+/// bare session_id: session ids are only unique per provider, not globally.
+/// See the design doc's "Session ids cannot be the primary key" section.
+const SESSION_TIE_NAMESPACE: &str = "agent-thread-session-tie";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistedTieOverride {
+    tied_worktree_root: PathBuf,
+    repo_main_root: Option<PathBuf>,
+}
+
+fn session_tie_key(kind_id: &str, session_id: &str) -> String {
+    format!("{kind_id}:{session_id}")
+}
+
+/// Reads the persisted tie override for a resumed session, if this session
+/// was ever retied. `None` is the common case (never retied) and is not an
+/// error -- logged and treated as absent either way.
+pub(crate) fn read_tie_override(cx: &App, kind_id: &str, session_id: &str) -> Option<TiedWorktree> {
+    let json = db::kvp::KeyValueStore::global(cx)
+        .scoped(SESSION_TIE_NAMESPACE)
+        .read(&session_tie_key(kind_id, session_id))
+        .log_err()
+        .flatten()?;
+    let parsed: PersistedTieOverride = serde_json::from_str(&json).log_err()?;
+    Some(TiedWorktree {
+        root: parsed.tied_worktree_root,
+        repo_main_root: parsed.repo_main_root,
+    })
+}
+
+/// Persists `tie` as the override for a resumed session. Awaited by design
+/// (not `db::write_and_log`'s fire-and-forget pattern used elsewhere in this
+/// file): the retie orchestration's response needs to distinguish a
+/// truthful "persisted" from "in_memory_only", which a detached write can't
+/// back.
+async fn write_tie_override(
+    cx: &mut AsyncApp,
+    kind_id: &str,
+    session_id: &str,
+    tie: &TiedWorktree,
+) -> Result<()> {
+    let value = serde_json::to_string(&PersistedTieOverride {
+        tied_worktree_root: tie.root.clone(),
+        repo_main_root: tie.repo_main_root.clone(),
+    })?;
+    let store = cx.update(|cx| db::kvp::KeyValueStore::global(cx));
+    store
+        .scoped(SESSION_TIE_NAMESPACE)
+        .write(session_tie_key(kind_id, session_id), value)
+        .await
+}
 
 struct SnapshotRequest {
     session_id: String,
@@ -321,6 +420,19 @@ pub struct AgentThreadStore {
     managed_provisioning:
         ManagedAgentProvisioningCoordinator<Entity<ManagedAgentProgressNotification>>,
     snapshot_sender: mpsc::UnboundedSender<SnapshotRequest>,
+    /// Entries retied before their session id was known (so the persisted
+    /// tie override, keyed by `(kind_id, session_id)`, couldn't be written
+    /// yet). `attach_discovered_session_id` persists the entry's current
+    /// tie and clears the marker once the id becomes known. See the design
+    /// doc's "Session ids cannot be the primary key" section.
+    pending_tie_persistence: HashSet<EntityId>,
+    /// The agent-control server's accept-loop task (see `crate::control`),
+    /// held here so its lifetime is the app's rather than any caller's.
+    /// Doesn't exist on non-Unix hosts, where the control server doesn't
+    /// either -- `#[cfg(unix)]`, not just an `Option` that stays `None`,
+    /// since nothing on that platform ever constructs a `Task` to hold.
+    #[cfg(unix)]
+    _control_server_task: Option<Task<()>>,
 }
 
 struct ThreadEntry {
@@ -331,6 +443,14 @@ struct ThreadEntry {
     window: Option<WindowHandle<MultiWorkspace>>,
     remote_process: Option<RemoteAgentProcess>,
     egress: Option<AgentEgressLease>,
+}
+
+/// See `AgentThreadStore::live_terminal_worktree_roots`.
+#[cfg(unix)]
+pub(crate) struct LiveTerminalWorktree {
+    pub(crate) terminal_item_id: EntityId,
+    pub(crate) tied_worktree_root: PathBuf,
+    pub(crate) kind_id: &'static str,
 }
 
 struct ThreadShutdown {
@@ -457,6 +577,9 @@ impl AgentThreadStore {
             agent_artifact_cache: None,
             managed_provisioning: ManagedAgentProvisioningCoordinator::default(),
             snapshot_sender,
+            pending_tie_persistence: HashSet::default(),
+            #[cfg(unix)]
+            _control_server_task: None,
         });
         spawn_session_discovery_loop(store.clone(), cx);
         cx.set_global(GlobalAgentThreadStore(store));
@@ -495,19 +618,26 @@ impl AgentThreadStore {
             .contains(&remote::remote_connection_identity(connection_options))
     }
 
-    pub fn live_threads_for_project(
+    pub(crate) fn live_threads_for_project(
         &self,
         kind_id: &str,
         project_roots: &[PathBuf],
+        tie_resolution: &TieResolution,
     ) -> Vec<AgentThreadMetadata> {
         self.threads
             .values()
             .map(|entry| &entry.metadata)
             .filter(|metadata| {
-                metadata.kind_id == kind_id
-                    && project_roots
-                        .iter()
-                        .any(|root| root == &metadata.project_root)
+                if metadata.kind_id != kind_id {
+                    return false;
+                }
+                let Some(effective_tie) = tie_resolution.effective_tie(
+                    &metadata.tied_worktree_root,
+                    metadata.tied_repo_main_root.as_deref(),
+                ) else {
+                    return false;
+                };
+                project_roots.iter().any(|root| root == &effective_tie)
             })
             .cloned()
             .collect()
@@ -565,6 +695,18 @@ impl AgentThreadStore {
         }
         entry.metadata.resumed_session_id = Some(session_id);
         cx.notify();
+
+        // Migrate a retie that happened before this thread's session id was
+        // known: the persisted override table is keyed by (kind_id,
+        // session_id), so it couldn't be written until now. Fire-and-forget
+        // is fine here (unlike the retie orchestration's own write, nothing
+        // is waiting on this to report success/failure back to a caller).
+        if self.pending_tie_persistence.remove(&terminal_item_id)
+            && let Some((kind_id, session_id, tie)) = self.tie_override_to_persist(terminal_item_id)
+        {
+            cx.spawn(async move |_, cx| write_tie_override(cx, kind_id, &session_id, &tie).await)
+                .detach_and_log_err(cx);
+        }
     }
 
     pub fn active_thread_count_for_connection(
@@ -706,11 +848,95 @@ impl AgentThreadStore {
         Ok(())
     }
 
+    /// The synchronous, infallible-once-called part of a retie: updates
+    /// `entry.workspace` and the metadata's tie fields, and emits
+    /// `ThreadUpdated`. No IO, no workspace resolution -- those happen
+    /// first, in the async `retie_thread` orchestration, which only calls
+    /// this once the checked move into `new_workspace` has already
+    /// succeeded (so `entry.workspace` here is not a promise, it is
+    /// already true).
+    ///
+    /// Marks the entry for later persistence (via `pending_tie_persistence`)
+    /// when its session id isn't known yet -- session ids are the
+    /// persisted-override table's key, and a `retie-thread` request can
+    /// easily arrive before discovery has assigned one. See the design
+    /// doc's "Session ids cannot be the primary key" section.
+    // Reachable only from `retie_thread` today, which is itself only called
+    // from tests -- Stage 2's control.rs is its production caller.
+    #[allow(dead_code)]
+    pub(crate) fn commit_retie(
+        &mut self,
+        terminal_item_id: EntityId,
+        new_workspace: Entity<Workspace>,
+        new_tie: TiedWorktree,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let entry = self
+            .threads
+            .get_mut(&terminal_item_id)
+            .ok_or_else(|| anyhow!("agent thread no longer exists"))?;
+        entry.workspace = new_workspace.downgrade();
+        entry.metadata.tied_worktree_root = new_tie.root;
+        entry.metadata.tied_repo_main_root = new_tie.repo_main_root;
+        let kind_id = entry.metadata.kind_id;
+        if entry.metadata.resumed_session_id.is_none() {
+            self.pending_tie_persistence.insert(terminal_item_id);
+        }
+        cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
+        cx.notify();
+        Ok(())
+    }
+
+    /// The tie override to persist for `terminal_item_id` right now, if its
+    /// session id is already known -- `None` when it isn't (the caller
+    /// should leave `pending_tie_persistence`'s marker in place instead;
+    /// `attach_discovered_session_id` will persist it once the id arrives).
+    pub(crate) fn tie_override_to_persist(
+        &self,
+        terminal_item_id: EntityId,
+    ) -> Option<(&'static str, SharedString, TiedWorktree)> {
+        let entry = self.threads.get(&terminal_item_id)?;
+        let session_id = entry.metadata.resumed_session_id.clone()?;
+        Some((
+            entry.metadata.kind_id,
+            session_id,
+            TiedWorktree {
+                root: entry.metadata.tied_worktree_root.clone(),
+                repo_main_root: entry.metadata.tied_repo_main_root.clone(),
+            },
+        ))
+    }
+
+    /// The workspace and terminal item a live thread currently lives in --
+    /// the source side of a retie's move. Mirrors `focus_thread`'s own
+    /// resolution of these two handles.
+    // Reachable only from `retie_thread` today; see its own dead_code note.
+    #[allow(dead_code)]
+    pub(crate) fn thread_workspace_and_terminal(
+        &self,
+        terminal_item_id: EntityId,
+    ) -> Result<(Entity<Workspace>, Entity<TerminalView>)> {
+        let entry = self
+            .threads
+            .get(&terminal_item_id)
+            .ok_or_else(|| anyhow!("agent thread no longer exists"))?;
+        let workspace = entry
+            .workspace
+            .upgrade()
+            .ok_or_else(|| anyhow!("agent thread workspace closed"))?;
+        let terminal_view = entry
+            .terminal_view
+            .upgrade()
+            .ok_or_else(|| anyhow!("agent thread terminal closed"))?;
+        Ok((workspace, terminal_view))
+    }
+
     fn register(
         &mut self,
         kind_id: &'static str,
         title: SharedString,
         project_root: PathBuf,
+        tied_worktree: TiedWorktree,
         resumed_session_id: Option<SharedString>,
         launched_at: SystemTime,
         workspace: Entity<Workspace>,
@@ -728,6 +954,8 @@ impl AgentThreadStore {
             kind_id,
             title: title.clone(),
             project_root,
+            tied_worktree_root: tied_worktree.root,
+            tied_repo_main_root: tied_worktree.repo_main_root,
             launched_at,
             resumed_session_id,
         };
@@ -807,6 +1035,70 @@ impl AgentThreadStore {
             .run(cx),
         )
     }
+
+    /// The window a live thread's terminal lives in -- needed by the control
+    /// server to call `retie_thread`/`launch_seeded_thread`, both of which
+    /// require a live `Window` rather than just the owning `Workspace`.
+    pub(crate) fn thread_window(
+        &self,
+        terminal_item_id: EntityId,
+    ) -> Result<WindowHandle<MultiWorkspace>> {
+        self.threads
+            .get(&terminal_item_id)
+            .ok_or_else(|| anyhow!("agent thread no longer exists"))?
+            .window
+            .ok_or_else(|| anyhow!("agent thread window closed"))
+    }
+
+    /// Stores the agent-control server's accept-loop task so its lifetime is
+    /// the app's, not any caller's -- see `crate::control::init`.
+    #[cfg(unix)]
+    pub(crate) fn hold_control_server_task(&mut self, task: Task<()>) {
+        self._control_server_task = Some(task);
+    }
+
+    /// Every live thread's underlying terminal process id, for the control
+    /// server's peer-credential resolution: it walks a connecting process's
+    /// ancestry looking for a PID in this map, so it knows which thread (if
+    /// any) is calling. A remote thread's terminal process runs on a
+    /// different machine, so it can never appear in this map or match a
+    /// local process's ancestry -- remote threads are excluded from the
+    /// control surface by construction, with no separate check needed.
+    #[cfg(unix)]
+    pub(crate) fn live_terminal_pids(&self, cx: &App) -> HashMap<u32, EntityId> {
+        self.threads
+            .iter()
+            .filter_map(|(terminal_item_id, entry)| {
+                let pid = entry.terminal.read(cx).pid()?;
+                Some((pid.as_u32(), *terminal_item_id))
+            })
+            .collect()
+    }
+
+    /// Every live local thread's tied worktree root and agent kind, for the
+    /// control server's peer-credential resolution -- a fallback identity
+    /// signal used when `live_terminal_pids`'s ancestry walk can't find a
+    /// match. Some agent CLIs (Codex, notably) delegate tool-call shell
+    /// execution to a separate, already-running daemon rather than forking
+    /// it as a child of the interactive session, so no ancestor PID is
+    /// ever one Flint tracks -- the delegated shell's cwd is still reliably
+    /// the session's own cwd, though, since the CLI's own file operations
+    /// depend on it being correct. `kind_id` disambiguates two threads tied
+    /// to the same worktree, which cwd alone can't. Remote threads are
+    /// excluded: their tied worktree is a path on a different machine,
+    /// never a local caller's cwd.
+    #[cfg(unix)]
+    pub(crate) fn live_terminal_worktree_roots(&self) -> Vec<LiveTerminalWorktree> {
+        self.threads
+            .iter()
+            .filter(|(_, entry)| entry.remote_process.is_none())
+            .map(|(terminal_item_id, entry)| LiveTerminalWorktree {
+                terminal_item_id: *terminal_item_id,
+                tied_worktree_root: entry.metadata.tied_worktree_root.clone(),
+                kind_id: entry.metadata.kind_id,
+            })
+            .collect()
+    }
 }
 
 fn entry_matches_connection(
@@ -853,18 +1145,23 @@ pub fn launch_new_thread(
 /// turn, for cross-agent handoff. Only used on the configured (non-managed)
 /// route -- handoff does not support the managed/tunneled route yet, so
 /// callers must not reach this for a project using it.
+///
+/// Returns whether the prompt was actually seeded, so a caller that promised
+/// a seeded launch (e.g. `create-thread`'s command handler) can report a
+/// structured failure instead of silently spawning an unseeded thread when
+/// `kind.initial_prompt_strategy` is `Unsupported` or the prompt is empty.
 pub(crate) fn launch_seeded_thread(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
     initial_prompt: &str,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> bool {
     let extra_args = resolve_new_thread_launch_args(cx, kind);
     let settings = AgentThreadSettings::get_global(cx);
     let base = settings.command_for_kind(kind.id);
     let mut launch = build_new_thread_launch(kind, base, &extra_args, None);
-    crate::seed_launch_command_with_prompt(&mut launch.command, kind, initial_prompt);
+    let seeded = crate::seed_launch_command_with_prompt(&mut launch.command, kind, initial_prompt);
     spawn_thread(
         workspace,
         kind,
@@ -874,6 +1171,7 @@ pub(crate) fn launch_seeded_thread(
         window,
         cx,
     );
+    seeded
 }
 
 fn launch_configured_thread(
@@ -1797,6 +2095,316 @@ fn apply_self_update_policy(command: &mut AgentLaunchCommand, kind: &AgentKindDe
     }
 }
 
+/// A worktree a thread is tied to, plus the repository it belongs to (if
+/// any). `repo_main_root` is captured at tie-assignment time rather than
+/// re-derived later, because once `root` is removed from its repository's
+/// worktree set there is no longer any current state from which to
+/// rediscover which repository it used to belong to -- see the design doc's
+/// "Deleted worktrees fall back to the main worktree" section.
+#[derive(Clone)]
+pub(crate) struct TiedWorktree {
+    pub root: PathBuf,
+    pub repo_main_root: Option<PathBuf>,
+}
+
+/// Resolves the worktree a newly-launched thread should be tied to: prefer
+/// the worktree owning the project's active repository, else the first
+/// visible worktree ("default to main worktree" for a project with several
+/// roots and no active repository), else `None` for a worktree-less
+/// project. The active-repository preference mirrors
+/// `TitleBar::effective_active_worktree`
+/// (`crates/title_bar/src/title_bar.rs:403-419`) -- duplicated rather than
+/// shared, since pulling in a `title_bar` dependency for this one lookup
+/// would be a heavier coupling than the ~15 lines it saves.
+fn resolve_tied_worktree(workspace: &Workspace, cx: &App) -> Option<TiedWorktree> {
+    let project = workspace.project().read(cx);
+
+    if let Some(repo) = project.active_repository(cx) {
+        let repo = repo.read(cx);
+        let repo_path = &repo.work_directory_abs_path;
+
+        for worktree in project.visible_worktrees(cx) {
+            let worktree_path = worktree.read(cx).abs_path();
+            if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
+                return Some(TiedWorktree {
+                    root: worktree_path.to_path_buf(),
+                    repo_main_root: repo.main_worktree_abs_path().map(|path| path.to_path_buf()),
+                });
+            }
+        }
+    }
+
+    let root = project
+        .visible_worktrees(cx)
+        .next()
+        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())?;
+    Some(TiedWorktree {
+        repo_main_root: repo_main_root_for_worktree(project, &root, cx),
+        root,
+    })
+}
+
+/// Live-worktree state gathered once per use (a panel render, or a restore
+/// pass), used to resolve where a thread's tie should actually be
+/// considered to point right now -- see the design doc's "Deleted
+/// worktrees fall back to the main worktree" section. A flat `HashSet`
+/// rather than the design doc's original `HashMap<RepositoryId, _>`
+/// sketch: `effective_tie` doesn't need to discover *which* repository a
+/// dangling tie belonged to from current state, because that's exactly
+/// the state that's gone missing once a tie goes dangling -- callers
+/// instead pass each thread's own `tied_repo_main_root`, captured at
+/// tie-assignment time (see `TiedWorktree`/`AgentThreadMetadata`).
+pub(crate) struct TieResolution {
+    /// Every worktree path currently live across every repository the
+    /// caller passed in (condition 1).
+    live_worktree_roots: HashSet<PathBuf>,
+    /// Worktree paths with a currently-open workspace (condition 2). Left
+    /// empty for restore, which uses condition 1 only -- see the design
+    /// doc's "Condition 2 is racy at restore, deliberately" note.
+    open_workspace_roots: HashSet<PathBuf>,
+    /// False until git state has loaded; suppresses the fallback (keeps
+    /// the raw tie) rather than treating "not scanned yet" as "deleted".
+    git_ready: bool,
+}
+
+impl TieResolution {
+    /// A resolution that never applies the deleted-worktree fallback --
+    /// `effective_tie` always returns the raw tie unchanged, matching the
+    /// pre-fallback behavior. Useful for callers with no `Project` handy
+    /// (or, in tests, no git repository at all) where the fallback simply
+    /// doesn't apply.
+    pub(crate) fn not_ready() -> Self {
+        Self {
+            live_worktree_roots: HashSet::default(),
+            open_workspace_roots: HashSet::default(),
+            git_ready: false,
+        }
+    }
+
+    /// Gathers condition 1 from `project`'s visible worktrees plus every
+    /// repository's linked worktrees, condition 2 from
+    /// `open_workspace_roots`, and `git_ready` from the caller (see
+    /// `AgentThreadsPanel::git_ready`, cached from a one-time
+    /// `Project::git_scans_complete` task -- rebuilding this per render is
+    /// cheap; re-awaiting readiness per render would not be).
+    ///
+    /// Condition 1 must include plain visible worktrees, not only
+    /// git-repository worktrees: `resolve_tied_worktree`'s fallback path
+    /// (no active repository) ties a thread to `visible_worktrees(cx).next()`
+    /// even for a project with no git repository at all, and that same
+    /// project then has no repository to contribute a `repo_main_root`
+    /// either -- so without this, a plain (non-git) project's own threads
+    /// would look dangling with nowhere to fall back to the moment
+    /// `git_ready` turns true, and vanish from their own panel.
+    pub(crate) fn new(
+        project: &Project,
+        open_workspace_roots: HashSet<PathBuf>,
+        git_ready: bool,
+        cx: &App,
+    ) -> Self {
+        let mut live_worktree_roots: HashSet<PathBuf> = project
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect();
+        for repo in project.repositories(cx).values() {
+            let repo = repo.read(cx);
+            live_worktree_roots.insert(repo.work_directory_abs_path.to_path_buf());
+            live_worktree_roots.extend(
+                repo.linked_worktrees()
+                    .iter()
+                    .map(|worktree| worktree.path.clone()),
+            );
+        }
+        Self {
+            live_worktree_roots,
+            open_workspace_roots,
+            git_ready,
+        }
+    }
+
+    /// Resolves where `tied_worktree_root` should currently be considered
+    /// to point. `None` only when the tie is dangling and
+    /// `tied_repo_main_root` is also `None` (e.g. a `retie-thread` target
+    /// outside every repository) -- there is nowhere left to fall back to.
+    pub(crate) fn effective_tie(
+        &self,
+        tied_worktree_root: &Path,
+        tied_repo_main_root: Option<&Path>,
+    ) -> Option<PathBuf> {
+        if !self.git_ready
+            || self.live_worktree_roots.contains(tied_worktree_root)
+            || self.open_workspace_roots.contains(tied_worktree_root)
+        {
+            return Some(tied_worktree_root.to_path_buf());
+        }
+        tied_repo_main_root.map(|root| root.to_path_buf())
+    }
+
+    #[cfg(test)]
+    fn for_test(
+        live_worktree_roots: impl IntoIterator<Item = PathBuf>,
+        open_workspace_roots: impl IntoIterator<Item = PathBuf>,
+        git_ready: bool,
+    ) -> Self {
+        Self {
+            live_worktree_roots: live_worktree_roots.into_iter().collect(),
+            open_workspace_roots: open_workspace_roots.into_iter().collect(),
+            git_ready,
+        }
+    }
+}
+
+/// Finds the repository (if any) that owns `worktree_root` -- either as its
+/// main worktree or one of its linked worktrees -- and returns that
+/// repository's main worktree path.
+fn repo_main_root_for_worktree(
+    project: &Project,
+    worktree_root: &Path,
+    cx: &App,
+) -> Option<PathBuf> {
+    project.repositories(cx).values().find_map(|repo| {
+        let repo = repo.read(cx);
+        let owns_root = repo.work_directory_abs_path.as_ref() == worktree_root
+            || repo
+                .linked_worktrees()
+                .iter()
+                .any(|worktree| worktree.path.as_path() == worktree_root);
+        owns_root
+            .then(|| repo.main_worktree_abs_path())
+            .flatten()
+            .map(|path| path.to_path_buf())
+    })
+}
+
+/// Whether `retie_thread`'s persisted-tie write actually happened. A thread
+/// with no session id yet legitimately reports `InMemoryOnly` -- not a
+/// failure, see `AgentThreadStore::commit_retie` -- the tie is fully in
+/// effect for the live thread either way; only the persisted-override
+/// table's write is what's deferred.
+// Only constructed by `retie_thread` today; see its own dead_code note --
+// Stage 2's control.rs is the pending production caller.
+#[allow(dead_code)]
+pub(crate) enum RetiePersistence {
+    Persisted,
+    InMemoryOnly,
+}
+
+/// Re-ties a live thread to the worktree at `target_path`, moving its
+/// terminal into that worktree's workspace (creating a background workspace
+/// for it if none is open yet) so tie and ownership never diverge. See the
+/// design doc's "Retie moves the terminal" and "Commit ordering" sections
+/// for the invariants this implements.
+// Exercised end-to-end by tests (panel.rs's retie_thread_* tests) but has
+// no production caller yet -- that's Stage 2's control.rs, not yet built.
+#[allow(dead_code)]
+pub(crate) async fn retie_thread(
+    terminal_item_id: EntityId,
+    target_path: PathBuf,
+    window_handle: WindowHandle<MultiWorkspace>,
+    cx: &mut AsyncApp,
+) -> Result<(TiedWorktree, RetiePersistence)> {
+    // Step 1: resolve-or-create the destination background workspace.
+    // Never activates -- see find_or_create_background_local_workspace's
+    // own doc comment for why this, and not the picker's activating
+    // counterpart, is used here.
+    let destination_workspace = window_handle
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.find_or_create_background_local_workspace(
+                util::path_list::PathList::new(&[target_path]),
+                None,
+                &[],
+                None,
+                window,
+                cx,
+            )
+        })?
+        .await?;
+
+    // The committed tie is derived from the destination workspace's own
+    // resolved worktree root, never the raw caller-supplied path: `..`
+    // segments, symlinks, and platform case/spelling differences would all
+    // fail the exact path-equality checks TieResolution performs.
+    let new_tie = destination_workspace
+        .update(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
+        .ok_or_else(|| anyhow!("could not resolve a worktree root for the retie target"))?;
+
+    // Step 2: checked move into the destination workspace's active pane.
+    let store = cx.update(|cx| AgentThreadStore::global(cx));
+    let (source_workspace, terminal_view) = store
+        .read_with(cx, |store, _| {
+            store.thread_workspace_and_terminal(terminal_item_id)
+        })
+        .log_err()
+        .ok_or_else(|| anyhow!("agent thread is no longer live"))?;
+    let source_pane = source_workspace
+        .read_with(cx, |workspace, _| {
+            workspace.pane_for_item_id(terminal_item_id)
+        })
+        .ok_or_else(|| anyhow!("agent thread pane closed"))?;
+    let destination_pane =
+        destination_workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+    // Only follow the terminal into its new worktree if the user could
+    // already see it -- i.e. its source workspace was the window's
+    // foreground one. A background agent retying itself must not yank the
+    // user out of whatever worktree they're actually looking at; but a
+    // terminal the user was watching would otherwise just vanish from the
+    // window once its pane item moves below, with no visible explanation.
+    let source_was_active = window_handle
+        .read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace() == &source_workspace
+        })
+        .unwrap_or(false);
+
+    if source_pane != destination_pane {
+        window_handle.update(cx, |_, window, cx| {
+            workspace::move_item_checked(
+                &source_pane,
+                &destination_pane,
+                terminal_item_id,
+                destination_pane.read(cx).items_len(),
+                false,
+                window,
+                cx,
+            )
+        })??;
+    }
+    // `move_item_checked` (when it ran) triggered `TerminalView::added_to_workspace`
+    // as a side effect of the pane-add, which already called `reparent` --
+    // `self.workspace`/`self.project`/`_terminal_subscriptions` on the
+    // terminal view are already correct by this point. Nothing left to do
+    // for ownership beyond the store-side commit below.
+    let _ = terminal_view;
+
+    if source_was_active {
+        window_handle.update(cx, |multi_workspace, window, cx| {
+            multi_workspace.activate(
+                destination_workspace.clone(),
+                Some(source_workspace.downgrade()),
+                window,
+                cx,
+            );
+        })?;
+    }
+
+    // Step 3: commit in-memory (infallible now that the move succeeded).
+    let committed_tie = new_tie.clone();
+    let store = cx.update(|cx| AgentThreadStore::global(cx));
+    store.update(cx, |store, cx| {
+        store.commit_retie(terminal_item_id, destination_workspace, new_tie, cx)
+    })?;
+
+    // Step 4: persist, awaited -- so this function's return value is a
+    // truthful account of what happened, not an assumption.
+    let Some((kind_id, session_id, tie)) = store.read_with(cx, |store, _| {
+        store.tie_override_to_persist(terminal_item_id)
+    }) else {
+        return Ok((committed_tie, RetiePersistence::InMemoryOnly));
+    };
+    write_tie_override(cx, kind_id, &session_id, &tie).await?;
+    Ok((committed_tie, RetiePersistence::Persisted))
+}
+
 fn prepare_remote_thread_process(
     command: &mut AgentLaunchCommand,
     remote_connection: Option<Arc<dyn remote::RemoteConnection>>,
@@ -1832,6 +2440,10 @@ fn spawn_thread_task_inner(
             "agent thread working directory is unavailable"
         )));
     };
+    let tied_worktree = resolve_tied_worktree(workspace, cx).unwrap_or_else(|| TiedWorktree {
+        root: cwd.clone(),
+        repo_main_root: None,
+    });
     let kind_id = kind.id;
     let kind_icon = kind.icon;
     let title = summary.clone();
@@ -1840,6 +2452,10 @@ fn spawn_thread_task_inner(
     let initialization_command = command.initialization_command.take();
     let is_windows = workspace.project().read(cx).path_style(cx).is_windows();
     let remote_client = workspace.project().read(cx).remote_client();
+    #[cfg(unix)]
+    if remote_client.is_none() {
+        crate::instructions::maybe_offer_worktree_instructions(kind, workspace, cx);
+    }
     let remote_process = match prepare_remote_thread_process(
         &mut command,
         remote_connection,
@@ -1914,6 +2530,7 @@ fn spawn_thread_task_inner(
                 kind_id,
                 title,
                 cwd,
+                tied_worktree,
                 resumed_session_id,
                 launched_at,
                 workspace_entity,
@@ -2030,7 +2647,11 @@ pub fn restore_threads_for_workspace(
     };
 
     let live_threads = store.read(cx).live_threads_for_workspace(workspace_id, cx);
-    let records = records_to_restore_for_workspace(workspace_id, &records, &live_threads);
+    let own_project_roots = workspace.project().read_with(cx, |project, cx| {
+        history::project_worktree_roots(project, cx)
+    });
+    let records =
+        records_to_restore_for_workspace(workspace_id, &own_project_roots, &records, &live_threads);
     let settings = AgentThreadSettings::get_global(cx).clone();
     let mut restores = Vec::new();
 
@@ -2131,20 +2752,50 @@ fn snapshot_records_for_workspace(
                 session_id: session_id.to_string(),
                 title: thread.title.to_string(),
                 project_root: thread.project_root,
+                // Always populated, not only for retied threads: every
+                // *new* snapshot carries a resolved tie, so restore routing
+                // never has to fall back to path-comparing project_root
+                // (which can be a subdirectory, not a worktree root) for a
+                // record written after this field existed.
+                tied_worktree_root: Some(thread.tied_worktree_root),
                 last_activity_at: system_time_to_millis(thread.launched_at),
             })
         })
         .collect()
 }
 
+/// Selects the records `workspace_id` (whose own worktree roots are
+/// `own_project_roots`) should restore. Routes by effective tie for records
+/// that carry one (every record written since `tied_worktree_root` was
+/// added); legacy records (`None`, written before) fall back to their
+/// original `workspace_id`-based routing, exactly as before this field
+/// existed -- never by comparing `own_project_roots` against `project_root`,
+/// which is a launch cwd, not necessarily a worktree root.
+///
+/// Once a record is selected here, the actual resume launches into *this*
+/// restoring workspace via the normal `spawn_thread_task_inner` path, which
+/// re-derives `tied_worktree_root` fresh via `resolve_tied_worktree` rather
+/// than being handed the record's tie directly -- deliberately not plumbed
+/// through as an explicit override. For the common single-root-workspace
+/// case (this filter already guarantees the workspace's own root matches
+/// the tie) the two always agree, so this is not a behavior gap in the
+/// case that matters; a multi-root workspace whose `active_repository`
+/// picks a different one of its own roots than the specific one that was
+/// tied is the only case where they could diverge, left as a known,
+/// narrow gap rather than threading an override through the whole launch
+/// pipeline for it.
 fn records_to_restore_for_workspace(
     workspace_id: WorkspaceId,
+    own_project_roots: &[PathBuf],
     records: &[AgentThreadSessionRestoreRecord],
     live_threads: &[AgentThreadMetadata],
 ) -> Vec<AgentThreadSessionRestoreRecord> {
     records
         .iter()
-        .filter(|record| record.workspace_id == workspace_id)
+        .filter(|record| match &record.tied_worktree_root {
+            Some(tied_root) => own_project_roots.contains(tied_root),
+            None => record.workspace_id == workspace_id,
+        })
         .filter(|record| {
             !live_threads.iter().any(|thread| {
                 thread.kind_id == record.kind_id
@@ -2187,9 +2838,13 @@ pub fn init(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
+    use project::{FakeFs, Project};
+    use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+    use workspace::MultiWorkspace;
 
     struct DropProbe(Arc<AtomicBool>);
 
@@ -2203,12 +2858,193 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
     }
 
+    #[gpui::test]
+    async fn resolve_tied_worktree_falls_back_to_the_first_visible_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let resolved = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.read_with(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
+            })
+            .expect("window should be live");
+        let resolved = resolved.expect("a single-worktree project should resolve a tie");
+
+        // No git repository in this fixture, so there's no repo to fall
+        // back to if this worktree later vanishes.
+        assert_eq!(resolved.root, PathBuf::from("/root"));
+        assert_eq!(resolved.repo_main_root, None);
+    }
+
+    #[gpui::test]
+    async fn tie_resolution_keeps_a_plain_non_git_projects_own_worktree_live(
+        cx: &mut TestAppContext,
+    ) {
+        // Regression test: TieResolution::new used to seed live_worktree_roots
+        // only from project.repositories(cx). A project with no git
+        // repository at all has no repository to contribute either a live
+        // root or a repo_main_root fallback, so once git_ready turned true
+        // every thread in a plain (non-git) project would look dangling with
+        // nowhere to fall back to, and vanish from its own panel.
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let tied = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.read_with(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
+            })
+            .expect("window should be live")
+            .expect("a single-worktree project should resolve a tie");
+
+        let effective = cx.update(|cx| {
+            let resolution = TieResolution::new(project.read(cx), HashSet::default(), true, cx);
+            resolution.effective_tie(&tied.root, tied.repo_main_root.as_deref())
+        });
+
+        assert_eq!(effective, Some(PathBuf::from("/root")));
+    }
+
+    #[gpui::test]
+    async fn resolve_tied_worktree_is_none_for_a_worktree_less_project(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let resolved = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.read_with(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
+            })
+            .expect("window should be live");
+
+        assert!(resolved.is_none());
+    }
+
+    #[gpui::test]
+    async fn resolve_tied_worktree_prefers_the_active_repository_and_captures_its_main_root(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" },
+                },
+            }),
+        )
+        .await;
+
+        let project_root = PathBuf::from("/root/project");
+        let project = Project::test(fs, [project_root.as_path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let resolved = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.read_with(cx, |workspace, cx| resolve_tied_worktree(workspace, cx))
+            })
+            .expect("window should be live");
+        let resolved = resolved.expect("a git-repository project should resolve a tie");
+
+        assert_eq!(resolved.root, project_root);
+        assert_eq!(resolved.repo_main_root, Some(project_root));
+    }
+
+    #[test]
+    fn effective_tie_is_unchanged_while_the_worktree_is_live() {
+        let resolution = TieResolution::for_test([PathBuf::from("/repo/x")], [], true);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/repo/x"), None),
+            Some(PathBuf::from("/repo/x"))
+        );
+    }
+
+    #[test]
+    fn effective_tie_stays_put_when_a_workspace_is_open_even_if_the_repo_forgot_it() {
+        // Condition 2: the worktree isn't in the repo's own worktree set
+        // (as if it had just been externally removed), but a workspace is
+        // still open there -- the regression test for the divergence
+        // condition 2 exists to prevent (see the design doc).
+        let resolution = TieResolution::for_test([], [PathBuf::from("/repo/x")], true);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/repo/x"), Some(&PathBuf::from("/repo"))),
+            Some(PathBuf::from("/repo/x"))
+        );
+    }
+
+    #[test]
+    fn effective_tie_falls_back_to_the_repo_main_root_once_dangling() {
+        let resolution = TieResolution::for_test([], [], true);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/repo/x"), Some(&PathBuf::from("/repo"))),
+            Some(PathBuf::from("/repo"))
+        );
+    }
+
+    #[test]
+    fn effective_tie_is_none_when_dangling_with_no_repo_to_fall_back_to() {
+        let resolution = TieResolution::for_test([], [], true);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/elsewhere/x"), None),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_tie_keeps_the_raw_tie_while_git_state_is_not_ready() {
+        // git_ready: false must suppress the fallback entirely, even though
+        // the tie would otherwise look dangling -- "not scanned yet" must
+        // never be treated as "deleted".
+        let resolution = TieResolution::for_test([], [], false);
+        assert_eq!(
+            resolution.effective_tie(Path::new("/repo/x"), Some(&PathBuf::from("/repo"))),
+            Some(PathBuf::from("/repo/x"))
+        );
+    }
+
     fn live(id: u64, launched_at: u64, resumed_session_id: Option<&str>) -> AgentThreadMetadata {
         AgentThreadMetadata {
             terminal_item_id: EntityId::from(id),
             kind_id: "codex",
             title: SharedString::from("live"),
             project_root: PathBuf::from("/root"),
+            tied_worktree_root: PathBuf::from("/root"),
+            tied_repo_main_root: None,
             launched_at: at(launched_at),
             resumed_session_id: resumed_session_id.map(SharedString::from),
         }
@@ -2917,26 +3753,90 @@ mod tests {
                 session_id: "session-a".to_string(),
                 title: "live".to_string(),
                 project_root: PathBuf::from("/root"),
+                tied_worktree_root: Some(PathBuf::from("/root")),
                 last_activity_at: 100_000,
             }]
         );
+    }
+
+    fn restore_record(
+        workspace_id: i64,
+        tied_worktree_root: Option<&str>,
+    ) -> AgentThreadSessionRestoreRecord {
+        AgentThreadSessionRestoreRecord {
+            workspace_id: workspace::WorkspaceId::from_i64(workspace_id),
+            kind_id: "codex".to_string(),
+            session_id: "session-a".to_string(),
+            title: "Restored".to_string(),
+            project_root: PathBuf::from("/root"),
+            tied_worktree_root: tied_worktree_root.map(PathBuf::from),
+            last_activity_at: 100_000,
+        }
     }
 
     #[test]
     fn restore_records_skip_live_resumed_sessions() {
         let records = records_to_restore_for_workspace(
             workspace::WorkspaceId::from_i64(7),
-            &[AgentThreadSessionRestoreRecord {
-                workspace_id: workspace::WorkspaceId::from_i64(7),
-                kind_id: "codex".to_string(),
-                session_id: "session-a".to_string(),
-                title: "Restored".to_string(),
-                project_root: PathBuf::from("/root"),
-                last_activity_at: 100_000,
-            }],
+            &[PathBuf::from("/root")],
+            &[restore_record(7, Some("/root"))],
             &[live_with_kind(1, "codex", Some("session-a"))],
         );
 
         assert!(records.is_empty());
+    }
+
+    #[test]
+    fn restore_records_route_new_records_by_effective_tie_not_workspace_id() {
+        // The record's original workspace_id (7) never reopens; only
+        // workspace 9, whose own root matches the tie, does. A tie-based
+        // record must still restore there.
+        let records = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(9),
+            &[PathBuf::from("/root-b")],
+            &[restore_record(7, Some("/root-b"))],
+            &[],
+        );
+
+        assert_eq!(records, vec![restore_record(7, Some("/root-b"))]);
+    }
+
+    #[test]
+    fn restore_records_do_not_route_new_records_to_a_workspace_with_a_different_root() {
+        let records = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(9),
+            &[PathBuf::from("/unrelated")],
+            &[restore_record(7, Some("/root-b"))],
+            &[],
+        );
+
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn restore_records_route_legacy_records_by_workspace_id_only() {
+        // No tied_worktree_root at all (a record written before this field
+        // existed) -- must not be compared against project_root by path,
+        // only workspace_id routing applies.
+        let legacy = restore_record(7, None);
+
+        let matches_original_workspace = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(7),
+            &[PathBuf::from("/somewhere-else")],
+            std::slice::from_ref(&legacy),
+            &[],
+        );
+        assert_eq!(matches_original_workspace, vec![legacy.clone()]);
+
+        let different_workspace_with_matching_root = records_to_restore_for_workspace(
+            workspace::WorkspaceId::from_i64(9),
+            &[PathBuf::from("/root")],
+            &[legacy],
+            &[],
+        );
+        assert!(
+            different_workspace_with_matching_root.is_empty(),
+            "a legacy record must not restore into a different workspace even if its root matches project_root"
+        );
     }
 }

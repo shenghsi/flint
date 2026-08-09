@@ -129,6 +129,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_control_cli"
+version = "0.1.0"
+dependencies = [
+ "agent_control_protocol",
+ "anyhow",
+ "clap",
+ "serde_json",
+]
+
+[[package]]
+name = "agent_control_protocol"
+version = "0.1.0"
+dependencies = [
+ "paths",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "agent_history"
 version = "0.1.0"
 dependencies = [
@@ -155,6 +174,7 @@ dependencies = [
 name = "agent_threads"
 version = "0.1.0"
 dependencies = [
+ "agent_control_protocol",
  "agent_history",
  "anyhow",
  "async-channel 2.5.0",
@@ -171,16 +191,20 @@ dependencies = [
  "flint_actions",
  "fs",
  "futures 0.3.32",
+ "git_ui",
  "gpui",
  "hex",
  "hmac",
  "http_client",
  "log",
+ "net",
+ "nix 0.29.0",
  "parking_lot",
  "paths",
  "pretty_assertions",
  "project",
  "proto",
+ "release_channel",
  "remote",
  "rpc",
  "schemars",
@@ -190,6 +214,7 @@ dependencies = [
  "settings_macros",
  "sha2",
  "smol",
+ "sysinfo 0.37.2",
  "task",
  "tempfile",
  "terminal",
@@ -8501,6 +8526,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]

@@ -753,6 +753,12 @@ fn main() {
 
         log::info!("init: menus/crash_handler setup");
         initialize_workspace(app_state.clone(), cx);
+        // Only from the real app entry point, never from
+        // `initialize_workspace` itself: that function is also called by
+        // this crate's own test harness, and starting the control server
+        // there would bind a real OS socket under the real data dir on
+        // every test run.
+        agent_threads::init_control_server(cx);
         log::info!("init: workspace initialized, opening window");
 
         cx.activate(true);

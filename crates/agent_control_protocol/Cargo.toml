@@ -1,0 +1,20 @@
+[package]
+name = "agent_control_protocol"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/agent_control_protocol.rs"
+doctest = false
+
+[dependencies]
+paths.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

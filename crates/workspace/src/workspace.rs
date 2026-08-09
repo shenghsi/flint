@@ -9225,6 +9225,50 @@ pub fn move_item(
     });
 }
 
+/// Checked variant of `move_item`. `move_item` silently no-ops when the
+/// source pane no longer contains the item ("Tab was closed during drag") --
+/// fine for its usual drag-and-drop callers, but a caller that commits new
+/// ownership state on the assumption the move happened (e.g. a retie) must
+/// not do so after a silent no-op. Returns an error instead, and also
+/// verifies the item actually landed in the destination afterward, so a
+/// caller never proceeds as if a move succeeded when it didn't.
+pub fn move_item_checked(
+    source: &Entity<Pane>,
+    destination: &Entity<Pane>,
+    item_id_to_move: EntityId,
+    destination_index: usize,
+    activate: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    let present_in_source = source
+        .read(cx)
+        .items()
+        .any(|item| item.item_id() == item_id_to_move);
+    if !present_in_source {
+        anyhow::bail!("item is no longer present in the source pane");
+    }
+
+    move_item(
+        source,
+        destination,
+        item_id_to_move,
+        destination_index,
+        activate,
+        window,
+        cx,
+    );
+
+    let present_in_destination = destination
+        .read(cx)
+        .items()
+        .any(|item| item.item_id() == item_id_to_move);
+    if !present_in_destination {
+        anyhow::bail!("item did not land in the destination pane after the move");
+    }
+    Ok(())
+}
+
 pub fn move_active_item(
     source: &Entity<Pane>,
     destination: &Entity<Pane>,
@@ -11009,6 +11053,75 @@ mod tests {
         workspace.update(cx, |workspace, _| {
             assert_eq!(workspace.active_pane().entity_id(), target_last_pane_id);
         });
+    }
+
+    #[gpui::test]
+    async fn test_move_item_checked(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        let item_id = item.entity_id();
+        let (source_pane, destination_pane) = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+            let source_pane = workspace.active_pane().clone();
+            let destination_pane =
+                workspace.split_pane(source_pane.clone(), SplitDirection::Right, window, cx);
+            (source_pane, destination_pane)
+        });
+
+        workspace
+            .update_in(cx, |_, window, cx| {
+                move_item_checked(
+                    &source_pane,
+                    &destination_pane,
+                    item_id,
+                    0,
+                    false,
+                    window,
+                    cx,
+                )
+            })
+            .expect("moving a present item into a real pane should succeed");
+
+        source_pane.read_with(cx, |pane, _| {
+            assert!(
+                !pane.items().any(|item| item.item_id() == item_id),
+                "the item should no longer be in the source pane"
+            );
+        });
+        destination_pane.read_with(cx, |pane, _| {
+            assert!(
+                pane.items().any(|item| item.item_id() == item_id),
+                "the item should now be in the destination pane"
+            );
+        });
+
+        // The item is no longer in `source_pane` (it moved to
+        // `destination_pane` above) -- moving it *from* `source_pane` again
+        // must report an error rather than silently doing nothing, unlike
+        // plain `move_item`.
+        let result = workspace.update_in(cx, |_, window, cx| {
+            move_item_checked(
+                &source_pane,
+                &destination_pane,
+                item_id,
+                0,
+                false,
+                window,
+                cx,
+            )
+        });
+        assert!(
+            result.is_err(),
+            "moving an item no longer present in the source pane must return an error"
+        );
     }
 
     #[gpui::test]

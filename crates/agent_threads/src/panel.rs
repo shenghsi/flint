@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{
@@ -18,7 +18,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    Workspace,
+    MultiWorkspace, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -27,7 +27,7 @@ use crate::history::{self, HistoryParseCache, project_worktree_roots};
 use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
 use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
-    merge_threads,
+    TieResolution, merge_threads,
 };
 use crate::{
     AgentKindDefinition, AgentThreadSettings, HistoricalThread, RemoteAgentRoutingSettings,
@@ -124,6 +124,15 @@ pub struct AgentThreadsPanel {
     plan_usage_task: Option<Task<()>>,
     http_client: Arc<dyn http_client::HttpClient>,
     active: bool,
+    /// Whether this project's git state (branches, worktrees, status) has
+    /// completed its initial load at least once. Starts `false` and is
+    /// flipped by a one-time spawned task awaiting
+    /// `Project::git_scans_complete`; fed into `TieResolution.git_ready` so
+    /// the deleted-worktree fallback stays suppressed (raw tie kept) until
+    /// there's real data to judge liveness against, rather than treating
+    /// "not scanned yet" as "deleted".
+    git_ready: bool,
+    _git_ready_task: Task<()>,
 }
 
 /// Debounce window for history filesystem watch events. Coalesces the burst of
@@ -134,6 +143,24 @@ fn history_cache_path(kind_id: &str) -> PathBuf {
     paths::data_dir()
         .join("agent_history_cache")
         .join(format!("{kind_id}.json"))
+}
+
+/// Whether `thread`'s *effective* tie (a persisted retie override if one
+/// exists, else its own recorded `project_root`) matches one of
+/// `own_project_roots` -- i.e. whether this historical row belongs to a
+/// panel scoped to those roots. See the design doc's "Historical rows"
+/// section: candidates come from a project-group-wide scan, and this is
+/// the filter that narrows them back down per panel.
+fn historical_thread_belongs_to_panel(
+    cx: &App,
+    kind_id: &str,
+    thread: &HistoricalThread,
+    own_project_roots: &[PathBuf],
+) -> bool {
+    let effective_root = store::read_tie_override(cx, kind_id, &thread.session_id)
+        .map(|tie| tie.root)
+        .unwrap_or_else(|| thread.project_root.clone());
+    own_project_roots.contains(&effective_root)
 }
 
 fn format_reset_countdown(reset_at: i64) -> Option<String> {
@@ -285,17 +312,44 @@ impl AgentThreadsPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
-        let workspace_handle = cx.entity().downgrade();
+        let workspace_entity = cx.entity();
+        let workspace_handle = workspace_entity.downgrade();
         let fs = workspace.app_state().fs.clone();
         let history_index = history::global_history_index(&fs, cx);
         let http_client = workspace.app_state().http_client.clone();
         let remote_project = workspace.project().read(cx).remote_client().is_some();
+        let project = workspace.project().clone();
         cx.new(|cx| {
+            let git_ready_task = cx.spawn({
+                let project = project.clone();
+                async move |this, cx| {
+                    let scan_complete =
+                        project.update(cx, |project, cx| project.git_scans_complete(cx));
+                    scan_complete.await;
+                    this.update(cx, |this: &mut Self, cx| {
+                        this.git_ready = true;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            });
             let store = AgentThreadStore::global(cx);
             let store_subscription =
                 cx.subscribe(&store, |this: &mut AgentThreadsPanel, _, event, cx| {
                     this.handle_store_event(event, cx);
                 });
+            // Deriving the active row from the workspace's active item (rather
+            // than tracking a separate "selected row" field) means there is no
+            // second source of truth to drift; this subscription just triggers
+            // the re-render that picks the fresh value up.
+            let active_item_subscription = cx.subscribe(
+                &workspace_entity,
+                |_this: &mut AgentThreadsPanel, _, event, cx| {
+                    if let workspace::Event::ActiveItemChanged = event {
+                        cx.notify();
+                    }
+                },
+            );
             let settings = AgentThreadSettings::get_global(cx);
             let mut plan_usage_settings = (
                 settings.show_plan_usage,
@@ -329,7 +383,11 @@ impl AgentThreadsPanel {
                 registry,
                 sections,
                 context_menu: None,
-                _subscriptions: vec![store_subscription, settings_subscription],
+                _subscriptions: vec![
+                    store_subscription,
+                    settings_subscription,
+                    active_item_subscription,
+                ],
                 history_tasks: HashMap::default(),
                 history_index,
                 history_caches: HashMap::default(),
@@ -338,6 +396,8 @@ impl AgentThreadsPanel {
                 plan_usage_task: None,
                 http_client,
                 active: false,
+                git_ready: false,
+                _git_ready_task: git_ready_task,
             };
             let _ = window;
             panel
@@ -407,7 +467,8 @@ impl AgentThreadsPanel {
             return;
         }
         match event {
-            AgentThreadStoreEvent::ThreadOpened { .. } => cx.notify(),
+            AgentThreadStoreEvent::ThreadOpened { .. }
+            | AgentThreadStoreEvent::ThreadUpdated { .. } => cx.notify(),
             AgentThreadStoreEvent::ThreadClosed { kind_id } => {
                 cx.notify();
                 // When a watcher is active for this kind it will catch the
@@ -439,6 +500,11 @@ impl AgentThreadsPanel {
             return;
         };
         let project = workspace.read(cx).project().clone();
+        // The panel's own narrow roots -- used to *filter* scan results by
+        // effective tie, distinct from the wider group scan below.
+        let own_project_roots = project.read_with(cx, |project, cx| {
+            history::project_worktree_roots(project, cx)
+        });
         let Some(kind) = self.registry.iter().find(|kind| kind.id == kind_id) else {
             return;
         };
@@ -495,8 +561,9 @@ impl AgentThreadsPanel {
                 let base_dir =
                     history::resolve_history_base_dir(&project, env_var, env_child, dir_name, cx)
                         .await?;
-                let project_roots =
-                    project.read_with(cx, |project, cx| project_worktree_roots(project, cx));
+                let project_roots = project.read_with(cx, |project, cx| {
+                    history::project_group_worktree_roots(project, cx)
+                });
                 let legacy_host = history::history_host_for_resolved_base_dir(
                     &project,
                     base_dir.clone(),
@@ -546,6 +613,23 @@ impl AgentThreadsPanel {
                                     if !this.active {
                                         return;
                                     }
+                                    // The scan above is project-group-wide (so a
+                                    // session retied to this panel is a candidate
+                                    // at all); this filters those candidates down
+                                    // to the ones whose *effective* tie actually
+                                    // matches this panel's own roots, per the
+                                    // design doc's "Historical rows" section.
+                                    let threads: Vec<_> = threads
+                                        .into_iter()
+                                        .filter(|thread| {
+                                            historical_thread_belongs_to_panel(
+                                                cx,
+                                                kind_id,
+                                                thread,
+                                                &own_project_roots,
+                                            )
+                                        })
+                                        .collect();
                                     if let Some(section) = this.sections.get_mut(kind_id) {
                                         section.historical =
                                             HistoricalState::Loaded(threads.into());
@@ -1089,13 +1173,15 @@ impl AgentThreadsPanel {
         &mut self,
         kind: &AgentKindDefinition,
         project_roots: &[PathBuf],
+        tie_resolution: &TieResolution,
+        active_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let usage = self.plan_usage.get(kind.id).copied();
-        let live = self
-            .store
-            .read(cx)
-            .live_threads_for_project(kind.id, project_roots);
+        let live =
+            self.store
+                .read(cx)
+                .live_threads_for_project(kind.id, project_roots, tie_resolution);
         let section = self.sections.entry(kind.id).or_default();
         let collapsed = section.collapsed;
         let visible_override = section.visible_override;
@@ -1270,7 +1356,7 @@ impl AgentThreadsPanel {
                 );
             } else {
                 for row in rows {
-                    body_children.push(self.render_row(kind, row, cx));
+                    body_children.push(self.render_row(kind, row, active_terminal_item_id, cx));
                 }
                 if can_show_more || can_show_less {
                     let mut controls = h_flex().gap_1();
@@ -1340,24 +1426,35 @@ impl AgentThreadsPanel {
         &mut self,
         kind: &AgentKindDefinition,
         row: AgentThreadRow,
+        active_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match row {
-            AgentThreadRow::FreshLive(metadata) => self.render_live_row(metadata, cx),
+            AgentThreadRow::FreshLive(metadata) => {
+                self.render_live_row(metadata, active_terminal_item_id, cx)
+            }
             AgentThreadRow::Historical {
                 thread,
                 live_terminal_item_id,
-            } => self.render_historical_row(kind, thread, live_terminal_item_id, cx),
+            } => self.render_historical_row(
+                kind,
+                thread,
+                live_terminal_item_id,
+                active_terminal_item_id,
+                cx,
+            ),
         }
     }
 
     fn render_live_row(
         &mut self,
         metadata: AgentThreadMetadata,
+        active_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let terminal_item_id = metadata.terminal_item_id;
         let menu_metadata = metadata.clone();
+        let is_active = active_terminal_item_id == Some(terminal_item_id);
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
             .w_full()
@@ -1365,6 +1462,9 @@ impl AgentThreadsPanel {
             .px_2()
             .py_1()
             .rounded_sm()
+            .when(is_active, |row| {
+                row.bg(cx.theme().colors().element_selected)
+            })
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.focus_live_thread(terminal_item_id, window, cx);
@@ -1408,6 +1508,7 @@ impl AgentThreadsPanel {
         kind: &AgentKindDefinition,
         thread: HistoricalThread,
         live_terminal_item_id: Option<gpui::EntityId>,
+        active_terminal_item_id: Option<gpui::EntityId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let row_id =
@@ -1421,6 +1522,8 @@ impl AgentThreadsPanel {
         let menu_kind_for_button = kind.clone();
         let menu_thread_for_button = thread.clone();
         let is_live = live_terminal_item_id.is_some();
+        let is_active =
+            live_terminal_item_id.is_some() && live_terminal_item_id == active_terminal_item_id;
         let resume_option_label = thread_resume_option_label(cx, kind, &thread.session_id);
         let resume_option_visual = thread_resume_option_visual(cx, kind, &thread.session_id);
         h_flex()
@@ -1432,6 +1535,9 @@ impl AgentThreadsPanel {
             .px_2()
             .py_1()
             .rounded_sm()
+            .when(is_active, |row| {
+                row.bg(cx.theme().colors().element_selected)
+            })
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .when_some(live_terminal_item_id, |row, terminal_item_id| {
                 let handoff_kind = kind.clone();
@@ -1440,6 +1546,11 @@ impl AgentThreadsPanel {
                     kind_id: kind.id,
                     title: thread.title.clone(),
                     project_root: thread.project_root.clone(),
+                    // Synthetic metadata for the handoff menu only -- never
+                    // inserted into the store, so there's no real tie to
+                    // report; project_root is the closest honest value.
+                    tied_worktree_root: thread.project_root.clone(),
+                    tied_repo_main_root: None,
                     launched_at: thread.last_activity_at,
                     resumed_session_id: Some(thread.session_id.clone()),
                 };
@@ -1614,9 +1725,14 @@ fn start_handoff(
                     let indexed = history::indexed_snapshot_threads(snapshot);
                     let already_bound: collections::HashSet<SharedString> = store
                         .read_with(cx, |store, _| {
+                            // Session-id dedup only, not the panel's display
+                            // path -- the deleted-worktree fallback doesn't
+                            // apply here, so raw ties are compared exactly as
+                            // before `TieResolution` existed.
                             store.live_threads_for_project(
                                 source_kind.id,
                                 std::slice::from_ref(&source_metadata.project_root),
+                                &TieResolution::not_ready(),
                             )
                         })
                         .into_iter()
@@ -1714,13 +1830,19 @@ fn start_handoff(
 
             window_handle.update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
-                    store::launch_seeded_thread(
+                    let seeded = store::launch_seeded_thread(
                         workspace,
                         &target_kind,
                         &bootstrap_prompt,
                         window,
                         cx,
                     );
+                    if !seeded {
+                        log::warn!(
+                            "agent_threads: handoff to {} launched without seeding the handoff prompt (unsupported initial-prompt strategy)",
+                            target_kind.id
+                        );
+                    }
                 });
             })?;
             Ok(())
@@ -1732,6 +1854,19 @@ fn start_handoff(
         }
     })
     .detach();
+}
+
+impl AgentThreadsPanel {
+    /// The terminal item id of the panel's own workspace's currently active
+    /// item, if that item is a terminal -- used to highlight the matching
+    /// row. Derived fresh from `Workspace::active_item` rather than tracked
+    /// as separate panel state, so there is no second source of truth that
+    /// can drift from what the workspace actually shows.
+    fn active_terminal_item_id(&self, cx: &App) -> Option<gpui::EntityId> {
+        let workspace = self.workspace.upgrade()?;
+        let item = workspace.read(cx).active_item(cx)?;
+        Some(item.item_id())
+    }
 }
 
 impl Focusable for AgentThreadsPanel {
@@ -1817,17 +1952,40 @@ impl Panel for AgentThreadsPanel {
 }
 
 impl Render for AgentThreadsPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(workspace) = self.workspace.upgrade() else {
             return div().size_full().into_any_element();
         };
         let project = workspace.read(cx).project().clone();
         let project_roots = project_worktree_roots(project.read(cx), cx);
 
+        let open_workspace_roots: HashSet<PathBuf> = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .map(|multi_workspace| {
+                multi_workspace
+                    .read(cx)
+                    .retained_workspaces()
+                    .iter()
+                    .flat_map(|workspace| workspace.read(cx).root_paths(cx))
+                    .map(|path| path.to_path_buf())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let tie_resolution =
+            TieResolution::new(project.read(cx), open_workspace_roots, self.git_ready, cx);
+        let active_terminal_item_id = self.active_terminal_item_id(cx);
+
         let registry = self.visible_registry(cx);
         let mut sections = Vec::new();
         for kind in &registry {
-            sections.push(self.render_section(kind, &project_roots, cx));
+            sections.push(self.render_section(
+                kind,
+                &project_roots,
+                &tie_resolution,
+                active_terminal_item_id,
+                cx,
+            ));
         }
 
         v_flex()
@@ -2006,6 +2164,7 @@ mod tests {
         root_path: &'static str,
     ) -> WindowHandle<MultiWorkspace> {
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs, [Path::new(root_path)], cx).await;
         cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx))
     }
@@ -2088,7 +2247,11 @@ mod tests {
         cx.update(|cx| {
             AgentThreadStore::global(cx)
                 .read(cx)
-                .live_threads_for_project("codex", &[PathBuf::from(project_root)])
+                .live_threads_for_project(
+                    "codex",
+                    &[PathBuf::from(project_root)],
+                    &TieResolution::not_ready(),
+                )
         })
     }
 
@@ -2171,6 +2334,7 @@ mod tests {
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0].kind_id, "codex");
         assert!(metadata[0].resumed_session_id.is_none());
+        assert_eq!(metadata[0].tied_worktree_root, PathBuf::from(root));
 
         let terminal_views = terminal_views(&window_handle, cx);
         assert_eq!(terminal_views.len(), 1);
@@ -2261,6 +2425,68 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn active_row_tracks_the_workspace_active_item(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
+            })
+            .expect("failed to create panel");
+        cx.run_until_parked();
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_live_count(cx, root, 1).await;
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                AgentThreadStore::global(cx).update(cx, |store, cx| {
+                    store.focus_thread(terminal_item_id, window, cx)
+                })
+            })
+            .expect("failed to focus thread")
+            .expect("focus_thread should succeed");
+
+        assert_eq!(
+            panel.read_with(cx, |panel, cx| panel.active_terminal_item_id(cx)),
+            Some(terminal_item_id)
+        );
+
+        // Switching the active tab away from the terminal moves the derived
+        // active id with it -- there's no separate "selected row" state left
+        // pointing at the old row.
+        let editor_item = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor_item =
+                        cx.new(|cx| workspace::item::test::TestItem::new(cx).with_label("editor"));
+                    workspace.add_item_to_active_pane(
+                        Box::new(editor_item.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                    editor_item
+                })
+            })
+            .expect("failed to add editor item");
+        cx.run_until_parked();
+
+        assert_eq!(
+            panel.read_with(cx, |panel, cx| panel.active_terminal_item_id(cx)),
+            Some(editor_item.entity_id())
+        );
+    }
+
+    #[gpui::test]
     async fn hiding_an_agent_excludes_it_from_visible_registry(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
@@ -2306,6 +2532,315 @@ mod tests {
 
         set_agent_hidden(cx, "opencode", true);
         assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude", "pi"]);
+    }
+
+    #[gpui::test]
+    async fn git_ready_flips_true_after_the_panel_settles_and_a_live_thread_survives_it(
+        cx: &mut TestAppContext,
+    ) {
+        // Regression coverage for the real render path (not just
+        // TieResolution's logic in isolation, see the store.rs test with a
+        // similar name): a launched thread's row must still be present
+        // after git_ready flips true, including for a plain project with no
+        // git repository at all.
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_live_count(cx, root, 1).await;
+
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
+            })
+            .expect("failed to create panel");
+        cx.run_until_parked();
+
+        assert!(
+            panel.read_with(cx, |panel, _| panel.git_ready),
+            "git_ready should flip true once git_scans_complete resolves for a FakeFs project"
+        );
+
+        let project_roots = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                project_worktree_roots(multi_workspace.workspace().read(cx).project().read(cx), cx)
+            })
+            .expect("window should be live");
+        let live = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let project = workspace.read(cx).project().clone();
+                let tie_resolution =
+                    TieResolution::new(project.read(cx), HashSet::default(), true, cx);
+                let _ = window;
+                panel.read(cx).store.read(cx).live_threads_for_project(
+                    "codex",
+                    &project_roots,
+                    &tie_resolution,
+                )
+            })
+            .expect("window should be live");
+
+        assert_eq!(
+            live.len(),
+            1,
+            "the live thread must survive git_ready flipping true"
+        );
+    }
+
+    #[gpui::test]
+    async fn retie_thread_moves_the_terminal_and_updates_the_tie(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_live_count(cx, root_a, 1).await;
+        let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
+
+        let root_b = std::env::temp_dir().join("agent_threads_retie_test_b");
+        std::fs::create_dir_all(&root_b).expect("failed to create the retie target directory");
+
+        let async_cx = cx.to_async();
+        let (tie, persistence) = store::retie_thread(
+            terminal_item_id,
+            root_b.clone(),
+            window_handle,
+            &mut async_cx.clone(),
+        )
+        .await
+        .expect("retie should succeed");
+        assert_eq!(tie.root, root_b);
+        assert!(
+            matches!(persistence, store::RetiePersistence::InMemoryOnly),
+            "a freshly launched codex thread has no session id yet, so persistence must be deferred"
+        );
+        cx.run_until_parked();
+
+        // Workspace A was the active workspace when the retie happened, so
+        // the window followed the terminal into workspace B rather than
+        // leaving it to silently vanish from the foreground.
+        assert!(
+            !terminal_views(&window_handle, cx).is_empty(),
+            "the terminal should still be visible -- the window should have followed it into \
+             workspace B, since workspace A was active when the retie happened"
+        );
+
+        let metadata = live_codex_threads(cx, root_b.to_str().unwrap());
+        assert_eq!(
+            metadata.len(),
+            1,
+            "the retied thread should now appear under its new worktree root"
+        );
+        assert_eq!(metadata[0].terminal_item_id, terminal_item_id);
+        assert_eq!(metadata[0].tied_worktree_root, root_b);
+
+        assert!(
+            live_codex_threads(cx, root_a).is_empty(),
+            "the retied thread should no longer appear under its original worktree root"
+        );
+
+        // focus_thread needs no special-casing for a retied thread: reparenting
+        // already made the destination workspace the true owner.
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let store = AgentThreadStore::global(cx);
+                store.update(cx, |store, cx| {
+                    store
+                        .focus_thread(terminal_item_id, window, cx)
+                        .expect("focus_thread should succeed on the moved thread");
+                });
+                let _ = multi_workspace;
+            })
+            .expect("window should be live");
+    }
+
+    #[gpui::test]
+    async fn retie_thread_does_not_activate_the_destination_when_the_source_workspace_is_backgrounded(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+        let workspace_a = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .expect("window should be live");
+
+        // Add workspace B (a second project in the same window) and launch a
+        // codex thread there while it's briefly the active workspace.
+        let root_b = std::env::temp_dir().join("agent_threads_retie_background_source_b");
+        std::fs::create_dir_all(&root_b).expect("failed to create workspace B's directory");
+        let root_b = root_b.to_string_lossy().into_owned();
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let project_b = Project::test(fs, [Path::new(root_b.as_str())], cx).await;
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b, window, cx);
+            })
+            .expect("window should be live");
+
+        configure_echo_threads(cx, &root_b, 5);
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace
+                    .workspace()
+                    .clone()
+                    .update(cx, |workspace, cx| {
+                        crate::launch_new_thread_with_default(workspace, &codex_kind(), window, cx);
+                    });
+            })
+            .expect("failed to launch codex thread in workspace B");
+        wait_for_live_count(cx, &root_b, 1).await;
+        let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
+
+        // Switch back to workspace A: workspace B (the thread's source) is
+        // now backgrounded when the retie below happens.
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(workspace_a.clone(), None, window, cx);
+            })
+            .expect("window should be live");
+
+        let root_c = std::env::temp_dir().join("agent_threads_retie_background_dest_c");
+        std::fs::create_dir_all(&root_c).expect("failed to create the retie target directory");
+
+        let async_cx = cx.to_async();
+        store::retie_thread(
+            terminal_item_id,
+            root_c.clone(),
+            window_handle,
+            &mut async_cx.clone(),
+        )
+        .await
+        .expect("retie should succeed");
+        cx.run_until_parked();
+
+        let active_workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .expect("window should be live");
+        assert_eq!(
+            active_workspace, workspace_a,
+            "a backgrounded thread's retie must not yank the window's active workspace away \
+             from whatever the user was actually looking at"
+        );
+    }
+
+    #[gpui::test]
+    async fn retie_thread_errors_cleanly_for_an_unknown_thread(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        let window_handle = init_workspace(cx, root).await;
+
+        let bogus_terminal_item_id = gpui::EntityId::from(u64::MAX);
+        let async_cx = cx.to_async();
+        let result = store::retie_thread(
+            bogus_terminal_item_id,
+            std::env::temp_dir(),
+            window_handle,
+            &mut async_cx.clone(),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "retying a thread the store doesn't know about must fail, not panic or no-op silently"
+        );
+    }
+
+    #[gpui::test]
+    async fn retie_thread_persists_immediately_when_the_session_id_is_already_known(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+
+        // Resuming (rather than a fresh launch) gives the thread a known
+        // session id immediately, unlike retie_thread_moves_the_terminal_..
+        // above -- exercising the "Persisted" branch instead of
+        // "InMemoryOnly".
+        let thread = HistoricalThread {
+            session_id: SharedString::from("session-persist"),
+            title: SharedString::from("Fix the bug"),
+            project_root: PathBuf::from(root_a),
+            last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                });
+            })
+            .expect("failed to resume thread");
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+        let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
+
+        assert!(
+            cx.update(|cx| store::read_tie_override(cx, "codex", "session-persist"))
+                .is_none(),
+            "no override should exist before any retie"
+        );
+
+        let root_b = std::env::temp_dir().join("agent_threads_retie_persist_test_b");
+        std::fs::create_dir_all(&root_b).expect("failed to create the retie target directory");
+        let async_cx = cx.to_async();
+        let (_tie, persistence) = store::retie_thread(
+            terminal_item_id,
+            root_b.clone(),
+            window_handle,
+            &mut async_cx.clone(),
+        )
+        .await
+        .expect("retie should succeed");
+
+        assert!(
+            matches!(persistence, store::RetiePersistence::Persisted),
+            "a thread with a known session id must persist the override immediately"
+        );
+
+        let override_ = cx
+            .update(|cx| store::read_tie_override(cx, "codex", "session-persist"))
+            .expect("the override should now be persisted");
+        assert_eq!(override_.root, root_b);
+
+        // The filter predicate historical scanning uses should now attribute
+        // this session to B, not A.
+        cx.update(|cx| {
+            assert!(
+                !historical_thread_belongs_to_panel(cx, "codex", &thread, &[PathBuf::from(root_a)]),
+                "the retied session should no longer belong to its original root"
+            );
+            let thread_at_b = HistoricalThread {
+                project_root: root_b.clone(),
+                ..thread.clone()
+            };
+            assert!(
+                historical_thread_belongs_to_panel(
+                    cx,
+                    "codex",
+                    &thread_at_b,
+                    std::slice::from_ref(&root_b)
+                ),
+                "the retied session should belong to its new root"
+            );
+        });
     }
 
     #[gpui::test]

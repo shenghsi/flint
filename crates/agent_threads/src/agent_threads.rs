@@ -3,9 +3,13 @@ pub mod artifact_cache;
 mod claude_history;
 mod codex_history;
 pub mod connect_proxy;
+#[cfg(unix)]
+mod control;
 mod egress;
 mod handoff;
 mod history;
+#[cfg(unix)]
+mod instructions;
 pub mod managed_agent;
 mod managed_agent_progress;
 mod opencode_history;
@@ -468,6 +472,7 @@ pub struct AgentThreadSettings {
     pub notify_when_finished: bool,
     pub reopen_sessions_on_startup: settings::AgentThreadReopenSessionsOnStartup,
     pub dock: settings::DockSide,
+    pub agent_control: bool,
 }
 
 #[derive(RegisterSetting)]
@@ -541,6 +546,7 @@ impl Settings for AgentThreadSettings {
             notify_when_finished: content.notify_when_finished.unwrap_or(true),
             reopen_sessions_on_startup: content.reopen_sessions_on_startup.unwrap_or_default(),
             dock: content.dock.unwrap_or(settings::DockSide::Left),
+            agent_control: content.agent_control.unwrap_or(true),
         }
     }
 }
@@ -575,6 +581,20 @@ pub fn init(cx: &mut App) {
         workspace.register_action(new_opencode_thread);
     })
     .detach();
+}
+
+/// Starts the local-only agent-control Unix socket server (see
+/// `control.rs`). Deliberately **not** called from `init` above: `init` also
+/// runs for every test (`crate::init(cx)` in test setup), and this binds a
+/// real OS socket under the real `paths::data_dir()` -- a side effect no
+/// test should trigger implicitly. The real app entry point
+/// (`crates/flint/src/flint.rs`) calls this separately, once, after `init`.
+/// No-op on non-Unix, where the control server doesn't exist.
+pub fn init_control_server(cx: &mut App) {
+    #[cfg(unix)]
+    control::init(cx);
+    #[cfg(not(unix))]
+    let _ = cx;
 }
 
 pub fn active_remote_agent_thread_count(
