@@ -23,26 +23,21 @@ use crate::AgentKindDefinition;
 /// user (or an earlier Flint version) already has this in is recognized
 /// as-is -- no separate sentinel comment needed.
 const WORKTREE_INSTRUCTIONS_BLOCK: &str = "\
-# Worktree creation
+## Worktree creation
 
-Check for a Flint agent-control marker file first, with this command:
+Run this after creating a git worktree:
 
     find ~/Library/Application\\ Support/Flint ~/.local/share/flint -maxdepth 1 -name \"agent-control-*-executable.json\" -exec cat {} \\; 2>/dev/null
 
-If this command shows no output, skip the rest of this section. Flint is not
-tracking this terminal.
-
-If this command shows output, it is JSON with a field named \"executable\".
-If you create a new git worktree, run this command right after, using the
-value of \"executable\" as the program to run:
+If it prints JSON with an \"executable\" field, run:
 
     \"<executable>\" retie-thread --worktree <path>
 
-Replace <executable> with the \"executable\" value from the file, and <path>
-with the full path of the new worktree. This command tells Flint to move
-this thread to the new worktree in its Agent Threads panel. The command
-finds its own connection to Flint on its own; you do not need to read or
-pass anything else from the file.
+using that value and the new worktree's full path. This moves the thread to
+the new worktree in Flint's Agent Threads panel. No output means Flint is
+not installed or running. A \"not recognized\" report means this terminal
+just is not a Flint-tracked one, even if Flint is running elsewhere. Skip
+this section either way.
 ";
 
 const DETECTION_MARKER: &str = "retie-thread --worktree";

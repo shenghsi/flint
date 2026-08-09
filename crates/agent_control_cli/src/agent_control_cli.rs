@@ -147,8 +147,8 @@ fn print_response(response: &ControlResponse, wants_json: bool) -> i32 {
         }
         ControlResponse::NotReady => {
             eprintln!(
-                "flint-agent-control: Flint did not recognize this caller in time -- is this \
-                 running inside a Flint agent thread terminal?"
+                "flint-agent-control: this terminal doesn't appear to be a Flint agent thread -- \
+                 if you're not using Flint here, this is expected and can be ignored."
             );
         }
         ControlResponse::Error { message } => {
