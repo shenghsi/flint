@@ -428,7 +428,10 @@ pub struct AgentThreadStore {
     pending_tie_persistence: HashSet<EntityId>,
     /// The agent-control server's accept-loop task (see `crate::control`),
     /// held here so its lifetime is the app's rather than any caller's.
-    /// `None` on non-Unix hosts, where the control server doesn't exist.
+    /// Doesn't exist on non-Unix hosts, where the control server doesn't
+    /// either -- `#[cfg(unix)]`, not just an `Option` that stays `None`,
+    /// since nothing on that platform ever constructs a `Task` to hold.
+    #[cfg(unix)]
     _control_server_task: Option<Task<()>>,
 }
 
@@ -443,6 +446,7 @@ struct ThreadEntry {
 }
 
 /// See `AgentThreadStore::live_terminal_worktree_roots`.
+#[cfg(unix)]
 pub(crate) struct LiveTerminalWorktree {
     pub(crate) terminal_item_id: EntityId,
     pub(crate) tied_worktree_root: PathBuf,
@@ -574,6 +578,7 @@ impl AgentThreadStore {
             managed_provisioning: ManagedAgentProvisioningCoordinator::default(),
             snapshot_sender,
             pending_tie_persistence: HashSet::default(),
+            #[cfg(unix)]
             _control_server_task: None,
         });
         spawn_session_discovery_loop(store.clone(), cx);
@@ -1047,6 +1052,7 @@ impl AgentThreadStore {
 
     /// Stores the agent-control server's accept-loop task so its lifetime is
     /// the app's, not any caller's -- see `crate::control::init`.
+    #[cfg(unix)]
     pub(crate) fn hold_control_server_task(&mut self, task: Task<()>) {
         self._control_server_task = Some(task);
     }
@@ -1058,6 +1064,7 @@ impl AgentThreadStore {
     /// different machine, so it can never appear in this map or match a
     /// local process's ancestry -- remote threads are excluded from the
     /// control surface by construction, with no separate check needed.
+    #[cfg(unix)]
     pub(crate) fn live_terminal_pids(&self, cx: &App) -> HashMap<u32, EntityId> {
         self.threads
             .iter()
@@ -1080,6 +1087,7 @@ impl AgentThreadStore {
     /// to the same worktree, which cwd alone can't. Remote threads are
     /// excluded: their tied worktree is a path on a different machine,
     /// never a local caller's cwd.
+    #[cfg(unix)]
     pub(crate) fn live_terminal_worktree_roots(&self) -> Vec<LiveTerminalWorktree> {
         self.threads
             .iter()
