@@ -2444,6 +2444,10 @@ fn spawn_thread_task_inner(
     let initialization_command = command.initialization_command.take();
     let is_windows = workspace.project().read(cx).path_style(cx).is_windows();
     let remote_client = workspace.project().read(cx).remote_client();
+    #[cfg(unix)]
+    if remote_client.is_none() {
+        crate::instructions::maybe_offer_worktree_instructions(kind, workspace, cx);
+    }
     let remote_process = match prepare_remote_thread_process(
         &mut command,
         remote_connection,

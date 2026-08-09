@@ -8,6 +8,8 @@ mod control;
 mod egress;
 mod handoff;
 mod history;
+#[cfg(unix)]
+mod instructions;
 pub mod managed_agent;
 mod managed_agent_progress;
 mod opencode_history;
