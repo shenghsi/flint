@@ -70,12 +70,13 @@ transport works:
 1. [Windows AF_UNIX does not expose credential ancillary data](https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/)
    equivalent to `LOCAL_PEERPID`/`SO_PEERCRED`. Without a kernel-reported peer PID,
    it cannot preserve the current no-client-secret authorization boundary.
-2. AF_UNIX arrived in Windows build 17063, while Flint's installer currently allows
-   build 16299 (`MinVersion=10.0.16299` in `flint.iss`). A compile-only check cannot
-   establish runtime availability on every supported Windows version.
-3. Named pipes support `GetNamedPipeClientProcessId` on older supported Windows
-   versions and therefore provide the identity primitive this feature actually
-   needs.
+2. Named pipes provide `GetNamedPipeClientProcessId`, the identity primitive this
+   feature needs.
+
+Flint already uses `net::async_net::UnixListener` for askpass on Windows, so this
+choice does not imply that AF_UNIX is generally unavailable or unsupported there.
+It is specifically unsuitable for agent control because it cannot report the peer
+PID required by this authorization model.
 
 The JSON request and response types remain shared. The transport endpoint and
 message framing become platform-specific.
@@ -87,14 +88,14 @@ Windows uses named pipes. Make the distinction explicit:
 
 - Keep `socket_path() -> PathBuf` under `#[cfg(unix)]`.
 - Add a Windows pipe-name function under `#[cfg(windows)]`, returning a name in the
-  `\\.\pipe\...` namespace. Include the release channel and Windows logon session
-  identity in the name so Stable/Nightly/Dev and simultaneous user sessions do not
-  collide.
+  `\\.\pipe\...` namespace. Include the release channel and Terminal Services
+  session ID in the name so Stable/Nightly/Dev and simultaneous user sessions do
+  not collide.
 - Keep the existing per-channel executable-marker path on Unix. On Windows, add the
-  same logon-session identity to the marker filename so each independently owned
-  pipe has one independently owned marker. Derive the pipe name and marker path
-  from one shared Windows control scope rather than computing their identities in
-  separate functions.
+  same Terminal Services session ID to the marker filename so each independently
+  owned pipe has one independently owned marker. Derive the pipe name and marker
+  path from one shared Windows control scope rather than computing their identities
+  in separate functions.
 - Keep endpoint derivation lightweight and identical in the server and CLI. A
   Windows-only dependency in `agent_control_protocol` is acceptable; it must not
   pull GPUI into `agent_control_cli`.
@@ -104,29 +105,53 @@ Windows uses named pipes. Make the distinction explicit:
 
 Do not rely on
 [`CreateNamedPipeW`'s default security descriptor](https://learn.microsoft.com/windows/win32/ipc/named-pipe-security-and-access-rights).
-Create the pipe with a DACL granting the current logon SID the required read/write
-access (and only the explicitly intended system principals), reject remote clients
-with `PIPE_REJECT_REMOTE_CLIENTS`, and make handles non-inheritable. Use
-`FILE_FLAG_FIRST_PIPE_INSTANCE` or an equivalent ownership check so a second Flint
-does not silently join or steal an existing endpoint. A same-name live owner should
-disable the new server instance with a clear log, matching the Unix behavior.
+The Terminal Services session ID is only a naming/isolation value; it is not a
+securable principal. Independently obtain the current logon SID (`S-1-5-5-X-Y`)
+from Flint's process token and use it as the client principal in the pipe DACL.
+Unlike a user SID, the logon SID scopes access to that logon session, including for
+the same account connected through another Terminal Services session. Grant the
+individual client read/write rights required by the protocol without granting
+`FILE_CREATE_PIPE_INSTANCE`, and include only explicitly intended system
+principals. Reject remote clients with `PIPE_REJECT_REMOTE_CLIENTS` and make handles
+non-inheritable.
+
+Create the initial owning instance with `FILE_FLAG_FIRST_PIPE_INSTANCE` before
+creating the rest of the pool without that flag. This prevents a second Flint from
+silently joining or stealing an existing endpoint while still allowing the owner
+to create concurrent instances. A same-name live owner should disable the new
+server instance with a clear log, matching the Unix behavior.
 
 The executable-location marker remains a normal file under `paths::data_dir()`.
-Its Windows filename must contain the same logon-session identity as the pipe name.
+Its Windows filename must contain the same Terminal Services session ID as the pipe
+name.
 Write it only after the named-pipe server owns its endpoint, and remove it on clean
 shutdown only if that server instance wrote that session-specific marker. This
 preserves the Unix invariant that one endpoint owner owns one marker: two Flint
-instances for the same Windows user in different logon sessions must never overwrite
-or remove each other's marker.
+instances for the same Windows user in different Terminal Services sessions must
+never overwrite or remove each other's marker.
+
+Accept stale markers for ended sessions rather than adding cross-session cleanup.
+They contain no secret, discovery reads only the current session's marker, and a
+CLI using a stale current-session marker fails to connect and exits nonzero. When a
+new server later acquires the pipe for that session, it atomically replaces the
+marker with its own executable location. Markers for other ended sessions may
+remain as harmless files under the data directory.
 
 ## Server architecture and framing
 
 Use the workspace-standard `windows` crate, whose configured features already
-include `Win32_System_Pipes`, rather than introducing `windows-sys`. Reuse the
-repository's named-pipe patterns in
-`crates/flint/src/flint/windows_only_instance.rs` where helpful, but do not copy its
-single small inbound-message assumptions: agent control is duplex and its JSON is
-variable-sized.
+include `Win32_System_Pipes` and `Win32_Security`, rather than introducing
+`windows-sys`. Add the currently missing `Win32_Security_Authorization` feature
+for constructing the explicit pipe DACL. Reuse the repository's named-pipe
+patterns in `crates/flint/src/flint/windows_only_instance.rs` where helpful, but do
+not copy its single small inbound-message assumptions: agent control is duplex and
+its JSON is variable-sized.
+
+Add narrowly featured, Windows-only `windows` dependencies to
+`agent_control_protocol` for session-scoped endpoint derivation and to
+`agent_control_cli` for the named-pipe client. Both crates must remain independent
+of GPUI and the terminal stack; the platform dependency does not change the small,
+standalone nature of the CLI binary.
 
 The current Unix framing is request bytes followed by a write-half shutdown; the
 server calls `read_to_end` and then writes the response. Named pipes have no
@@ -138,24 +163,34 @@ equivalent half-close, so define Windows framing explicitly:
 - Read `ERROR_MORE_DATA` chunks until the message is complete, with a fixed maximum
   request/response size. Reject an oversized or malformed request with a bounded
   error response rather than growing a `Vec` without limit.
+- When all server instances are occupied, make the Windows client wait for an
+  available instance only up to a fixed timeout and report a clear busy error. Put
+  bounded timeouts around client reads and writes as well so pool exhaustion or a
+  failed server worker cannot hang the CLI indefinitely.
 - Disconnect and reuse or recreate the pipe instance after the response. The next
   accept must be ready even if the previous request failed to decode or dispatch.
 
 Synchronous `ConnectNamedPipe`/`ReadFile`/`WriteFile` must never run on GPUI's
-foreground executor. Use a dedicated Windows server thread with cancellable
-overlapped I/O (or an equivalently cancellable background implementation):
+foreground executor. Use a bounded pool of concurrent pipe instances, each driven
+by cancellable overlapped I/O on dedicated Windows server threads (or an
+equivalently cancellable background implementation). The pool must contain more
+than one instance so a slow `create-thread` request cannot block all other clients,
+and its size must be an explicit constant that tests can override.
 
-1. The server thread accepts a connection, reads its bounded message, and obtains
-   the client PID with `GetNamedPipeClientProcessId` from that connected pipe
-   instance.
+1. Each available instance accepts independently, reads its bounded message, and
+   obtains the client PID with `GetNamedPipeClientProcessId` from that connected
+   pipe instance.
 2. It sends `(peer_pid, request, response_sender)` through a channel consumed by a
-   foreground GPUI task.
-3. The foreground task calls the existing async `dispatch` path and returns the
-   `ControlResponse` through the response sender.
-4. The server thread writes the response and disconnects the instance.
-5. App shutdown signals the server, cancels pending accept/read I/O, joins the
-   thread, and then removes the marker it owns. Tests must be able to stop a server
-   deterministically; process exit is not the cleanup mechanism.
+   foreground GPUI dispatcher. The dispatcher spawns each request independently so
+   one long-running command does not serialize other connected instances.
+3. The foreground request task calls the existing async `dispatch` path and returns
+   the `ControlResponse` through the response sender.
+4. The owning server worker writes the response, disconnects the instance, and
+   immediately recreates or reuses that pool slot for another accept, including
+   after decode or dispatch failure.
+5. App shutdown signals every worker, cancels pending accept/read I/O, joins all
+   server threads, and then removes the marker it owns. Tests must be able to stop
+   the pool deterministically; process exit is not the cleanup mechanism.
 
 Preserve the existing Unix server lifecycle: it remains one foreground
 `Task<()>` held by `AgentThreadStore`, with the same cancellation and app-quit
@@ -181,6 +216,13 @@ After obtaining the PID, reuse the ancestry-first and cwd/kind-fallback policy f
 - Confirm `sysinfo` returns the expected parent chain, process names, executable,
   and cwd for a real Windows child process on both x86_64 and aarch64 CI where
   available.
+- Validate every ancestry hop with process creation times from
+  [`GetProcessTimes`](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes):
+  the child must not predate its reported parent. Reject the hop if either process
+  cannot be opened for query, either creation time cannot be read, or the ordering
+  is invalid. Do not use `sysinfo::Process::start_time()` for this authorization
+  check because its one-second granularity cannot distinguish PID reuse within the
+  same second.
 - Normalize `.exe` suffixes when comparing process names with agent kind IDs.
 - Make cwd/root containment honor Windows path semantics, including
   case-insensitive components, drive-letter case, mixed separators, and canonical
@@ -188,6 +230,23 @@ After obtaining the PID, reuse the ancestry-first and cwd/kind-fallback policy f
 - Preserve ancestry as the authoritative signal and continue rejecting ambiguous
   cwd/kind matches.
 - Continue excluding remote threads from the local PID/worktree candidate sets.
+
+Windows does not reparent orphaned processes, and its reported parent PID may have
+been recycled after the original parent exited. The creation-time validation above
+is therefore part of authorization, not only a correctness check. Add a native test
+whose reported stale/recycled parent PID now belongs to a tracked terminal and
+verify that the creation-time ordering prevents the false match.
+
+Also validate the cwd fallback before treating any delegating-daemon CLI as
+supported. For those CLIs, ancestry never reaches the tracked terminal and cwd/kind
+matching is the only authorization path. Native x86_64 and aarch64 tests must prove
+that the chosen process inspection can read the real daemon child's cwd across the
+architectures Flint supports, including relevant WOW64 combinations. Record this
+as a per-kind Windows authorization capability alongside the instruction
+capability. If cwd inspection is unavailable or unreliable for a kind, do not offer
+the Windows instruction nudge for it and show the unsupported authorization reason
+in the Settings UI rather than allowing calls to fail later as unexplained
+`NotReady` responses.
 
 Keep the authorization-independent command handlers shared. Only endpoint
 ownership, framing, and peer-PID acquisition should differ by transport.
@@ -209,7 +268,9 @@ Enabling Windows requires updating every existing Unix-only boundary:
 - Replace `agent_control_cli`'s non-Unix stub with the Windows client while retaining
   a stub for targets supporting neither implementation.
 - Update Unix-specific module docs and CLI help so they describe the selected
-  platform transport accurately.
+  platform transport accurately. In particular, update `control.rs`'s Unix-only
+  module doc and `write_executable_location`'s comment that names `--socket` as the
+  only discovery override.
 
 Add a Windows startup test or another focused integration check proving that the
 real Windows gate calls the server initializer and publishes a usable executable
@@ -260,6 +321,10 @@ layouts. Then make every delivery step explicit:
   executables in the staging root.
 - Add the executable to `SignFlintAndItsFriends`.
 - Add `flint-agent-control.pdb` to `ZipFlintAndItsFriendsDebug`.
+- Update `crates/auto_update_helper`'s explicit job list to move the old
+  `flint-agent-control.exe` into `old\`, move the replacement from `install\`
+  into the application root, and restore the old executable during rollback if a
+  later update job fails. Add apply and rollback tests covering the new file.
 - Verify the installed executable location is the same path written to the marker,
   and that the signed installer contains both the executable and its expected
   version metadata.
@@ -270,19 +335,24 @@ Keep the shared dispatch tests, then add Windows-native coverage for the pieces 
 tests cannot validate:
 
 - Pipe-name and executable-marker derivation use the same release/session scope,
-  are isolated across logon sessions, and are overridable in tests.
-- Starting and stopping one of two simulated logon-session servers neither
-  overwrites nor removes the other session's marker.
-- The pipe DACL rejects a client outside the allowed logon session, and remote
-  clients are rejected.
+  are isolated across Terminal Services sessions, and are overridable in tests.
+- Starting and stopping one of two simulated Terminal Services session servers
+  neither overwrites nor removes the other session's marker.
+- The pipe DACL rejects a client running as another user and the same user from a
+  different logon session, and remote clients are rejected. Separate tests prove
+  that the numeric Terminal Services session ID isolates names and markers while
+  the logon SID is the securable DACL principal.
 - A real named-pipe connection reports the actual client PID.
 - A real Windows child process resolves through tracked ancestry.
+- An ancestry hop rejects a recycled parent PID whose current process has a later
+  creation time than the child.
 - The cwd fallback handles differently cased drive letters/components and mixed
   separators, disambiguates by normalized process kind, and rejects ambiguous
   matches.
 - Message-mode request/response round trips cover payloads larger than the first
   read buffer, malformed JSON, oversize rejection, retry after a failed request,
-  and deterministic shutdown while accept/read is pending.
+  concurrent requests while one dispatch is slow, pool exhaustion behavior, and
+  deterministic shutdown while accept/read is pending.
 - The Windows CLI preserves the Unix client's retry/backoff and exit-code behavior.
 - Toggling `agent_threads.agent_control` affects already-running Windows threads.
 - Windows startup publishes the marker; the test discovery layer reads it, launches
@@ -293,9 +363,14 @@ tests cannot validate:
 
 Treat `clippy_windows` as a required gate. Also run the Windows `agent_threads`,
 `agent_control_cli`, `agent_control_protocol`, and `net` tests, build the Windows
-installer, inspect its file list, and smoke-test the installed executable on the
-oldest Windows build Flint still supports. A cross-compile alone is not runtime
-verification.
+installer, and inspect its file list. Resolve the repository's existing minimum-OS
+mismatch as part of this work: `docs/src/installation.md` declares Windows 10 1903
+and later supported, while `flint.iss` still permits 1709. Raise the installer
+`MinVersion` to Windows 10 1903 (`10.0.18362`) so the documented and enforced floors
+agree. Before merging, smoke-test the installed executable on a locally managed,
+pinned Windows 10 1903 VM and record the OS build, installer artifact, and commands
+and results in the PR. Hosted CI and cross-compilation do not replace that runtime
+acceptance check.
 
 ## Explicit non-goals
 
@@ -310,16 +385,20 @@ verification.
 ## Implementation order
 
 1. Add shared Windows release/session scoping for pipe names and executable-marker
-   paths, plus security-descriptor helpers and focused ownership tests.
+   paths, plus security-descriptor helpers and focused ownership tests. Accept
+   injected session IDs and data directories in the derivation layer so pipe names
+   and marker paths are test-overridable from the start.
 2. Implement the cancellable named-pipe transport, message framing, and peer-PID
-   acquisition behind injected test endpoints.
-3. Make caller resolution Windows-correct and add native process/path tests.
+   acquisition behind injected test endpoints, including the concurrent instance
+   pool.
+3. Make caller resolution Windows-correct, add creation-time and native process/path
+   tests, and establish each delegating agent's cwd-based authorization capability.
 4. Broaden all module, store, startup, utility, and nudge gates; add the startup
    integration check.
 5. Implement the Windows CLI transport and end-to-end request tests.
 6. Verify all four agents' Windows instruction conventions and enable only the
    confirmed per-kind blocks.
-7. Add build, installer-manifest, signing, debug-symbol, and installed-bundle
-   verification.
-8. Run Windows clippy/tests and the minimum-supported-Windows smoke test before
+7. Add build, installer-manifest, auto-update/rollback, signing, debug-symbol, and
+   installed-bundle verification; align the installer minimum with Windows 10 1903.
+8. Run Windows clippy/tests and the pinned Windows 10 1903 smoke test before
    declaring the platform supported.
