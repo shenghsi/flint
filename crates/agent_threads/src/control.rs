@@ -240,9 +240,10 @@ fn get_peer_pid(_stream: &UnixStream) -> Result<u32> {
 /// -- Codex CLI, for instance, delegates shell execution to a separate,
 /// already-running `codex app-server` daemon rather than forking it as its
 /// own child, so no ancestor PID is ever one Flint tracks. A tool-invoked
-/// shell's cwd is still reliably the session's own cwd (otherwise the
-/// CLI's own file operations would be broken), so it survives that
-/// indirection even though the process tree doesn't.
+/// shell's cwd identifies the tied worktree in the usual case. Immediately
+/// after the agent creates a linked worktree, its cwd can instead identify
+/// that new worktree; the shared git common directory then identifies the
+/// originating repository.
 ///
 /// A cwd can match more than one tracked thread -- two threads tied to the
 /// same worktree is a real case, not just hypothetical. When that happens,
@@ -324,8 +325,7 @@ fn walk_ancestry_for_match(
 /// Matched against `peer_pid` itself, not an ancestor -- the delegated
 /// shell's own cwd is the signal, and it's the leaf of the chain, closest
 /// to where the command actually runs. Ancestors further up (a shared
-/// daemon, a login shell, `launchd`) have no reason to share the session's
-/// cwd.
+/// daemon or a login shell) have no reason to share the session's cwd.
 fn resolve_by_cwd(
     peer_pid: u32,
     system: &sysinfo::System,
@@ -340,7 +340,26 @@ fn resolve_by_cwd(
         })
         .collect();
 
-    match cwd_matches.as_slice() {
+    if !cwd_matches.is_empty() {
+        return select_cwd_candidate(peer_pid, system, &cwd_matches);
+    }
+
+    let cwd_common_dir = git_common_dir(cwd)?;
+    let repository_matches = tracked_worktrees
+        .iter()
+        .filter(|candidate| {
+            git_common_dir(&candidate.tied_worktree_root).as_ref() == Some(&cwd_common_dir)
+        })
+        .collect::<Vec<_>>();
+    select_cwd_candidate(peer_pid, system, &repository_matches)
+}
+
+fn select_cwd_candidate(
+    peer_pid: u32,
+    system: &sysinfo::System,
+    candidates: &[&LiveTerminalWorktree],
+) -> Option<EntityId> {
+    match candidates {
         [] => None,
         [only] => Some(only.terminal_item_id),
         multiple => {
@@ -348,19 +367,40 @@ fn resolve_by_cwd(
                 .into_iter()
                 .map(|(_, name)| name.to_lowercase())
                 .collect::<Vec<_>>();
-            let by_kind: Vec<&&LiveTerminalWorktree> = multiple
+            let by_kind = multiple
                 .iter()
                 .filter(|candidate| {
                     let kind = candidate.kind_id.to_lowercase();
                     ancestry_names.iter().any(|name| name.contains(&kind))
                 })
-                .collect();
+                .collect::<Vec<_>>();
             match by_kind.as_slice() {
                 [only] => Some(only.terminal_item_id),
                 _ => None,
             }
         }
     }
+}
+
+fn git_common_dir(path: &std::path::Path) -> Option<PathBuf> {
+    let repository_root = path
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())?;
+    let dot_git = repository_root.join(".git");
+    if dot_git.is_dir() {
+        return std::fs::canonicalize(dot_git).ok();
+    }
+
+    let dot_git_contents = std::fs::read_to_string(&dot_git).ok()?;
+    let git_dir = dot_git_contents.trim().strip_prefix("gitdir:")?.trim();
+    let git_dir = std::path::Path::new(git_dir);
+    let git_dir = if git_dir.is_absolute() {
+        git_dir.to_path_buf()
+    } else {
+        repository_root.join(git_dir)
+    };
+    let common_dir = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    std::fs::canonicalize(git_dir.join(common_dir.trim())).ok()
 }
 
 /// Walks up from `peer_pid` through its process ancestry (closest first),
@@ -813,6 +853,24 @@ mod tests {
         }
     }
 
+    fn linked_worktree_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let temp_dir = tempfile::tempdir().expect("failed to create a linked-worktree fixture");
+        let main_root = temp_dir.path().join("main");
+        let linked_root = temp_dir.path().join("linked");
+        let common_dir = main_root.join(".git");
+        let linked_git_dir = common_dir.join("worktrees/linked");
+        std::fs::create_dir_all(&linked_git_dir).expect("failed to create git admin directories");
+        std::fs::create_dir_all(&linked_root).expect("failed to create linked worktree");
+        std::fs::write(
+            linked_root.join(".git"),
+            format!("gitdir: {}\n", linked_git_dir.display()),
+        )
+        .expect("failed to write linked worktree git file");
+        std::fs::write(linked_git_dir.join("commondir"), "../..\n")
+            .expect("failed to write common-dir pointer");
+        (temp_dir, main_root, linked_root)
+    }
+
     /// Models Codex CLI's real-world topology: the connecting process's
     /// ancestry never reaches a tracked PID (it's delegated through a
     /// daemon that isn't a descendant of any tracked terminal), but its cwd
@@ -843,6 +901,49 @@ mod tests {
             Some(EntityId::from(7)),
             "ancestry has nothing to match, but the child's own cwd is the tracked worktree root"
         );
+    }
+
+    #[test]
+    fn resolve_caller_thread_matches_a_new_linked_worktree_to_its_repository() {
+        let (_temp_dir, main_root, linked_root) = linked_worktree_fixture();
+        let mut child = smol::process::Command::new("sleep")
+            .arg("5")
+            .current_dir(&linked_root)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn a process in the linked worktree");
+        let child_pid = child.id();
+        let worktrees = [live_terminal_worktree(
+            EntityId::from(7),
+            main_root,
+            "codex",
+        )];
+
+        let resolved = resolve_caller_thread(child_pid, &HashMap::default(), &worktrees);
+        child.kill().log_err();
+
+        assert_eq!(resolved, Some(EntityId::from(7)));
+    }
+
+    #[test]
+    fn resolve_caller_thread_refuses_an_ambiguous_repository_match() {
+        let (_temp_dir, main_root, linked_root) = linked_worktree_fixture();
+        let mut child = smol::process::Command::new("sleep")
+            .arg("5")
+            .current_dir(&linked_root)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn a process in the linked worktree");
+        let child_pid = child.id();
+        let worktrees = [
+            live_terminal_worktree(EntityId::from(7), main_root.clone(), "codex"),
+            live_terminal_worktree(EntityId::from(8), main_root, "codex"),
+        ];
+
+        let resolved = resolve_caller_thread(child_pid, &HashMap::default(), &worktrees);
+        child.kill().log_err();
+
+        assert_eq!(resolved, None);
     }
 
     /// Two threads of the *same* kind tied to the same worktree root is a
