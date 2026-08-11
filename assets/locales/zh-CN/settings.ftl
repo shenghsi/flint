@@ -23,6 +23,13 @@ settings-feature-enabled-all = 对所有用户启用
 settings-feature-reset = 重置
 settings-modified-in = —  已在{ $scope }中修改
 settings-language-native-name = 简体中文
+settings-window-title = Flint — 设置
+settings-configure = 配置
+settings-search-placeholder = 搜索设置…
+settings-focus-content = 聚焦内容
+settings-focus-navbar = 聚焦导航栏
+settings-scope = 范围
+settings-default-section = 设置
 settings-source = { $source ->
     [Agent] 智能体
     [Appearance] 外观

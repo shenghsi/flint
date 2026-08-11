@@ -716,7 +716,7 @@ fn open_settings_editor_at_target(
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Flint — Settings".into()),
+                    title: Some(localization::text(cx, "settings-window-title")),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(12.0), px(12.0))),
                 }),
@@ -1097,7 +1097,7 @@ impl SettingsPageItem {
                         .child(
                             Button::new(
                                 ("sub-page".into(), sub_page_link.title.clone()),
-                                "Configure",
+                                localization::text(cx, "settings-configure"),
                             )
                             .tab_index(0_isize)
                             .end_icon(
@@ -1616,7 +1616,8 @@ impl SettingsWindow {
         let current_file = SettingsUiFile::User;
         let search_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search settings…", window, cx);
+            let placeholder = localization::text(cx, "settings-search-placeholder");
+            editor.set_placeholder_text(&placeholder, window, cx);
             editor
         });
         cx.subscribe(&search_bar, |this, _, event: &EditorEvent, cx| {
@@ -2874,9 +2875,9 @@ impl SettingsWindow {
                 .visible_navbar_entries()
                 .any(|(_, entry)| entry.focus_handle.is_focused(window))
         {
-            "Focus Content"
+            localization::text(cx, "settings-focus-content")
         } else {
-            "Focus Navbar"
+            localization::text(cx, "settings-focus-navbar")
         };
 
         let mut key_context = KeyContext::new_with_defaults();
@@ -3284,11 +3285,12 @@ impl SettingsWindow {
 
         let scope_element = if allowed_file_indices.len() > 1 {
             let this = cx.entity();
+            let scope_label = localization::text(cx, "settings-scope");
             DropdownMenu::new(
                 "sub-page-scope-picker",
                 scope_name,
                 ContextMenu::build(window, cx, move |mut menu, _, _| {
-                    menu = menu.header("Scope");
+                    menu = menu.header(scope_label.clone());
 
                     for ix in allowed_file_indices {
                         let (file, focus_handle) = &self.files[ix];
@@ -4055,7 +4057,7 @@ impl SettingsWindow {
                             .take(item_index)
                             .rev()
                             .find_map(|item| item.header_text().map(SharedString::new_static))
-                            .unwrap_or_else(|| "Settings".into());
+                            .unwrap_or_else(|| localization::text(cx, "settings-default-section"));
 
                         self.push_sub_page(sub_page_link.clone(), section_header, window, cx);
                         return true;
