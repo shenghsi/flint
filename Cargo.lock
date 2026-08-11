@@ -10304,6 +10304,7 @@ dependencies = [
  "gpui",
  "gpui_util",
  "language",
+ "localization",
  "menu",
  "multi_buffer",
  "project",

@@ -1,0 +1,8 @@
+picker-no-matches = No matches
+picker-selected-count = { $count } selected
+picker-select-multiple = Select multiple items
+picker-done = Done
+picker-select-multiple-action = Select Multiple
+picker-preview = Preview
+picker-preview-right = Preview to the Right
+picker-preview-below = Preview Below
