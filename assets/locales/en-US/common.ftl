@@ -1,6 +1,12 @@
 common-cancel = Cancel
 common-confirm = Confirm
 common-ok = OK
+common-copy = Copy
+common-open-default-app = Open in Default App
+common-return-onboarding = Return to Onboarding
+common-backup-update = Backup and Update
+common-open-changes = Open Changes
+common-could-not-open-file = Could not open file
 common-close = Close
 common-dismiss = Dismiss
 common-copied-clipboard = Copied to clipboard

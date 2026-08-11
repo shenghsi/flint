@@ -1,6 +1,12 @@
 common-cancel = 取消
 common-confirm = 确认
 common-ok = 确定
+common-copy = 复制
+common-open-default-app = 在默认应用中打开
+common-return-onboarding = 返回引导
+common-backup-update = 备份并更新
+common-open-changes = 打开更改
+common-could-not-open-file = 无法打开文件
 common-close = 关闭
 common-dismiss = 关闭
 common-copied-clipboard = 已复制到剪贴板

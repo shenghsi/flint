@@ -131,7 +131,7 @@ impl Render for QuickActionBar {
             IconButton::new("open_changes_icon", IconName::Diff)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
-                .tooltip(Tooltip::text("Open Changes"))
+                .tooltip(Tooltip::text(localization::text(cx, "common-open-changes")))
                 .on_click(move |_, window, cx| {
                     let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
                         return;
