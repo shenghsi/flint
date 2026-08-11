@@ -88,10 +88,30 @@ impl Update {
 pub struct EditorPreview {
     project: Entity<Project>,
     current_path: Option<Arc<RelPath>>,
-    message: Option<SharedString>,
+    message: Option<PreviewMessage>,
     preview_editor: Entity<Editor>,
     load_guard: PreviewLoadGuard,
     load_task: Task<()>,
+}
+
+enum PreviewMessage {
+    NoResults,
+    FileError(SharedString),
+    SymbolError(SharedString),
+}
+
+impl PreviewMessage {
+    fn text(&self, cx: &App) -> SharedString {
+        match self {
+            Self::NoResults => localization::text(cx, "picker-no-results-preview"),
+            Self::FileError(error) => {
+                localization::tr!(cx, "picker-preview-file-failed", error = error.as_ref())
+            }
+            Self::SymbolError(error) => {
+                localization::tr!(cx, "picker-preview-symbol-failed", error = error.as_ref())
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -162,7 +182,7 @@ impl EditorPreview {
         self.load_guard.invalidate();
         self.load_task = Task::ready(());
         self.current_path = None;
-        self.message = Some("No results to preview".into());
+        self.message = Some(PreviewMessage::NoResults);
     }
 
     fn update(&mut self, update: Update, window: &mut Window, cx: &mut Context<Self>) {
@@ -214,7 +234,7 @@ impl EditorPreview {
                         return;
                     }
                     this.current_path = None;
-                    this.message = Some(format!("Unable to preview file: {error:#}").into());
+                    this.message = Some(PreviewMessage::FileError(format!("{error:#}").into()));
                     cx.notify();
                 })
                 .log_err();
@@ -249,7 +269,7 @@ impl EditorPreview {
                         return;
                     }
                     this.current_path = None;
-                    this.message = Some(format!("Unable to preview symbol: {error:#}").into());
+                    this.message = Some(PreviewMessage::SymbolError(format!("{error:#}").into()));
                     cx.notify();
                 })
                 .log_err();
@@ -292,7 +312,7 @@ impl EditorPreview {
         });
     }
 
-    pub(crate) fn render(&self, layout: Layout, _cx: &mut App) -> impl IntoElement {
+    pub(crate) fn render(&self, layout: Layout, cx: &mut App) -> impl IntoElement {
         match layout {
             Layout::Hidden => div().into_any_element(),
             Layout::Right | Layout::Below => v_flex()
@@ -302,7 +322,7 @@ impl EditorPreview {
                         .size_full()
                         .items_center()
                         .justify_center()
-                        .child(Label::new(message.clone()).color(Color::Muted))
+                        .child(Label::new(message.text(cx)).color(Color::Muted))
                         .into_any_element()
                 } else {
                     div()

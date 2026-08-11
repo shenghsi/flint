@@ -6,3 +6,6 @@ picker-select-multiple-action = 选择多个项目
 picker-preview = 预览
 picker-preview-right = 在右侧预览
 picker-preview-below = 在下方预览
+picker-no-results-preview = 没有可预览的结果
+picker-preview-file-failed = 无法预览文件：{ $error }
+picker-preview-symbol-failed = 无法预览符号：{ $error }

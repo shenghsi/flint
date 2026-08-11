@@ -6,3 +6,6 @@ picker-select-multiple-action = Select Multiple
 picker-preview = Preview
 picker-preview-right = Preview to the Right
 picker-preview-below = Preview Below
+picker-no-results-preview = No results to preview
+picker-preview-file-failed = Unable to preview file: { $error }
+picker-preview-symbol-failed = Unable to preview symbol: { $error }
