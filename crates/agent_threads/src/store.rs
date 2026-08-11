@@ -1080,10 +1080,10 @@ impl AgentThreadStore {
     /// match. Some agent CLIs (Codex, notably) delegate tool-call shell
     /// execution to a separate, already-running daemon rather than forking
     /// it as a child of the interactive session, so no ancestor PID is
-    /// ever one Flint tracks -- the delegated shell's cwd is still reliably
-    /// the session's own cwd, though, since the CLI's own file operations
-    /// depend on it being correct. `kind_id` disambiguates two threads tied
-    /// to the same worktree, which cwd alone can't. Remote threads are
+    /// ever one Flint tracks. The delegated shell's cwd identifies either
+    /// the tied worktree or a newly-created linked worktree in the same git
+    /// repository. `kind_id` disambiguates threads when cwd or repository
+    /// identity alone can't. Remote threads are
     /// excluded: their tied worktree is a path on a different machine,
     /// never a local caller's cwd.
     #[cfg(any(unix, windows))]
