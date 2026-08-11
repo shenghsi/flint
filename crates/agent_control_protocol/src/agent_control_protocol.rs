@@ -1,12 +1,15 @@
 //! Wire types shared between `agent_control_cli` (the `flint-agent-control`
 //! binary an agent's own CLI process invokes) and `agent_threads::control`
-//! (the Unix socket server inside Flint that handles the request). Kept
+//! (the local control server inside Flint that handles the request). Kept
 //! dependency-free of GPUI/terminal so the CLI binary stays small.
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
+
+pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// `stable` | `dev` | `nightly` | `preview`. A local re-derivation of
 /// `release_channel::RELEASE_CHANNEL_NAME`'s own logic, not a dependency on
@@ -35,6 +38,7 @@ static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
 /// environment variables (the reason this crate exists at all: see
 /// `AgentControlLocation`'s doc comment for the env-var failure this
 /// replaced).
+#[cfg(unix)]
 pub fn socket_path() -> PathBuf {
     paths::data_dir().join(format!("agent-control-{}.sock", *RELEASE_CHANNEL_NAME))
 }
@@ -46,6 +50,7 @@ pub fn socket_path() -> PathBuf {
 /// `agent_threads::control::init`) and removed on quit -- not per-thread,
 /// since the executable's location is the same for every thread in one
 /// Flint session.
+#[cfg(unix)]
 pub fn executable_location_path() -> PathBuf {
     paths::data_dir().join(format!(
         "agent-control-{}-executable.json",
@@ -53,12 +58,65 @@ pub fn executable_location_path() -> PathBuf {
     ))
 }
 
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowsControlScope {
+    pipe_name: String,
+    executable_location_path: PathBuf,
+}
+
+#[cfg(windows)]
+impl WindowsControlScope {
+    pub fn current() -> std::io::Result<Self> {
+        let mut session_id = 0;
+        // SAFETY: `session_id` points to writable storage for the duration of the call.
+        unsafe {
+            windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+                std::process::id(),
+                &mut session_id,
+            )
+            .map_err(std::io::Error::other)?;
+        }
+        Ok(Self::for_session(
+            paths::data_dir().to_path_buf(),
+            session_id,
+        ))
+    }
+
+    pub fn for_session(data_dir: PathBuf, session_id: u32) -> Self {
+        let stem = format!("agent-control-{}-{session_id}", *RELEASE_CHANNEL_NAME);
+        Self {
+            pipe_name: format!(r"\\.\pipe\flint-{stem}"),
+            executable_location_path: data_dir.join(format!("{stem}-executable.json")),
+        }
+    }
+
+    pub fn pipe_name(&self) -> &str {
+        &self.pipe_name
+    }
+
+    pub fn executable_location_path(&self) -> &std::path::Path {
+        &self.executable_location_path
+    }
+}
+
+#[cfg(windows)]
+pub fn pipe_name() -> std::io::Result<String> {
+    Ok(WindowsControlScope::current()?.pipe_name)
+}
+
+#[cfg(windows)]
+pub fn executable_location_path() -> std::io::Result<PathBuf> {
+    Ok(WindowsControlScope::current()?.executable_location_path)
+}
+
 /// Contents of the file at `executable_location_path()`.
 ///
-/// This is the only handoff data left on disk. The control socket's path is
-/// independently computable (`socket_path()`), and caller identity is
+/// This is the only handoff data left on disk. The platform endpoint is
+/// independently computable (`socket_path()` or `pipe_name()`), and caller identity is
 /// established by the server asking the kernel who actually connected
-/// (`SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS) rather than by a
+/// (`SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS, or a named-pipe peer
+/// process query on Windows) rather than by a
 /// client-presented secret -- so there's no per-thread token to mint,
 /// deliver, or collide over. The original design used environment variables
 /// for all of this, but some coding-agent CLIs run their own shell commands
@@ -200,11 +258,43 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn socket_path_and_executable_location_path_are_release_channel_scoped_siblings() {
         let socket = socket_path();
         let executable_location = executable_location_path();
         assert_eq!(socket.parent(), executable_location.parent());
         assert_ne!(socket, executable_location);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_scope_uses_one_release_and_session_identity() {
+        let data_dir = PathBuf::from(r"C:\Users\test\AppData\Local\Flint");
+        let scope = WindowsControlScope::for_session(data_dir.clone(), 42);
+        let expected_stem = format!("agent-control-{}-42", *RELEASE_CHANNEL_NAME);
+
+        assert_eq!(
+            scope.pipe_name(),
+            format!(r"\\.\pipe\flint-{expected_stem}")
+        );
+        assert_eq!(
+            scope.executable_location_path(),
+            data_dir.join(format!("{expected_stem}-executable.json"))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_scopes_are_isolated_by_terminal_services_session() {
+        let data_dir = PathBuf::from(r"C:\Flint");
+        let first = WindowsControlScope::for_session(data_dir.clone(), 1);
+        let second = WindowsControlScope::for_session(data_dir, 2);
+
+        assert_ne!(first.pipe_name(), second.pipe_name());
+        assert_ne!(
+            first.executable_location_path(),
+            second.executable_location_path()
+        );
     }
 }

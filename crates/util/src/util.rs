@@ -349,9 +349,8 @@ pub fn get_flint_cli_path() -> Result<PathBuf> {
 }
 
 /// Returns a path for the `flint-agent-control` executable (the local-only
-/// agent worktree control CLI), mirroring `get_flint_cli_path` above. Unix
-/// only, matching that binary's own platform support.
-#[cfg(unix)]
+/// agent worktree control CLI), mirroring `get_flint_cli_path` above.
+#[cfg(any(unix, windows))]
 pub fn get_flint_agent_control_path() -> Result<PathBuf> {
     use anyhow::Context as _;
     let flint_path =
@@ -368,6 +367,9 @@ pub fn get_flint_agent_control_path() -> Result<PathBuf> {
         // libexec is the standard installed layout, ./flint-agent-control is
         // for the target directory in development builds.
         &["../libexec/flint-agent-control", "./flint-agent-control"]
+    } else if cfg!(windows) {
+        // Installed and development Windows layouts place the helper beside Flint.exe.
+        &["./flint-agent-control.exe"]
     } else {
         anyhow::bail!("unsupported platform for determining flint-agent-control path");
     };

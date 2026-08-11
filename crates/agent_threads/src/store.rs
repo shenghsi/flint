@@ -428,11 +428,10 @@ pub struct AgentThreadStore {
     pending_tie_persistence: HashSet<EntityId>,
     /// The agent-control server's accept-loop task (see `crate::control`),
     /// held here so its lifetime is the app's rather than any caller's.
-    /// Doesn't exist on non-Unix hosts, where the control server doesn't
-    /// either -- `#[cfg(unix)]`, not just an `Option` that stays `None`,
-    /// since nothing on that platform ever constructs a `Task` to hold.
-    #[cfg(unix)]
-    _control_server_task: Option<Task<()>>,
+    /// Doesn't exist on unsupported hosts, where the control server doesn't
+    /// either -- this is cfg-gated rather than an `Option` that stays `None`.
+    #[cfg(any(unix, windows))]
+    _control_server: Option<crate::control::ControlServerHandle>,
 }
 
 struct ThreadEntry {
@@ -446,7 +445,7 @@ struct ThreadEntry {
 }
 
 /// See `AgentThreadStore::live_terminal_worktree_roots`.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) struct LiveTerminalWorktree {
     pub(crate) terminal_item_id: EntityId,
     pub(crate) tied_worktree_root: PathBuf,
@@ -578,8 +577,8 @@ impl AgentThreadStore {
             managed_provisioning: ManagedAgentProvisioningCoordinator::default(),
             snapshot_sender,
             pending_tie_persistence: HashSet::default(),
-            #[cfg(unix)]
-            _control_server_task: None,
+            #[cfg(any(unix, windows))]
+            _control_server: None,
         });
         spawn_session_discovery_loop(store.clone(), cx);
         cx.set_global(GlobalAgentThreadStore(store));
@@ -1050,11 +1049,11 @@ impl AgentThreadStore {
             .ok_or_else(|| anyhow!("agent thread window closed"))
     }
 
-    /// Stores the agent-control server's accept-loop task so its lifetime is
-    /// the app's, not any caller's -- see `crate::control::init`.
-    #[cfg(unix)]
-    pub(crate) fn hold_control_server_task(&mut self, task: Task<()>) {
-        self._control_server_task = Some(task);
+    /// Stores the agent-control server handle so its lifetime is the app's,
+    /// not any caller's -- see `crate::control::init`.
+    #[cfg(any(unix, windows))]
+    pub(crate) fn hold_control_server(&mut self, server: crate::control::ControlServerHandle) {
+        self._control_server = Some(server);
     }
 
     /// Every live thread's underlying terminal process id, for the control
@@ -1064,7 +1063,7 @@ impl AgentThreadStore {
     /// different machine, so it can never appear in this map or match a
     /// local process's ancestry -- remote threads are excluded from the
     /// control surface by construction, with no separate check needed.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn live_terminal_pids(&self, cx: &App) -> HashMap<u32, EntityId> {
         self.threads
             .iter()
@@ -1087,7 +1086,7 @@ impl AgentThreadStore {
     /// identity alone can't. Remote threads are
     /// excluded: their tied worktree is a path on a different machine,
     /// never a local caller's cwd.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn live_terminal_worktree_roots(&self) -> Vec<LiveTerminalWorktree> {
         self.threads
             .iter()
@@ -2452,7 +2451,7 @@ fn spawn_thread_task_inner(
     let initialization_command = command.initialization_command.take();
     let is_windows = workspace.project().read(cx).path_style(cx).is_windows();
     let remote_client = workspace.project().read(cx).remote_client();
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     if remote_client.is_none() {
         crate::instructions::maybe_offer_worktree_instructions(kind, workspace, cx);
     }

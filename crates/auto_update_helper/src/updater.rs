@@ -164,7 +164,7 @@ impl Job {
 }
 
 #[cfg(not(test))]
-pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
+pub(crate) static JOBS: LazyLock<[Job; 24]> = LazyLock::new(|| {
     fn p(value: &str) -> &Path {
         Path::new(value)
     }
@@ -173,6 +173,13 @@ pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
         // Not deleting because installing new files can fail
         Job::mkdir(p("old")),
         Job::move_file(p("Flint.exe"), p("old\\Flint.exe")),
+        // Existing installs from before agent control was introduced do not
+        // have this companion yet, so the first update must tolerate its
+        // absence while still preserving it for rollback on later updates.
+        Job::move_if_exists(
+            p("flint-agent-control.exe"),
+            p("old\\flint-agent-control.exe"),
+        ),
         Job::mkdir(p("old\\bin")),
         Job::move_file(p("bin\\Flint.exe"), p("old\\bin\\Flint.exe")),
         Job::move_file(p("bin\\flint"), p("old\\bin\\flint")),
@@ -190,6 +197,10 @@ pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
         Job::move_file(p("conpty.dll"), p("old\\conpty.dll")),
         // Copy new files
         Job::move_file(p("install\\Flint.exe"), p("Flint.exe")),
+        Job::move_file(
+            p("install\\flint-agent-control.exe"),
+            p("flint-agent-control.exe"),
+        ),
         Job::move_file(p("install\\bin\\Flint.exe"), p("bin\\Flint.exe")),
         Job::move_file(p("install\\bin\\flint"), p("bin\\flint")),
         //
@@ -280,6 +291,7 @@ fn release_file_handles(app_dir: &Path) -> Result<()> {
     // Files that commonly get locked by Explorer or other processes
     let files_to_release = [
         app_dir.join("Flint.exe"),
+        app_dir.join("flint-agent-control.exe"),
         app_dir.join("bin\\Flint.exe"),
         app_dir.join("bin\\flint"),
         app_dir.join("conpty.dll"),
@@ -436,7 +448,74 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
 
 #[cfg(test)]
 mod test {
-    use super::perform_update;
+    use std::path::Path;
+
+    use super::{Job, perform_update};
+
+    #[test]
+    fn agent_control_helper_is_replaced_and_restored_on_rollback() {
+        let app_dir = tempfile::tempdir().expect("create app directory");
+        let app_dir = app_dir.path();
+        std::fs::create_dir_all(app_dir.join("old")).expect("create old directory");
+        std::fs::create_dir_all(app_dir.join("install")).expect("create install directory");
+        std::fs::write(app_dir.join("flint-agent-control.exe"), "old").expect("write old helper");
+        std::fs::write(app_dir.join("install\\flint-agent-control.exe"), "new")
+            .expect("write new helper");
+
+        let move_old = Job::move_if_exists(
+            Path::new("flint-agent-control.exe"),
+            Path::new("old\\flint-agent-control.exe"),
+        );
+        let install_new = Job::move_file(
+            Path::new("install\\flint-agent-control.exe"),
+            Path::new("flint-agent-control.exe"),
+        );
+        (move_old.apply)(app_dir).expect("move old helper");
+        (install_new.apply)(app_dir).expect("install new helper");
+        assert_eq!(
+            std::fs::read_to_string(app_dir.join("flint-agent-control.exe"))
+                .expect("read installed helper"),
+            "new"
+        );
+
+        (install_new.rollback)(app_dir).expect("remove replacement helper");
+        (move_old.rollback)(app_dir).expect("restore old helper");
+        assert_eq!(
+            std::fs::read_to_string(app_dir.join("flint-agent-control.exe"))
+                .expect("read restored helper"),
+            "old"
+        );
+    }
+
+    #[test]
+    fn agent_control_helper_can_be_installed_when_the_old_version_is_absent() {
+        let app_dir = tempfile::tempdir().expect("create app directory");
+        let app_dir = app_dir.path();
+        std::fs::create_dir_all(app_dir.join("old")).expect("create old directory");
+        std::fs::create_dir_all(app_dir.join("install")).expect("create install directory");
+        std::fs::write(app_dir.join("install\\flint-agent-control.exe"), "new")
+            .expect("write new helper");
+
+        let move_old = Job::move_if_exists(
+            Path::new("flint-agent-control.exe"),
+            Path::new("old\\flint-agent-control.exe"),
+        );
+        let install_new = Job::move_file(
+            Path::new("install\\flint-agent-control.exe"),
+            Path::new("flint-agent-control.exe"),
+        );
+        (move_old.apply)(app_dir).expect("skip absent old helper");
+        (install_new.apply)(app_dir).expect("install new helper");
+        assert_eq!(
+            std::fs::read_to_string(app_dir.join("flint-agent-control.exe"))
+                .expect("read installed helper"),
+            "new"
+        );
+
+        (install_new.rollback)(app_dir).expect("remove replacement helper");
+        (move_old.rollback)(app_dir).expect("keep old helper absent");
+        assert!(!app_dir.join("flint-agent-control.exe").exists());
+    }
 
     #[test]
     fn test_perform_update() {
