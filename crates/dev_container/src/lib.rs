@@ -691,7 +691,10 @@ impl DevContainerModal {
                                     );
                                     cx.notify();
                                 }))
-                                .child(Label::new("Search for Dev Container Templates")),
+                                .child(Label::new(localization::text(
+                                    cx,
+                                    "common-search-dev-container-templates",
+                                ))),
                         ),
                 )
                 .into_any_element(),
@@ -757,7 +760,12 @@ impl DevContainerModal {
                         .child(
                             ModalHeader::new()
                                 .child(
-                                    Headline::new("Template Option: ").size(HeadlineSize::XSmall),
+                                    Headline::new(localization::tr!(
+                                        cx,
+                                        "common-template-option",
+                                        name = next_option_entries.option_name.as_str()
+                                    ))
+                                    .size(HeadlineSize::XSmall),
                                 )
                                 .child(
                                     Headline::new(&next_option_entries.option_name)
@@ -837,7 +845,7 @@ impl DevContainerModal {
                                     this.accept_message(DevContainerMessage::GoBack, window, cx);
                                     cx.notify();
                                 }))
-                                .child(Label::new("Go Back")),
+                                .child(Label::new(localization::text(cx, "common-go-back"))),
                         ),
                 )
                 .into_any_element(),
@@ -915,7 +923,7 @@ impl DevContainerModal {
                                     );
                                     cx.notify();
                                 }))
-                                .child(Label::new("Overwrite")),
+                                .child(Label::new(localization::text(cx, "common-overwrite"))),
                         ),
                 )
                 .child(
@@ -936,7 +944,7 @@ impl DevContainerModal {
                                     this.dismiss(&menu::Cancel, window, cx);
                                     cx.notify();
                                 }))
-                                .child(Label::new("Cancel")),
+                                .child(Label::new(localization::text(cx, "common-cancel"))),
                         ),
                 )
                 .into_any_element(),
@@ -953,7 +961,8 @@ impl DevContainerModal {
                 .child(
                     div().track_focus(&self.focus_handle).child(
                         ModalHeader::new().child(
-                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                            Headline::new(localization::text(cx, "common-create-dev-container"))
+                                .size(HeadlineSize::XSmall),
                         ),
                     ),
                 )
@@ -968,7 +977,10 @@ impl DevContainerModal {
                                     .color(Color::Muted)
                                     .with_rotate_animation(2),
                             )
-                            .child(Label::new("Querying template registry...")),
+                            .child(Label::new(localization::text(
+                                cx,
+                                "common-querying-template-registry",
+                            ))),
                     ),
                 )
                 .child(ListSeparator)
@@ -990,7 +1002,7 @@ impl DevContainerModal {
                                     this.accept_message(DevContainerMessage::GoBack, window, cx);
                                     cx.notify();
                                 }))
-                                .child(Label::new("Go Back")),
+                                .child(Label::new(localization::text(cx, "common-go-back"))),
                         ),
                 )
                 .into_any_element(),
@@ -1005,7 +1017,8 @@ impl DevContainerModal {
                 .child(
                     div().track_focus(&self.focus_handle).child(
                         ModalHeader::new().child(
-                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                            Headline::new(localization::text(cx, "common-create-dev-container"))
+                                .size(HeadlineSize::XSmall),
                         ),
                     ),
                 )
@@ -1020,7 +1033,10 @@ impl DevContainerModal {
                                     .color(Color::Muted)
                                     .with_rotate_animation(2),
                             )
-                            .child(Label::new("Querying features...")),
+                            .child(Label::new(localization::text(
+                                cx,
+                                "common-querying-features",
+                            ))),
                     ),
                 )
                 .child(ListSeparator)
@@ -1042,7 +1058,7 @@ impl DevContainerModal {
                                     this.accept_message(DevContainerMessage::GoBack, window, cx);
                                     cx.notify();
                                 }))
-                                .child(Label::new("Go Back")),
+                                .child(Label::new(localization::text(cx, "common-go-back"))),
                         ),
                 )
                 .into_any_element(),
