@@ -22,6 +22,7 @@ crates = [
   "markdown_preview",
   "open_path_prompt",
   "outline_panel",
+  "picker",
   "project_panel",
   "project_symbols",
   "recent_projects",
