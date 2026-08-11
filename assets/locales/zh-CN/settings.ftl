@@ -23,3 +23,19 @@ settings-feature-enabled-all = 对所有用户启用
 settings-feature-reset = 重置
 settings-modified-in = —  已在{ $scope }中修改
 settings-language-native-name = 简体中文
+settings-source = { $source ->
+    [Agent] 智能体
+    [Appearance] 外观
+    [Collaboration] 协作
+    [Editor] 编辑器
+    [Extensions] 扩展
+    [General] 常规
+    [Git] Git
+    [Keymap] 按键映射
+    [Language] 语言
+    [Languages] 语言
+    [Project] 项目
+    [Search] 搜索
+    [Terminal] 终端
+   *[other] { $source }
+}

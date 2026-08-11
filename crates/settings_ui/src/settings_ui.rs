@@ -999,7 +999,7 @@ impl SettingsPageItem {
 
         match self {
             SettingsPageItem::SectionHeader(header) => {
-                SettingsSectionHeader::new(SharedString::new_static(header)).into_any_element()
+                SettingsSectionHeader::new(settings_source_text(cx, header)).into_any_element()
             }
             SettingsPageItem::SettingItem(setting_item) => {
                 let (field_with_padding, _) =
@@ -1281,7 +1281,7 @@ fn render_settings_item(
                     h_flex()
                         .w_full()
                         .gap_1()
-                        .child(Label::new(SharedString::new_static(setting_item.title)))
+                        .child(Label::new(settings_source_text(cx, setting_item.title)))
                         .when_some(
                             if sub_field {
                                 None
@@ -1325,7 +1325,7 @@ fn render_settings_item(
                         ),
                 )
                 .child(
-                    Label::new(SharedString::new_static(setting_item.description))
+                    Label::new(settings_source_text(cx, setting_item.description))
                         .size(LabelSize::Small)
                         .color(Color::Muted)
                         .render_code_spans(),
@@ -1407,6 +1407,12 @@ fn user_language_setting(cx: &App) -> UserLanguageSettingItem {
         title: localization::tr!(cx, "settings-language-title"),
         description: localization::tr!(cx, "settings-language-description"),
     }
+}
+
+fn settings_source_text(cx: &App, source: &str) -> SharedString {
+    let mut arguments = localization::FluentArgs::new();
+    arguments.set("source", source);
+    localization::text_with_args(cx, "settings-source", &arguments)
 }
 
 struct DynamicItem {
@@ -1815,7 +1821,7 @@ impl SettingsWindow {
 
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
-        this.build_search_index();
+        this.build_search_index(cx);
 
         this.search_bar.update(cx, |editor, cx| {
             editor.focus_handle(cx).focus(window, cx);
@@ -2168,7 +2174,7 @@ impl SettingsWindow {
             .collect::<Vec<_>>();
     }
 
-    fn build_search_index(&mut self) {
+    fn build_search_index(&mut self, cx: &App) {
         fn split_into_words(parts: &[&str]) -> Vec<String> {
             parts
                 .iter()
@@ -2198,16 +2204,20 @@ impl SettingsWindow {
         // where many settings are filtered out, using the logic in filter_matches_to_file
         // we could only search relevant items based on the current file
         for (page_index, page) in self.pages.iter().enumerate() {
+            let localized_page_title = settings_source_text(cx, page.title);
             let mut header_index = 0;
             let mut header_str = "";
             for (item_index, item) in page.items.iter().enumerate() {
                 let key_index = key_lut.len();
                 let mut json_path = None;
+                let localized_header = settings_source_text(cx, header_str);
                 match item {
                     SettingsPageItem::DynamicItem(DynamicItem {
                         discriminant: item, ..
                     })
                     | SettingsPageItem::SettingItem(item) => {
+                        let localized_title = settings_source_text(cx, item.title);
+                        let localized_description = settings_source_text(cx, item.description);
                         json_path = item
                             .field
                             .json_path()
@@ -2219,10 +2229,24 @@ impl SettingsWindow {
                                 header_str,
                                 item.title,
                                 item.description,
+                                localized_page_title.as_ref(),
+                                localized_header.as_ref(),
+                                localized_title.as_ref(),
+                                localized_description.as_ref(),
                             ]),
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.title);
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.description);
+                        push_candidates(
+                            &mut fuzzy_match_candidates,
+                            key_index,
+                            localized_title.as_ref(),
+                        );
+                        push_candidates(
+                            &mut fuzzy_match_candidates,
+                            key_index,
+                            localized_description.as_ref(),
+                        );
                     }
                     SettingsPageItem::UserLanguageSetting(setting_item) => {
                         json_path = Some("ui_language");
@@ -2250,11 +2274,17 @@ impl SettingsWindow {
                         push_candidates(&mut fuzzy_match_candidates, key_index, "Language");
                     }
                     SettingsPageItem::SectionHeader(header) => {
+                        let localized_header = settings_source_text(cx, header);
                         documents.push(SearchDocument {
                             id: key_index,
-                            words: split_into_words(&[header]),
+                            words: split_into_words(&[header, localized_header.as_ref()]),
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, header);
+                        push_candidates(
+                            &mut fuzzy_match_candidates,
+                            key_index,
+                            localized_header.as_ref(),
+                        );
                         header_index = item_index;
                         header_str = *header;
                     }
@@ -2292,6 +2322,16 @@ impl SettingsWindow {
                 }
                 push_candidates(&mut fuzzy_match_candidates, key_index, page.title);
                 push_candidates(&mut fuzzy_match_candidates, key_index, header_str);
+                push_candidates(
+                    &mut fuzzy_match_candidates,
+                    key_index,
+                    localized_page_title.as_ref(),
+                );
+                push_candidates(
+                    &mut fuzzy_match_candidates,
+                    key_index,
+                    localized_header.as_ref(),
+                );
 
                 key_lut.push(SearchKeyLUTEntry {
                     page_index,
@@ -2353,7 +2393,7 @@ impl SettingsWindow {
         self.navbar_focus_subscriptions.clear();
         self.content_handles.clear();
         self.build_ui(window, cx);
-        self.build_search_index();
+        self.build_search_index(cx);
     }
 
     #[track_caller]
@@ -2991,7 +3031,7 @@ impl SettingsWindow {
                                     .map(|(entry_index, entry)| {
                                         TreeViewItem::new(
                                             ("settings-ui-navbar-entry", entry_index),
-                                            entry.title,
+                                            settings_source_text(cx, entry.title),
                                         )
                                         .track_focus(&entry.focus_handle)
                                         .root_item(entry.is_root)
@@ -3376,7 +3416,10 @@ impl SettingsWindow {
                             .when(this.sub_page_stack.is_empty(), |this| {
                                 this.when_some(root_nav_label, |this, title| {
                                     this.child(
-                                        Label::new(title).size(LabelSize::Large).mt_2().mb_3(),
+                                        Label::new(settings_source_text(cx, title))
+                                            .size(LabelSize::Large)
+                                            .mt_2()
+                                            .mb_3(),
                                     )
                                 })
                             })
@@ -3479,7 +3522,12 @@ impl SettingsWindow {
             page_content
                 .when(self.sub_page_stack.is_empty(), |this| {
                     this.when_some(root_nav_label, |this, title| {
-                        this.child(Label::new(title).size(LabelSize::Large).mt_2().mb_3())
+                        this.child(
+                            Label::new(settings_source_text(cx, title))
+                                .size(LabelSize::Large)
+                                .mt_2()
+                                .mb_3(),
+                        )
                     })
                 })
                 .children(items.clone().into_iter().enumerate().map(

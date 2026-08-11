@@ -23,3 +23,4 @@ settings-feature-enabled-all = enabled for all
 settings-feature-reset = Reset
 settings-modified-in = —  Modified in { $scope }
 settings-language-native-name = English
+settings-source = { $source }

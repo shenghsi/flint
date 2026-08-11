@@ -25,7 +25,6 @@ crates = [
   "recent_projects",
   "repl",
   "search",
-  "settings_ui",
   "snippets_ui",
   "svg_preview",
   "tab_switcher",
@@ -261,13 +260,3 @@ reason = "Stable launch option label used for legacy settings migration"
 file = "crates/agent_threads/src/panel.rs"
 text = "agent"
 reason = "Fluent variable name in a tooltip expression"
-
-[[allowlist]]
-file = "crates/settings_ui/src/settings_ui.rs"
-text = "setting-item"
-reason = "Element identifier"
-
-[[allowlist]]
-file = "crates/settings_ui/src/settings_ui.rs"
-text = "copy-link-btn"
-reason = "Element identifier"
