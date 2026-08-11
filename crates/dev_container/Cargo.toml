@@ -20,6 +20,7 @@ gpui.workspace = true
 fs.workspace = true
 futures.workspace = true
 log.workspace = true
+localization.workspace = true
 menu.workspace = true
 paths.workspace = true
 regex.workspace = true
