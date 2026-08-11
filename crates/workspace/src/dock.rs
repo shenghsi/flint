@@ -1242,7 +1242,7 @@ impl Render for PanelButtons {
                 } else {
                     let action = entry.panel.toggle_action(window, cx);
 
-                    (action, icon_tooltip.into())
+                    (action, icon_tooltip)
                 };
 
                 let focus_handle = dock.focus_handle(cx);
