@@ -1,0 +1,14 @@
+key-context-title = 键盘上下文
+key-context-description = 此视图可用于确定 Flint 中创建自定义键位绑定时的当前上下文栈。触发键盘快捷键时，它还会显示所有可能触发的上下文及实际匹配的上下文。
+key-context-open-documentation = 打开文档
+key-context-view-default-keymap = 查看默认键位映射
+key-context-edit-keymap = 编辑键位映射文件
+key-context-current-stack = 当前上下文栈
+key-context-last-keystroke = 上次按键
+key-context-waiting-input = 等待更多输入：{ $keystrokes }
+key-context-typed = 已输入：{ $keystrokes }
+key-context-equivalents = 等效按键
+key-context-equivalents-description = 某些字符定义的快捷键已重新映射，以便无需按住 Option 键即可输入快捷键。
+key-context-match = （匹配）
+key-context-low-precedence = （低优先级）
+key-context-no-match = （不匹配）

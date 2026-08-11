@@ -6,7 +6,6 @@ crates = [
   "command_palette",
   "csv_preview",
   "debugger_ui",
-  "dev_container",
   "diagnostics",
   "encoding_selector",
   "extensions_ui",

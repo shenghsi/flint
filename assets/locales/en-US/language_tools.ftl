@@ -1,0 +1,14 @@
+key-context-title = Keyboard Context
+key-context-description = This view lets you determine the current context stack for creating custom key bindings in Flint. When a keyboard shortcut is triggered, it also shows all the possible contexts it could have triggered in, and which one matched.
+key-context-open-documentation = Open Documentation
+key-context-view-default-keymap = View Default Keymap
+key-context-edit-keymap = Edit Keymap File
+key-context-current-stack = Current Context Stack
+key-context-last-keystroke = Last Keystroke
+key-context-waiting-input = Waiting for more input: { $keystrokes }
+key-context-typed = Typed: { $keystrokes }
+key-context-equivalents = Key Equivalents
+key-context-equivalents-description = Shortcuts defined using some characters have been remapped so that shortcuts can be typed without holding option.
+key-context-match = (match)
+key-context-low-precedence = (low precedence)
+key-context-no-match = (no match)
