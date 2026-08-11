@@ -298,7 +298,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         } else {
             localization::text(cx, "recent-no-matches")
         };
-        Some(text.into())
+        Some(text)
     }
 
     fn render_match(
