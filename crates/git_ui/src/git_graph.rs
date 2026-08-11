@@ -299,7 +299,14 @@ impl ChangedFileEntry {
                 } else {
                     format!("{}/{}", dir_path, file_name).into()
                 };
-                move |_, cx| Tooltip::with_meta("View Changes", None, meta.clone(), cx)
+                move |_, cx| {
+                    Tooltip::with_meta(
+                        localization::text(cx, "git-view-changes"),
+                        None,
+                        meta.clone(),
+                        cx,
+                    )
+                }
             })
             .on_click({
                 let entry = self.clone();
@@ -398,7 +405,14 @@ impl ChangedFileDirectoryEntry {
             )
             .tooltip({
                 let name = self.name.clone();
-                move |_, cx| Tooltip::with_meta("Toggle Folder", None, name.clone(), cx)
+                move |_, cx| {
+                    Tooltip::with_meta(
+                        localization::text(cx, "git-toggle-folder"),
+                        None,
+                        name.clone(),
+                        cx,
+                    )
+                }
             })
             .on_click(move |_, _, cx| {
                 git_graph
@@ -3140,7 +3154,7 @@ impl GitGraph {
             .child(Divider::horizontal())
             .child(
                 h_flex().p_1p5().w_full().child(
-                    Button::new("view-commit", "View Commit")
+                    Button::new("view-commit", localization::text(cx, "git-view-commit"))
                         .full_width()
                         .style(ButtonStyle::OutlinedGhost)
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -3686,28 +3700,40 @@ impl Render for GitGraph {
                             if !is_path_history {
                                 TableRow::from_vec(
                                     vec![
-                                        Label::new("Graph")
+                                        Label::new(localization::text(cx, "git-graph"))
                                             .color(Color::Muted)
                                             .truncate()
                                             .into_any_element(),
-                                        Label::new("Description")
+                                        Label::new(localization::text(cx, "git-description"))
                                             .color(Color::Muted)
                                             .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
-                                        Label::new("Author").color(Color::Muted).into_any_element(),
-                                        Label::new("Commit").color(Color::Muted).into_any_element(),
+                                        Label::new(localization::text(cx, "git-date"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new(localization::text(cx, "git-author"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new(localization::text(cx, "git-commit"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
                                     ],
                                     5,
                                 )
                             } else {
                                 TableRow::from_vec(
                                     vec![
-                                        Label::new("Description")
+                                        Label::new(localization::text(cx, "git-description"))
                                             .color(Color::Muted)
                                             .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
-                                        Label::new("Author").color(Color::Muted).into_any_element(),
-                                        Label::new("Commit").color(Color::Muted).into_any_element(),
+                                        Label::new(localization::text(cx, "git-date"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new(localization::text(cx, "git-author"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new(localization::text(cx, "git-commit"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
                                     ],
                                     4,
                                 )

@@ -381,16 +381,22 @@ impl PickerDelegate for KernelPickerDelegate {
                                                 )
                                                 .when(*is_recommended, |flex| {
                                                     flex.child(
-                                                        Label::new("Recommended")
-                                                            .size(LabelSize::XSmall)
-                                                            .color(Color::Accent),
+                                                        Label::new(localization::text(
+                                                            cx,
+                                                            "repl-recommended",
+                                                        ))
+                                                        .size(LabelSize::XSmall)
+                                                        .color(Color::Accent),
                                                     )
                                                 })
                                                 .when(!has_ipykernel, |flex| {
                                                     flex.child(
-                                                        Label::new("ipykernel not installed")
-                                                            .size(LabelSize::XSmall)
-                                                            .color(Color::Warning),
+                                                        Label::new(localization::text(
+                                                            cx,
+                                                            "repl-ipykernel-missing",
+                                                        ))
+                                                        .size(LabelSize::XSmall)
+                                                        .color(Color::Warning),
                                                     )
                                                 }),
                                         )
@@ -430,7 +436,7 @@ impl PickerDelegate for KernelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .child(
-                    Button::new("kernel-docs", "Kernel Docs")
+                    Button::new("kernel-docs", localization::text(cx, "repl-kernel-docs"))
                         .end_icon(
                             Icon::new(IconName::ArrowUpRight)
                                 .size(IconSize::Small)

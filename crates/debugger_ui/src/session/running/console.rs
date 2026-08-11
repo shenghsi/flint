@@ -476,7 +476,7 @@ impl Render for Console {
                             })
                             .layer(ui::ElevationIndex::ModalSurface)
                             .size(ui::ButtonSize::Compact)
-                            .child(Label::new("Evaluate"))
+                            .child(Label::new(localization::text(cx, "debugger-evaluate")))
                             .tooltip({
                                 let query_focus_handle = query_focus_handle.clone();
 

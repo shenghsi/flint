@@ -242,7 +242,7 @@ impl Render for ReplSessionsPage {
                             .style(ButtonStyle::Filled)
                             .size(ButtonSize::Large)
                             .layer(ElevationIndex::ModalSurface)
-                            .child(Label::new("Install Kernels"))
+                            .child(Label::new(localization::text(cx, "repl-install-kernels")))
                             .on_click(move |_, _, cx| {
                                 cx.open_url(
                                     "https://github.com/shenghsi/flint/blob/main/docs/src/repl.md#language-specific-instructions",

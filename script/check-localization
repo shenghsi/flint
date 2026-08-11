@@ -73,6 +73,13 @@ UI_LITERAL_PATTERNS = (
     re.compile(r"\.tooltip\([^\"]*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"\.child\(\s*\"([^\"]*[A-Za-z][^\"]*)\"\s*\)"),
     re.compile(r"MenuItem::action\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"Label::new\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"ListBulletItem::new\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"Tooltip::(?:text|simple|for_action(?:_title)?(?:_in)?)\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"Tooltip::with_meta(?:_in)?\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.tooltip\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"(?:window|cx)\.prompt\(\s*[^,]+,\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"SharedString::new_static\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
 )
 
 

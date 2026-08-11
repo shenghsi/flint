@@ -3,11 +3,13 @@
 crates = [
   "auto_update_ui",
   "command_palette",
+  "debugger_ui",
   "diagnostics",
   "encoding_selector",
   "extensions_ui",
   "file_finder",
   "go_to_line",
+  "git_ui",
   "install_cli",
   "keymap_editor",
   "language_selector",
@@ -16,6 +18,7 @@ crates = [
   "outline_panel",
   "project_symbols",
   "recent_projects",
+  "repl",
   "search",
   "tab_switcher",
   "terminal_view",
@@ -66,6 +69,16 @@ text = "keymap-row-wrapper"
 reason = "Element identifier"
 
 [[allowlist]]
+file = "crates/keymap_editor/src/keymap_editor.rs"
+text = "<null>"
+reason = "Stable keymap argument syntax"
+
+[[allowlist]]
+file = "crates/keymap_editor/src/keymap_editor.rs"
+text = "<no arguments>"
+reason = "Stable keymap argument sentinel"
+
+[[allowlist]]
 file = "crates/recent_projects/src/remote_servers.rs"
 text = "\\n"
 reason = "Path-list separator"
@@ -74,3 +87,118 @@ reason = "Path-list separator"
 file = "crates/extensions_ui/src/extensions_ui.rs"
 text = "v{version}"
 reason = "Extension version format"
+
+[[allowlist]]
+file = "crates/git_ui/src/commit_modal.rs"
+text = "git commit{}{}"
+reason = "Stable Git command preview"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "git commit{}{}"
+reason = "Stable Git command preview"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "git config --global --add safe.directory {}"
+reason = "Stable Git command preview"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "git init"
+reason = "Stable Git command"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "remote-button"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "commit-wrapper"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_ui.rs"
+text = "split-button-right-{}"
+reason = "Element identifier format"
+
+[[allowlist]]
+file = "crates/git_ui/src/worktree_picker.rs"
+text = "HEAD"
+reason = "Stable Git reference"
+
+[[allowlist]]
+file = "crates/git_ui/src/worktree_picker.rs"
+text = "Modal just created"
+reason = "Developer-only assertion message"
+
+[[allowlist]]
+file = "crates/git_ui/src/worktree_picker.rs"
+text = "\\u{2022}"
+reason = "Visual separator"
+
+[[allowlist]]
+file = "crates/repl/src/notebook/notebook_ui.rs"
+text = "notebook controls"
+reason = "Text in disabled example code"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Console"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Variables"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Breakpoints"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Frames"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Modules"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Sources"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Terminal"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Memory View"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running.rs"
+text = "debug-toggle-zoom-{}"
+reason = "Element identifier format"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/breakpoint_list.rs"
+text = "source-breakpoint-control-strip-{:?}:{}"
+reason = "Element identifier format"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/breakpoint_list.rs"
+text = "remove-breakpoint-breakpoint-list"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/breakpoint_list.rs"
+text = "Worktree parent path: {parent_dir}"
+reason = "Developer-only assertion message"

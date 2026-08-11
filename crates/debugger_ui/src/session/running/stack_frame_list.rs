@@ -655,7 +655,7 @@ impl StackFrameList {
                                     }
                                 }))
                                 .tooltip(move |window, cx| {
-                                    Tooltip::text("Restart Stack Frame")(window, cx)
+                                    Tooltip::text(localization::text(cx, "debugger-restart-frame"))(window, cx)
                                 }),
                             ),
                     )

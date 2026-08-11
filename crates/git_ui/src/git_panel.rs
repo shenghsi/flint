@@ -41,7 +41,7 @@ use git::{
 use gpui::{
     AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent,
     Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent,
-    Point, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt, TextStyle,
+    Point, PromptButton, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt, TextStyle,
     UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
@@ -3221,9 +3221,9 @@ impl GitPanel {
         } else if worktrees.is_empty() {
             let result = window.prompt(
                 PromptLevel::Warning,
-                "Unable to initialize a git repository",
-                Some("Open a directory first"),
-                &["Ok"],
+                &localization::text(cx, "git-init-failed"),
+                Some(&localization::text(cx, "git-open-directory-first")),
+                &[PromptButton::ok(localization::text(cx, "common-ok"))],
                 cx,
             );
             cx.background_executor()
@@ -4697,14 +4697,14 @@ impl GitPanel {
             .anchor(Anchor::TopRight)
     }
 
-    fn render_view_options_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
+    fn render_view_options_menu(&self, id: impl Into<ElementId>, cx: &App) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
 
         PopoverMenu::new(id.into())
             .trigger_with_tooltip(
                 IconButton::new("view-options-menu-trigger", IconName::Sliders)
                     .icon_size(IconSize::Small),
-                Tooltip::text("View Options"),
+                Tooltip::text(localization::text(cx, "git-view-options")),
             )
             .menu(move |window, cx| {
                 Some(git_panel_view_options_menu(
@@ -4729,7 +4729,10 @@ impl GitPanel {
                             .icon_color(Color::Error)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Tinted(TintColor::Error))
-                            .tooltip(Tooltip::text("Cancel Commit Message Generation"))
+                            .tooltip(Tooltip::text(localization::text(
+                                cx,
+                                "git-cancel-generation",
+                            )))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.generate_commit_message_task.take();
                                 this.commit_message_generation_error =
@@ -4738,7 +4741,7 @@ impl GitPanel {
                             })),
                     )
                     .child(
-                        Label::new("Generating Commit…")
+                        Label::new(localization::text(cx, "git-generating"))
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
@@ -4766,10 +4769,10 @@ impl GitPanel {
                 })
                 .tooltip(move |_window, cx| {
                     if !can_commit {
-                        Tooltip::simple("No Changes to Commit", cx)
+                        Tooltip::simple(localization::text(cx, "git-no-changes-generation"), cx)
                     } else if !generator_configured {
                         Tooltip::with_meta(
-                            "Configure a commit message generator command",
+                            localization::text(cx, "git-configure-generator"),
                             None,
                             "Set \"git.commit_message_generator.command\" in your settings.json (e.g. \"claude\" or \"codex\")",
                             cx,
@@ -4791,7 +4794,7 @@ impl GitPanel {
                         )
                     } else {
                         Tooltip::for_action_in(
-                            "Generate Commit Message",
+                            localization::text(cx, "git-generate-message"),
                             &git::GenerateCommitMessage,
                             &editor_focus_handle,
                             cx,
@@ -5016,7 +5019,7 @@ impl GitPanel {
                     h_flex()
                         .gap_1p5()
                         .child(
-                            Button::new("changes", "View Diff")
+                            Button::new("changes", localization::text(cx, "git-view-diff"))
                                 .label_size(LabelSize::Small)
                                 .color(Color::Muted)
                                 .start_icon(
@@ -5025,7 +5028,7 @@ impl GitPanel {
                                         .color(Color::Muted),
                                 )
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "View Diff",
+                                    localization::text(cx, "git-view-diff"),
                                     &Diff,
                                     &self.focus_handle,
                                 ))
@@ -5045,7 +5048,7 @@ impl GitPanel {
                                         diff_stat_total.added as usize,
                                         diff_stat_total.deleted as usize,
                                     )
-                                    .tooltip("Total tracked changes"),
+                                    .tooltip(localization::text(cx, "git-total-changes")),
                                 )
                             },
                         ),
@@ -5053,7 +5056,7 @@ impl GitPanel {
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(self.render_view_options_menu("view_options_menu"))
+                        .child(self.render_view_options_menu("view_options_menu", cx))
                         .child(self.render_ellipsis_menu("overflow_menu"))
                         .child(
                             Button::new("stage_unstage_all", text)
@@ -5252,7 +5255,7 @@ impl GitPanel {
                                     .tooltip({
                                         move |_window, cx| {
                                             Tooltip::for_action_in(
-                                                "Open Commit Modal",
+                                                localization::text(cx, "git-open-commit-modal"),
                                                 &git::ExpandCommitEditor,
                                                 &editor_focus_handle,
                                                 cx,
@@ -5397,13 +5400,13 @@ impl GitPanel {
                     .overflow_hidden()
                     .max_w(relative(0.85))
                     .child(
-                        Label::new("This will update your most recent commit.")
+                        Label::new(localization::text(cx, "git-amend-warning"))
                             .size(LabelSize::Small)
                             .truncate(),
                     ),
             )
             .child(
-                Button::new("cancel", "Cancel")
+                Button::new("cancel", localization::text(cx, "common-cancel"))
                     .label_size(LabelSize::Small)
                     .layer(ElevationIndex::ModalSurface)
                     .on_click(cx.listener(|this, _, _, cx| this.set_amend_pending(false, cx))),
@@ -5480,7 +5483,7 @@ impl GitPanel {
                                     .icon_size(IconSize::Small)
                                     .tooltip(move |_window, cx| {
                                         Tooltip::with_meta(
-                                            "Uncommit",
+                                            localization::text(cx, "git-uncommit"),
                                             Some(&git::Uncommit),
                                             if has_unstaged {
                                                 "git reset HEAD^ --soft"
@@ -5502,7 +5505,7 @@ impl GitPanel {
                                 .icon_size(IconSize::Small)
                                 .tooltip(|_window, cx| {
                                     Tooltip::for_action(
-                                        "Open Git Graph",
+                                        localization::text(cx, "git-open-graph"),
                                         &crate::git_graph::Open,
                                         cx,
                                     )
@@ -5550,7 +5553,7 @@ impl GitPanel {
                     )
                 })
                 .tooltip(Tooltip::for_action_title_in(
-                    format!("Toggle {} Tab", label),
+                    localization::tr!(cx, "git-toggle-tab", tab = label.to_string()),
                     tooltip_action.as_ref(),
                     &focus_handle,
                 ))
@@ -5587,12 +5590,9 @@ impl GitPanel {
             if let Some(history) = self.render_commit_history(window, cx) {
                 this.child(history)
             } else {
-                this.child(
-                    h_flex()
-                        .flex_1()
-                        .justify_center()
-                        .child(Label::new("Loading Commit History…").color(Color::Muted)),
-                )
+                this.child(h_flex().flex_1().justify_center().child(
+                    Label::new(localization::text(cx, "git-loading-history")).color(Color::Muted),
+                ))
             }
         })
     }
@@ -5941,7 +5941,7 @@ impl GitPanel {
                                         )
                                         .tooltip(move |_, cx| {
                                             Tooltip::with_meta(
-                                                "View Commit",
+                                                localization::text(cx, "git-view-commit"),
                                                 None,
                                                 short_sha.clone(),
                                                 cx,
@@ -6003,17 +6003,20 @@ impl GitPanel {
         v_flex()
             .gap_1()
             .items_center()
-            .child(Label::new("No changes to commit").color(Color::Muted))
+            .child(Label::new(localization::text(cx, "git-no-changes")).color(Color::Muted))
             .when(show_branch_diff, |this| {
                 this.child(
-                    Button::new("view_branch_diff", "View Branch Diff")
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .on_click(move |_, _, cx| {
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&BranchDiff);
-                            })
-                        }),
+                    Button::new(
+                        "view_branch_diff",
+                        localization::text(cx, "git-view-branch-diff"),
+                    )
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Outlined)
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&BranchDiff);
+                        })
+                    }),
                 )
             })
             .into_any_element()
@@ -6028,11 +6031,10 @@ impl GitPanel {
             repository.snapshot().work_directory_abs_path
         });
 
-        let message = format!(
-            "Detected dubious ownership in repository at {}. \
-            This happens when the .git/ directory is not owned by the current user. \
-            If you want to learn more about safe directories, visit git's documentation.",
-            directory.display()
+        let message = localization::tr!(
+            cx,
+            "git-unsafe-repository",
+            path = directory.display().to_string()
         );
 
         v_flex()
@@ -6044,7 +6046,7 @@ impl GitPanel {
                         .flex_wrap()
                         .gap_1()
                         .child(
-                            Button::new("trust_directory", "Trust Directory")
+                            Button::new("trust_directory", localization::text(cx, "git-trust-directory"))
                             .label_size(LabelSize::Small)
                             .layer(ElevationIndex::ModalSurface)
                             .style(ButtonStyle::Filled)
@@ -6058,7 +6060,7 @@ impl GitPanel {
                             )
                     )
                     .child(
-                        Button::new("learn_more", "Learn More")
+                        Button::new("learn_more", localization::text(cx, "git-learn-more"))
                             .label_size(LabelSize::Small)
                             .style(ButtonStyle::Outlined)
                             .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small).color(Color::Muted))
@@ -6074,21 +6076,26 @@ impl GitPanel {
             v_flex()
                 .gap_1()
                 .items_center()
-                .child(Label::new("No Git Repositories").color(Color::Muted))
                 .child(
-                    Button::new("initialize_repository", "Initialize Repository")
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .tooltip(Tooltip::for_action_title_in(
-                            "git init",
-                            &git::Init,
-                            &self.focus_handle,
-                        ))
-                        .on_click(move |_, _, cx| {
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&git::Init);
-                            })
-                        }),
+                    Label::new(localization::text(cx, "git-no-repositories")).color(Color::Muted),
+                )
+                .child(
+                    Button::new(
+                        "initialize_repository",
+                        localization::text(cx, "git-initialize-repository"),
+                    )
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Outlined)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "git init",
+                        &git::Init,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::Init);
+                        })
+                    }),
                 )
                 .into_any_element()
         } else if worktree_count == 0 {
@@ -6749,7 +6756,10 @@ impl GitPanel {
                             })
                             .tooltip(move |_window, cx| {
                                 if resolved_conflict {
-                                    Tooltip::simple("Conflict marked as resolved", cx)
+                                    Tooltip::simple(
+                                        localization::text(cx, "git-conflict-resolved"),
+                                        cx,
+                                    )
                                 } else {
                                     Tooltip::for_action(
                                         stage_intent.label(|| stage_status),
@@ -6935,7 +6945,10 @@ impl GitPanel {
                             })
                             .tooltip(move |_window, cx| {
                                 if resolved_conflict {
-                                    Tooltip::simple("Conflicts marked as resolved", cx)
+                                    Tooltip::simple(
+                                        localization::text(cx, "git-conflicts-resolved"),
+                                        cx,
+                                    )
                                 } else {
                                     Tooltip::simple(
                                         format!("{} Folder", stage_intent.label(|| stage_status)),
@@ -7599,7 +7612,7 @@ impl RenderOnce for PanelRepoFooter {
                     if single_repo {
                         cx.new(|_| Empty).into()
                     } else {
-                        Tooltip::simple("Switch Active Repository", cx)
+                        Tooltip::simple(localization::text(cx, "git-switch-repository"), cx)
                     }
                 },
             )
@@ -7626,7 +7639,10 @@ impl RenderOnce for PanelRepoFooter {
             })
             .trigger_with_tooltip(
                 branch_selector_button,
-                Tooltip::for_action_title("Switch Branch", &flint_actions::git::Switch),
+                Tooltip::for_action_title(
+                    localization::text(cx, "git-switch-branch"),
+                    &flint_actions::git::Switch,
+                ),
             )
             .anchor(Anchor::BottomLeft)
             .offset(gpui::Point {

@@ -199,7 +199,7 @@ impl Output {
                     el.child(
                         IconButton::new(ElementId::Name("copy-output".into()), IconName::Copy)
                             .style(ButtonStyle::Transparent)
-                            .tooltip(Tooltip::text("Copy Output"))
+                            .tooltip(Tooltip::text(localization::text(cx, "repl-copy-output")))
                             .on_click(move |_, window, cx| {
                                 let clipboard_content = v.clipboard_content(window, cx);
 
@@ -217,7 +217,7 @@ impl Output {
                             IconName::FileTextOutlined,
                         )
                         .style(ButtonStyle::Transparent)
-                        .tooltip(Tooltip::text("Open in Buffer"))
+                        .tooltip(Tooltip::text(localization::text(cx, "repl-open-buffer")))
                         .on_click({
                             let workspace = workspace.clone();
                             move |_, window, cx| {
@@ -331,7 +331,10 @@ impl Output {
                                 IconName::FileTextOutlined,
                             )
                             .style(ButtonStyle::Transparent)
-                            .tooltip(Tooltip::text("Open Full Error in Buffer"))
+                            .tooltip(Tooltip::text(localization::text(
+                                cx,
+                                "repl-open-full-error",
+                            )))
                             .on_click({
                                 let ename = err.ename.clone();
                                 let evalue = err.evalue.clone();
@@ -753,9 +756,11 @@ impl ExecutionView {
 impl Render for ExecutionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = match &self.status {
-            ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
-                .color(Color::Muted)
-                .into_any_element(),
+            ExecutionStatus::ConnectingToKernel => {
+                Label::new(localization::text(cx, "repl-connecting"))
+                    .color(Color::Muted)
+                    .into_any_element()
+            }
             ExecutionStatus::Executing => h_flex()
                 .gap_2()
                 .child(
@@ -764,29 +769,35 @@ impl Render for ExecutionView {
                         .color(Color::Muted)
                         .with_rotate_animation(3),
                 )
-                .child(Label::new("Executing...").color(Color::Muted))
+                .child(Label::new(localization::text(cx, "repl-executing")).color(Color::Muted))
                 .into_any_element(),
             ExecutionStatus::Finished => Icon::new(IconName::Check)
                 .size(IconSize::Small)
                 .into_any_element(),
-            ExecutionStatus::Unknown => Label::new("Unknown status")
+            ExecutionStatus::Unknown => Label::new(localization::text(cx, "repl-unknown-status"))
                 .color(Color::Muted)
                 .into_any_element(),
-            ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
+            ExecutionStatus::ShuttingDown => {
+                Label::new(localization::text(cx, "repl-shutting-down"))
+                    .color(Color::Muted)
+                    .into_any_element()
+            }
+            ExecutionStatus::Restarting => Label::new(localization::text(cx, "repl-restarting"))
                 .color(Color::Muted)
                 .into_any_element(),
-            ExecutionStatus::Restarting => Label::new("Kernel restarting...")
+            ExecutionStatus::Shutdown => Label::new(localization::text(cx, "repl-shutdown-status"))
                 .color(Color::Muted)
                 .into_any_element(),
-            ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
+            ExecutionStatus::Queued => Label::new(localization::text(cx, "repl-queued"))
                 .color(Color::Muted)
                 .into_any_element(),
-            ExecutionStatus::Queued => Label::new("Queued...")
-                .color(Color::Muted)
-                .into_any_element(),
-            ExecutionStatus::KernelErrored(error) => Label::new(format!("Kernel error: {}", error))
-                .color(Color::Error)
-                .into_any_element(),
+            ExecutionStatus::KernelErrored(error) => Label::new(localization::tr!(
+                cx,
+                "repl-kernel-error",
+                error = error.to_string()
+            ))
+            .color(Color::Error)
+            .into_any_element(),
         };
 
         let pending_input_element = self.pending_input.as_ref().map(|pending_input| {

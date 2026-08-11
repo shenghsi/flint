@@ -11769,6 +11769,7 @@ dependencies = [
  "jupyter-websocket-client",
  "language",
  "languages",
+ "localization",
  "log",
  "markdown",
  "menu",

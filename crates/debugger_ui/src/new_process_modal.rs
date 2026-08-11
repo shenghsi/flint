@@ -493,7 +493,7 @@ impl NewProcessModal {
             .debugger
             .as_ref()
             .map(|d| d.0.clone())
-            .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
+            .unwrap_or_else(|| localization::text(cx, "debugger-select"));
 
         DropdownMenu::new(
             "dap-adapter-picker",
@@ -529,8 +529,6 @@ impl NewProcessModal {
         })
     }
 }
-
-static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 
 #[derive(Clone, Copy)]
 pub(crate) enum NewProcessMode {
@@ -641,7 +639,7 @@ impl Render for NewProcessModal {
                             )
                             .tooltip(move |_, cx| {
                                 Tooltip::for_action_in(
-                                    "Run predefined task",
+                                    localization::text(cx, "debugger-run-task"),
                                     &ActivateTaskTab,
                                     &task_focus_handle,
                                     cx,
@@ -657,7 +655,7 @@ impl Render for NewProcessModal {
                             )
                             .tooltip(move |_, cx| {
                                 Tooltip::for_action_in(
-                                    "Start a predefined debug scenario",
+                                    localization::text(cx, "debugger-start-scenario"),
                                     &ActivateDebugTab,
                                     &debug_focus_handle,
                                     cx,
@@ -682,7 +680,7 @@ impl Render for NewProcessModal {
                             )
                             .tooltip(move |_, cx| {
                                 Tooltip::for_action_in(
-                                    "Attach the debugger to a running process",
+                                    localization::text(cx, "debugger-attach-process"),
                                     &ActivateAttachTab,
                                     &attach_focus_handle,
                                     cx,
@@ -698,7 +696,7 @@ impl Render for NewProcessModal {
                             )
                             .tooltip(move |_, cx| {
                                 Tooltip::for_action_in(
-                                    "Launch a new process with a debugger",
+                                    localization::text(cx, "debugger-launch-process"),
                                     &ActivateLaunchTab,
                                     &launch_focus_handle,
                                     cx,
@@ -732,7 +730,7 @@ impl Render for NewProcessModal {
                         container
                             .child(
                                 h_flex().child(
-                                    Button::new("edit-custom-debug", "Edit in debug.json")
+                                    Button::new("edit-custom-debug", localization::text(cx, "debugger-edit-json-full"))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.save_debug_scenario(window, cx);
                                         }))
@@ -749,7 +747,7 @@ impl Render for NewProcessModal {
                                 ),
                             )
                             .child(
-                                Button::new("debugger-spawn", "Start")
+                                Button::new("debugger-spawn", localization::text(cx, "debugger-start"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.start_new_session(window, cx)
                                     }))
@@ -779,7 +777,7 @@ impl Render for NewProcessModal {
                         let secondary_action = menu::SecondaryConfirm.boxed_clone();
                         container
                             .child(div().child({
-                                Button::new("edit-attach-task", "Edit in debug.json")
+                                Button::new("edit-attach-task", localization::text(cx, "debugger-edit-json-full"))
                                     .key_binding(KeyBinding::for_action(&*secondary_action, cx))
                                     .on_click(move |_, window, cx| {
                                         window.dispatch_action(secondary_action.boxed_clone(), cx)
@@ -828,14 +826,14 @@ impl ConfigureMode {
     pub(super) fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
         let program = cx.new(|cx| {
             InputField::new(window, cx, "ENV=Flint ~/bin/program --option")
-                .label("Program")
+                .label(localization::text(cx, "debugger-program"))
                 .tab_stop(true)
                 .tab_index(1)
         });
 
         let cwd = cx.new(|cx| {
             InputField::new(window, cx, "Ex: $ZED_WORKTREE_ROOT")
-                .label("Working Directory")
+                .label(localization::text(cx, "debugger-working-directory"))
                 .tab_stop(true)
                 .tab_index(2)
         });
@@ -932,7 +930,7 @@ impl ConfigureMode {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(Label::new("Debugger:").color(Color::Muted))
+                    .child(Label::new(localization::text(cx, "debugger-label")).color(Color::Muted))
                     .child(adapter_menu),
             )
             .child(self.program.clone())
@@ -940,7 +938,7 @@ impl ConfigureMode {
             .child(
                 Switch::new("debugger-stop-on-entry", self.stop_on_entry)
                     .tab_index(3_isize)
-                    .label("Stop on Entry")
+                    .label(localization::text(cx, "debugger-stop-entry"))
                     .label_position(SwitchLabelPosition::Start)
                     .label_size(LabelSize::Default)
                     .on_click({
@@ -1482,7 +1480,7 @@ impl PickerDelegate for DebugDelegate {
             .child({
                 let action = menu::SecondaryConfirm.boxed_clone();
                 if self.matches.is_empty() {
-                    Button::new("edit-debug-json", "Edit debug.json").on_click(cx.listener(
+                    Button::new("edit-debug-json", localization::text(cx, "debugger-edit-json")).on_click(cx.listener(
                         |_picker, _, window, cx| {
                             window.dispatch_action(
                                 flint_actions::OpenProjectDebugTasks.boxed_clone(),
@@ -1492,7 +1490,7 @@ impl PickerDelegate for DebugDelegate {
                         },
                     ))
                 } else {
-                    Button::new("edit-debug-task", "Edit in debug.json")
+                    Button::new("edit-debug-task", localization::text(cx, "debugger-edit-json-full"))
                         .key_binding(KeyBinding::for_action(&*action, cx))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(action.boxed_clone(), cx)
@@ -1503,7 +1501,7 @@ impl PickerDelegate for DebugDelegate {
                 if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty() {
                     let action = picker::ConfirmInput { secondary: false }.boxed_clone();
                     this.child({
-                        Button::new("launch-custom", "Launch Custom")
+                        Button::new("launch-custom", localization::text(cx, "debugger-launch-custom"))
                             .key_binding(KeyBinding::for_action(&*action, cx))
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(action.boxed_clone(), cx)

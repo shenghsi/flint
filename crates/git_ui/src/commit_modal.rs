@@ -390,7 +390,10 @@ impl CommitModal {
             .with_handle(self.branch_list_handle.clone())
             .trigger_with_tooltip(
                 branch_picker_button,
-                Tooltip::for_action_title("Switch Branch", &flint_actions::git::Branch),
+                Tooltip::for_action_title(
+                    localization::text(cx, "git-switch-branch"),
+                    &flint_actions::git::Branch,
+                ),
             )
             .anchor(Anchor::BottomLeft)
             .offset(gpui::Point {

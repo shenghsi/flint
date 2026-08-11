@@ -406,7 +406,7 @@ impl Render for DeleteWorktreeTooltip {
 
         if force_delete {
             Tooltip::for_action_in(
-                "Force Delete Worktree",
+                localization::text(cx, "git-force-delete-worktree"),
                 &ForceDeleteWorktree,
                 &self.focus_handle,
                 cx,
@@ -414,9 +414,9 @@ impl Render for DeleteWorktreeTooltip {
             .into_any_element()
         } else {
             Tooltip::with_meta_in(
-                "Delete Worktree",
+                localization::text(cx, "git-delete-worktree"),
                 Some(&DeleteWorktree),
-                "Hold alt to force delete",
+                localization::text(cx, "git-force-delete-hint"),
                 &self.focus_handle,
                 cx,
             )
@@ -1178,7 +1178,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                                             .with_rotate_animation(2),
                                     )
                                     .child(
-                                        Label::new("Deleting…")
+                                        Label::new(localization::text(cx, "git-deleting"))
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     ),
@@ -1188,7 +1188,10 @@ impl PickerDelegate for WorktreePickerDelegate {
                             let open_in_new_window_button =
                                 IconButton::new(("open-new-window", ix), IconName::ArrowUpRight)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Open in New Window"))
+                                    .tooltip(Tooltip::text(localization::text(
+                                        cx,
+                                        "git-open-new-window",
+                                    )))
                                     .on_click(cx.listener(move |picker, _, window, cx| {
                                         let Some(entry) = picker.delegate.matches.get(ix) else {
                                             return;
@@ -1330,7 +1333,7 @@ impl PickerDelegate for WorktreePickerDelegate {
             Some(
                 footer
                     .child(
-                        Button::new("create-worktree", "Create")
+                        Button::new("create-worktree", localization::text(cx, "git-create"))
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
@@ -1346,7 +1349,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 footer
                     .when(is_deleting, |this| {
                         this.child(
-                            Button::new("delete-worktree", "Deleting…")
+                            Button::new("delete-worktree", localization::text(cx, "git-deleting"))
                                 .loading(true)
                                 .disabled(true),
                         )
@@ -1354,7 +1357,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                     .when(!is_deleting && can_delete, |this| {
                         let focus_handle = focus_handle.clone();
                         this.child(
-                            Button::new("delete-worktree", "Delete")
+                            Button::new("delete-worktree", localization::text(cx, "git-delete"))
                                 .key_binding(
                                     KeyBinding::for_action_in(&DeleteWorktree, &focus_handle, cx)
                                         .map(|kb| kb.size(rems_from_px(12.))),
@@ -1367,23 +1370,26 @@ impl PickerDelegate for WorktreePickerDelegate {
                     .when(!is_deleting && !is_current, |this| {
                         let focus_handle = focus_handle.clone();
                         this.child(
-                            Button::new("open-in-new-window", "Open in New Window")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::SecondaryConfirm,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            Button::new(
+                                "open-in-new-window",
+                                localization::text(cx, "git-open-new-window"),
+                            )
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &menu::SecondaryConfirm,
+                                    &focus_handle,
+                                    cx,
                                 )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                                }),
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                            }),
                         )
                     })
                     .when(!is_deleting, |this| {
                         this.child(
-                            Button::new("open-worktree", "Open")
+                            Button::new("open-worktree", localization::text(cx, "git-open"))
                                 .key_binding(
                                     KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                         .map(|kb| kb.size(rems_from_px(12.))),

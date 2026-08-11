@@ -196,18 +196,21 @@ impl Render for WorktreeFetchFailedToast {
                 })),
             )
             .child(
-                Button::new("view-worktree-fetch-log", "Show Error Logs")
-                    .color(Color::Muted)
-                    .on_click(cx.listener(move |_, _event, window, cx| {
-                        cx.emit(DismissEvent);
-                        let output = output.clone();
-                        let operation = operation.clone();
-                        workspace_for_log
-                            .update(cx, move |workspace, cx| {
-                                open_output(operation, workspace, &output, window, cx)
-                            })
-                            .ok();
-                    })),
+                Button::new(
+                    "view-worktree-fetch-log",
+                    localization::text(cx, "git-show-error-logs"),
+                )
+                .color(Color::Muted)
+                .on_click(cx.listener(move |_, _event, window, cx| {
+                    cx.emit(DismissEvent);
+                    let output = output.clone();
+                    let operation = operation.clone();
+                    workspace_for_log
+                        .update(cx, move |workspace, cx| {
+                            open_output(operation, workspace, &output, window, cx)
+                        })
+                        .ok();
+                })),
             )
             .child(
                 IconButton::new("dismiss-worktree-fetch-failed-toast", IconName::Close)

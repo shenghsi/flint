@@ -67,28 +67,30 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::MemoryView => SharedString::new_static("Memory View"),
         }
     }
-    pub(crate) fn tab_tooltip(self) -> SharedString {
-        let tooltip = match self {
-            DebuggerPaneItem::Console => {
-                "Displays program output and allows manual input of debugger commands."
-            }
-            DebuggerPaneItem::Variables => {
-                "Shows current values of local and global variables in the current stack frame."
-            }
-            DebuggerPaneItem::BreakpointList => "Lists all active breakpoints set in the code.",
-            DebuggerPaneItem::Frames => {
-                "Displays the call stack, letting you navigate between function calls."
-            }
-            DebuggerPaneItem::Modules => "Shows all modules or libraries loaded by the program.",
-            DebuggerPaneItem::LoadedSources => {
-                "Lists all source files currently loaded and used by the debugger."
-            }
-            DebuggerPaneItem::Terminal => {
-                "Provides an interactive terminal session within the debugging environment."
-            }
-            DebuggerPaneItem::MemoryView => "Allows inspection of memory contents.",
-        };
-        SharedString::new_static(tooltip)
+    pub(crate) fn localized_label(self, cx: &App) -> SharedString {
+        localization::text(cx, match self {
+            DebuggerPaneItem::Console => "debugger-console",
+            DebuggerPaneItem::Variables => "debugger-variables",
+            DebuggerPaneItem::BreakpointList => "debugger-breakpoints",
+            DebuggerPaneItem::Frames => "debugger-frames",
+            DebuggerPaneItem::Modules => "debugger-modules",
+            DebuggerPaneItem::LoadedSources => "debugger-sources",
+            DebuggerPaneItem::Terminal => "debugger-terminal",
+            DebuggerPaneItem::MemoryView => "debugger-memory",
+        })
+    }
+
+    pub(crate) fn tab_tooltip(self, cx: &App) -> SharedString {
+        localization::text(cx, match self {
+            DebuggerPaneItem::Console => "debugger-console-help",
+            DebuggerPaneItem::Variables => "debugger-variables-help",
+            DebuggerPaneItem::BreakpointList => "debugger-breakpoints-help",
+            DebuggerPaneItem::Frames => "debugger-frames-help",
+            DebuggerPaneItem::Modules => "debugger-modules-help",
+            DebuggerPaneItem::LoadedSources => "debugger-sources-help",
+            DebuggerPaneItem::Terminal => "debugger-terminal-help",
+            DebuggerPaneItem::MemoryView => "debugger-memory-help",
+        })
     }
 }
 
