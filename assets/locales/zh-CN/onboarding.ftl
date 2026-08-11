@@ -23,3 +23,5 @@ onboarding-import-warning = 导入 { $source } 设置可能会覆盖现有设置
 onboarding-import-success = 已成功导入 { $source } 设置。
 onboarding-import-failed = 导入设置失败。请查看日志以了解详情
 onboarding-open-log = 打开日志
+onboarding-basedpyright-title = Basedpyright 现在是 Python 唯一的默认语言服务器
+onboarding-basedpyright-description = 默认已禁用 PyRight 和 pylsp。可以在设置中重新启用它们。

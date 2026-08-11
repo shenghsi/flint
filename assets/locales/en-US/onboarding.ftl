@@ -23,3 +23,5 @@ onboarding-import-warning = Importing { $source } settings may overwrite your ex
 onboarding-import-success = Your { $source } settings were successfully imported.
 onboarding-import-failed = Failed to import settings. See log for details
 onboarding-open-log = Open Log
+onboarding-basedpyright-title = Basedpyright is now the only default language server for Python
+onboarding-basedpyright-description = We have disabled PyRight and pylsp by default. They can be re-enabled in your settings.

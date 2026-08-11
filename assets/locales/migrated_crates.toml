@@ -17,6 +17,7 @@ crates = [
   "install_cli",
   "keymap_editor",
   "language_selector",
+  "language_onboarding",
   "line_ending_selector",
   "markdown_preview",
   "open_path_prompt",

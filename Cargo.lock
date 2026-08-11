@@ -7294,6 +7294,7 @@ dependencies = [
  "db",
  "editor",
  "gpui",
+ "localization",
  "project",
  "ui",
  "workspace",
