@@ -12,6 +12,7 @@ use unic_langid::LanguageIdentifier;
 
 const ENGLISH_LOCALE: &str = "en-US";
 const SIMPLIFIED_CHINESE_LOCALE: &str = "zh-CN";
+const SIMPLIFIED_CHINESE_UI_READY: bool = false;
 
 #[derive(
     Clone,
@@ -268,6 +269,10 @@ pub fn language(cx: &App) -> UiLanguage {
 
 pub fn try_language(cx: &App) -> Option<UiLanguage> {
     cx.try_global::<Localization>().map(Localization::language)
+}
+
+pub const fn simplified_chinese_ui_ready() -> bool {
+    SIMPLIFIED_CHINESE_UI_READY
 }
 
 pub fn effective_development_language(language: UiLanguage) -> UiLanguage {

@@ -119,10 +119,14 @@ fn developer_page(cx: &App) -> SettingsPage {
 }
 
 fn general_page(cx: &App) -> SettingsPage {
-    fn general_settings_section(_cx: &App) -> Vec<SettingsPageItem> {
-        vec![
-            SettingsPageItem::SectionHeader("General Settings"),
-            SettingsPageItem::UserLanguageSetting(user_language_setting(_cx)),
+    fn general_settings_section(cx: &App) -> Vec<SettingsPageItem> {
+        let mut items = vec![SettingsPageItem::SectionHeader("General Settings")];
+        if localization::simplified_chinese_ui_ready() {
+            items.push(SettingsPageItem::UserLanguageSetting(
+                user_language_setting(cx),
+            ));
+        }
+        items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "When Closing With No Tabs",
                 description: "What to do when using the 'close active item' action with no tabs.",
@@ -236,7 +240,8 @@ fn general_page(cx: &App) -> SettingsPage {
                 })),
                 files: USER,
             }),
-        ]
+        ]);
+        items
     }
     fn security_section() -> [SettingsPageItem; 2] {
         [
