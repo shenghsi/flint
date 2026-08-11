@@ -115,8 +115,8 @@ impl LineEndingSelectorDelegate {
 impl PickerDelegate for LineEndingSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a line ending…".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "line-ending-selector-placeholder").into()
     }
 
     fn match_count(&self) -> usize {

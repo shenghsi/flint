@@ -148,8 +148,8 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search project symbols...".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "project-symbols-placeholder").into()
     }
 
     fn workspace(&self, _cx: &App) -> Option<WeakEntity<Workspace>> {

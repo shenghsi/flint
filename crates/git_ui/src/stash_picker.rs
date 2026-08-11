@@ -272,25 +272,35 @@ impl StashListDelegate {
         format!("#{}: {}", ix, message)
     }
 
-    fn format_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
+    fn format_timestamp(
+        timestamp: i64,
+        timezone: UtcOffset,
+        language: localization::UiLanguage,
+    ) -> String {
         let timestamp =
             OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
-        time_format::format_localized_timestamp(
+        time_format::format_localized_timestamp_for_language(
             timestamp,
             OffsetDateTime::now_utc(),
             timezone,
             time_format::TimestampFormat::Relative,
+            language,
         )
     }
 
-    fn format_absolute_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
+    fn format_absolute_timestamp(
+        timestamp: i64,
+        timezone: UtcOffset,
+        language: localization::UiLanguage,
+    ) -> String {
         let timestamp =
             OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
-        time_format::format_localized_timestamp(
+        time_format::format_localized_timestamp_for_language(
             timestamp,
             OffsetDateTime::now_utc(),
             timezone,
             time_format::TimestampFormat::EnhancedAbsolute,
+            language,
         )
     }
 
@@ -403,13 +413,17 @@ impl PickerDelegate for StashListDelegate {
         let timezone = self.timezone;
 
         cx.spawn_in(window, async move |picker, cx| {
+            let Ok(language) = cx.update(|_, cx| localization::language(cx)) else {
+                return;
+            };
             let matches: Vec<StashEntryMatch> = if query.is_empty() {
                 all_stash_entries
                     .into_iter()
                     .map(|entry| {
-                        let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+                        let formatted_timestamp =
+                            Self::format_timestamp(entry.timestamp, timezone, language);
                         let formatted_absolute_timestamp =
-                            Self::format_absolute_timestamp(entry.timestamp, timezone);
+                            Self::format_absolute_timestamp(entry.timestamp, timezone, language);
 
                         StashEntryMatch {
                             entry,
@@ -443,9 +457,10 @@ impl PickerDelegate for StashListDelegate {
                 .into_iter()
                 .map(|candidate| {
                     let entry = all_stash_entries[candidate.candidate_id].clone();
-                    let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+                    let formatted_timestamp =
+                        Self::format_timestamp(entry.timestamp, timezone, language);
                     let formatted_absolute_timestamp =
-                        Self::format_absolute_timestamp(entry.timestamp, timezone);
+                        Self::format_absolute_timestamp(entry.timestamp, timezone, language);
 
                     StashEntryMatch {
                         entry,

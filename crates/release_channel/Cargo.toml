@@ -10,4 +10,8 @@ workspace = true
 
 [dependencies]
 gpui.workspace = true
+localization.workspace = true
 semver.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

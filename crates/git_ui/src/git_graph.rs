@@ -2588,6 +2588,7 @@ impl GitGraph {
                         search_options,
                         SearchSource::Buffer,
                         query_focus_handle,
+                        cx,
                     )),
             )
             .child(

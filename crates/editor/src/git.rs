@@ -2251,6 +2251,7 @@ impl Editor {
                     avatar_size,
                     action_icon_size,
                     colors,
+                    cx,
                 ))
             })
             .into_any_element()
@@ -2264,6 +2265,7 @@ impl Editor {
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
+        cx: &App,
     ) -> impl IntoElement {
         let comment_count = comments.len();
 
@@ -2318,6 +2320,7 @@ impl Editor {
                         avatar_size,
                         action_icon_size,
                         colors,
+                        cx,
                     )
                 }))
             })
@@ -2330,6 +2333,7 @@ impl Editor {
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
+        cx: &App,
     ) -> impl IntoElement {
         let comment_id = comment.id;
         let is_editing = inline_editor.is_some();
@@ -2391,7 +2395,7 @@ impl Editor {
                         )
                         .icon_color(ui::Color::Muted)
                         .icon_size(action_icon_size)
-                        .tooltip(Tooltip::text("Cancel"))
+                        .tooltip(Tooltip::text(localization::text(cx, "common-cancel")))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
                                 Box::new(crate::actions::CancelEditReviewComment {
@@ -2408,7 +2412,7 @@ impl Editor {
                         )
                         .icon_color(ui::Color::Muted)
                         .icon_size(action_icon_size)
-                        .tooltip(Tooltip::text("Confirm"))
+                        .tooltip(Tooltip::text(localization::text(cx, "common-confirm")))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
                                 Box::new(crate::actions::ConfirmEditReviewComment {

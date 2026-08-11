@@ -52,9 +52,15 @@ fn notify_release_notes_failed_to_show(
         |cx| {
             cx.new(move |cx| {
                 let url = release_notes_url(cx);
-                let mut prompt = ErrorMessagePrompt::new("Couldn't load release notes", cx);
+                let mut prompt = ErrorMessagePrompt::new(
+                    localization::text(cx, "update-release-notes-failed"),
+                    cx,
+                );
                 if let Some(url) = url {
-                    prompt = prompt.with_link_button("View in Browser".to_string(), url);
+                    prompt = prompt.with_link_button(
+                        localization::text(cx, "update-view-browser").to_string(),
+                        url,
+                    );
                 }
                 prompt
             })
@@ -180,17 +186,23 @@ fn show_update_notification(cx: &mut App) {
         move |cx| {
             let workspace_handle = cx.entity().downgrade();
             cx.new(|cx| {
-                MessageNotification::new(format!("Updated to {app_name} {}", version), cx)
-                    .primary_message("View Release Notes")
-                    .primary_on_click(move |window, cx| {
-                        if let Some(workspace) = workspace_handle.upgrade() {
-                            workspace.update(cx, |workspace, cx| {
-                                crate::view_release_notes_locally(workspace, window, cx);
-                            })
-                        }
-                        cx.emit(DismissEvent);
-                    })
-                    .show_suppress_button(false)
+                let mut args = localization::FluentArgs::new();
+                args.set("app", app_name);
+                args.set("version", version.to_string());
+                MessageNotification::new(
+                    localization::text_with_args(cx, "update-complete", &args),
+                    cx,
+                )
+                .primary_message(localization::text(cx, "update-view-release-notes"))
+                .primary_on_click(move |window, cx| {
+                    if let Some(workspace) = workspace_handle.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            crate::view_release_notes_locally(workspace, window, cx);
+                        })
+                    }
+                    cx.emit(DismissEvent);
+                })
+                .show_suppress_button(false)
             })
         },
     );

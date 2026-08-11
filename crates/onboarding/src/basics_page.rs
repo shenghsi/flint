@@ -48,34 +48,40 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
     return v_flex()
         .gap_2()
         .child(
-            h_flex().justify_between().child(Label::new("Theme")).child(
-                ToggleButtonGroup::single_row(
-                    "theme-selector-onboarding-dark-light",
-                    [
-                        ThemeAppearanceMode::Light,
-                        ThemeAppearanceMode::Dark,
-                        ThemeAppearanceMode::System,
-                    ]
-                    .map(|mode| {
-                        const MODE_NAMES: [SharedString; 3] = [
-                            SharedString::new_static("Light"),
-                            SharedString::new_static("Dark"),
-                            SharedString::new_static("System"),
-                        ];
-                        ToggleButtonSimple::new(
-                            MODE_NAMES[mode as usize].clone(),
-                            move |_, _, cx| {
+            h_flex()
+                .justify_between()
+                .child(Label::new(localization::text(cx, "onboarding-theme")))
+                .child(
+                    ToggleButtonGroup::single_row(
+                        "theme-selector-onboarding-dark-light",
+                        [
+                            ThemeAppearanceMode::Light,
+                            ThemeAppearanceMode::Dark,
+                            ThemeAppearanceMode::System,
+                        ]
+                        .map(|mode| {
+                            let mode_name = match mode {
+                                ThemeAppearanceMode::Light => {
+                                    localization::text(cx, "onboarding-theme-light")
+                                }
+                                ThemeAppearanceMode::Dark => {
+                                    localization::text(cx, "onboarding-theme-dark")
+                                }
+                                ThemeAppearanceMode::System => {
+                                    localization::text(cx, "onboarding-theme-system")
+                                }
+                            };
+                            ToggleButtonSimple::new(mode_name, move |_, _, cx| {
                                 write_mode_change(mode, cx);
-                            },
-                        )
-                    }),
-                )
-                .size(ToggleButtonGroupSize::Medium)
-                .tab_index(tab_index)
-                .selected_index(theme_mode as usize)
-                .style(ui::ToggleButtonGroupStyle::Outlined)
-                .width(rems_from_px(3. * 64.)),
-            ),
+                            })
+                        }),
+                    )
+                    .size(ToggleButtonGroupSize::Medium)
+                    .tab_index(tab_index)
+                    .selected_index(theme_mode as usize)
+                    .style(ui::ToggleButtonGroupStyle::Outlined)
+                    .width(rems_from_px(3. * 64.)),
+                ),
         )
         .child(
             h_flex()
@@ -230,40 +236,51 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
         BaseKeymap::TextMate | BaseKeymap::None => None,
     };
 
-    return v_flex().gap_2().child(Label::new("Base Keymap")).child(
-        ToggleButtonGroup::two_rows(
-            "base_keymap_selection",
-            [
-                ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::VSCode, cx);
-                }),
-                ToggleButtonWithIcon::new("JetBrains", IconName::EditorJetBrains, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::JetBrains, cx);
-                }),
-                ToggleButtonWithIcon::new("Sublime Text", IconName::EditorSublime, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::SublimeText, cx);
-                }),
-            ],
-            [
-                ToggleButtonWithIcon::new("Atom", IconName::EditorAtom, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::Atom, cx);
-                }),
-                ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::Emacs, cx);
-                }),
-                ToggleButtonWithIcon::new("Cursor", IconName::EditorCursor, |_, _, cx| {
-                    write_keymap_base(BaseKeymap::Cursor, cx);
-                }),
-            ],
-        )
-        .when_some(base_keymap, |this, base_keymap| {
-            this.selected_index(base_keymap)
-        })
-        .full_width()
-        .tab_index(tab_index)
-        .size(ui::ToggleButtonGroupSize::Medium)
-        .style(ui::ToggleButtonGroupStyle::Outlined),
-    );
+    return v_flex()
+        .gap_2()
+        .child(Label::new(localization::text(cx, "onboarding-base-keymap")))
+        .child(
+            ToggleButtonGroup::two_rows(
+                "base_keymap_selection",
+                [
+                    ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
+                        write_keymap_base(BaseKeymap::VSCode, cx);
+                    }),
+                    ToggleButtonWithIcon::new(
+                        "JetBrains",
+                        IconName::EditorJetBrains,
+                        |_, _, cx| {
+                            write_keymap_base(BaseKeymap::JetBrains, cx);
+                        },
+                    ),
+                    ToggleButtonWithIcon::new(
+                        "Sublime Text",
+                        IconName::EditorSublime,
+                        |_, _, cx| {
+                            write_keymap_base(BaseKeymap::SublimeText, cx);
+                        },
+                    ),
+                ],
+                [
+                    ToggleButtonWithIcon::new("Atom", IconName::EditorAtom, |_, _, cx| {
+                        write_keymap_base(BaseKeymap::Atom, cx);
+                    }),
+                    ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
+                        write_keymap_base(BaseKeymap::Emacs, cx);
+                    }),
+                    ToggleButtonWithIcon::new("Cursor", IconName::EditorCursor, |_, _, cx| {
+                        write_keymap_base(BaseKeymap::Cursor, cx);
+                    }),
+                ],
+            )
+            .when_some(base_keymap, |this, base_keymap| {
+                this.selected_index(base_keymap)
+            })
+            .full_width()
+            .tab_index(tab_index)
+            .size(ui::ToggleButtonGroupSize::Medium)
+            .style(ui::ToggleButtonGroupStyle::Outlined),
+        );
 
     fn write_keymap_base(keymap_base: BaseKeymap, cx: &App) {
         let fs = <dyn Fs>::global(cx);
@@ -282,8 +299,8 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
     };
     SwitchField::new(
         "onboarding-vim-mode",
-        Some("Vim Mode"),
-        Some("Coming from Neovim? Use our first-class implementation of Vim Mode".into()),
+        Some(localization::text(cx, "onboarding-vim-mode")),
+        Some(localization::text(cx, "onboarding-vim-mode-description")),
         toggle_state,
         {
             let fs = <dyn Fs>::global(cx);
@@ -314,14 +331,15 @@ fn render_worktree_auto_trust_switch(tab_index: &mut isize, cx: &mut App) -> imp
         ui::ToggleState::Unselected
     };
 
-    let tooltip_description = "Flint can only allow services like language servers, project settings, and MCP servers to run after you mark a new project as trusted.";
+    let tooltip_description = localization::text(cx, "onboarding-trust-tooltip");
 
     SwitchField::new(
         "onboarding-auto-trust-worktrees",
-        Some("Trust All Projects By Default"),
-        Some(
-            "Automatically mark all new projects as trusted to unlock all Flint's features".into(),
-        ),
+        Some(localization::text(cx, "onboarding-trust-all-projects")),
+        Some(localization::text(
+            cx,
+            "onboarding-trust-all-projects-description",
+        )),
         toggle_state,
         {
             let fs = <dyn Fs>::global(cx);
@@ -398,10 +416,16 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
             v_flex()
                 .gap_0p5()
                 .max_w_5_6()
-                .child(Label::new("Import Settings"))
+                .child(Label::new(localization::text(
+                    cx,
+                    "onboarding-import-settings",
+                )))
                 .child(
-                    Label::new("Automatically pull your settings from other editors")
-                        .color(Color::Muted),
+                    Label::new(localization::text(
+                        cx,
+                        "onboarding-import-settings-description",
+                    ))
+                    .color(Color::Muted),
                 ),
         )
         .child(h_flex().gap_1().child(vscode).child(cursor))

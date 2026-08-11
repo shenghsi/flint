@@ -861,19 +861,17 @@ impl Item for BufferDiagnosticsEditor {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, _app: &App) -> SharedString {
-        "Buffer Diagnostics".into()
+    fn tab_content_text(&self, _detail: usize, app: &App) -> SharedString {
+        localization::text(app, "diagnostics-buffer")
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         let path_style = self.project.read(cx).path_style(cx);
-        Some(
-            format!(
-                "Buffer Diagnostics - {}",
-                self.project_path.path.display(path_style)
-            )
-            .into(),
-        )
+        Some(localization::tr!(
+            cx,
+            "diagnostics-buffer-path",
+            path = self.project_path.path.display(path_style).to_string()
+        ))
     }
 
     fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
@@ -893,8 +891,8 @@ impl Render for BufferDiagnosticsEditor {
 
         let child = if error_count + warning_count == 0 {
             let label = match warning_count {
-                0 => "No problems in",
-                _ => "No errors in",
+                0 => localization::text(cx, "diagnostics-no-problems-in"),
+                _ => localization::text(cx, "diagnostics-no-errors-in"),
             };
 
             v_flex()
@@ -912,7 +910,10 @@ impl Render for BufferDiagnosticsEditor {
                         .child(
                             Button::new("open-file", filename)
                                 .style(ButtonStyle::Transparent)
-                                .tooltip(Tooltip::text("Open File"))
+                                .tooltip(Tooltip::text(localization::text(
+                                    cx,
+                                    "diagnostics-open-file",
+                                )))
                                 .on_click(cx.listener(|buffer_diagnostics, _, window, cx| {
                                     if let Some(workspace) = Workspace::for_window(window, cx) {
                                         workspace.update(cx, |workspace, cx| {
@@ -931,10 +932,11 @@ impl Render for BufferDiagnosticsEditor {
                         ),
                 )
                 .when(self.summary.warning_count > 0, |div| {
-                    let label = match self.summary.warning_count {
-                        1 => "Show 1 warning".into(),
-                        warning_count => format!("Show {} warnings", warning_count),
-                    };
+                    let label = localization::tr!(
+                        cx,
+                        "diagnostics-show-warnings",
+                        count = self.summary.warning_count
+                    );
 
                     div.child(
                         Button::new("diagnostics-show-warning-label", label).on_click(cx.listener(

@@ -23,6 +23,7 @@ gpui.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
+localization.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true

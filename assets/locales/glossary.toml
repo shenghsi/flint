@@ -1,0 +1,46 @@
+# Use this glossary for both the application catalogs and Chinese documentation.
+# Keep identifiers, JSON keys, commands, and proper product names unchanged.
+
+[[terms]]
+english = "Agent Thread"
+chinese = "智能体线程"
+
+[[terms]]
+english = "worktree"
+chinese = "工作树"
+
+[[terms]]
+english = "project"
+chinese = "项目"
+
+[[terms]]
+english = "buffer"
+chinese = "缓冲区"
+
+[[terms]]
+english = "Command Palette"
+chinese = "命令面板"
+
+[[terms]]
+english = "Settings Editor"
+chinese = "设置编辑器"
+
+[[terms]]
+english = "Restricted Mode"
+chinese = "受限模式"
+
+[[terms]]
+english = "extension"
+chinese = "扩展"
+
+[[terms]]
+english = "language server"
+chinese = "语言服务器"
+
+[[terms]]
+english = "debugger"
+chinese = "调试器"
+
+[[terms]]
+english = "terminal"
+chinese = "终端"

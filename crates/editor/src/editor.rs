@@ -10528,7 +10528,7 @@ impl Editor {
                         if multibuffer.is_singleton() {
                             multibuffer.title(cx).to_string()
                         } else {
-                            "untitled".to_string()
+                            localization::text(cx, "editor-untitled").to_string()
                         }
                     })
             });
@@ -11932,7 +11932,12 @@ impl BreakpointPromptEditor {
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
             .tooltip(move |_window, cx| {
-                Tooltip::for_action_in("Confirm", &menu::Confirm, &focus_handle, cx)
+                Tooltip::for_action_in(
+                    localization::text(cx, "common-confirm"),
+                    &menu::Confirm,
+                    &focus_handle,
+                    cx,
+                )
             })
             .on_click(cx.listener(|this, _, window, cx| {
                 this.confirm(&menu::Confirm, window, cx);

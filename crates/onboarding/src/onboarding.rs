@@ -283,30 +283,41 @@ impl Render for Onboarding {
                                             .child(
                                                 v_flex()
                                                     .child(
-                                                        Headline::new("Welcome to Flint")
-                                                            .size(HeadlineSize::Small),
+                                                        Headline::new(localization::text(
+                                                            cx,
+                                                            "onboarding-title",
+                                                        ))
+                                                        .size(HeadlineSize::Small),
                                                     )
                                                     .child(
-                                                        Label::new("The editor for what's next")
-                                                            .color(Color::Muted)
-                                                            .size(LabelSize::Small)
-                                                            .italic(),
+                                                        Label::new(localization::text(
+                                                            cx,
+                                                            "onboarding-tagline",
+                                                        ))
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small)
+                                                        .italic(),
                                                     ),
                                             ),
                                     )
                                     .child({
-                                        Button::new("finish_setup", "Finish Setup")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Medium)
-                                            .width(rems_from_px(200.))
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &Finish,
-                                                &self.focus_handle,
-                                                cx,
-                                            ))
-                                            .on_click(|_, window, cx| {
+                                        Button::new(
+                                            "finish_setup",
+                                            localization::text(cx, "onboarding-finish-setup"),
+                                        )
+                                        .style(ButtonStyle::Filled)
+                                        .size(ButtonSize::Medium)
+                                        .width(rems_from_px(200.))
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &Finish,
+                                            &self.focus_handle,
+                                            cx,
+                                        ))
+                                        .on_click(
+                                            |_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
-                                            })
+                                            },
+                                        )
                                     }),
                             )
                             .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
@@ -328,8 +339,8 @@ impl Focusable for Onboarding {
 impl Item for Onboarding {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Onboarding".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        localization::text(cx, "onboarding-tab-title")
     }
 
     fn show_toolbar(&self) -> bool {
@@ -409,27 +420,44 @@ pub async fn handle_import_vscode_settings(
             Ok(vscode_settings) => vscode_settings,
             Err(err) => {
                 zlog::error!("{err:?}");
-                let _ = cx.prompt(
-                    gpui::PromptLevel::Info,
-                    &format!("Could not find or load a {source} settings file"),
-                    None,
-                    &["Ok"],
-                );
+                let Ok((message, ok)) = cx.update(|_, cx| {
+                    (
+                        localization::tr!(
+                            cx,
+                            "onboarding-import-not-found",
+                            source = source.to_string()
+                        ),
+                        localization::text(cx, "common-ok"),
+                    )
+                }) else {
+                    return;
+                };
+                let _ = cx.prompt(gpui::PromptLevel::Info, &message, None, &[ok.as_ref()]);
                 return;
             }
         };
 
     if !skip_prompt {
+        let path = truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128);
+        let Ok((message, ok, cancel)) = cx.update(|_, cx| {
+            (
+                localization::tr!(
+                    cx,
+                    "onboarding-import-warning",
+                    source = vscode_settings.source.to_string(),
+                    path = path.clone()
+                ),
+                localization::text(cx, "common-ok"),
+                localization::text(cx, "common-cancel"),
+            )
+        }) else {
+            return;
+        };
         let prompt = cx.prompt(
             gpui::PromptLevel::Warning,
-            &format!(
-                "Importing {} settings may overwrite your existing settings. \
-                Will import settings from {}",
-                vscode_settings.source,
-                truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128),
-            ),
+            &message,
             None,
-            &["Ok", "Cancel"],
+            &[ok.as_ref(), cancel.as_ref()],
         );
         let result = cx.spawn(async move |_| prompt.await.ok()).await;
         if result != Some(0) {
@@ -454,7 +482,7 @@ pub async fn handle_import_vscode_settings(
         .update_in(cx, |workspace, _, cx| match result {
             Ok(_) => {
                 let confirmation_toast = StatusToast::new(
-                    format!("Your {} settings were successfully imported.", source),
+                    localization::tr!(cx, "onboarding-import-success", source = source.to_string()),
                     cx,
                     |this, _| {
                         this.icon(
@@ -476,21 +504,19 @@ pub async fn handle_import_vscode_settings(
                 workspace.toggle_status_toast(confirmation_toast, cx);
             }
             Err(_) => {
-                let error_toast = StatusToast::new(
-                    "Failed to import settings. See log for details",
-                    cx,
-                    |this, _| {
-                        this.icon(
-                            Icon::new(IconName::Close)
-                                .size(IconSize::Small)
-                                .color(Color::Error),
-                        )
-                        .action("Open Log", |window, cx| {
-                            window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
-                        })
-                        .dismiss_button(true)
-                    },
-                );
+                let error_message = localization::text(cx, "onboarding-import-failed");
+                let open_log_label = localization::text(cx, "onboarding-open-log");
+                let error_toast = StatusToast::new(error_message, cx, move |this, _| {
+                    this.icon(
+                        Icon::new(IconName::Close)
+                            .size(IconSize::Small)
+                            .color(Color::Error),
+                    )
+                    .action(open_log_label, |window, cx| {
+                        window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
+                    })
+                    .dismiss_button(true)
+                });
                 workspace.toggle_status_toast(error_toast, cx);
             }
         })

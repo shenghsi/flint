@@ -654,14 +654,18 @@ impl PickerDelegate for OpenPathDelegate {
                         };
                     if user_input.exists {
                         self.should_dismiss = false;
+                        let replace = localization::text(cx, "open-path-replace");
+                        let cancel = localization::text(cx, "common-cancel");
                         let answer = window.prompt(
                             gpui::PromptLevel::Critical,
-                            &format!("{prompted_path:?} already exists. Do you want to replace it?"),
-                            Some(
-                                "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
+                            &localization::tr!(
+                                cx,
+                                "open-path-replace-title",
+                                path = format!("{prompted_path:?}")
                             ),
-                            &["Replace", "Cancel"],
-                            cx
+                            Some(&localization::text(cx, "open-path-replace-detail")),
+                            &[replace.as_ref(), cancel.as_ref()],
+                            cx,
                         );
                         self.replace_prompt = cx.spawn_in(window, async move |picker, cx| {
                             let answer = answer.await.ok();
@@ -858,26 +862,25 @@ impl PickerDelegate for OpenPathDelegate {
         (self.render_footer)(window, cx)
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
         Some(match &self.directory_state {
-            DirectoryState::Create { .. } => SharedString::from("Type a path…"),
+            DirectoryState::Create { .. } => localization::text(cx, "open-path-type-path"),
             DirectoryState::List {
                 error: Some(error), ..
             } => error.clone(),
             DirectoryState::List { .. } | DirectoryState::None { .. } => {
-                SharedString::from("No such file or directory")
+                localization::text(cx, "open-path-not-found")
             }
         })
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from(
-            format!(
-                "[directory{}]filename.ext",
-                self.path_style.primary_separator()
-            )
-            .as_str(),
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::tr!(
+            cx,
+            "open-path-placeholder",
+            separator = self.path_style.primary_separator().to_string()
         )
+        .into()
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {

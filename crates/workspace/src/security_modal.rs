@@ -72,13 +72,15 @@ impl Render for SecurityModal {
         }
 
         let restricted_count = self.restricted_paths.len();
-        let header_label: SharedString = if restricted_count == 1 {
-            "Unrecognized Project".into()
+        let header_label = if restricted_count == 1 {
+            localization::text(cx, "trust-project-one")
         } else {
-            format!("Unrecognized Projects ({})", restricted_count).into()
+            let mut args = localization::FluentArgs::new();
+            args.set("count", restricted_count as i64);
+            localization::text_with_args(cx, "trust-project-many", &args)
         };
 
-        let trust_label = self.build_trust_label();
+        let trust_label = self.build_trust_label(cx);
 
         AlertModal::new("security-modal")
             .width(rems(40.))
@@ -87,10 +89,12 @@ impl Render for SecurityModal {
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
                 this.trust_and_dismiss(cx);
             }))
-            .on_action(cx.listener(|security_modal, _: &ToggleWorktreeSecurity, _window, cx| {
-                security_modal.trusted = Some(false);
-                security_modal.dismiss(cx);
-            }))
+            .on_action(
+                cx.listener(|security_modal, _: &ToggleWorktreeSecurity, _window, cx| {
+                    security_modal.trusted = Some(false);
+                    security_modal.dismiss(cx);
+                }),
+            )
             .header(
                 v_flex()
                     .p_3()
@@ -115,49 +119,39 @@ impl Render for SecurityModal {
                                     .max_h_24()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.project_list_scroll_handle)
-                                    .children(
-                                        self.restricted_paths.values().filter_map(
-                                            |restricted_path| {
-                                                let abs_path = if restricted_path.is_file {
-                                                    restricted_path.abs_path.parent()
-                                                } else {
-                                                    Some(restricted_path.abs_path.as_ref())
-                                                }?;
-                                                let label = match &restricted_path.host {
-                                                    Some(remote_host) => {
-                                                        match &remote_host.user_name {
-                                                            Some(user_name) => format!(
-                                                                "{} ({}@{})",
-                                                                self.shorten_path(abs_path)
-                                                                    .display(),
-                                                                user_name,
-                                                                remote_host.host_identifier
-                                                            ),
-                                                            None => format!(
-                                                                "{} ({})",
-                                                                self.shorten_path(abs_path)
-                                                                    .display(),
-                                                                remote_host.host_identifier
-                                                            ),
-                                                        }
-                                                    }
-                                                    None => self
-                                                        .shorten_path(abs_path)
-                                                        .display()
-                                                        .to_string(),
-                                                };
-                                                Some(
-                                                    h_flex()
-                                                        .pl(
-                                                            IconSize::default().rems() + rems(0.5),
-                                                        )
-                                                        .child(
-                                                            Label::new(label).color(Color::Muted),
-                                                        ),
-                                                )
-                                            },
-                                        ),
-                                    ),
+                                    .children(self.restricted_paths.values().filter_map(
+                                        |restricted_path| {
+                                            let abs_path = if restricted_path.is_file {
+                                                restricted_path.abs_path.parent()
+                                            } else {
+                                                Some(restricted_path.abs_path.as_ref())
+                                            }?;
+                                            let label = match &restricted_path.host {
+                                                Some(remote_host) => match &remote_host.user_name {
+                                                    Some(user_name) => format!(
+                                                        "{} ({}@{})",
+                                                        self.shorten_path(abs_path).display(),
+                                                        user_name,
+                                                        remote_host.host_identifier
+                                                    ),
+                                                    None => format!(
+                                                        "{} ({})",
+                                                        self.shorten_path(abs_path).display(),
+                                                        remote_host.host_identifier
+                                                    ),
+                                                },
+                                                None => self
+                                                    .shorten_path(abs_path)
+                                                    .display()
+                                                    .to_string(),
+                                            };
+                                            Some(
+                                                h_flex()
+                                                    .pl(IconSize::default().rems() + rems(0.5))
+                                                    .child(Label::new(label).color(Color::Muted)),
+                                            )
+                                        },
+                                    )),
                             ),
                     ),
             )
@@ -167,24 +161,32 @@ impl Render for SecurityModal {
                     .child(
                         v_flex()
                             .child(
-                                Label::new(
-                                    "Untrusted projects are opened in Restricted Mode to protect your system.",
-                                )
-                                .color(Color::Muted),
+                                Label::new(localization::text(cx, "trust-restricted-description"))
+                                    .color(Color::Muted),
                             )
                             .child(
-                                Label::new(
-                                    "Review .flint/settings.json for any extensions or commands configured by this project.",
-                                )
-                                .color(Color::Muted),
+                                Label::new(localization::text(cx, "trust-review-settings"))
+                                    .color(Color::Muted),
                             ),
                     )
                     .child(
                         v_flex()
-                            .child(Label::new("Restricted Mode prevents:").color(Color::Muted))
-                            .child(ListBulletItem::new("Project settings from being applied"))
-                            .child(ListBulletItem::new("Language servers from running"))
-                            .child(ListBulletItem::new("MCP Server integrations from installing")),
+                            .child(
+                                Label::new(localization::text(cx, "trust-prevents"))
+                                    .color(Color::Muted),
+                            )
+                            .child(ListBulletItem::new(localization::text(
+                                cx,
+                                "trust-prevents-settings",
+                            )))
+                            .child(ListBulletItem::new(localization::text(
+                                cx,
+                                "trust-prevents-language-servers",
+                            )))
+                            .child(ListBulletItem::new(localization::text(
+                                cx,
+                                "trust-prevents-mcp",
+                            ))),
                     )
                     .map(|this| match trust_label {
                         Some(trust_label) => this.child(
@@ -208,13 +210,10 @@ impl Render for SecurityModal {
                     .gap_1()
                     .justify_end()
                     .child(
-                        Button::new("rm", "Stay in Restricted Mode")
+                        Button::new("rm", localization::text(cx, "trust-stay-restricted"))
                             .key_binding(
-                                KeyBinding::for_action(
-                                    &ToggleWorktreeSecurity,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                KeyBinding::for_action(&ToggleWorktreeSecurity, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trusted = Some(false);
@@ -223,7 +222,7 @@ impl Render for SecurityModal {
                             })),
                     )
                     .child(
-                        Button::new("tc", "Trust and Continue")
+                        Button::new("tc", localization::text(cx, "trust-continue"))
                             .style(ButtonStyle::Filled)
                             .layer(ui::ElevationIndex::ModalSurface)
                             .key_binding(
@@ -261,7 +260,7 @@ impl SecurityModal {
         this
     }
 
-    fn build_trust_label(&self) -> Option<Cow<'static, str>> {
+    fn build_trust_label(&self, cx: &App) -> Option<SharedString> {
         let mut has_restricted_files = false;
         let available_parents = self
             .restricted_paths
@@ -275,16 +274,22 @@ impl SecurityModal {
         match available_parents.len() {
             0 => {
                 if has_restricted_files {
-                    Some(Cow::Borrowed("Trust all single files"))
+                    Some(localization::text(cx, "trust-all-files"))
                 } else {
                     None
                 }
             }
-            1 => Some(Cow::Owned(format!(
-                "Trust all projects in the {:} folder",
-                self.shorten_path(available_parents[0]).display()
-            ))),
-            _ => Some(Cow::Borrowed("Trust all projects in the parent folders")),
+            1 => {
+                let mut args = localization::FluentArgs::new();
+                args.set(
+                    "folder",
+                    self.shorten_path(available_parents[0])
+                        .display()
+                        .to_string(),
+                );
+                Some(localization::text_with_args(cx, "trust-all-folder", &args))
+            }
+            _ => Some(localization::text(cx, "trust-all-parents")),
         }
     }
 

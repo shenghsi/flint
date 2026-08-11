@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+
+import pathlib
+import re
+import sys
+
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+ENGLISH = ROOT / "docs" / "src"
+CHINESE = ROOT / "docs" / "src.zh-CN"
+
+
+def fail(messages: list[str]) -> None:
+    for message in messages:
+        print(f"localized docs check: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def page_slug(path: pathlib.Path) -> str:
+    relative = path.relative_to(CHINESE).with_suffix("")
+    return "" if relative.as_posix() == "index" else relative.as_posix()
+
+
+def main() -> None:
+    failures: list[str] = []
+    chinese_pages = {
+        page_slug(path)
+        for path in CHINESE.rglob("*.md")
+        if path.name != "SUMMARY.md"
+    }
+
+    release_source = (ROOT / "crates/release_channel/src/lib.rs").read_text()
+    match = re.search(
+        r"CHINESE_DOCUMENTATION_PAGES: &\[&str\] = &\[(.*?)\];",
+        release_source,
+        re.DOTALL,
+    )
+    if match is None:
+        failures.append("release_channel has no Chinese documentation page map")
+        release_pages: set[str] = set()
+    else:
+        release_pages = set(re.findall(r'"([^"]*)"', match.group(1)))
+    if release_pages != chinese_pages:
+        failures.append(
+            f"release_channel page map differs: files={sorted(chinese_pages)}, "
+            f"map={sorted(release_pages)}"
+        )
+
+    template = (ROOT / "docs/theme/index.hbs").read_text()
+    match = re.search(r"chinesePages = new Set\(\[(.*?)\]\)", template, re.DOTALL)
+    template_pages = (
+        set(re.findall(r"'([^']*)'", match.group(1))) if match is not None else set()
+    )
+    html_pages = {"" if page == "" else f"{page}.html" for page in chinese_pages}
+    html_pages.add("index.html")
+    if template_pages != html_pages:
+        failures.append(
+            f"documentation selector page map differs: files={sorted(html_pages)}, "
+            f"template={sorted(template_pages)}"
+        )
+
+    link_pattern = re.compile(r"\[[^]]*\]\(([^)]+)\)")
+    for path in CHINESE.rglob("*.md"):
+        english_path = ENGLISH / path.relative_to(CHINESE)
+        if path.name not in {"SUMMARY.md", "index.md"} and not english_path.is_file():
+            failures.append(f"Chinese page has no English source page: {path.relative_to(ROOT)}")
+        for target in link_pattern.findall(path.read_text()):
+            target = target.split("#", 1)[0].split("?", 1)[0]
+            if not target or target.startswith(("http://", "https://", "mailto:", "/")):
+                continue
+            resolved = (path.parent / target).resolve()
+            if not resolved.is_file():
+                failures.append(
+                    f"broken local link in {path.relative_to(ROOT)}: {target}"
+                )
+
+    if failures:
+        fail(failures)
+    print(f"localized docs check: {len(chinese_pages)} Chinese pages validated")
+
+
+if __name__ == "__main__":
+    main()

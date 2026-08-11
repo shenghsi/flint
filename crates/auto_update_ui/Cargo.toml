@@ -22,6 +22,7 @@ notifications.workspace = true
 release_channel.workspace = true
 semver.workspace = true
 http_client.workspace = true
+localization.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

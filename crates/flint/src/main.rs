@@ -27,8 +27,8 @@ use futures::{StreamExt, channel::oneshot};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
-    App, AppContext, Application, AsyncApp, QuitMode, Task, TaskExt, UpdateGlobal as _,
-    WindowHandle, block_on,
+    App, AppContext, Application, AsyncApp, QuitMode, ReadGlobal as _, Task, TaskExt,
+    UpdateGlobal as _, WindowHandle, block_on,
 };
 use gpui_platform;
 
@@ -491,6 +491,37 @@ fn main() {
         log::info!("init: settings");
         zlog_settings::init(cx);
         flint::watch_settings_files(fs.clone(), cx);
+        let ui_language =
+            localization::effective_development_language(SettingsStore::global(cx).ui_language());
+        if let Err(error) = localization::init(ui_language, cx) {
+            log::error!("Failed to initialize localization: {error:#}");
+            cx.quit();
+            return;
+        }
+        cx.observe_global::<SettingsStore>(|cx| {
+            let ui_language = localization::effective_development_language(
+                SettingsStore::global(cx).ui_language(),
+            );
+            if localization::set_language(ui_language, cx) {
+                let menus = app_menus(cx);
+                cx.set_menus(menus);
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let new_window = localization::text(cx, "menu-new-window");
+                    cx.set_dock_menu(vec![gpui::MenuItem::action(
+                        new_window,
+                        workspace::NewWindow,
+                    )]);
+                }
+                #[cfg(target_os = "windows")]
+                if let Some(history_manager) = workspace::HistoryManager::global(cx) {
+                    history_manager.update(cx, |history_manager, cx| {
+                        history_manager.refresh_jump_list(cx)
+                    });
+                }
+            }
+        })
+        .detach();
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
         let user_agent = format!(
@@ -1601,7 +1632,10 @@ fn load_embedded_fonts(cx: &App) {
 
     cx.foreground_executor().block_on(executor.scoped(|scope| {
         for font_path in &font_paths {
-            if !font_path.ends_with(".ttf") {
+            if !font_path.ends_with(".ttf")
+                && !font_path.ends_with(".ttc")
+                && !font_path.ends_with(".otf")
+            {
                 continue;
             }
 

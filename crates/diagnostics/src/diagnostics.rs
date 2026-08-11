@@ -104,9 +104,9 @@ impl Render for ProjectDiagnosticsEditor {
         let child =
             if warning_count + self.summary.error_count == 0 && self.editor.read(cx).is_empty(cx) {
                 let label = if self.summary.warning_count == 0 {
-                    SharedString::new_static("No problems in workspace")
+                    localization::text(cx, "diagnostics-no-problems-workspace")
                 } else {
-                    SharedString::new_static("No errors in workspace")
+                    localization::text(cx, "diagnostics-no-errors-workspace")
                 };
                 v_flex()
                     .key_context("EmptyPane")
@@ -118,14 +118,10 @@ impl Render for ProjectDiagnosticsEditor {
                     .bg(cx.theme().colors().editor_background)
                     .child(Label::new(label).color(Color::Muted))
                     .when(self.summary.warning_count > 0, |this| {
-                        let plural_suffix = if self.summary.warning_count > 1 {
-                            "s"
-                        } else {
-                            ""
-                        };
-                        let label = format!(
-                            "Show {} warning{}",
-                            self.summary.warning_count, plural_suffix
+                        let label = localization::tr!(
+                            cx,
+                            "diagnostics-show-warnings",
+                            count = self.summary.warning_count
                         );
                         this.child(
                             Button::new("diagnostics-show-warning-label", label).on_click(
@@ -748,15 +744,15 @@ impl Item for ProjectDiagnosticsEditor {
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some("Project Diagnostics".into())
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+        Some(localization::text(cx, "diagnostics-project"))
     }
 
-    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
-        "Diagnostics".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        localization::text(cx, "diagnostics-tab")
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         h_flex()
             .gap_1()
             .when(
@@ -766,7 +762,10 @@ impl Item for ProjectDiagnosticsEditor {
                         h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::Check).color(Color::Success))
-                            .child(Label::new("No problems").color(params.text_color())),
+                            .child(
+                                Label::new(localization::text(cx, "diagnostics-no-problems"))
+                                    .color(params.text_color()),
+                            ),
                     )
                 },
             )

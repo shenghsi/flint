@@ -1,0 +1,17 @@
+toolchain-name = 工具链
+toolchain-select = 选择{ $term }
+toolchain-select-path = 选择工具链路径
+toolchain-add = 添加
+toolchain-scope = 范围
+toolchain-scope-subproject = 子项目
+toolchain-scope-project = 项目
+toolchain-scope-global = 全局
+toolchain-scope-subproject-description = 仅在当前子项目中可用。
+toolchain-scope-project-description = 在当前项目的所有位置中可用。
+toolchain-scope-global-description = 在此计算机上的所有项目中可用。
+toolchain-add-term = 添加{ $term }
+toolchain-worktree-root = 工作树根目录
+toolchain-select-for-path = 为{ $path }选择{ $term }…
+toolchain-placeholder = 选择工具链…
+toolchain-add-toolchain = 添加工具链
+toolchain-select-button = 选择

@@ -610,8 +610,8 @@ impl PickerDelegate for Delegate {
         "text finder"
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search all files…".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "text-finder-placeholder").into()
     }
 
     fn match_count(&self) -> usize {
@@ -962,16 +962,29 @@ impl PickerDelegate for Delegate {
                                             .tooltip(move |_window, cx| {
                                                 let (label, action): (_, &dyn gpui::Action) =
                                                     if is_collapsed {
-                                                        ("Unfold", &Unfold)
+                                                        (
+                                                            localization::text(
+                                                                cx,
+                                                                "text-finder-unfold",
+                                                            ),
+                                                            &Unfold,
+                                                        )
                                                     } else {
-                                                        ("Fold", &Fold)
+                                                        (
+                                                            localization::text(
+                                                                cx,
+                                                                "text-finder-fold",
+                                                            ),
+                                                            &Fold,
+                                                        )
                                                     };
                                                 Tooltip::with_meta_in(
                                                     label,
                                                     Some(action),
-                                                    format!(
-                                                        "{} to toggle all",
-                                                        text_for_keystroke(
+                                                    localization::tr!(
+                                                        cx,
+                                                        "text-finder-toggle-all",
+                                                        shortcut = text_for_keystroke(
                                                             &Modifiers::alt(),
                                                             "click",
                                                             cx

@@ -717,12 +717,12 @@ impl TabSwitcherDelegate {
 impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search all tabs…".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "tab-switcher-placeholder").into()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        Some("No tabs".into())
+    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
+        Some(localization::text(cx, "tab-switcher-empty"))
     }
 
     fn match_count(&self) -> usize {
@@ -862,7 +862,10 @@ impl PickerDelegate for TabSwitcherDelegate {
                 IconButton::new("close_tab", IconName::Close)
                     .icon_size(IconSize::Small)
                     .icon_color(indicator_color)
-                    .tooltip(Tooltip::for_action_title("Close", &CloseSelectedItem))
+                    .tooltip(Tooltip::for_action_title(
+                        localization::text(cx, "common-close"),
+                        &CloseSelectedItem,
+                    ))
                     .on_click(cx.listener(move |picker, _, window, cx| {
                         cx.stop_propagation();
                         picker.delegate.close_item_at(ix, window, cx);

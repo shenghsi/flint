@@ -21,7 +21,8 @@ use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
-    IntoGpui, Settings, SettingsContent, SettingsStore, initial_project_settings_content,
+    IntoGpui, Settings, SettingsContent, SettingsStore, UiLanguage,
+    initial_project_settings_content,
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -435,12 +436,15 @@ fn init_renderers(cx: &mut App) {
                     settings_window,
                     item,
                     settings_file,
-                    Button::new("open-in-settings-file", "Edit in settings.json")
+                    Button::new(
+                        "open-in-settings-file",
+                        localization::text(cx, "settings-edit-json"),
+                    )
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
                         .tab_index(0_isize)
                         .tooltip(Tooltip::for_action_title_in(
-                            "Edit in settings.json",
+                            localization::text(cx, "settings-edit-json"),
                             &OpenCurrentFile,
                             &settings_window.focus_handle,
                         ))
@@ -878,6 +882,7 @@ struct SettingsPage {
 enum SettingsPageItem {
     SectionHeader(&'static str),
     SettingItem(SettingItem),
+    UserLanguageSetting(UserLanguageSettingItem),
     SubPageLink(SubPageLink),
     DynamicItem(DynamicItem),
     ActionLink(ActionLink),
@@ -889,6 +894,9 @@ impl std::fmt::Debug for SettingsPageItem {
             SettingsPageItem::SectionHeader(header) => write!(f, "SectionHeader({})", header),
             SettingsPageItem::SettingItem(setting_item) => {
                 write!(f, "SettingItem({})", setting_item.title)
+            }
+            SettingsPageItem::UserLanguageSetting(setting_item) => {
+                write!(f, "UserLanguageSetting({})", setting_item.title)
             }
             SettingsPageItem::SubPageLink(sub_page_link) => {
                 write!(f, "SubPageLink({})", sub_page_link.title)
@@ -1001,6 +1009,61 @@ impl SettingsPageItem {
                     .group("setting-item")
                     .px_8()
                     .child(field_with_padding)
+                    .when(bottom_border, |this| this.child(Divider::horizontal()))
+                    .into_any_element()
+            }
+            SettingsPageItem::UserLanguageSetting(setting_item) => {
+                const LANGUAGE_LABELS: &[&str] = &["English", "简体中文"];
+                let current_language = SettingsStore::global(cx).ui_language();
+                let control = EnumVariantDropdown::new(
+                    "ui-language-dropdown",
+                    current_language,
+                    &UiLanguage::ALL,
+                    LANGUAGE_LABELS,
+                    move |language, _, cx| {
+                        if language != current_language {
+                            SettingsStore::global(cx).update_user_settings_file(
+                                <dyn fs::Fs>::global(cx),
+                                move |settings, _| settings.ui_language = Some(language),
+                            );
+                        }
+                    },
+                )
+                .title_case(false)
+                .tab_index(0)
+                .into_any_element();
+
+                v_flex()
+                    .group("setting-item")
+                    .px_8()
+                    .child(
+                        h_flex()
+                            .id(setting_item.title.clone())
+                            .min_w_0()
+                            .justify_between()
+                            .map(apply_padding)
+                            .child(
+                                v_flex()
+                                    .relative()
+                                    .w_full()
+                                    .max_w_2_3()
+                                    .min_w_0()
+                                    .child(Label::new(setting_item.title.clone()))
+                                    .child(
+                                        Label::new(setting_item.description.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(render_settings_item_link(
+                                        setting_item.description.clone(),
+                                        Some("ui_language"),
+                                        false,
+                                        settings_window,
+                                        cx,
+                                    )),
+                            )
+                            .child(control),
+                    )
                     .when(bottom_border, |this| this.child(Divider::horizontal()))
                     .into_any_element()
             }
@@ -1232,7 +1295,10 @@ fn render_settings_item(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
                                         .icon_color(Color::Muted)
                                         .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Reset to Default"))
+                                        .tooltip(Tooltip::text(localization::text(
+                                            cx,
+                                            "settings-reset-default",
+                                        )))
                                         .on_click({
                                             move |_, window, cx| {
                                                 reset_to_default(window, cx);
@@ -1245,9 +1311,10 @@ fn render_settings_item(
                             file_set_in.filter(|file_set_in| file_set_in != &file),
                             |this, file_set_in| {
                                 this.child(
-                                    Label::new(format!(
-                                        "—  Modified in {}",
-                                        settings_window
+                                    Label::new(localization::tr!(
+                                        cx,
+                                        "settings-modified-in",
+                                        scope = settings_window
                                             .display_name(&file_set_in)
                                             .expect("File name should exist")
                                     ))
@@ -1309,7 +1376,7 @@ fn render_settings_item_link(
                 .icon_color(link_icon_color)
                 .icon_size(IconSize::Small)
                 .shape(IconButtonShape::Square)
-                .tooltip(Tooltip::text("Copy Link"))
+                .tooltip(Tooltip::text(localization::text(cx, "settings-copy-link")))
                 .when_some(json_path, |this, path| {
                     this.on_click(cx.listener(move |this, _, _, cx| {
                         let link = format!("flint://settings/{}", path);
@@ -1327,6 +1394,19 @@ struct SettingItem {
     field: Box<dyn AnySettingField>,
     metadata: Option<Box<SettingsFieldMetadata>>,
     files: FileMask,
+}
+
+#[derive(PartialEq)]
+struct UserLanguageSettingItem {
+    title: SharedString,
+    description: SharedString,
+}
+
+fn user_language_setting(cx: &App) -> UserLanguageSettingItem {
+    UserLanguageSettingItem {
+        title: localization::tr!(cx, "settings-language-title"),
+        description: localization::tr!(cx, "settings-language-description"),
+    }
 }
 
 struct DynamicItem {
@@ -1547,8 +1627,15 @@ impl SettingsWindow {
         .detach();
 
         let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let mut ui_language = SettingsStore::global(cx).ui_language();
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
+
+            let new_ui_language = SettingsStore::global(cx).ui_language();
+            if new_ui_language != ui_language {
+                ui_language = new_ui_language;
+                this.rebuild_pages(window, cx);
+            }
 
             // Whenever settings are changed, it's possible that the changed
             // settings affects the rendering of the `SettingsWindow`, like is
@@ -1916,6 +2003,13 @@ impl SettingsWindow {
                             any_found_since_last_header = true;
                         }
                     }
+                    SettingsPageItem::UserLanguageSetting(_) => {
+                        if !USER.contains(current_file) {
+                            page_filter[index] = false;
+                        } else {
+                            any_found_since_last_header = true;
+                        }
+                    }
                     SettingsPageItem::ActionLink(ActionLink { files, .. }) => {
                         if !files.contains(current_file) {
                             page_filter[index] = false;
@@ -2129,6 +2223,31 @@ impl SettingsWindow {
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.title);
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.description);
+                    }
+                    SettingsPageItem::UserLanguageSetting(setting_item) => {
+                        json_path = Some("ui_language");
+                        documents.push(SearchDocument {
+                            id: key_index,
+                            words: split_into_words(&[
+                                page.title,
+                                header_str,
+                                setting_item.title.as_ref(),
+                                setting_item.description.as_ref(),
+                                "Language",
+                                "Select the language that Flint uses for its interface.",
+                            ]),
+                        });
+                        push_candidates(
+                            &mut fuzzy_match_candidates,
+                            key_index,
+                            setting_item.title.as_ref(),
+                        );
+                        push_candidates(
+                            &mut fuzzy_match_candidates,
+                            key_index,
+                            setting_item.description.as_ref(),
+                        );
+                        push_candidates(&mut fuzzy_match_candidates, key_index, "Language");
                     }
                     SettingsPageItem::SectionHeader(header) => {
                         documents.push(SearchDocument {
@@ -2606,7 +2725,10 @@ impl SettingsWindow {
                                         }),
                                     )
                                     .style(DropdownStyle::Subtle)
-                                    .trigger_tooltip(Tooltip::text("View Other Projects"))
+                                    .trigger_tooltip(Tooltip::text(localization::text(
+                                        cx,
+                                        "settings-view-other-projects",
+                                    )))
                                     .trigger_icon(IconName::ChevronDown)
                                     .attach(gpui::Anchor::BottomLeft)
                                     .offset(gpui::Point {
@@ -2619,17 +2741,20 @@ impl SettingsWindow {
                     }),
             )
             .child(
-                Button::new(edit_in_json_id, "Edit in settings.json")
-                    .tab_index(0_isize)
-                    .style(ButtonStyle::OutlinedGhost)
-                    .tooltip(Tooltip::for_action_title_in(
-                        "Edit in settings.json",
-                        &OpenCurrentFile,
-                        &self.focus_handle,
-                    ))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_current_settings_file(window, cx);
-                    })),
+                Button::new(
+                    edit_in_json_id,
+                    localization::text(cx, "settings-edit-json"),
+                )
+                .tab_index(0_isize)
+                .style(ButtonStyle::OutlinedGhost)
+                .tooltip(Tooltip::for_action_title_in(
+                    localization::text(cx, "settings-edit-json"),
+                    &OpenCurrentFile,
+                    &self.focus_handle,
+                ))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_current_settings_file(window, cx);
+                })),
             )
     }
 
@@ -3153,7 +3278,10 @@ impl SettingsWindow {
                 }),
             )
             .style(DropdownStyle::Subtle)
-            .trigger_tooltip(Tooltip::text("Change Scope"))
+            .trigger_tooltip(Tooltip::text(localization::text(
+                cx,
+                "settings-change-scope",
+            )))
             .attach(gpui::Anchor::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
@@ -3200,11 +3328,15 @@ impl SettingsWindow {
             .items_center()
             .justify_center()
             .gap_1()
-            .child(Label::new("No Results"))
+            .child(Label::new(localization::text(cx, "settings-no-results")))
             .child(
-                Label::new(format!("No settings match \"{}\"", search_query))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                Label::new(localization::tr!(
+                    cx,
+                    "settings-no-results-detail",
+                    query = search_query.to_string()
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
             )
     }
 
@@ -3409,17 +3541,22 @@ impl SettingsWindow {
                 .when(current_sub_page.link.in_json, |this| {
                     this.child(
                         div().flex_shrink_0().child(
-                            Button::new("open-in-settings-file", "Edit in settings.json")
-                                .tab_index(0_isize)
-                                .style(ButtonStyle::OutlinedGhost)
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Edit in settings.json",
-                                    &OpenCurrentFile,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
+                            Button::new(
+                                "open-in-settings-file",
+                                localization::text(cx, "settings-edit-json"),
+                            )
+                            .tab_index(0_isize)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .tooltip(Tooltip::for_action_title_in(
+                                localization::text(cx, "settings-edit-json"),
+                                &OpenCurrentFile,
+                                &self.focus_handle,
+                            ))
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
                                     this.open_current_settings_file(window, cx);
-                                })),
+                                },
+                            )),
                         ),
                     )
                 })
@@ -3443,7 +3580,7 @@ impl SettingsWindow {
             SettingsStore::global(cx).error_for_file(self.current_file.to_settings())
         {
             fn banner(
-                label: &'static str,
+                label: SharedString,
                 error: String,
                 cx: &mut Context<SettingsWindow>,
             ) -> impl IntoElement {
@@ -3458,7 +3595,7 @@ impl SettingsWindow {
                     )
                     .action_slot(
                         div().pr_1().pb_1().child(
-                            Button::new("fix-in-json", "Fix in settings.json")
+                            Button::new("fix-in-json", localization::text(cx, "settings-fix-json"))
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -3475,23 +3612,28 @@ impl SettingsWindow {
                 .gap_2()
                 .when_some(parse_error, |this, err| {
                     this.child(banner(
-                        "Failed to load your settings. Some values may be incorrect and changes may be lost.",
+                        localization::text(cx, "settings-load-failed"),
                         err,
                         cx,
                     ))
                 })
                 .map(|this| match &error.migration_status {
                     settings::MigrationStatus::Succeeded => this.child(banner(
-                        "Your settings are out of date, and need to be updated.",
+                        localization::text(cx, "settings-outdated"),
                         match &self.current_file {
-                            SettingsUiFile::User => "They can be automatically migrated to the latest version.",
-                            SettingsUiFile::Server(_) | SettingsUiFile::Project(_)  => "They must be manually migrated to the latest version."
-                        }.to_string(),
+                            SettingsUiFile::User => {
+                                localization::text(cx, "settings-migrate-automatic")
+                            }
+                            SettingsUiFile::Server(_) | SettingsUiFile::Project(_) => {
+                                localization::text(cx, "settings-migrate-manual")
+                            }
+                        }
+                        .to_string(),
                         cx,
                     )),
                     settings::MigrationStatus::Failed { error: err } if !parse_failed => this
                         .child(banner(
-                            "Your settings file is out of date, automatic migration failed",
+                            localization::text(cx, "settings-migration-failed"),
                             err.clone(),
                             cx,
                         )),
@@ -3522,37 +3664,44 @@ impl SettingsWindow {
                         v_flex()
                             .my_0p5()
                             .gap_0p5()
-                            .child(Label::new("Restricted Mode"))
+                            .child(Label::new(localization::text(
+                                cx,
+                                "settings-restricted-mode",
+                            )))
                             .child(
-                                Label::new(
-                                    "This project is in restricted mode. Some project settings may not apply.",
-                                )
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                Label::new(localization::text(cx, "settings-restricted-detail"))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                             ),
                     )
                     .action_slot(
                         div().pr_2().pb_1().child(
-                            Button::new("manage-trust", "Manage Trust")
-                                .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                .on_click(cx.listener(move |_this, _, window, cx| {
+                            Button::new(
+                                "manage-trust",
+                                localization::text(cx, "settings-manage-trust"),
+                            )
+                            .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                            .on_click(cx.listener(
+                                move |_this, _, window, cx| {
                                     if let Some(original_window) = original_window {
                                         original_window
                                             .update(cx, |multi_workspace, window, cx| {
-                                                multi_workspace
-                                                    .workspace()
-                                                    .update(cx, |workspace, cx| {
+                                                multi_workspace.workspace().update(
+                                                    cx,
+                                                    |workspace, cx| {
                                                         workspace
                                                             .show_worktree_trust_security_modal(
                                                                 true, window, cx,
                                                             );
-                                                    });
+                                                    },
+                                                );
                                             })
                                             .log_err();
                                     }
                                     // Close the settings window
                                     window.remove_window();
-                                })),
+                                },
+                            )),
                         ),
                     )
                     .into_any_element();
@@ -3884,6 +4033,7 @@ impl SettingsWindow {
             for (item_index, item) in page.items.iter().enumerate() {
                 let item_json_path = match item {
                     SettingsPageItem::SettingItem(setting_item) => setting_item.field.json_path(),
+                    SettingsPageItem::UserLanguageSetting(_) => Some("ui_language"),
                     SettingsPageItem::DynamicItem(dynamic_item) => {
                         dynamic_item.discriminant.field.json_path()
                     }

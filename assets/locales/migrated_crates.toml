@@ -1,0 +1,76 @@
+# Add a crate only after all its user-facing string literals use localization
+# messages or have an explicit allowlist entry.
+crates = [
+  "auto_update_ui",
+  "command_palette",
+  "diagnostics",
+  "encoding_selector",
+  "extensions_ui",
+  "file_finder",
+  "go_to_line",
+  "install_cli",
+  "keymap_editor",
+  "language_selector",
+  "line_ending_selector",
+  "open_path_prompt",
+  "outline_panel",
+  "project_symbols",
+  "recent_projects",
+  "search",
+  "tab_switcher",
+  "terminal_view",
+  "theme_selector",
+]
+
+# Each entry permits one technical string that a UI literal sink uses. Add a
+# narrow entry only when the text is not visible to a user.
+[[allowlist]]
+file = "crates/diagnostics/src/items.rs"
+text = "diagnostic-indicator"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/search/src/buffer_search.rs"
+text = "multibuffer-collapse-expand-empty"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/search/src/project_search.rs"
+text = "{}\\n{}"
+reason = "Localized tooltip layout format"
+
+[[allowlist]]
+file = "crates/search/src/project_search.rs"
+text = "project-search-replace-button"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/outline_panel/src/outline_panel.rs"
+text = "buffers_inside_directory called on a non-directory entry {dir_entry:?}"
+reason = "Developer-only debug panic message"
+
+[[allowlist]]
+file = "crates/terminal_view/src/terminal_element.rs"
+text = '''Terminal paint: {} text runs, {} rects, \
+                        text paint took {:?}, total paint took {total_paint_time:?}'''
+reason = "Developer-only performance log"
+
+[[allowlist]]
+file = "crates/keymap_editor/src/keymap_editor.rs"
+text = "keymap context"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/keymap_editor/src/keymap_editor.rs"
+text = "keymap-row-wrapper"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/recent_projects/src/remote_servers.rs"
+text = "\\n"
+reason = "Path-list separator"
+
+[[allowlist]]
+file = "crates/extensions_ui/src/extensions_ui.rs"
+text = "v{version}"
+reason = "Extension version format"

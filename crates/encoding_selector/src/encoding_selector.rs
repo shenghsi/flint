@@ -60,7 +60,7 @@ impl EncodingSelector {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<EncodingSelector>(),
-                    "Save file to change encoding",
+                    localization::text(cx, "encoding-selector-save-first").to_string(),
                 ),
                 cx,
             );
@@ -70,7 +70,7 @@ impl EncodingSelector {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<EncodingSelector>(),
-                    "Cannot change encoding during collaboration",
+                    localization::text(cx, "encoding-selector-collaboration").to_string(),
                 ),
                 cx,
             );
@@ -80,7 +80,7 @@ impl EncodingSelector {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<EncodingSelector>(),
-                    "Cannot change encoding of remote server file",
+                    localization::text(cx, "encoding-selector-remote").to_string(),
                 ),
                 cx,
             );
@@ -221,8 +221,8 @@ fn available_encodings() -> Vec<&'static Encoding> {
 impl PickerDelegate for EncodingSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Reopen with encoding...".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "encoding-selector-placeholder").into()
     }
 
     fn match_count(&self) -> usize {

@@ -9,6 +9,7 @@ use ui::IntoElement;
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
+    user_language_setting,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -121,6 +122,7 @@ fn general_page(cx: &App) -> SettingsPage {
     fn general_settings_section(_cx: &App) -> Vec<SettingsPageItem> {
         vec![
             SettingsPageItem::SectionHeader("General Settings"),
+            SettingsPageItem::UserLanguageSetting(user_language_setting(_cx)),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "When Closing With No Tabs",
                 description: "What to do when using the 'close active item' action with no tabs.",

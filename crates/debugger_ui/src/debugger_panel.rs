@@ -1582,9 +1582,9 @@ impl Panel for DebugPanel {
             .then_some(IconName::Debug)
     }
 
-    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<SharedString> {
         if DebuggerSettings::get_global(cx).button {
-            Some("Debug Panel")
+            Some(localization::text(cx, "panel-debugger"))
         } else {
             None
         }

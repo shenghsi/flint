@@ -31,6 +31,7 @@ fs.workspace = true
 futures.workspace = true
 git_ui.workspace = true
 gpui.workspace = true
+localization.workspace = true
 hex.workspace = true
 hmac.workspace = true
 http_client.workspace = true

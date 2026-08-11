@@ -84,6 +84,7 @@ members = [
     "crates/languages",
     "crates/latex_render",
     "crates/line_ending_selector",
+    "crates/localization",
     "crates/lsp",
     "crates/lsp_locations",
     "crates/markdown",
@@ -291,6 +292,7 @@ language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
 latex_render = { path = "crates/latex_render" }
 line_ending_selector = { path = "crates/line_ending_selector" }
+localization = { path = "crates/localization" }
 lsp = { path = "crates/lsp" }
 lsp_locations = { path = "crates/lsp_locations" }
 markdown = { path = "crates/markdown" }
@@ -438,6 +440,7 @@ cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
 const_format = "0.2"
 convert_case = "0.11.0"
+fluent-bundle = "0.16.0"
 core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
@@ -671,6 +674,7 @@ tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 tracing = "0.1.40"
 unicase = "2.6"
+unic-langid = "0.9.6"
 unicode-script = "0.5.7"
 unicode-segmentation = "1.10"
 unicode-width = "0.2"

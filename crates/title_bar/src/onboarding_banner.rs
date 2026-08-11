@@ -46,7 +46,8 @@ impl OnboardingBanner {
                 action,
                 icon_name,
                 label: label.into(),
-                subtitle: subtitle.or(Some(SharedString::from("Introducing:"))),
+                subtitle: subtitle
+                    .or_else(|| Some(localization::text(cx, "title-bar-introducing"))),
             },
             visible_when: None,
             dismissed: get_dismissed(source, cx),
@@ -160,9 +161,9 @@ impl Render for OnboardingBanner {
                         .on_click(cx.listener(|this, _, _window, cx| this.dismiss(cx)))
                         .tooltip(|_window, cx| {
                             Tooltip::with_meta(
-                                "Close Announcement Banner",
+                                localization::text(cx, "title-bar-close-announcement"),
                                 None,
-                                "It won't show again for this feature",
+                                localization::text(cx, "title-bar-announcement-wont-show"),
                                 cx,
                             )
                         }),

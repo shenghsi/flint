@@ -65,6 +65,46 @@ pub fn normalize_action_query(input: &str) -> String {
     result
 }
 
+fn localized_action_name(action: &dyn Action, cx: &App) -> String {
+    action_translation_identifier(action.name())
+        .map(|identifier| localization::text(cx, identifier).to_string())
+        .unwrap_or_else(|| humanize_action_name(action.name()))
+}
+
+fn action_search_name(action: &dyn Action, cx: &App) -> String {
+    let english_name = humanize_action_name(action.name());
+    let localized_name = localized_action_name(action, cx);
+    if localized_name == english_name {
+        localized_name
+    } else {
+        format!("{localized_name} {english_name}")
+    }
+}
+
+fn action_translation_identifier(action_name: &str) -> Option<&'static str> {
+    Some(match action_name {
+        "workspace::NewFile" => "menu-new",
+        "workspace::NewWindow" => "menu-new-window",
+        "workspace::OpenFiles" => "menu-open-file",
+        "workspace::OpenFolder" => "menu-open-folder",
+        "workspace::Save" => "menu-save",
+        "workspace::SaveAs" => "menu-save-as",
+        "workspace::SaveAll" => "menu-save-all",
+        "workspace::CloseActiveItem" => "menu-close-editor",
+        "workspace::CloseWindow" => "menu-close-window",
+        "flint::OpenSettings" => "menu-open-settings",
+        "flint::OpenKeymap" => "menu-open-keymap",
+        "flint::About" => "menu-about-flint",
+        "flint::Quit" => "menu-quit-flint",
+        "command_palette::Toggle" => "menu-command-palette",
+        "project_panel::ToggleFocus" => "menu-project-panel",
+        "outline_panel::ToggleFocus" => "menu-outline-panel",
+        "terminal_panel::ToggleFocus" => "menu-terminal",
+        "extensions_ui::Toggle" => "menu-extensions",
+        _ => return None,
+    })
+}
+
 impl CommandPalette {
     fn register(
         workspace: &mut Workspace,
@@ -110,7 +150,9 @@ impl CommandPalette {
                 }
 
                 Some(Command {
-                    name: humanize_action_name(action.name()),
+                    name: localized_action_name(&*action, cx),
+                    search_name: action_search_name(&*action, cx),
+                    history_key: action.name().to_string(),
                     action,
                 })
             })
@@ -172,6 +214,8 @@ pub struct CommandPaletteDelegate {
 
 struct Command {
     name: String,
+    search_name: String,
+    history_key: String,
     action: Box<dyn Action>,
 }
 
@@ -264,6 +308,8 @@ impl Clone for Command {
     fn clone(&self) -> Self {
         Self {
             name: self.name.clone(),
+            search_name: self.search_name.clone(),
+            history_key: self.history_key.clone(),
             action: self.action.boxed_clone(),
         }
     }
@@ -317,6 +363,8 @@ impl CommandPaletteDelegate {
             }
             commands.push(Command {
                 name: string.clone(),
+                search_name: string.clone(),
+                history_key: action.name().to_string(),
                 action,
             });
             new_matches.push(StringMatch {
@@ -375,8 +423,8 @@ impl CommandPaletteDelegate {
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Execute a command...".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "command-palette-placeholder").into()
     }
 
     fn select_history(
@@ -459,7 +507,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             async move {
                 commands.sort_by_key(|action| {
                     (
-                        Reverse(hit_counts.get(&action.name).cloned()),
+                        Reverse(hit_counts.get(&action.history_key).cloned()),
                         action.name.clone(),
                     )
                 });
@@ -467,7 +515,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 let candidates = commands
                     .iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.search_name))
                     .collect::<Vec<_>>();
 
                 let matches = fuzzy_nucleo::match_strings_async(
@@ -573,7 +621,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         let command = self.commands.swap_remove(action_ix);
         self.matches.clear();
         self.commands.clear();
-        let command_name = command.name.clone();
+        let command_name = command.history_key.clone();
         let latest_query = self.latest_query.clone();
         let db = CommandPaletteDB::global(cx);
         cx.background_spawn(async move {
@@ -607,10 +655,15 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .w_full()
                         .py_px()
                         .justify_between()
-                        .child(HighlightedLabel::new(
-                            command.name.clone(),
-                            matching_command.positions.clone(),
-                        ))
+                        .child(HighlightedLabel::new(command.name.clone(), {
+                            let displayed_character_count = command.name.chars().count();
+                            matching_command
+                                .positions
+                                .iter()
+                                .copied()
+                                .filter(|position| *position < displayed_character_count)
+                                .collect::<Vec<_>>()
+                        }))
                         .child(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,
@@ -631,23 +684,29 @@ impl PickerDelegate for CommandPaletteDelegate {
 
         let focus_handle = &self.previous_focus_handle;
         let keybinding_buttons = if keybind.has_binding(window) {
-            Button::new("change", "Change Keybinding…")
-                .key_binding(
-                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
-                        .map(|kb| kb.size(rems_from_px(12.))),
-                )
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
-                })
+            Button::new(
+                "change",
+                localization::text(cx, "command-palette-change-keybinding"),
+            )
+            .key_binding(
+                KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
+                    .map(|kb| kb.size(rems_from_px(12.))),
+            )
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+            })
         } else {
-            Button::new("add", "Add Keybinding…")
-                .key_binding(
-                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
-                        .map(|kb| kb.size(rems_from_px(12.))),
-                )
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
-                })
+            Button::new(
+                "add",
+                localization::text(cx, "command-palette-add-keybinding"),
+            )
+            .key_binding(
+                KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
+                    .map(|kb| kb.size(rems_from_px(12.))),
+            )
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+            })
         };
 
         Some(
@@ -660,7 +719,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(keybinding_buttons)
                 .child(
-                    Button::new("run-action", "Run")
+                    Button::new("run-action", localization::text(cx, "command-palette-run"))
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -1008,6 +1067,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();

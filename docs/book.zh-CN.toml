@@ -1,0 +1,26 @@
+[book]
+authors = ["The Flint Team"]
+language = "zh-CN"
+multilingual = true
+src = "src.zh-CN"
+title = "Flint 文档"
+site-url = "/docs/zh-CN/"
+
+[build]
+extra-watch-dirs = ["../crates/docs_preprocessor"]
+
+[output.flint-html]
+command = "cargo run -p docs_preprocessor -- postprocess"
+default-description = "了解如何使用和自定义 Flint。"
+default-title = "Flint 中文文档"
+no-section-label = true
+preferred-dark-theme = "dark"
+additional-css = ["theme/page-toc.css", "theme/plugins.css", "theme/highlight.css", "theme/consent-banner.css"]
+additional-js = ["theme/page-toc.js", "theme/plugins.js", "theme/c15t@2.0.0-rc.3.js", "theme/analytics.js"]
+
+[output.flint-html.print]
+enable = false
+
+[preprocessor.flint_docs_preprocessor]
+command = "cargo run -p docs_preprocessor --"
+renderer = ["html", "flint-html"]

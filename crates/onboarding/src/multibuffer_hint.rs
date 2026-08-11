@@ -155,11 +155,14 @@ impl Render for MultibufferHint {
                                     .color(Color::Muted),
                             )
                             .child(Label::new(
-                                "Edit and save files directly in the results multibuffer!",
+                                localization::text(cx, "onboarding-multibuffer-hint"),
                             )),
                     )
                     .child(
-                        Button::new("open_docs", "Learn More")
+                        Button::new(
+                            "open_docs",
+                            localization::text(cx, "onboarding-learn-more"),
+                        )
                             .end_icon(
                                 Icon::new(IconName::ArrowUpRight)
                                     .size(IconSize::Small)
@@ -180,7 +183,10 @@ impl Render for MultibufferHint {
                             ToolbarItemLocation::Hidden,
                         ))
                     }))
-                    .tooltip(Tooltip::text("Dismiss Hint")),
+                    .tooltip(Tooltip::text(localization::text(
+                        cx,
+                        "onboarding-dismiss-hint",
+                    ))),
             )
             .into_any_element()
     }

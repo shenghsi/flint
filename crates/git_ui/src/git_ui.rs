@@ -622,11 +622,12 @@ impl Render for RefPickerModal {
                 .unwrap_or_else(|_| OffsetDateTime::now_utc());
             let local_offset =
                 time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-            let formatted_time = time_format::format_localized_timestamp(
+            let formatted_time = time_format::format_localized_timestamp_for_language(
                 commit_time,
                 OffsetDateTime::now_utc(),
                 local_offset,
                 time_format::TimestampFormat::Relative,
+                localization::language(cx),
             );
 
             let subject = details.message.lines().next().unwrap_or("").to_string();

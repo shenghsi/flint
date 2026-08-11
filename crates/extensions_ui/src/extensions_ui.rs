@@ -170,20 +170,23 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
-    match provides {
-        ExtensionProvides::Themes => "Themes",
-        ExtensionProvides::IconThemes => "Icon Themes",
-        ExtensionProvides::Languages => "Languages",
-        ExtensionProvides::Grammars => "Grammars",
-        ExtensionProvides::LanguageServers => "Language Servers",
-        ExtensionProvides::ContextServers => "MCP Servers",
-        ExtensionProvides::AgentServers => "Agent Servers",
-        ExtensionProvides::SlashCommands => "Slash Commands",
-        ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
-        ExtensionProvides::Snippets => "Snippets",
-        ExtensionProvides::DebugAdapters => "Debug Adapters",
-    }
+fn extension_provides_label(provides: ExtensionProvides, cx: &App) -> SharedString {
+    localization::text(
+        cx,
+        match provides {
+            ExtensionProvides::Themes => "extensions-category-themes",
+            ExtensionProvides::IconThemes => "extensions-category-icon-themes",
+            ExtensionProvides::Languages => "extensions-category-languages",
+            ExtensionProvides::Grammars => "extensions-category-grammars",
+            ExtensionProvides::LanguageServers => "extensions-category-language-servers",
+            ExtensionProvides::ContextServers => "extensions-category-mcp-servers",
+            ExtensionProvides::AgentServers => "extensions-category-agent-servers",
+            ExtensionProvides::SlashCommands => "extensions-category-slash-commands",
+            ExtensionProvides::IndexedDocsProviders => "extensions-category-indexed-docs",
+            ExtensionProvides::Snippets => "extensions-category-snippets",
+            ExtensionProvides::DebugAdapters => "extensions-category-debug-adapters",
+        },
+    )
 }
 
 #[derive(Clone)]
@@ -333,7 +336,11 @@ impl ExtensionsPage {
 
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search extensions...", window, cx);
+                input.set_placeholder_text(
+                    &localization::text(cx, "extensions-search"),
+                    window,
+                    cx,
+                );
                 if let Some(id) = focus_extension_id {
                     input.set_text(format!("id:{id}"), window, cx);
                 }
@@ -634,7 +641,7 @@ impl ExtensionsPage {
                             .child(
                                 Button::new(
                                     SharedString::from(format!("rebuild-{}", extension.id)),
-                                    "Rebuild",
+                                    localization::text(cx, "extensions-rebuild"),
                                 )
                                 .color(Color::Accent)
                                 .disabled(matches!(status, ExtensionStatus::Upgrading))
@@ -650,7 +657,7 @@ impl ExtensionsPage {
                             .child(
                                 Button::new(
                                     extension_button_id(&extension.id, ExtensionOperation::Remove),
-                                    "Uninstall",
+                                    localization::text(cx, "extensions-uninstall"),
                                 )
                                 .color(Color::Accent)
                                 .disabled(matches!(status, ExtensionStatus::Removing))
@@ -674,11 +681,14 @@ impl ExtensionsPage {
                     .child(
                         Label::new(format!(
                             "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
+                            localization::text(
+                                cx,
+                                if extension.authors.len() > 1 {
+                                    "extensions-authors"
+                                } else {
+                                    "extensions-author"
+                                },
+                            ),
                             extension.authors.join(", ")
                         ))
                         .size(LabelSize::Small)
@@ -752,8 +762,12 @@ impl ExtensionsPage {
                                 installed_version
                                     .filter(|installed_version| *installed_version != version)
                                     .map(|installed_version| {
-                                        Headline::new(format!("(v{installed_version} installed)",))
-                                            .size(HeadlineSize::XSmall)
+                                        Headline::new(localization::tr!(
+                                            cx,
+                                            "extensions-installed-version",
+                                            version = installed_version.to_string()
+                                        ))
+                                        .size(HeadlineSize::XSmall)
                                     }),
                             )
                             .map(|parent| {
@@ -778,7 +792,9 @@ impl ExtensionsPage {
                                                     _ => {}
                                                 }
 
-                                                Some(Chip::new(extension_provides_label(*provides)))
+                                                Some(Chip::new(extension_provides_label(
+                                                    *provides, cx,
+                                                )))
                                             })
                                             .collect::<Vec<_>>(),
                                     ),
@@ -804,9 +820,15 @@ impl ExtensionsPage {
                             .truncate()
                     }))
                     .child(
-                        Label::new(format!(
-                            "Downloads: {}",
-                            extension.download_count.to_formatted_string(&Locale::en)
+                        Label::new(localization::tr!(
+                            cx,
+                            "extensions-downloads",
+                            count = match localization::language(cx) {
+                                localization::UiLanguage::SimplifiedChinese => {
+                                    extension.download_count.to_string()
+                                }
+                                _ => extension.download_count.to_formatted_string(&Locale::en),
+                            }
                         ))
                         .size(LabelSize::Small),
                     ),
@@ -846,7 +868,7 @@ impl ExtensionsPage {
                                 .icon_size(IconSize::Small)
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
-                                        "Visit Extension Repository",
+                                        localization::text(cx, "extensions-visit-repository"),
                                         None,
                                         repo_url_for_tooltip.clone(),
                                         cx,
@@ -898,10 +920,10 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |context_menu, window, _| {
+        ContextMenu::build(window, cx, |context_menu, window, cx| {
             context_menu
                 .entry(
-                    "Install Another Version...",
+                    localization::text(cx, "extensions-install-version"),
                     None,
                     window.handler_for(this, {
                         let extension_id = extension_id.clone();
@@ -910,13 +932,13 @@ impl ExtensionsPage {
                         }
                     }),
                 )
-                .entry("Copy Extension ID", None, {
+                .entry(localization::text(cx, "extensions-copy-id"), None, {
                     let extension_id = extension_id.clone();
                     move |_, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(extension_id.to_string()));
                     }
                 })
-                .entry("Copy Author Info", None, {
+                .entry(localization::text(cx, "extensions-copy-author"), None, {
                     let authors = authors.clone();
                     move |_, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
@@ -980,7 +1002,7 @@ impl ExtensionsPage {
             return ExtensionCardButtons {
                 install_or_uninstall: Button::new(
                     extension_button_id(&extension.id, ExtensionOperation::Install),
-                    "Install",
+                    localization::text(cx, "extensions-install"),
                 ),
                 configure: None,
                 upgrade: None,
@@ -993,7 +1015,7 @@ impl ExtensionsPage {
             ExtensionStatus::NotInstalled => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
                     extension_button_id(&extension.id, ExtensionOperation::Install),
-                    "Install",
+                    localization::text(cx, "extensions-install"),
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                 .start_icon(
@@ -1015,7 +1037,7 @@ impl ExtensionsPage {
             ExtensionStatus::Installing => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
                     extension_button_id(&extension.id, ExtensionOperation::Install),
-                    "Install",
+                    localization::text(cx, "extensions-install"),
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                 .start_icon(
@@ -1030,21 +1052,21 @@ impl ExtensionsPage {
             ExtensionStatus::Upgrading => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
                     extension_button_id(&extension.id, ExtensionOperation::Remove),
-                    "Uninstall",
+                    localization::text(cx, "extensions-uninstall"),
                 )
                 .style(ButtonStyle::OutlinedGhost)
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
                         SharedString::from(format!("configure-{}", extension.id)),
-                        "Configure",
+                        localization::text(cx, "extensions-configure"),
                     )
                     .disabled(true)
                 }),
                 upgrade: Some(
                     Button::new(
                         extension_button_id(&extension.id, ExtensionOperation::Upgrade),
-                        "Upgrade",
+                        localization::text(cx, "extensions-upgrade"),
                     )
                     .disabled(true),
                 ),
@@ -1052,7 +1074,7 @@ impl ExtensionsPage {
             ExtensionStatus::Installed(installed_version) => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
                     extension_button_id(&extension.id, ExtensionOperation::Remove),
-                    "Uninstall",
+                    localization::text(cx, "extensions-uninstall"),
                 )
                 .style(ButtonStyle::OutlinedGhost)
                 .on_click({
@@ -1068,7 +1090,7 @@ impl ExtensionsPage {
                 configure: is_configurable.then(|| {
                     Button::new(
                         SharedString::from(format!("configure-{}", extension.id)),
-                        "Configure",
+                        localization::text(cx, "extensions-configure"),
                     )
                     .style(ButtonStyle::OutlinedGhost)
                     .on_click({
@@ -1094,51 +1116,56 @@ impl ExtensionsPage {
                     None
                 } else {
                     Some(
-                        Button::new(extension_button_id(&extension.id, ExtensionOperation::Upgrade), "Upgrade")
-                          .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .when(!is_compatible, |upgrade_button| {
-                                upgrade_button.disabled(true).tooltip({
-                                    let version = extension.manifest.version.clone();
-                                    move |_, cx| {
-                                        Tooltip::simple(
-                                            format!(
-                                                "v{version} is not compatible with this version of Flint.",
-                                            ),
-                                             cx,
-                                        )
-                                    }
-                                })
-                            })
-                            .disabled(!is_compatible)
-                            .on_click({
-                                let extension_id = extension.id.clone();
+                        Button::new(
+                            extension_button_id(&extension.id, ExtensionOperation::Upgrade),
+                            localization::text(cx, "extensions-upgrade"),
+                        )
+                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .when(!is_compatible, |upgrade_button| {
+                            upgrade_button.disabled(true).tooltip({
                                 let version = extension.manifest.version.clone();
-                                move |_, _, cx| {
-                                    ExtensionStore::global(cx).update(cx, |store, cx| {
-                                        store
-                                            .upgrade_extension(
-                                                extension_id.clone(),
-                                                version.clone(),
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx)
-                                    });
+                                move |_, cx| {
+                                    Tooltip::simple(
+                                        localization::tr!(
+                                            cx,
+                                            "extensions-version-incompatible",
+                                            version = version.to_string()
+                                        ),
+                                        cx,
+                                    )
                                 }
-                            }),
+                            })
+                        })
+                        .disabled(!is_compatible)
+                        .on_click({
+                            let extension_id = extension.id.clone();
+                            let version = extension.manifest.version.clone();
+                            move |_, _, cx| {
+                                ExtensionStore::global(cx).update(cx, |store, cx| {
+                                    store
+                                        .upgrade_extension(
+                                            extension_id.clone(),
+                                            version.clone(),
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx)
+                                });
+                            }
+                        }),
                     )
                 },
             },
             ExtensionStatus::Removing => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
                     extension_button_id(&extension.id, ExtensionOperation::Remove),
-                    "Uninstall",
+                    localization::text(cx, "extensions-uninstall"),
                 )
                 .style(ButtonStyle::OutlinedGhost)
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
                         SharedString::from(format!("configure-{}", extension.id)),
-                        "Configure",
+                        localization::text(cx, "extensions-configure"),
                     )
                     .disabled(true)
                 }),
@@ -1289,31 +1316,31 @@ impl ExtensionsPage {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
 
-        let message = if self.is_fetching_extensions {
-            "Loading extensions…"
+        let message_id = if self.is_fetching_extensions {
+            "extensions-loading"
         } else if self.fetch_failed {
-            "Failed to load extensions. Please check your connection and try again."
+            "extensions-load-failed"
         } else {
             match self.filter {
                 ExtensionFilter::All => {
                     if has_search {
-                        "No extensions that match your search."
+                        "extensions-no-search"
                     } else {
-                        "No extensions."
+                        "extensions-none"
                     }
                 }
                 ExtensionFilter::Installed => {
                     if has_search {
-                        "No installed extensions that match your search."
+                        "extensions-no-installed-search"
                     } else {
-                        "No installed extensions."
+                        "extensions-no-installed"
                     }
                 }
                 ExtensionFilter::NotInstalled => {
                     if has_search {
-                        "No not installed extensions that match your search."
+                        "extensions-no-uninstalled-search"
                     } else {
-                        "No not installed extensions."
+                        "extensions-no-uninstalled"
                     }
                 }
             }
@@ -1329,7 +1356,7 @@ impl ExtensionsPage {
                         .color(Color::Warning),
                 )
             })
-            .child(Label::new(message))
+            .child(Label::new(localization::text(cx, message_id)))
     }
 
     fn update_settings(
@@ -1402,9 +1429,10 @@ impl ExtensionsPage {
         vim: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let docs_url_button = Button::new("open_docs", "View Documentation")
-            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small))
-            .on_click(move |_event, _window, cx| cx.open_url(&docs_url));
+        let docs_url_button =
+            Button::new("open_docs", localization::text(cx, "extensions-view-docs"))
+                .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small))
+                .on_click(move |_event, _window, cx| cx.open_url(&docs_url));
 
         div()
             .pt_4()
@@ -1424,7 +1452,10 @@ impl ExtensionsPage {
                                         h_flex()
                                             .pl_1()
                                             .gap_1()
-                                            .child(Label::new("Enable Vim mode"))
+                                            .child(Label::new(localization::text(
+                                                cx,
+                                                "extensions-enable-vim",
+                                            )))
                                             .child(
                                                 Switch::new(
                                                     "enable-vim",
@@ -1460,99 +1491,49 @@ impl ExtensionsPage {
         let mut container = v_flex();
 
         for feature in &self.upsells {
-            let banner = match feature {
-                Feature::ExtensionBasedpyright => self.render_feature_upsell_banner(
-                    "Basedpyright (Python language server) support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/python.md#basedpyright".into(),
+            let (message, page, vim) = match feature {
+                Feature::ExtensionBasedpyright => (
+                    "extensions-built-in-basedpyright",
+                    "languages/python#basedpyright",
                     false,
-                    cx,
                 ),
-                Feature::ExtensionRuff => self.render_feature_upsell_banner(
-                    "Ruff (linter for Python) support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/python.md#code-formatting--linting".into(),
+                Feature::ExtensionRuff => (
+                    "extensions-built-in-ruff",
+                    "languages/python#code-formatting--linting",
                     false,
-                    cx,
                 ),
-                Feature::ExtensionTailwind => self.render_feature_upsell_banner(
-                    "Tailwind CSS support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/tailwindcss.md".into(),
+                Feature::ExtensionTailwind => (
+                    "extensions-built-in-tailwind",
+                    "languages/tailwindcss",
                     false,
-                    cx,
                 ),
-                Feature::ExtensionTy => self.render_feature_upsell_banner(
-                    "Ty (Python language server) support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/python.md".into(),
+                Feature::ExtensionTy => ("extensions-built-in-ty", "languages/python", false),
+                Feature::Git => ("extensions-built-in-git", "git", false),
+                Feature::LanguageBash => ("extensions-built-in-shell", "languages/bash", false),
+                Feature::LanguageC => ("extensions-built-in-c", "languages/c", false),
+                Feature::LanguageCpp => ("extensions-built-in-cpp", "languages/cpp", false),
+                Feature::LanguageGo => ("extensions-built-in-go", "languages/go", false),
+                Feature::LanguagePython => {
+                    ("extensions-built-in-python", "languages/python", false)
+                }
+                Feature::LanguageReact => {
+                    ("extensions-built-in-react", "languages/typescript", false)
+                }
+                Feature::LanguageRust => ("extensions-built-in-rust", "languages/rust", false),
+                Feature::LanguageTypescript => (
+                    "extensions-built-in-typescript",
+                    "languages/typescript",
                     false,
-                    cx,
                 ),
-                Feature::Git => self.render_feature_upsell_banner(
-                    "Flint comes with basic Git support—more features are coming in the future."
-                        .into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/git.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageBash => self.render_feature_upsell_banner(
-                    "Shell support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/bash.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageC => self.render_feature_upsell_banner(
-                    "C support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/c.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageCpp => self.render_feature_upsell_banner(
-                    "C++ support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/cpp.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageGo => self.render_feature_upsell_banner(
-                    "Go support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/go.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguagePython => self.render_feature_upsell_banner(
-                    "Python support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/python.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageReact => self.render_feature_upsell_banner(
-                    "React support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/typescript.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageRust => self.render_feature_upsell_banner(
-                    "Rust support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/rust.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageTypescript => self.render_feature_upsell_banner(
-                    "Typescript support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/languages/typescript.md".into(),
-                    false,
-                    cx,
-                ),
-                Feature::OpenIn => self.render_feature_upsell_banner(
-                    "Flint supports linking to a source line on GitHub and others.".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/git.md#git-integrations".into(),
-                    false,
-                    cx,
-                ),
-                Feature::Vim => self.render_feature_upsell_banner(
-                    "Vim support is built-in to Flint!".into(),
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/vim.md".into(),
-                    true,
-                    cx,
-                ),
+                Feature::OpenIn => ("extensions-built-in-open-in", "git#git-integrations", false),
+                Feature::Vim => ("extensions-built-in-vim", "vim", true),
             };
+            let banner = self.render_feature_upsell_banner(
+                localization::text(cx, message),
+                release_channel::docs_url(page, cx).into(),
+                vim,
+                cx,
+            );
             container = container.child(banner);
         }
 
@@ -1576,14 +1557,20 @@ impl Render for ExtensionsPage {
                             .w_full()
                             .gap_1p5()
                             .justify_between()
-                            .child(Headline::new("Extensions").size(HeadlineSize::Large))
                             .child(
-                                Button::new("install-dev-extension", "Install Dev Extension")
-                                    .style(ButtonStyle::Outlined)
-                                    .size(ButtonSize::Medium)
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(Box::new(InstallDevExtension), cx)
-                                    }),
+                                Headline::new(localization::text(cx, "extensions-title"))
+                                    .size(HeadlineSize::Large),
+                            )
+                            .child(
+                                Button::new(
+                                    "install-dev-extension",
+                                    localization::text(cx, "extensions-install-dev"),
+                                )
+                                .style(ButtonStyle::Outlined)
+                                .size(ButtonSize::Medium)
+                                .on_click(|_event, window, cx| {
+                                    window.dispatch_action(Box::new(InstallDevExtension), cx)
+                                }),
                             ),
                     )
                     .child(
@@ -1598,7 +1585,7 @@ impl Render for ExtensionsPage {
                                         "filter-buttons",
                                         [
                                             ToggleButtonSimple::new(
-                                                "All",
+                                                localization::text(cx, "extensions-all"),
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::All;
                                                     this.filter_extension_entries(cx);
@@ -1606,7 +1593,7 @@ impl Render for ExtensionsPage {
                                                 }),
                                             ),
                                             ToggleButtonSimple::new(
-                                                "Installed",
+                                                localization::text(cx, "extensions-installed"),
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::Installed;
                                                     this.filter_extension_entries(cx);
@@ -1614,7 +1601,7 @@ impl Render for ExtensionsPage {
                                                 }),
                                             ),
                                             ToggleButtonSimple::new(
-                                                "Not Installed",
+                                                localization::text(cx, "extensions-not-installed"),
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::NotInstalled;
                                                     this.filter_extension_entries(cx);
@@ -1647,17 +1634,20 @@ impl Render for ExtensionsPage {
                     .border_color(cx.theme().colors().border_variant)
                     .overflow_x_scroll()
                     .child(
-                        Button::new("filter-all-categories", "All")
-                            .when(self.provides_filter.is_none(), |button| {
-                                button.style(ButtonStyle::Filled)
-                            })
-                            .when(self.provides_filter.is_some(), |button| {
-                                button.style(ButtonStyle::Subtle)
-                            })
-                            .toggle_state(self.provides_filter.is_none())
-                            .on_click(cx.listener(|this, _event, _, cx| {
-                                this.change_provides_filter(None, cx);
-                            })),
+                        Button::new(
+                            "filter-all-categories",
+                            localization::text(cx, "extensions-all"),
+                        )
+                        .when(self.provides_filter.is_none(), |button| {
+                            button.style(ButtonStyle::Filled)
+                        })
+                        .when(self.provides_filter.is_some(), |button| {
+                            button.style(ButtonStyle::Subtle)
+                        })
+                        .toggle_state(self.provides_filter.is_none())
+                        .on_click(cx.listener(|this, _event, _, cx| {
+                            this.change_provides_filter(None, cx);
+                        })),
                     )
                     .children(ExtensionProvides::iter().filter_map(|provides| {
                         match provides {
@@ -1666,7 +1656,7 @@ impl Render for ExtensionsPage {
                             _ => {}
                         }
 
-                        let label = extension_provides_label(provides);
+                        let label = extension_provides_label(provides, cx);
                         let button_id = SharedString::from(format!("filter-category-{}", label));
 
                         Some(
@@ -1720,8 +1710,8 @@ impl Focusable for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Extensions".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        localization::text(cx, "extensions-title")
     }
 
     fn show_toolbar(&self) -> bool {

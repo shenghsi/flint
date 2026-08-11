@@ -199,6 +199,7 @@ dependencies = [
  "hex",
  "hmac",
  "http_client",
+ "localization",
  "log",
  "net",
  "nix 0.29.0",
@@ -991,6 +992,7 @@ dependencies = [
  "flint_actions",
  "gpui",
  "http_client",
+ "localization",
  "markdown_preview",
  "notifications",
  "release_channel",
@@ -2068,6 +2070,7 @@ dependencies = [
  "go_to_line",
  "gpui",
  "language",
+ "localization",
  "log",
  "menu",
  "picker",
@@ -3196,6 +3199,7 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "localization",
  "log",
  "lsp",
  "markdown",
@@ -3488,6 +3492,7 @@ dependencies = [
  "language",
  "languages",
  "linkify",
+ "localization",
  "log",
  "lsp",
  "markdown",
@@ -3655,6 +3660,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "localization",
  "picker",
  "project",
  "ui",
@@ -4037,6 +4043,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "localization",
  "log",
  "num-format",
  "picker",
@@ -4179,6 +4186,7 @@ dependencies = [
  "extension_host",
  "flint_actions",
  "gpui",
+ "localization",
  "system_specs",
  "urlencoding",
  "util",
@@ -4200,6 +4208,7 @@ dependencies = [
  "fuzzy_nucleo",
  "gpui",
  "language",
+ "localization",
  "menu",
  "open_path_prompt",
  "picker",
@@ -4344,6 +4353,7 @@ dependencies = [
  "languages",
  "latex_render",
  "line_ending_selector",
+ "localization",
  "log",
  "lsp_locations",
  "markdown",
@@ -4499,6 +4509,41 @@ name = "float_next_after"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
+
+[[package]]
+name = "fluent-bundle"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01203cb8918f5711e73891b347816d932046f95f54207710bda99beaeb423bf4"
+dependencies = [
+ "fluent-langneg",
+ "fluent-syntax",
+ "intl-memoizer",
+ "intl_pluralrules",
+ "rustc-hash 2.1.1",
+ "self_cell",
+ "smallvec",
+ "unic-langid",
+]
+
+[[package]]
+name = "fluent-langneg"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7eebbe59450baee8282d71676f3bfed5689aeab00b27545e83e5f14b1195e8b0"
+dependencies = [
+ "unic-langid",
+]
+
+[[package]]
+name = "fluent-syntax"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54f0d287c53ffd184d04d8677f590f4ac5379785529e5e08b1c8083acdd5c198"
+dependencies = [
+ "memchr",
+ "thiserror 2.0.17",
+]
 
 [[package]]
 name = "fluent-uri"
@@ -5114,6 +5159,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "linkify",
+ "localization",
  "log",
  "markdown",
  "menu",
@@ -5334,6 +5380,7 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
+ "localization",
  "menu",
  "multi_buffer",
  "project",
@@ -6593,6 +6640,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
+ "localization",
  "release_channel",
  "smol",
  "util",
@@ -6617,6 +6665,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "intl-memoizer"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "310da2e345f5eb861e7a07ee182262e94975051db9e4223e909ba90f392f163f"
+dependencies = [
+ "type-map",
+ "unic-langid",
+]
+
+[[package]]
+name = "intl_pluralrules"
+version = "7.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "078ea7b7c29a2b4df841a7f6ac8775ff6074020c6776d48491ce2268e068f972"
+dependencies = [
+ "unic-langid",
 ]
 
 [[package]]
@@ -6992,6 +7059,7 @@ dependencies = [
  "itertools 0.14.0",
  "json_schema_store",
  "language",
+ "localization",
  "log",
  "menu",
  "notifications",
@@ -7238,6 +7306,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "localization",
  "open_path_prompt",
  "picker",
  "project",
@@ -7485,6 +7554,7 @@ dependencies = [
  "editor",
  "gpui",
  "language",
+ "localization",
  "picker",
  "project",
  "ui",
@@ -7542,6 +7612,23 @@ name = "litrs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
+
+[[package]]
+name = "localization"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fluent-bundle",
+ "gpui",
+ "log",
+ "parking_lot",
+ "pretty_assertions",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "strum",
+ "unic-langid",
+]
 
 [[package]]
 name = "lock_api"
@@ -8600,6 +8687,7 @@ dependencies = [
  "component",
  "flint_actions",
  "gpui",
+ "localization",
  "ui",
  "workspace",
 ]
@@ -9167,6 +9255,7 @@ dependencies = [
  "fs",
  "fuzzy",
  "gpui",
+ "localization",
  "menu",
  "notifications",
  "picker",
@@ -9256,6 +9345,7 @@ dependencies = [
  "futures 0.3.32",
  "fuzzy",
  "gpui",
+ "localization",
  "picker",
  "project",
  "project_panel",
@@ -9376,6 +9466,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "localization",
  "log",
  "lsp",
  "menu",
@@ -10765,6 +10856,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "localization",
  "menu",
  "notifications",
  "pretty_assertions",
@@ -10797,6 +10889,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "localization",
  "lsp",
  "menu",
  "ordered-float 2.10.1",
@@ -11359,6 +11452,7 @@ dependencies = [
  "http_client",
  "indoc",
  "language",
+ "localization",
  "log",
  "menu",
  "node_runtime",
@@ -11515,6 +11609,7 @@ name = "release_channel"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "localization",
  "semver",
 ]
 
@@ -12380,6 +12475,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "localization",
  "lsp",
  "menu",
  "multi_buffer",
@@ -12680,6 +12776,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "localization",
  "log",
  "schemars",
  "serde",
@@ -12752,6 +12849,7 @@ dependencies = [
  "heck 0.5.0",
  "itertools 0.14.0",
  "language",
+ "localization",
  "log",
  "menu",
  "paths",
@@ -13635,6 +13733,7 @@ dependencies = [
  "editor",
  "fuzzy_nucleo",
  "gpui",
+ "localization",
  "menu",
  "picker",
  "project",
@@ -13847,6 +13946,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "localization",
  "log",
  "menu",
  "pretty_assertions",
@@ -13954,9 +14054,11 @@ dependencies = [
  "fs",
  "fuzzy",
  "gpui",
+ "localization",
  "log",
  "picker",
  "project",
+ "release_channel",
  "serde",
  "serde_json",
  "settings",
@@ -14089,6 +14191,7 @@ version = "0.1.0"
 dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
+ "localization",
  "sys-locale",
  "time",
  "windows 0.61.3",
@@ -14179,6 +14282,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "icons",
+ "localization",
  "notifications",
  "platform_title_bar",
  "project",
@@ -14397,6 +14501,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "localization",
  "menu",
  "open_path_prompt",
  "picker",
@@ -14872,6 +14977,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "type-map"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90"
+dependencies = [
+ "rustc-hash 2.1.1",
+]
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14921,6 +15035,7 @@ dependencies = [
  "gpui_util",
  "icons",
  "itertools 0.14.0",
+ "localization",
  "log",
  "menu",
  "num-format",
@@ -14957,6 +15072,7 @@ name = "ui_prompt"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "localization",
  "markdown",
  "menu",
  "settings",
@@ -14970,6 +15086,24 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
+
+[[package]]
+name = "unic-langid"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a28ba52c9b05311f4f6e62d5d9d46f094bd6e84cb8df7b3ef952748d752a7d05"
+dependencies = [
+ "unic-langid-impl",
+]
+
+[[package]]
+name = "unic-langid-impl"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce1bf08044d4b7a94028c93786f8566047edc11110595914de93362559bc658"
+dependencies = [
+ "tinystr",
+]
 
 [[package]]
 name = "unicase"
@@ -17662,6 +17796,7 @@ dependencies = [
  "http_client",
  "itertools 0.14.0",
  "language",
+ "localization",
  "log",
  "markdown",
  "menu",

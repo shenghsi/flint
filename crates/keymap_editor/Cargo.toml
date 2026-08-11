@@ -25,6 +25,7 @@ itertools.workspace = true
 json_schema_store.workspace = true
 language.workspace = true
 log.workspace = true
+localization.workspace = true
 menu.workspace = true
 notifications.workspace = true
 paths.workspace = true

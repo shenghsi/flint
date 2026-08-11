@@ -1,0 +1,13 @@
+trust-project-one = Unrecognized Project
+trust-project-many = Unrecognized Projects ({ $count })
+trust-restricted-description = Untrusted projects are opened in Restricted Mode to protect your system.
+trust-review-settings = Review .flint/settings.json for any extensions or commands configured by this project.
+trust-prevents = Restricted Mode prevents:
+trust-prevents-settings = Project settings from being applied
+trust-prevents-language-servers = Language servers from running
+trust-prevents-mcp = MCP Server integrations from installing
+trust-stay-restricted = Stay in Restricted Mode
+trust-continue = Trust and Continue
+trust-all-files = Trust all single files
+trust-all-folder = Trust all projects in the { $folder } folder
+trust-all-parents = Trust all projects in the parent folders

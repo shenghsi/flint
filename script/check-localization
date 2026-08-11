@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+
+import pathlib
+import re
+import subprocess
+import sys
+import tomllib
+
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+LOCALES = ROOT / "assets" / "locales"
+
+
+def fail(message: str) -> None:
+    print(f"localization check: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def catalog_messages(path: pathlib.Path) -> dict[str, str]:
+    messages: dict[str, str] = {}
+    for catalog in sorted(path.glob("*.ftl")):
+        current_identifier: str | None = None
+        for line_number, line in enumerate(catalog.read_text().splitlines(), 1):
+            if line[:1].isspace():
+                if current_identifier is not None:
+                    messages[current_identifier] += "\n" + line
+                continue
+            current_identifier = None
+            if line.lstrip().startswith("#") or "=" not in line:
+                continue
+            identifier = line.split("=", 1)[0].strip()
+            if identifier in messages:
+                fail(f"duplicate message {identifier!r} at {catalog}:{line_number}")
+            messages[identifier] = line.split("=", 1)[1]
+            current_identifier = identifier
+    return messages
+
+
+def message_variables(message: str) -> set[str]:
+    return set(re.findall(r"\$([A-Za-z][A-Za-z0-9_-]*)", message))
+
+
+def check_variable_parity(english: dict[str, str], chinese: dict[str, str]) -> None:
+    failures = []
+    for identifier in sorted(english.keys() & chinese.keys()):
+        english_variables = message_variables(english[identifier])
+        chinese_variables = message_variables(chinese[identifier])
+        if english_variables != chinese_variables:
+            failures.append(
+                f"{identifier}: English={sorted(english_variables)}, "
+                f"Chinese={sorted(chinese_variables)}"
+            )
+    if failures:
+        fail("catalog variables differ:\n" + "\n".join(failures))
+
+
+def check_unused_messages(identifiers: set[str]) -> None:
+    source = "\n".join(
+        path.read_text(errors="ignore")
+        for base in (ROOT / "crates", ROOT / "docs", ROOT / "script")
+        for path in base.rglob("*")
+        if path.is_file() and path.suffix in {".rs", ".md", ".hbs", ".py"}
+    )
+    unused = sorted(identifier for identifier in identifiers if identifier not in source)
+    if unused:
+        fail("unused messages: " + ", ".join(unused))
+
+
+UI_LITERAL_PATTERNS = (
+    re.compile(r"Button::new\([^,]+,\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.placeholder(?:_text)?\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.label\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.tooltip\([^\"]*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.child\(\s*\"([^\"]*[A-Za-z][^\"]*)\"\s*\)"),
+    re.compile(r"MenuItem::action\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+)
+
+
+def check_migrated_crates(identifiers: set[str]) -> None:
+    configuration = tomllib.loads((LOCALES / "migrated_crates.toml").read_text())
+    allowlist = {
+        (entry["file"], entry["text"])
+        for entry in configuration.get("allowlist", [])
+    }
+    failures: list[str] = []
+    for crate_name in configuration.get("crates", []):
+        source_root = ROOT / "crates" / crate_name / "src"
+        if not source_root.is_dir():
+            fail(f"migrated crate does not exist: {crate_name}")
+        for path in source_root.rglob("*.rs"):
+            relative_path = str(path.relative_to(ROOT))
+            production_source = path.read_text().split("#[cfg(test)]", 1)[0]
+            for pattern in UI_LITERAL_PATTERNS:
+                for match in pattern.finditer(production_source):
+                    text = match.group(1)
+                    if text in identifiers:
+                        continue
+                    if (relative_path, text) not in allowlist:
+                        line = production_source.count("\n", 0, match.start()) + 1
+                        failures.append(f"{relative_path}:{line}: {text!r}")
+    if failures:
+        fail("user-facing literals remain:\n" + "\n".join(sorted(failures)))
+
+
+def main() -> None:
+    english = catalog_messages(LOCALES / "en-US")
+    chinese = catalog_messages(LOCALES / "zh-CN")
+    if english.keys() != chinese.keys():
+        fail(
+            f"catalog message sets differ; English only={sorted(english.keys() - chinese.keys())}, "
+            f"Chinese only={sorted(chinese.keys() - english.keys())}"
+        )
+    check_variable_parity(english, chinese)
+    check_unused_messages(set(english))
+    check_migrated_crates(set(english))
+    subprocess.run(
+        ["cargo", "test", "-p", "localization", "--quiet"], cwd=ROOT, check=True
+    )
+
+
+if __name__ == "__main__":
+    main()

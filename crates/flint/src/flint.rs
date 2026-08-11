@@ -2100,7 +2100,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
     cx.set_dock_menu(vec![gpui::MenuItem::action(
-        "New Window",
+        localization::text(cx, "menu-new-window"),
         workspace::NewWindow,
     )]);
     // todo: nicer api here?

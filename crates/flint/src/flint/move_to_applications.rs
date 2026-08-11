@@ -70,17 +70,24 @@ impl MoveToApplicationsRequest {
         workspace: WeakEntity<MultiWorkspace>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
+        let (question, detail, yes, no, do_not_ask) = cx.update(|_, cx| {
+            (
+                localization::text(cx, "install-move-question"),
+                localization::text(cx, "install-move-detail"),
+                localization::text(cx, "install-yes"),
+                localization::text(cx, "install-no"),
+                localization::text(cx, "install-do-not-ask"),
+            )
+        })?;
         let response = cx
             .prompt(
                 PromptLevel::Info,
-                "Move Flint to Applications?",
-                Some(
-                    "Flint is running from a temporary location. Move it to Applications to finish installing it.",
-                ),
+                &question,
+                Some(&detail),
                 &[
-                    PromptButton::ok("Yes"),
-                    PromptButton::cancel("No"),
-                    PromptButton::new("Don't ask me again"),
+                    PromptButton::ok(yes),
+                    PromptButton::cancel(no),
+                    PromptButton::new(do_not_ask),
                 ],
             )
             .await?;
@@ -102,11 +109,17 @@ impl MoveToApplicationsRequest {
                             }
                         })
                         .ok();
+                    let (failed, ok) = cx.update(|_, cx| {
+                        (
+                            localization::text(cx, "install-move-failed"),
+                            localization::text(cx, "common-ok"),
+                        )
+                    })?;
                     cx.prompt(
                         PromptLevel::Critical,
-                        "Failed to move Flint to Applications",
+                        &failed,
                         Some(&error.to_string()),
-                        &["Ok"],
+                        &[PromptButton::ok(ok)],
                     )
                     .await
                     .log_err();
@@ -179,7 +192,7 @@ impl Render for InstallingFlintModal {
                     .py_3()
                     .border_b_1()
                     .border_color(theme.colors().border_variant)
-                    .child(Label::new("Installing Flint…")),
+                    .child(Label::new(localization::text(cx, "install-progress"))),
             )
             .child(
                 h_flex()
@@ -197,9 +210,9 @@ impl Render for InstallingFlintModal {
                     .child(
                         v_flex()
                             .gap_1()
-                            .child(Label::new("Moving Flint to Applications"))
+                            .child(Label::new(localization::text(cx, "install-moving")))
                             .child(
-                                Label::new("Flint will reopen when installation is complete.")
+                                Label::new(localization::text(cx, "install-reopen"))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             ),

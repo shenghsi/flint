@@ -198,8 +198,8 @@ impl LanguageSelectorDelegate {
 impl PickerDelegate for LanguageSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a language…".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "language-selector-placeholder").into()
     }
 
     fn match_count(&self) -> usize {

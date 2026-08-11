@@ -33,6 +33,7 @@ pub use title_bar::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
+pub use localization::UiLanguage;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -71,6 +72,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::hash::Hash;
 use std::sync::Arc;
 pub use util::serde::default_true;
+
+impl MergeFromTrait for UiLanguage {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseStatus {
@@ -388,6 +395,11 @@ pub struct SettingsProfile {
 pub struct UserSettingsContent {
     #[serde(flatten)]
     pub content: Box<SettingsContent>,
+
+    /// The language that Flint uses for its user interface. This field is
+    /// outside `SettingsContent` so project settings and settings profiles
+    /// cannot override it.
+    pub ui_language: Option<UiLanguage>,
 
     #[serde(flatten)]
     pub release_channel_overrides: ReleaseChannelOverrides,

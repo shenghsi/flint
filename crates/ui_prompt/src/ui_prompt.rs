@@ -40,7 +40,7 @@ fn flint_prompt_renderer(
         |cx| FlintPromptRenderer {
             _level: level,
             message: cx.new(|cx| Markdown::new(SharedString::new(message), None, None, cx)),
-            actions: actions.iter().map(|a| a.label().to_string()).collect(),
+            actions: actions.to_vec(),
             focus: cx.focus_handle(),
             active_action_id: 0,
             detail: detail
@@ -55,7 +55,7 @@ fn flint_prompt_renderer(
 pub struct FlintPromptRenderer {
     _level: PromptLevel,
     message: Entity<Markdown>,
-    actions: Vec<String>,
+    actions: Vec<PromptButton>,
     focus: FocusHandle,
     active_action_id: usize,
     detail: Option<Entity<Markdown>>,
@@ -67,7 +67,7 @@ impl FlintPromptRenderer {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
+        if let Some(ix) = self.actions.iter().position(PromptButton::is_cancel) {
             cx.emit(PromptResponse(ix));
         }
     }
@@ -141,7 +141,7 @@ impl Render for FlintPromptRenderer {
                 v_flex()
                     .gap_1()
                     .children(self.actions.iter().enumerate().map(|(ix, action)| {
-                        Button::new(ix, action.clone())
+                        Button::new(ix, action.label().clone())
                             .full_width()
                             .style(ButtonStyle::Outlined)
                             .when(ix == self.active_action_id, |s| {

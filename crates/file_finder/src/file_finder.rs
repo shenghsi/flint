@@ -1264,7 +1264,12 @@ impl FileFinderDelegate {
                 }
                 Match::Search(path_match) => self.labels_for_path_match(&path_match.0, path_style),
                 Match::CreateNew(project_path) => (
-                    format!("Create file: {}", project_path.path.display(path_style)),
+                    localization::tr!(
+                        cx,
+                        "file-finder-create-file",
+                        path = project_path.path.display(path_style).to_string()
+                    )
+                    .to_string(),
                     vec![],
                     String::from(""),
                     vec![],
@@ -1636,8 +1641,8 @@ impl PickerDelegate for FileFinderDelegate {
         "file_finder"
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search project files...".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "file-finder-placeholder").into()
     }
 
     fn match_count(&self) -> usize {
@@ -1902,7 +1907,10 @@ impl PickerDelegate for FileFinderDelegate {
                 this.child(
                     h_flex()
                         .id("project-scan-indicator")
-                        .tooltip(Tooltip::text("Project Scan in Progress…"))
+                        .tooltip(Tooltip::text(localization::text(
+                            cx,
+                            "file-finder-project-scan",
+                        )))
                         .child(
                             Icon::new(IconName::LoadCircle)
                                 .color(Color::Accent)
@@ -1944,7 +1952,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 let focus_handle = focus_handle.clone();
                                 move |_window, cx| {
                                     Tooltip::for_action_in(
-                                        "Filter Options",
+                                        localization::text(cx, "file-finder-filter-options"),
                                         &ToggleFilterMenu,
                                         &focus_handle,
                                         cx,
@@ -1959,11 +1967,17 @@ impl PickerDelegate for FileFinderDelegate {
                             move |window, cx| {
                                 Some(ContextMenu::build(window, cx, {
                                     let focus_handle = focus_handle.clone();
-                                    move |menu, _, _| {
+                                    move |menu, _, cx| {
                                         menu.context(focus_handle.clone())
-                                            .header("Filter Options")
+                                            .header(localization::text(
+                                                cx,
+                                                "file-finder-filter-options",
+                                            ))
                                             .toggleable_entry(
-                                                "Include Ignored Files",
+                                                localization::text(
+                                                    cx,
+                                                    "file-finder-include-ignored",
+                                                ),
                                                 include_ignored.unwrap_or(false),
                                                 ui::IconPosition::End,
                                                 Some(ToggleIncludeIgnored.boxed_clone()),
@@ -1994,7 +2008,10 @@ impl PickerDelegate for FileFinderDelegate {
                                 })
                                 .trigger(
                                     ButtonLike::new("split-trigger")
-                                        .child(Label::new("Split…"))
+                                        .child(Label::new(localization::text(
+                                            cx,
+                                            "file-finder-split",
+                                        )))
                                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                         .child(
                                             KeyBinding::for_action_in(
@@ -2011,22 +2028,22 @@ impl PickerDelegate for FileFinderDelegate {
                                     move |window, cx| {
                                         Some(ContextMenu::build(window, cx, {
                                             let focus_handle = focus_handle.clone();
-                                            move |menu, _, _| {
+                                            move |menu, _, cx| {
                                                 menu.context(focus_handle)
                                                     .action(
-                                                        "Split Left",
+                                                        localization::text(cx, "menu-split-left"),
                                                         pane::SplitLeft::default().boxed_clone(),
                                                     )
                                                     .action(
-                                                        "Split Right",
+                                                        localization::text(cx, "menu-split-right"),
                                                         pane::SplitRight::default().boxed_clone(),
                                                     )
                                                     .action(
-                                                        "Split Up",
+                                                        localization::text(cx, "menu-split-up"),
                                                         pane::SplitUp::default().boxed_clone(),
                                                     )
                                                     .action(
-                                                        "Split Down",
+                                                        localization::text(cx, "menu-split-down"),
                                                         pane::SplitDown::default().boxed_clone(),
                                                     )
                                             }
@@ -2035,28 +2052,30 @@ impl PickerDelegate for FileFinderDelegate {
                                 }),
                         )
                         .child(
-                            Button::new("open-without-dismiss", "Keep Open")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &OpenWithoutDismiss,
-                                        &focus_handle,
-                                        cx,
-                                    )
+                            Button::new(
+                                "open-without-dismiss",
+                                localization::text(cx, "file-finder-keep-open"),
+                            )
+                            .key_binding(
+                                KeyBinding::for_action_in(&OpenWithoutDismiss, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(OpenWithoutDismiss.boxed_clone(), cx)
-                                }),
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(OpenWithoutDismiss.boxed_clone(), cx)
+                            }),
                         )
                         .child(
-                            Button::new("open-selection", "Open")
-                                .key_binding(
-                                    KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                                }),
+                            Button::new(
+                                "open-selection",
+                                localization::text(cx, "file-finder-open"),
+                            )
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                            }),
                         ),
                 )
                 .into_any(),

@@ -5851,11 +5851,12 @@ impl GitPanel {
                                             time::OffsetDateTime::from_unix_timestamp(ts).ok()
                                         })
                                         .map(|dt| {
-                                            time_format::format_localized_timestamp(
+                                            time_format::format_localized_timestamp_for_language(
                                                 dt,
                                                 now,
                                                 local_offset,
                                                 time_format::TimestampFormat::Relative,
+                                                localization::language(cx),
                                             )
                                             .into()
                                         })
@@ -7377,8 +7378,8 @@ impl Panel for GitPanel {
         Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Git Panel")
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<SharedString> {
+        Some(localization::text(cx, "panel-git"))
     }
 
     fn icon_label(&self, _: &Window, cx: &App) -> Option<String> {

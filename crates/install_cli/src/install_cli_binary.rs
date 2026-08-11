@@ -1,6 +1,6 @@
 use super::register_flint_scheme;
 use anyhow::{Context as _, Result};
-use gpui::{AppContext as _, AsyncApp, Context, PromptLevel, Window, actions};
+use gpui::{AppContext as _, AsyncApp, Context, PromptButton, PromptLevel, Window, actions};
 use release_channel::ReleaseChannel;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,9 @@ actions!(
 async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))?;
     let link_path = Path::new("/usr/local/bin/flint");
-    let bin_dir_path = link_path.parent().unwrap();
+    let bin_dir_path = link_path
+        .parent()
+        .context("CLI link path has no parent directory")?;
 
     // Don't re-create symlink if it points to the same CLI binary.
     if smol::fs::read_link(link_path).await.ok().as_ref() == Some(&cli_path) {
@@ -62,15 +64,21 @@ async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
 }
 
 pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
-    const LINUX_PROMPT_DETAIL: &str = "If you installed Flint from our official release add ~/.local/bin to your PATH.\n\nIf you installed Flint from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named flintitor, flintit, flint-editor or something else.";
-
+    let install_error = localization::text(cx, "install-cli-error");
     cx.spawn_in(window, async move |workspace, cx| {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            let (title, detail, ok) = cx.update(|_, cx| {
+                (
+                    localization::text(cx, "install-cli-already"),
+                    localization::text(cx, "install-cli-linux-detail"),
+                    localization::text(cx, "common-ok"),
+                )
+            })?;
             let prompt = cx.prompt(
                 PromptLevel::Warning,
-                "CLI should already be installed",
-                Some(LINUX_PROMPT_DETAIL),
-                &["Ok"],
+                &title,
+                Some(&detail),
+                &[PromptButton::ok(ok)],
             );
             cx.background_spawn(prompt).detach();
             return Ok(());
@@ -82,14 +90,13 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
         workspace.update_in(cx, |workspace, _, cx| {
             struct InstalledFlintCli;
 
+            let mut args = localization::FluentArgs::new();
+            args.set("path", path.to_string_lossy().into_owned());
+            args.set("app", ReleaseChannel::global(cx).display_name());
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<InstalledFlintCli>(),
-                    format!(
-                        "Installed `flint` to {}. You can launch {} from your terminal.",
-                        path.to_string_lossy(),
-                        ReleaseChannel::global(cx).display_name()
-                    ),
+                    localization::text_with_args(cx, "install-cli-complete", &args).to_string(),
                 ),
                 cx,
             )
@@ -97,5 +104,5 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
         register_flint_scheme(cx).await.log_err();
         Ok(())
     })
-    .detach_and_prompt_err("Error installing flint cli", window, cx, |_, _, _| None);
+    .detach_and_prompt_err(&install_error, window, cx, |_, _, _| None);
 }

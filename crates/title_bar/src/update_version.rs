@@ -62,13 +62,19 @@ impl UpdateVersion {
         cx.notify()
     }
 
-    fn version_tooltip_message(version: &VersionCheckType) -> String {
-        format!("Update to Version: {}", {
-            match version {
-                VersionCheckType::Sha(sha) => sha.full(),
-                VersionCheckType::Semantic(semantic_version) => semantic_version.to_string(),
-            }
-        })
+    fn version_text(version: &VersionCheckType) -> String {
+        match version {
+            VersionCheckType::Sha(sha) => sha.full(),
+            VersionCheckType::Semantic(semantic_version) => semantic_version.to_string(),
+        }
+    }
+
+    fn version_tooltip_message(version: &VersionCheckType, cx: &App) -> SharedString {
+        localization::tr!(
+            cx,
+            "title-bar-update-to-version",
+            version = Self::version_text(version)
+        )
     }
 }
 
@@ -82,15 +88,15 @@ impl Render for UpdateVersion {
                 UpdateButton::checking().into_any_element()
             }
             AutoUpdateStatus::Downloading { version } => {
-                let version = Self::version_tooltip_message(&version);
+                let version = Self::version_tooltip_message(&version, cx);
                 UpdateButton::downloading(version).into_any_element()
             }
             AutoUpdateStatus::Installing { version } => {
-                let version = Self::version_tooltip_message(&version);
+                let version = Self::version_tooltip_message(&version, cx);
                 UpdateButton::installing(version).into_any_element()
             }
             AutoUpdateStatus::Updated { version } => {
-                let version = Self::version_tooltip_message(&version);
+                let version = Self::version_tooltip_message(&version, cx);
                 UpdateButton::updated(version)
                     .on_click(|_, _, cx| {
                         workspace::reload(cx);
@@ -127,19 +133,15 @@ mod tests {
 
     #[test]
     fn test_version_tooltip_message() {
-        let message = UpdateVersion::version_tooltip_message(&VersionCheckType::Semantic(
-            Version::new(1, 0, 0),
-        ));
+        let message =
+            UpdateVersion::version_text(&VersionCheckType::Semantic(Version::new(1, 0, 0)));
 
-        assert_eq!(message, "Update to Version: 1.0.0");
+        assert_eq!(message, "1.0.0");
 
-        let message = UpdateVersion::version_tooltip_message(&VersionCheckType::Sha(
-            AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
-        ));
+        let message = UpdateVersion::version_text(&VersionCheckType::Sha(AppCommitSha::new(
+            "14d9a4189f058d8736339b06ff2340101eaea5af".to_string(),
+        )));
 
-        assert_eq!(
-            message,
-            "Update to Version: 14d9a4189f058d8736339b06ff2340101eaea5af"
-        );
+        assert_eq!(message, "14d9a4189f058d8736339b06ff2340101eaea5af");
     }
 }

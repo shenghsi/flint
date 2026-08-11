@@ -783,7 +783,7 @@ pub(crate) fn render_buffer_header(
                             |path_header| {
                                 let filename = filename
                                     .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into());
+                                    .unwrap_or_else(|| localization::text(cx, "editor-untitled"));
 
                                 let full_path = match parent_path.as_deref() {
                                     Some(parent) if !parent.is_empty() => {

@@ -166,6 +166,45 @@ impl ManagedAgentProgressState {
         Some((((*downloaded_bytes as u128 * 100) / *total_bytes as u128).min(100)) as u64)
     }
 
+    pub fn localized_detail(&self, cx: &App) -> SharedString {
+        match self {
+            Self::Downloading {
+                downloaded_bytes,
+                total_bytes: Some(total_bytes),
+            } => SharedString::from(format!(
+                "{}% · {} / {}",
+                self.percentage().unwrap_or(0),
+                format_bytes(*downloaded_bytes),
+                format_bytes(*total_bytes)
+            )),
+            Self::Downloading {
+                downloaded_bytes,
+                total_bytes: None,
+            } => {
+                let mut args = localization::FluentArgs::new();
+                args.set("bytes", format_bytes(*downloaded_bytes));
+                localization::text_with_args(cx, "agent-threads-progress-downloaded", &args)
+            }
+            Self::CheckingInstalled => {
+                localization::text(cx, "agent-threads-progress-check-installed")
+            }
+            Self::Reusing => localization::text(cx, "agent-threads-progress-reuse"),
+            Self::CheckingCache => localization::text(cx, "agent-threads-progress-check-cache"),
+            Self::AwaitingConfirmation => {
+                localization::text(cx, "agent-threads-progress-confirmation")
+            }
+            Self::Verifying => localization::text(cx, "agent-threads-progress-verify"),
+            Self::VerifyingUploaded => {
+                localization::text(cx, "agent-threads-progress-verify-upload")
+            }
+            Self::Uploading => localization::text(cx, "agent-threads-progress-upload"),
+            Self::Installing => localization::text(cx, "agent-threads-progress-install"),
+            Self::Launching => localization::text(cx, "agent-threads-progress-launch"),
+            Self::Resuming => localization::text(cx, "agent-threads-progress-resume"),
+        }
+    }
+
+    #[cfg(test)]
     pub fn detail(&self) -> String {
         match self {
             Self::Downloading {
@@ -279,54 +318,38 @@ impl ManagedAgentProgressNotification {
         cx.notify();
     }
 
-    pub fn headline(&self) -> String {
-        match self.state {
+    pub fn headline(&self, cx: &App) -> SharedString {
+        let identifier = match self.state {
             ManagedAgentProgressState::CheckingInstalled => {
-                format!("Checking installed {} CLI", self.agent_label)
+                "agent-threads-headline-check-installed"
             }
-            ManagedAgentProgressState::Reusing => {
-                format!("Reusing installed {} CLI", self.agent_label)
+            ManagedAgentProgressState::Reusing => "agent-threads-headline-reuse",
+            ManagedAgentProgressState::CheckingCache => "agent-threads-headline-prepare",
+            ManagedAgentProgressState::AwaitingConfirmation => {
+                "agent-threads-headline-confirmation"
             }
-            ManagedAgentProgressState::CheckingCache => {
-                format!("Preparing Flint-managed {} CLI", self.agent_label)
-            }
-            ManagedAgentProgressState::AwaitingConfirmation => format!(
-                "Waiting to download official {} CLI v{}",
-                self.agent_label, self.version
-            ),
-            ManagedAgentProgressState::Downloading { .. } => format!(
-                "Downloading official {} CLI v{}",
-                self.agent_label, self.version
-            ),
-            ManagedAgentProgressState::Verifying => {
-                format!("Verifying official {} CLI", self.agent_label)
-            }
-            ManagedAgentProgressState::VerifyingUploaded => {
-                format!("Verifying uploaded {} CLI", self.agent_label)
-            }
-            ManagedAgentProgressState::Uploading => {
-                format!("Uploading {} CLI to remote", self.agent_label)
-            }
-            ManagedAgentProgressState::Installing => {
-                format!("Installing {} CLI on remote", self.agent_label)
-            }
-            ManagedAgentProgressState::Launching => {
-                format!("Launching Flint-managed {}", self.agent_label)
-            }
-            ManagedAgentProgressState::Resuming => {
-                format!("Resuming {} session", self.agent_label)
-            }
-        }
+            ManagedAgentProgressState::Downloading { .. } => "agent-threads-headline-download",
+            ManagedAgentProgressState::Verifying => "agent-threads-headline-verify",
+            ManagedAgentProgressState::VerifyingUploaded => "agent-threads-headline-verify-upload",
+            ManagedAgentProgressState::Uploading => "agent-threads-headline-upload",
+            ManagedAgentProgressState::Installing => "agent-threads-headline-install",
+            ManagedAgentProgressState::Launching => "agent-threads-headline-launch",
+            ManagedAgentProgressState::Resuming => "agent-threads-headline-resume",
+        };
+        let mut args = localization::FluentArgs::new();
+        args.set("agent", self.agent_label.to_string());
+        args.set("version", self.version.to_string());
+        localization::text_with_args(cx, identifier, &args)
     }
 }
 
 impl Render for ManagedAgentProgressNotification {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let detail = self.state.detail();
+        let detail = self.state.localized_detail(cx);
         let content = v_flex()
             .w_96()
             .gap_2()
-            .child(Label::new(self.headline()))
+            .child(Label::new(self.headline(cx)))
             .child(match self.state {
                 ManagedAgentProgressState::Downloading {
                     downloaded_bytes,
@@ -371,8 +394,14 @@ impl Render for ManagedAgentProgressNotification {
                     .into_any_element(),
             });
 
+        let mut args = localization::FluentArgs::new();
+        args.set("agent", self.agent_label.to_string());
         NotificationFrame::new()
-            .with_title(Some(format!("Flint-managed {}", self.agent_label)))
+            .with_title(Some(localization::text_with_args(
+                cx,
+                "agent-threads-managed-title",
+                &args,
+            )))
             .show_close_button(false)
             .show_suppress_button(false)
             .with_content(content)
@@ -490,6 +519,10 @@ mod tests {
 
     #[gpui::test]
     fn progress_notification_exposes_the_current_download(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
+        });
         let notification =
             cx.new(|cx| ManagedAgentProgressNotification::new("Codex", "0.144.6", cx));
 
@@ -504,7 +537,7 @@ mod tests {
         });
 
         assert_eq!(
-            notification.read_with(cx, |notification, _| notification.headline()),
+            notification.read_with(cx, |notification, cx| notification.headline(cx)),
             "Downloading official Codex CLI v0.144.6"
         );
         assert_eq!(
@@ -515,6 +548,10 @@ mod tests {
 
     #[gpui::test]
     fn remote_verification_has_distinct_installed_cli_copy(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
+        });
         let notification =
             cx.new(|cx| ManagedAgentProgressNotification::new("Codex", "0.144.6", cx));
 
@@ -526,7 +563,7 @@ mod tests {
         });
 
         assert_eq!(
-            notification.read_with(cx, |notification, _| notification.headline()),
+            notification.read_with(cx, |notification, cx| notification.headline(cx)),
             "Verifying uploaded Codex CLI"
         );
         assert_eq!(
@@ -537,11 +574,15 @@ mod tests {
 
     #[gpui::test]
     fn installed_cli_check_and_reuse_have_distinct_copy(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
+        });
         let notification =
             cx.new(|cx| ManagedAgentProgressNotification::new("Codex", "0.144.6", cx));
 
         assert_eq!(
-            notification.read_with(cx, |notification, _| notification.headline()),
+            notification.read_with(cx, |notification, cx| notification.headline(cx)),
             "Checking installed Codex CLI"
         );
         assert_eq!(
@@ -557,7 +598,7 @@ mod tests {
         });
 
         assert_eq!(
-            notification.read_with(cx, |notification, _| notification.headline()),
+            notification.read_with(cx, |notification, cx| notification.headline(cx)),
             "Reusing installed Codex CLI"
         );
         assert_eq!(
@@ -568,6 +609,10 @@ mod tests {
 
     #[gpui::test]
     fn resume_has_distinct_session_copy(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
+        });
         let notification =
             cx.new(|cx| ManagedAgentProgressNotification::new("Codex", "0.144.6", cx));
 
@@ -576,12 +621,33 @@ mod tests {
         });
 
         assert_eq!(
-            notification.read_with(cx, |notification, _| notification.headline()),
+            notification.read_with(cx, |notification, cx| notification.headline(cx)),
             "Resuming Codex session"
         );
         assert_eq!(
             notification.read_with(cx, |notification, _| notification.state().detail()),
             "Launching the managed CLI for this session"
+        );
+    }
+
+    #[gpui::test]
+    fn progress_copy_uses_simplified_chinese(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            localization::init(localization::UiLanguage::SimplifiedChinese, cx)
+                .expect("test localization must load");
+        });
+        let notification =
+            cx.new(|cx| ManagedAgentProgressNotification::new("Codex", "0.144.6", cx));
+
+        assert_eq!(
+            notification.read_with(cx, |notification, cx| notification.headline(cx)),
+            "正在检查已安装的 Codex CLI"
+        );
+        assert_eq!(
+            notification.read_with(cx, |notification, cx| {
+                notification.state().localized_detail(cx)
+            }),
+            "正在检查远程主机上安装的 CLI"
         );
     }
 }

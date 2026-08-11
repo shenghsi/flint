@@ -1,0 +1,60 @@
+keymap-title = Keymap Editor
+keymap-filter-actions = Filter action names…
+keymap-create = Create
+keymap-edit = Edit
+keymap-delete = Delete
+keymap-copy-action = Copy Action
+keymap-copy-context = Copy Context
+keymap-show-matching = Show Matching Keybindings
+keymap-unbound = This action is unbound
+keymap-view-conflicts = View conflicts
+keymap-view-conflicts-meta = Use alt+click to show all conflicts
+keymap-edit-binding = Edit this binding
+keymap-overridden = This binding is overridden by other bindings.
+keymap-show-matching-short = Show matching keybinds
+keymap-overridden-edit = This binding is overridden by other bindings.
+    Use alt+click to edit this binding
+keymap-edit-keybinding = Edit Keybinding
+keymap-no-conflict-query = No conflicting keybindings match the query
+keymap-no-conflicts = No conflicting keybindings found
+keymap-no-keystrokes = No keybindings match the entered keystrokes
+keymap-no-query = No matches found for the query
+keymap-filters = Filters
+keymap-conflicts = Conflicts
+keymap-no-action = No Action
+keymap-categories = Categories
+keymap-user = User
+keymap-default = Default
+keymap-vim = Vim
+keymap-global = <global>
+keymap-toggle-exact = Toggle Exact Match Mode
+keymap-search-keystrokes = Search by Keystrokes
+keymap-edit-json = Edit in JSON
+keymap-create-binding = Create Keybinding
+keymap-column-action = Action
+keymap-column-arguments = Arguments
+keymap-column-keystrokes = Keystrokes
+keymap-column-context = Context
+keymap-column-source = Source
+keymap-context-placeholder = Keybinding Context
+keymap-context-label = Edit Context
+keymap-action-placeholder = Type an action name
+keymap-action-label = Action
+keymap-edit-keystroke = Edit Keystroke
+keymap-matching-count =
+    { $count ->
+        [one] There is { $count } binding with the same keystrokes.
+       *[other] There are { $count } bindings with the same keystrokes.
+    }
+keymap-view = View
+keymap-edit-arguments = Edit Arguments
+keymap-save = Save
+keymap-recording = REC
+keymap-searching = SEARCH
+keymap-stop-searching = Stop Searching
+keymap-stop-recording = Stop Recording
+keymap-start-searching = Start Searching
+keymap-start-recording = Start Recording
+keymap-clear-keystrokes = Clear Keystrokes
+keymap-clear-keystrokes-meta = Press it three times to execute
+keymap-saved = Saved edits to the { $action } action.

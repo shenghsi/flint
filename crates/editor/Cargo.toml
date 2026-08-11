@@ -55,6 +55,7 @@ itertools.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true
+localization.workspace = true
 lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
