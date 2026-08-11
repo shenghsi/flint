@@ -1,4 +1,4 @@
-# Agent-Initiated Worktree Control: Windows Support (plan only, not implemented)
+# Agent-Initiated Worktree Control: Windows Support
 
 ## Context
 
@@ -12,15 +12,37 @@ detached daemon). It also added an opt-in nudge that can append worktree discove
 instructions to a CLI's global instructions file
 (`crates/agent_threads/src/instructions.rs`).
 
-This document plans a later Windows implementation. It does not implement Windows
-support. The earlier peer-credential work also exposed Windows `dead_code` failures:
+This document specifies the Windows implementation. The earlier peer-credential
+work also exposed Windows `dead_code` failures:
 the control-server task, live-terminal PID/worktree helpers, and their supporting
 type were reachable only from `#[cfg(unix)]` call sites but were not all gated the
 same way. Those items are now `#[cfg(unix)]`, keeping current Windows CI clean. The
 Windows implementation must broaden those gates as part of enabling their Windows
 callers; simply adding a transport is not sufficient.
 
-## Current platform boundary
+The behavioral baseline is commit
+`e1b1db2271c1122d1247837a668847be8a7faa65`. Windows support extends that
+implementation rather than defining a second control model. In particular, it must
+preserve the existing request and response JSON, server-side caller resolution,
+ancestry-before-cwd precedence, ambiguity rejection, local-thread boundary, live
+`agent_threads.agent_control` setting check, retie/create handlers, and executable
+marker discovery. Platform-specific code supplies only endpoint ownership, framing,
+peer-PID acquisition, and the Windows validation needed to make the same resolver
+safe. Existing Unix behavior and lifecycle are regression constraints.
+
+## Implementation status
+
+The branch implementation now covers the endpoint protocol, named-pipe client and
+server, caller resolution, capability-gated instructions, helper delivery, updater
+rollback, and installer metadata described below. Windows-native tests and the
+repository clippy gate pass. Do not declare the platform supported until the
+remaining release-acceptance work is recorded in the PR: build and inspect a
+signed installer, exercise the DACL with genuinely separate logon identities, and
+smoke-test the installed helper on the pinned Windows 10 1903 VM. Those checks
+require release signing credentials and managed Windows identities/VMs; unit tests
+or a developer-machine build do not substitute for them.
+
+## Baseline platform boundary
 
 Already cross-platform:
 
@@ -33,7 +55,7 @@ Already cross-platform:
   algorithm uses `sysinfo`, but its Windows process and path behavior still needs
   native tests before it can be called unchanged.
 
-Unix-only today:
+Unix-only at the baseline commit:
 
 - `mod control` and `mod instructions` in `agent_threads.rs`.
 - `AgentThreadStore::_control_server_task`, `LiveTerminalWorktree`,
@@ -121,6 +143,17 @@ silently joining or stealing an existing endpoint while still allowing the owner
 to create concurrent instances. A same-name live owner should disable the new
 server instance with a clear log, matching the Unix behavior.
 
+Keep that initial handle open as one persistent serving slot for the server's entire
+lifetime. Every pool slot disconnects and reconnects the same handle rather than
+closing and recreating instances, so the pool never passes through a state with no
+open owner handle. A separate non-serving anchor is unsuitable because Windows may
+select that available instance for a client connection and strand the client with no
+worker. Remove the owned marker before signalling the workers to stop, while the
+first-instance handle is still open; this prevents a new owner from publishing a
+marker in the gap between endpoint release and the old owner's removal. Tests should
+force every serving slot to recycle concurrently and prove that a second server still
+cannot acquire the endpoint.
+
 The executable-location marker remains a normal file under `paths::data_dir()`.
 Its Windows filename must contain the same Terminal Services session ID as the pipe
 name.
@@ -167,6 +200,11 @@ equivalent half-close, so define Windows framing explicitly:
   available instance only up to a fixed timeout and report a clear busy error. Put
   bounded timeouts around client reads and writes as well so pool exhaustion or a
   failed server worker cannot hang the CLI indefinitely.
+- Implement those read/write deadlines with overlapped operations and
+  `CancelIoEx`; `WaitNamedPipeW` bounds only the wait for an available instance and
+  does not bound a subsequent synchronous `ReadFile` or `WriteFile`. After a
+  cancellation, wait for the overlapped operation to reach a terminal state before
+  closing or reusing its handle.
 - Disconnect and reuse or recreate the pipe instance after the response. The next
   accept must be ready even if the previous request failed to decode or dispatch.
 
@@ -188,9 +226,15 @@ and its size must be an explicit constant that tests can override.
 4. The owning server worker writes the response, disconnects the instance, and
    immediately recreates or reuses that pool slot for another accept, including
    after decode or dispatch failure.
-5. App shutdown signals every worker, cancels pending accept/read I/O, joins all
-   server threads, and then removes the marker it owns. Tests must be able to stop
-   the pool deterministically; process exit is not the cleanup mechanism.
+5. Waiting for the foreground response is itself bounded and observes shutdown. If
+   the dispatcher task exits, the response sender is dropped, dispatch exceeds its
+   deadline, or shutdown begins, the worker returns a bounded error when possible
+   and recycles or closes the instance instead of waiting forever.
+6. App shutdown first removes the marker it owns while the first-instance serving
+   handle still owns the endpoint, then signals every worker, cancels pending
+   accept/read/write I/O, and joins all server threads off the GPUI foreground
+   thread. Tests must be able to stop the pool deterministically; process exit is
+   not the cleanup mechanism.
 
 Preserve the existing Unix server lifecycle: it remains one foreground
 `Task<()>` held by `AgentThreadStore`, with the same cancellation and app-quit
@@ -227,6 +271,9 @@ After obtaining the PID, reuse the ancestry-first and cwd/kind-fallback policy f
 - Make cwd/root containment honor Windows path semantics, including
   case-insensitive components, drive-letter case, mixed separators, and canonical
   paths. Do not use raw `Path::starts_with` as the only Windows containment check.
+  Canonicalize both paths before comparison and fail authorization closed if either
+  path cannot be canonicalized; a lexical fallback can accept aliases, junctions,
+  or traversal components that do not identify the tracked worktree.
 - Preserve ancestry as the authoritative signal and continue rejecting ambiguous
   cwd/kind matches.
 - Continue excluding remote threads from the local PID/worktree candidate sets.
@@ -293,6 +340,26 @@ Represent the result as an explicit per-kind/platform instruction capability. If
 kind's Windows shell or global instructions convention is unverified, do not offer
 to write a block for that kind.
 
+The current fail-closed capability decision is:
+
+- **Codex: enabled.** Official OpenAI documentation confirms native PowerShell
+  execution on Windows and the global `CODEX_HOME/AGENTS.md` convention. Native
+  Windows process/path tests cover the cwd inspection used by its fallback.
+- **Claude Code: disabled.** Its user instructions path is known, but Anthropic's
+  native Windows setup uses Git Bash rather than the PowerShell block below; its
+  native cwd authorization path still needs a kind-specific test.
+- **OpenCode: disabled.** Its global instructions path is known, but its Windows
+  documentation recommends WSL and its native shell/cwd authorization path is not
+  established for this local Windows transport.
+- **Pi: disabled.** Its global instructions path is known, but its `shellPath` is
+  configurable on Windows, so one unconditional shell block would be unsafe and
+  its cwd authorization path remains unverified.
+
+Keep an explicit unsupported reason for each disabled kind and surface the current
+limitations with the Agent Control setting. Enabling another kind requires both an
+exact shell-specific block test and a native cwd/ancestry authorization test; a
+known global instructions path alone is insufficient.
+
 For PowerShell-backed agents, the block should discover
 the marker for the current PowerShell process's session under
 `%LOCALAPPDATA%\Flint` rather than reading markers belonging to every session. For
@@ -352,7 +419,9 @@ tests cannot validate:
 - Message-mode request/response round trips cover payloads larger than the first
   read buffer, malformed JSON, oversize rejection, retry after a failed request,
   concurrent requests while one dispatch is slow, pool exhaustion behavior, and
-  deterministic shutdown while accept/read is pending.
+  deterministic shutdown while accept/read/write or foreground dispatch is
+  pending. Force all serving slots to recycle at once and verify the persistent
+  first-instance serving handle prevents a second server from acquiring the name.
 - The Windows CLI preserves the Unix client's retry/backoff and exit-code behavior.
 - Toggling `agent_threads.agent_control` affects already-running Windows threads.
 - Windows startup publishes the marker; the test discovery layer reads it, launches
@@ -380,7 +449,6 @@ acceptance check.
   command semantics.
 - Reintroducing client-presented bearer tokens or trusting a PID supplied by the
   client.
-- Implementing any of the Windows work in this documentation-only pass.
 
 ## Implementation order
 

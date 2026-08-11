@@ -18,3 +18,9 @@ agent_control_protocol.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[build-dependencies]
+windows_resources = { path = "../windows_resources" }

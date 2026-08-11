@@ -5,8 +5,8 @@
 //! worktree creation (`crate::control`) silently never gets used even when
 //! `agent_threads.agent_control` is on.
 //!
-//! Unix only, matching `crate::control`'s own gating: the feature this
-//! nudges toward doesn't exist elsewhere.
+//! The exact discovery block is selected for the host platform and only
+//! offered for agent kinds with a verified shell/instructions capability.
 
 use std::path::{Path, PathBuf};
 
@@ -17,11 +17,14 @@ use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 
 use crate::AgentKindDefinition;
+#[cfg(windows)]
+use crate::WindowsInstructionShell;
 
 /// The exact block Flint offers to append. `already_has_instructions` also
 /// just checks for `DETECTION_MARKER` (a substring of this), so a file a
 /// user (or an earlier Flint version) already has this in is recognized
 /// as-is -- no separate sentinel comment needed.
+#[cfg(unix)]
 const WORKTREE_INSTRUCTIONS_BLOCK: &str = "\
 ## Worktree creation
 
@@ -38,6 +41,27 @@ the new worktree in Flint's Agent Threads panel. No output means Flint is
 not installed or running. A \"not recognized\" report means this terminal
 just is not a Flint-tracked one, even if Flint is running elsewhere. Skip
 this section either way.
+";
+
+#[cfg(windows)]
+const POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK: &str = "\
+## Worktree creation
+
+Run this in PowerShell after creating a git worktree:
+
+    $sessionId = (Get-Process -Id $PID).SessionId
+    $marker = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Flint') -Filter \"agent-control-*-$sessionId-executable.json\" -File | Select-Object -First 1
+    $control = if ($marker) { (Get-Content -Raw $marker.FullName | ConvertFrom-Json).executable }
+
+If `$control` contains an executable path, run:
+
+    & $control retie-thread --worktree \"<path>\"
+
+using the new worktree's full path. This moves the thread to the new
+worktree in Flint's Agent Threads panel. No marker means Flint is not
+installed or running in this Windows sign-in session. A \"not recognized\"
+report means this terminal is not a Flint-tracked one. Skip this section
+either way.
 ";
 
 const DETECTION_MARKER: &str = "retie-thread --worktree";
@@ -79,6 +103,26 @@ fn already_has_instructions(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn worktree_instructions_block(kind: &AgentKindDefinition) -> Option<&'static str> {
+    #[cfg(unix)]
+    {
+        let _ = kind;
+        Some(WORKTREE_INSTRUCTIONS_BLOCK)
+    }
+    #[cfg(windows)]
+    {
+        if !kind.supports_windows_agent_control() {
+            return None;
+        }
+        match kind.windows_agent_control.instruction_shell {
+            Some(WindowsInstructionShell::PowerShell) => {
+                Some(POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK)
+            }
+            None => None,
+        }
+    }
+}
+
 /// Checks whether `kind`'s global instructions file is missing the
 /// worktree-creation section and, if so and the user hasn't already been
 /// offered it, shows a dismissible toast in `workspace` offering to add it.
@@ -93,6 +137,16 @@ pub(crate) fn maybe_offer_worktree_instructions(
     if !crate::AgentThreadSettings::get_global(cx).agent_control {
         return;
     }
+    let Some(instructions_block) = worktree_instructions_block(kind) else {
+        #[cfg(windows)]
+        if let Some(reason) = kind.windows_agent_control_unsupported_reason() {
+            log::debug!(
+                "agent_threads: Windows worktree instructions are unavailable for {}: {reason}",
+                kind.id
+            );
+        }
+        return;
+    };
     let Some(path) = global_instructions_path(kind.id) else {
         return;
     };
@@ -134,7 +188,7 @@ pub(crate) fn maybe_offer_worktree_instructions(
             ),
         )
         .on_click("Add", move |_window, _cx| {
-            append_instructions(&path);
+            append_instructions(&path, instructions_block);
         }),
         cx,
     );
@@ -142,7 +196,7 @@ pub(crate) fn maybe_offer_worktree_instructions(
 
 enum WorktreeInstructionsNudge {}
 
-fn append_instructions(path: &Path) {
+fn append_instructions(path: &Path, instructions_block: &str) {
     match std::fs::read_to_string(path) {
         Ok(existing) => {
             if existing.contains(DETECTION_MARKER) {
@@ -155,14 +209,14 @@ fn append_instructions(path: &Path) {
             if !updated.is_empty() {
                 updated.push('\n');
             }
-            updated.push_str(WORKTREE_INSTRUCTIONS_BLOCK);
+            updated.push_str(instructions_block);
             std::fs::write(path, updated).log_err();
         }
         Err(_) => {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).log_err();
             }
-            std::fs::write(path, WORKTREE_INSTRUCTIONS_BLOCK).log_err();
+            std::fs::write(path, instructions_block).log_err();
         }
     }
 }
@@ -170,6 +224,13 @@ fn append_instructions(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_block() -> &'static str {
+        #[cfg(unix)]
+        return WORKTREE_INSTRUCTIONS_BLOCK;
+        #[cfg(windows)]
+        return POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK;
+    }
 
     #[test]
     fn already_has_instructions_detects_an_existing_manually_added_block() {
@@ -200,7 +261,7 @@ mod tests {
     fn append_instructions_creates_a_missing_file() {
         let temp_dir = tempfile::tempdir().expect("failed to create a temp dir");
         let path = temp_dir.path().join("nested").join("AGENTS.md");
-        append_instructions(&path);
+        append_instructions(&path, test_block());
         let content = std::fs::read_to_string(&path).expect("failed to read the written file");
         assert!(content.contains(DETECTION_MARKER));
     }
@@ -211,7 +272,7 @@ mod tests {
         let path = temp_dir.path().join("CLAUDE.md");
         std::fs::write(&path, "Always be concise.\n").expect("failed to write the fixture file");
 
-        append_instructions(&path);
+        append_instructions(&path, test_block());
 
         let content = std::fs::read_to_string(&path).expect("failed to read the written file");
         assert!(content.starts_with("Always be concise.\n"));
@@ -222,10 +283,10 @@ mod tests {
     fn append_instructions_does_not_duplicate_an_existing_block() {
         let temp_dir = tempfile::tempdir().expect("failed to create a temp dir");
         let path = temp_dir.path().join("AGENTS.md");
-        std::fs::write(&path, WORKTREE_INSTRUCTIONS_BLOCK)
-            .expect("failed to write the fixture file");
+        let block = test_block();
+        std::fs::write(&path, block).expect("failed to write the fixture file");
 
-        append_instructions(&path);
+        append_instructions(&path, block);
 
         let content = std::fs::read_to_string(&path).expect("failed to read the written file");
         assert_eq!(content.matches(DETECTION_MARKER).count(), 1);
@@ -254,5 +315,47 @@ mod tests {
             global_instructions_path("pi"),
             Some(paths::home_dir().join(".pi/agent/AGENTS.md"))
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_block_is_session_scoped_and_invokes_the_discovered_helper() {
+        assert!(
+            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK.contains("(Get-Process -Id $PID).SessionId")
+        );
+        assert!(
+            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK
+                .contains("agent-control-*-$sessionId-executable.json")
+        );
+        assert!(
+            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK
+                .contains("& $control retie-thread --worktree \"<path>\"")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_nudge_is_enabled_only_for_verified_agent_shells() {
+        let mut registry = crate::agent_kind_registry().into_iter();
+        let codex = registry.next().expect("Codex is registered");
+        assert_eq!(codex.id, "codex");
+        assert_eq!(
+            worktree_instructions_block(&codex),
+            Some(POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK)
+        );
+        assert_eq!(codex.windows_agent_control_unsupported_reason(), None);
+
+        for kind in registry {
+            assert!(
+                worktree_instructions_block(&kind).is_none(),
+                "{} must stay disabled until its Windows shell and cwd authorization are verified",
+                kind.id
+            );
+            assert!(
+                kind.windows_agent_control_unsupported_reason().is_some(),
+                "{} must explain why Windows agent control is unavailable",
+                kind.id
+            );
+        }
     }
 }

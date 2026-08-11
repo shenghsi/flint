@@ -5154,7 +5154,11 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Agent Control",
-                description: "Allow a local agent thread's own CLI process to ask Flint to re-tie itself to a different worktree or spawn a sibling thread.",
+                description: if cfg!(windows) {
+                    "Allow a local agent thread's own CLI process to ask Flint to re-tie itself to a different worktree or spawn a sibling thread. On Windows, automatic instructions are currently available for Codex; automatic setup for Claude Code, OpenCode, and Pi stays disabled until their native shell and cwd authorization paths are verified."
+                } else {
+                    "Allow a local agent thread's own CLI process to ask Flint to re-tie itself to a different worktree or spawn a sibling thread."
+                },
                 field: Box::new(SettingField {
                     json_path: Some("agent_threads.agent_control"),
                     pick: |settings_content| {

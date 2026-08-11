@@ -1,10 +1,11 @@
-//! The local-only Unix socket server backing agent-initiated worktree
+//! The local-only server backing agent-initiated worktree
 //! control: a thread's own CLI process (Codex, Claude Code, etc.) invokes
 //! the `flint-agent-control` binary (`agent_control_cli`), which sends one
-//! JSON request over this socket per invocation.
+//! JSON request over the platform transport per invocation.
 //!
 //! Caller identity is established by asking the kernel who actually
-//! connected -- `LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux -- and
+//! connected -- `LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux, or the
+//! named-pipe client PID on Windows -- and
 //! walking that process's parent-PID ancestry (via `sysinfo`) looking for a
 //! PID Flint recognizes as a live thread's own terminal process. There is
 //! no client-presented secret: nothing is minted, delivered, or can go
@@ -12,24 +13,29 @@
 //! for why environment variables and a per-thread token were tried first
 //! and abandoned.
 //!
-//! Unix only: gated at the `mod control;` declaration in `agent_threads.rs`
-//! and at every cross-module call site, since the feature doesn't exist on
-//! other platforms for this pass.
-
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
+#[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use agent_control_protocol::{
     ControlRequest, ControlResponse, ControlSuccess, CreateThreadRequest, CreateThreadWorktree,
     RetieThreadRequest,
 };
+#[cfg(unix)]
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+#[cfg(unix)]
+use gpui::Task;
 use gpui::{App, AsyncApp, Entity, EntityId};
+#[cfg(unix)]
 use net::async_net::{UnixListener, UnixStream};
 use settings::Settings as _;
+#[cfg(unix)]
 use smol::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -43,8 +49,15 @@ use crate::store::{self, AgentThreadStore, LiveTerminalWorktree};
 /// shell layer removed) without risking an unbounded walk.
 const MAX_ANCESTRY_DEPTH: usize = 32;
 
+#[cfg(unix)]
+pub(crate) type ControlServerHandle = Task<()>;
+
+#[cfg(windows)]
+pub(crate) use crate::control_windows::ControlServerHandle;
+
 /// Starts the accept-loop exactly once and stashes its `Task` on the
 /// `AgentThreadStore` global so its lifetime is the app's, not a caller's.
+#[cfg(unix)]
 pub(crate) fn init(cx: &mut App) {
     let store = AgentThreadStore::global(cx);
     let socket_path = agent_control_protocol::socket_path();
@@ -84,9 +97,15 @@ pub(crate) fn init(cx: &mut App) {
     })
     .detach();
     let store = AgentThreadStore::global(cx);
-    store.update(cx, |store, _cx| store.hold_control_server_task(task));
+    store.update(cx, |store, _cx| store.hold_control_server(task));
 }
 
+#[cfg(windows)]
+pub(crate) fn init(cx: &mut App) {
+    crate::control_windows::init(cx);
+}
+
+#[cfg(unix)]
 async fn run_server(
     socket_path: PathBuf,
     executable_location_path: PathBuf,
@@ -149,9 +168,9 @@ async fn run_server(
 /// lives, so an agent's CLI process can discover what command to run in the
 /// first place. Best-effort: if the executable can't be resolved (e.g. a
 /// dev build with no bundled binary alongside it), the server still starts
-/// -- an explicit `--socket` override or a PATH-installed binary can still
-/// reach it, just not via this file.
-fn write_executable_location(executable_location_path: &std::path::Path) {
+/// -- an explicit platform endpoint override or a PATH-installed binary can
+/// still reach it, just not via this file.
+pub(crate) fn write_executable_location(executable_location_path: &std::path::Path) -> bool {
     let executable = match util::get_flint_agent_control_path() {
         Ok(executable) => executable,
         Err(error) => {
@@ -159,16 +178,77 @@ fn write_executable_location(executable_location_path: &std::path::Path) {
                 "agent_threads: could not resolve flint-agent-control's own path, so agents \
                  won't be able to discover it via the marker file: {error:#}"
             );
-            return;
+            return false;
         }
     };
-    let location = agent_control_protocol::AgentControlLocation { executable };
-    let Some(json) = serde_json::to_string_pretty(&location).log_err() else {
-        return;
-    };
-    std::fs::write(executable_location_path, json).log_err();
+    write_executable_location_for(executable_location_path, executable)
 }
 
+pub(crate) fn write_executable_location_for(
+    executable_location_path: &std::path::Path,
+    executable: std::path::PathBuf,
+) -> bool {
+    if let Some(parent) = executable_location_path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        log::error!("failed to create agent control marker directory {parent:?}: {error:#}");
+        return false;
+    }
+    let location = agent_control_protocol::AgentControlLocation { executable };
+    let Some(json) = serde_json::to_string_pretty(&location).log_err() else {
+        return false;
+    };
+    let temporary_path =
+        executable_location_path.with_extension(format!("{}.tmp", std::process::id()));
+    let result = std::fs::write(&temporary_path, json)
+        .and_then(|()| replace_marker(&temporary_path, executable_location_path));
+    match result {
+        Ok(()) => true,
+        Err(error) => {
+            if let Err(cleanup_error) = std::fs::remove_file(&temporary_path)
+                && cleanup_error.kind() != std::io::ErrorKind::NotFound
+            {
+                log::warn!("failed to clean up temporary agent control marker: {cleanup_error}");
+            }
+            log::error!("failed to write agent control executable marker: {error:#}");
+            false
+        }
+    }
+}
+
+#[cfg(unix)]
+fn replace_marker(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+}
+
+#[cfg(windows)]
+fn replace_marker(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MoveFileExW};
+    use windows::core::PCWSTR;
+
+    let from = from
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let to = to
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both buffers are terminated and remain alive for the call.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(from.as_ptr()),
+            PCWSTR(to.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING,
+        )
+    }
+    .map_err(std::io::Error::other)
+}
+
+#[cfg(unix)]
 async fn handle_connection(
     mut stream: UnixStream,
     store: Entity<AgentThreadStore>,
@@ -218,7 +298,7 @@ fn get_peer_pid(stream: &UnixStream) -> Result<u32> {
     Ok(credentials.pid() as u32)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
 fn get_peer_pid(_stream: &UnixStream) -> Result<u32> {
     anyhow::bail!("peer-credential resolution is not supported on this platform")
 }
@@ -316,6 +396,15 @@ fn walk_ancestry_for_match(
         if parent == current {
             return None;
         }
+        #[cfg(windows)]
+        if !valid_windows_parent_hop(current.as_u32(), parent.as_u32()) {
+            log::warn!(
+                "agent_threads: rejected process ancestry hop {} -> {} because its creation times could not prove the relationship",
+                current.as_u32(),
+                parent.as_u32()
+            );
+            return None;
+        }
         current = parent;
     }
     None
@@ -334,10 +423,7 @@ fn resolve_by_cwd(
     let cwd = system.process(sysinfo::Pid::from_u32(peer_pid))?.cwd()?;
     let cwd_matches: Vec<&LiveTerminalWorktree> = tracked_worktrees
         .iter()
-        .filter(|candidate| {
-            cwd == candidate.tied_worktree_root.as_path()
-                || cwd.starts_with(&candidate.tied_worktree_root)
-        })
+        .filter(|candidate| path_is_within(cwd, &candidate.tied_worktree_root))
         .collect();
 
     match cwd_matches.as_slice() {
@@ -346,13 +432,13 @@ fn resolve_by_cwd(
         multiple => {
             let ancestry_names = ancestry_chain(peer_pid, system)
                 .into_iter()
-                .map(|(_, name)| name.to_lowercase())
+                .map(|(_, name)| normalized_process_name(&name))
                 .collect::<Vec<_>>();
             let by_kind: Vec<&&LiveTerminalWorktree> = multiple
                 .iter()
                 .filter(|candidate| {
-                    let kind = candidate.kind_id.to_lowercase();
-                    ancestry_names.iter().any(|name| name.contains(&kind))
+                    let kind = normalized_process_name(candidate.kind_id);
+                    ancestry_names.iter().any(|name| name == &kind)
                 })
                 .collect();
             match by_kind.as_slice() {
@@ -361,6 +447,78 @@ fn resolve_by_cwd(
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn path_is_within(path: &std::path::Path, root: &std::path::Path) -> bool {
+    path == root || path.starts_with(root)
+}
+
+#[cfg(windows)]
+fn path_is_within(path: &std::path::Path, root: &std::path::Path) -> bool {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    let Ok(root) = std::fs::canonicalize(root) else {
+        return false;
+    };
+    let path_components = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
+        .collect::<Vec<_>>();
+    let root_components = root
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
+        .collect::<Vec<_>>();
+    path_components.starts_with(&root_components)
+}
+
+fn normalized_process_name(name: &str) -> String {
+    let normalized = name.to_lowercase();
+    normalized
+        .strip_suffix(".exe")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+#[cfg(windows)]
+fn valid_windows_parent_hop(child_pid: u32, parent_pid: u32) -> bool {
+    let Some(child_created) = windows_process_creation_time(child_pid) else {
+        return false;
+    };
+    let Some(parent_created) = windows_process_creation_time(parent_pid) else {
+        return false;
+    };
+    valid_windows_parent_creation_times(child_created, parent_created)
+}
+
+#[cfg(windows)]
+fn valid_windows_parent_creation_times(child_created: u64, parent_created: u64) -> bool {
+    child_created >= parent_created
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_process_creation_time(pid: u32) -> Option<u64> {
+    use windows::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // SAFETY: the returned process handle is owned and closed below.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    // SAFETY: all FILETIME pointers are valid writable storage.
+    let result =
+        unsafe { GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) };
+    // SAFETY: process is the valid owned handle returned by OpenProcess.
+    if let Err(error) = unsafe { CloseHandle(process) } {
+        log::warn!("agent_threads: failed to close process {pid} after querying times: {error}");
+    }
+    result.ok()?;
+    Some(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
 }
 
 /// Walks up from `peer_pid` through its process ancestry (closest first),
@@ -387,7 +545,7 @@ fn ancestry_chain(peer_pid: u32, system: &sysinfo::System) -> Vec<(u32, String)>
     chain
 }
 
-async fn dispatch(
+pub(crate) async fn dispatch(
     peer_pid: u32,
     request: &ControlRequest,
     store: &Entity<AgentThreadStore>,
@@ -434,7 +592,7 @@ async fn dispatch_for_caller(
     }
 }
 
-fn error_response(error: impl std::fmt::Display) -> ControlResponse {
+pub(crate) fn error_response(error: impl std::fmt::Display) -> ControlResponse {
     ControlResponse::Error {
         message: error.to_string(),
     }
@@ -584,7 +742,12 @@ mod tests {
     use gpui::{EntityId, TestAppContext, WindowHandle};
     use project::{FakeFs, Project};
     use settings::{AgentThreadCommandContent, AgentThreadSettingsContent, SettingsStore};
+    use std::path::PathBuf;
+    #[cfg(unix)]
+    use std::sync::Arc;
     use std::sync::LazyLock;
+    #[cfg(unix)]
+    use std::sync::atomic::{AtomicBool, Ordering};
     use terminal_view::TerminalView;
     use workspace::MultiWorkspace;
 
@@ -722,6 +885,7 @@ mod tests {
         (window_handle, terminal_item_id)
     }
 
+    #[cfg(unix)]
     #[test]
     fn get_peer_pid_returns_the_actual_connecting_process() {
         let temp_dir = tempfile::tempdir().expect("failed to create a temp dir for the socket");
@@ -754,11 +918,7 @@ mod tests {
     #[test]
     fn resolve_caller_thread_walks_up_to_a_tracked_parent() {
         let this_pid = std::process::id();
-        let mut child = smol::process::Command::new("sleep")
-            .arg("5")
-            .kill_on_drop(true)
-            .spawn()
-            .expect("failed to spawn a real child process for the ancestry test");
+        let mut child = spawn_test_child(None);
         let child_pid = child.id();
 
         let tracked: HashMap<u32, EntityId> = HashMap::from_iter([(this_pid, EntityId::from(42))]);
@@ -813,6 +973,62 @@ mod tests {
         }
     }
 
+    fn spawn_test_child(cwd: Option<&std::path::Path>) -> smol::process::Child {
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = smol::process::Command::new("sleep");
+            command.arg("5");
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = smol::process::Command::new("cmd.exe");
+            command.args(["/C", "ping -n 6 127.0.0.1 > nul"]);
+            command
+        };
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        command
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn a process inspection test child")
+    }
+
+    fn test_child_kind_id() -> &'static str {
+        if cfg!(windows) { "cmd" } else { "sleep" }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_path_containment_handles_case_and_mixed_separators() {
+        let root = tempfile::tempdir().expect("create path test root");
+        let nested = root.path().join("Nested");
+        std::fs::create_dir(&nested).expect("create nested directory");
+        let differently_cased_root = PathBuf::from(root.path().to_string_lossy().to_uppercase());
+        let mixed_separator_nested = PathBuf::from(nested.to_string_lossy().replace('\\', "/"));
+
+        assert!(path_is_within(
+            &mixed_separator_nested,
+            &differently_cased_root
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_process_names_ignore_exe_suffix_and_case() {
+        assert_eq!(normalized_process_name("CoDeX.EXE"), "codex");
+        assert_eq!(normalized_process_name("CoDeX.Exe"), "codex");
+        assert_eq!(normalized_process_name("codex.exe"), "codex");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_parent_created_after_its_reported_child_is_rejected() {
+        assert!(!valid_windows_parent_creation_times(100, 101));
+        assert!(valid_windows_parent_creation_times(101, 100));
+    }
+
     /// Models Codex CLI's real-world topology: the connecting process's
     /// ancestry never reaches a tracked PID (it's delegated through a
     /// daemon that isn't a descendant of any tracked terminal), but its cwd
@@ -820,12 +1036,7 @@ mod tests {
     #[test]
     fn resolve_caller_thread_falls_back_to_cwd_when_ancestry_has_no_match() {
         let worktree_root = canonical_temp_dir();
-        let mut child = smol::process::Command::new("sleep")
-            .arg("5")
-            .current_dir(&worktree_root)
-            .kill_on_drop(true)
-            .spawn()
-            .expect("failed to spawn a real child process for the cwd test");
+        let mut child = spawn_test_child(Some(&worktree_root));
         let child_pid = child.id();
 
         let no_pids: HashMap<u32, EntityId> = HashMap::default();
@@ -852,12 +1063,7 @@ mod tests {
     #[test]
     fn resolve_caller_thread_refuses_an_ambiguous_cwd_match() {
         let worktree_root = canonical_temp_dir();
-        let mut child = smol::process::Command::new("sleep")
-            .arg("5")
-            .current_dir(&worktree_root)
-            .kill_on_drop(true)
-            .spawn()
-            .expect("failed to spawn a real child process for the cwd test");
+        let mut child = spawn_test_child(Some(&worktree_root));
         let child_pid = child.id();
 
         let no_pids: HashMap<u32, EntityId> = HashMap::default();
@@ -881,12 +1087,7 @@ mod tests {
     #[test]
     fn resolve_caller_thread_disambiguates_same_worktree_by_kind() {
         let worktree_root = canonical_temp_dir();
-        let mut child = smol::process::Command::new("sleep")
-            .arg("5")
-            .current_dir(&worktree_root)
-            .kill_on_drop(true)
-            .spawn()
-            .expect("failed to spawn a real child process for the kind-disambiguation test");
+        let mut child = spawn_test_child(Some(&worktree_root));
         let child_pid = child.id();
 
         let no_pids: HashMap<u32, EntityId> = HashMap::default();
@@ -897,7 +1098,11 @@ mod tests {
         // which would make this assertion flaky depending on what spawned
         // the test run.
         let worktrees = [
-            live_terminal_worktree(EntityId::from(7), worktree_root.clone(), "sleep"),
+            live_terminal_worktree(
+                EntityId::from(7),
+                worktree_root.clone(),
+                test_child_kind_id(),
+            ),
             live_terminal_worktree(EntityId::from(8), worktree_root, "zzz-decoy-kind"),
         ];
 
@@ -907,7 +1112,7 @@ mod tests {
         assert_eq!(
             resolved,
             Some(EntityId::from(7)),
-            "the connecting process's own name is \"sleep\", matching only the first candidate's kind_id"
+            "the connecting process's own name matches only the first candidate's kind_id"
         );
     }
 
@@ -918,12 +1123,7 @@ mod tests {
     fn resolve_caller_thread_prefers_ancestry_over_cwd() {
         let this_pid = std::process::id();
         let decoy_root = canonical_temp_dir();
-        let mut child = smol::process::Command::new("sleep")
-            .arg("5")
-            .current_dir(&decoy_root)
-            .kill_on_drop(true)
-            .spawn()
-            .expect("failed to spawn a real child process for the ancestry test");
+        let mut child = spawn_test_child(Some(&decoy_root));
         let child_pid = child.id();
 
         let tracked: HashMap<u32, EntityId> = HashMap::from_iter([(this_pid, EntityId::from(42))]);
@@ -933,7 +1133,7 @@ mod tests {
         let worktrees = [live_terminal_worktree(
             EntityId::from(99),
             decoy_root,
-            "sleep",
+            test_child_kind_id(),
         )];
 
         let resolved = resolve_caller_thread(child_pid, &tracked, &worktrees);
@@ -1039,6 +1239,7 @@ mod tests {
     /// an ancestor of it, so this exercises the NotReady/rejection path
     /// rather than a successful match; `resolve_caller_thread`'s own tests
     /// cover the match logic with a real ancestor relationship.
+    #[cfg(unix)]
     #[gpui::test]
     async fn control_server_round_trips_a_request_over_a_real_socket(cx: &mut TestAppContext) {
         let (_window_handle, _terminal_item_id) = spawn_live_codex_thread(cx).await;
