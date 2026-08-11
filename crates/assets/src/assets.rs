@@ -66,3 +66,13 @@ impl Assets {
             .unwrap()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Assets;
+
+    #[test]
+    fn embeds_noto_sans_cjk_sc_regular() {
+        assert!(Assets::get("fonts/noto-sans-cjk-sc/NotoSansCJKsc-Regular.otf").is_some());
+    }
+}
