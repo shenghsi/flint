@@ -1,0 +1,16 @@
+preview-zoom-out = Zoom Out
+preview-reset-zoom = Reset Zoom
+preview-zoom-in = Zoom In
+preview-fit-view = Fit to View
+preview-csv-performance = Performance metrics:
+preview-csv-empty = No CSV content to display
+preview-csv-alignment = Text Alignment:
+preview-csv-alignment-help = Choose vertical text alignment within cells
+preview-csv-dev-only = Development only:
+preview-csv-dev-help = Development section for debugging. It will be removed before the CSV feature is released.
+preview-csv-row-numbers = Toggle between file line numbers and sequential row numbers
+preview-csv-sort-ascending = Sorted A–Z. Click to sort Z–A
+preview-csv-sort-descending = Sorted Z–A. Click to disable sorting
+preview-csv-sort-none = Not sorted. Click to sort A–Z
+preview-svg-load-failed = Failed to load SVG image
+preview-svg-none = No SVG file selected

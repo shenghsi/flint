@@ -53,13 +53,16 @@ impl CsvPreviewView {
                 ButtonStyle::Subtle
             },
         )
-        .tooltip(Tooltip::text(match self.engine.applied_sorting {
-            Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
-                SortDirection::Asc => "Sorted A-Z. Click to sort Z-A",
-                SortDirection::Desc => "Sorted Z-A. Click to disable sorting",
+        .tooltip(Tooltip::text(localization::text(
+            cx,
+            match self.engine.applied_sorting {
+                Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
+                    SortDirection::Asc => "preview-csv-sort-ascending",
+                    SortDirection::Desc => "preview-csv-sort-descending",
+                },
+                _ => "preview-csv-sort-none",
             },
-            _ => "Not sorted. Click to sort A-Z",
-        }))
+        )))
         .on_click(cx.listener(move |this, _event, _window, cx| {
             let new_sorting = match this.engine.applied_sorting {
                 Some(ordering) if ordering.col_idx == col_idx => {

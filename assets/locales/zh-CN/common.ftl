@@ -4,6 +4,7 @@ common-ok = 确定
 common-close = 关闭
 common-dismiss = 关闭
 common-copied-clipboard = 已复制到剪贴板
+common-symbolic-link = 符号链接
 panel-project = 项目面板
 panel-terminal = 终端
 panel-git = Git 面板

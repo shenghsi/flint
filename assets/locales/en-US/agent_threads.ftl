@@ -47,3 +47,7 @@ agent-threads-hand-off-to = Hand off to { $agent }
 agent-threads-hand-off-question = Hand off this thread to { $agent }?
 agent-threads-hand-off-detail = { $turns } conversation turns, { $files } changed files. A new { $agent } thread will open and read the handoff.
 agent-threads-hand-off = Hand off
+agent-threads-option-bypass = Bypass approvals & sandbox
+agent-threads-option-skip-permissions = Skip permission prompts
+agent-threads-option-auto-approve = Auto-approve permissions
+agent-threads-resume-options-tooltip = Resume with options: { $option }

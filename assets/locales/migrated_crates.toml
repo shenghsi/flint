@@ -1,8 +1,10 @@
 # Add a crate only after all its user-facing string literals use localization
 # messages or have an explicit allowlist entry.
 crates = [
+  "agent_threads",
   "auto_update_ui",
   "command_palette",
+  "csv_preview",
   "debugger_ui",
   "diagnostics",
   "encoding_selector",
@@ -10,17 +12,24 @@ crates = [
   "file_finder",
   "go_to_line",
   "git_ui",
+  "image_viewer",
   "install_cli",
   "keymap_editor",
   "language_selector",
   "line_ending_selector",
+  "markdown_preview",
   "open_path_prompt",
   "outline_panel",
+  "project_panel",
   "project_symbols",
   "recent_projects",
   "repl",
   "search",
+  "settings_ui",
+  "snippets_ui",
+  "svg_preview",
   "tab_switcher",
+  "tasks_ui",
   "terminal_view",
   "theme_selector",
 ]
@@ -144,6 +153,16 @@ text = "notebook controls"
 reason = "Text in disabled example code"
 
 [[allowlist]]
+file = "crates/tasks_ui/src/modal.rs"
+text = "delete"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/project_panel/src/undo.rs"
+text = "project_panel_undo"
+reason = "Notification identifier"
+
+[[allowlist]]
 file = "crates/debugger_ui/src/persistence.rs"
 text = "Console"
 reason = "Stable serialized pane identifier"
@@ -202,3 +221,53 @@ reason = "Element identifier"
 file = "crates/debugger_ui/src/session/running/breakpoint_list.rs"
 text = "Worktree parent path: {parent_dir}"
 reason = "Developer-only assertion message"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Codex"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Claude"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Pi"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "OpenCode"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Bypass approvals & sandbox"
+reason = "Stable launch option label used for legacy settings migration"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Skip permission prompts"
+reason = "Stable launch option label used for legacy settings migration"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Auto-approve permissions"
+reason = "Stable launch option label used for legacy settings migration"
+
+[[allowlist]]
+file = "crates/agent_threads/src/panel.rs"
+text = "agent"
+reason = "Fluent variable name in a tooltip expression"
+
+[[allowlist]]
+file = "crates/settings_ui/src/settings_ui.rs"
+text = "setting-item"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/settings_ui/src/settings_ui.rs"
+text = "copy-link-btn"
+reason = "Element identifier"

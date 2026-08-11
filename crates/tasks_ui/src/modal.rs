@@ -50,14 +50,15 @@ impl TasksModalDelegate {
         task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
+        cx: &App,
     ) -> Self {
         let placeholder_text = if let Some(TaskOverrides {
             reveal_target: Some(RevealTarget::Center),
         }) = &task_overrides
         {
-            Arc::from("Find a task, or run a command in the central pane")
+            Arc::from(localization::text(cx, "tasks-placeholder-central").to_string())
         } else {
-            Arc::from("Find a task, or run a command")
+            Arc::from(localization::text(cx, "tasks-placeholder").to_string())
         };
         Self {
             task_store,
@@ -144,6 +145,7 @@ impl TasksModal {
                     task_contexts,
                     task_overrides,
                     workspace.clone(),
+                    cx,
                 ),
                 window,
                 cx,
@@ -566,7 +568,12 @@ impl PickerDelegate for TasksModalDelegate {
                                         .checked_sub(1);
                                     picker.refresh(window, cx);
                                 }))
-                                .tooltip(|_, cx| Tooltip::simple("Delete from Recent Tasks", cx)),
+                                .tooltip(|_, cx| {
+                                    Tooltip::simple(
+                                        localization::text(cx, "tasks-delete-recent"),
+                                        cx,
+                                    )
+                                }),
                         );
                         item.end_slot_on_hover(delete_button)
                     } else {
@@ -643,7 +650,10 @@ impl PickerDelegate for TasksModalDelegate {
             .last_scheduled_task(None)
             .is_some()
         {
-            Some(("Rerun Last Task", Rerun::default().boxed_clone()))
+            Some((
+                localization::text(cx, "tasks-rerun-last"),
+                Rerun::default().boxed_clone(),
+            ))
         } else {
             None
         };
@@ -677,9 +687,9 @@ impl PickerDelegate for TasksModalDelegate {
                         .boxed_clone();
                         this.child({
                             let spawn_oneshot_label = if current_modifiers.secondary() {
-                                "Spawn Oneshot Without History"
+                                localization::text(cx, "tasks-spawn-once-no-history")
                             } else {
-                                "Spawn Oneshot"
+                                localization::text(cx, "tasks-spawn-once")
                             };
 
                             Button::new("spawn-onehshot", spawn_oneshot_label)
@@ -691,9 +701,9 @@ impl PickerDelegate for TasksModalDelegate {
                     } else if current_modifiers.secondary() {
                         this.child({
                             let label = if is_recent_selected {
-                                "Rerun Without History"
+                                localization::text(cx, "tasks-rerun-no-history")
                             } else {
-                                "Spawn Without History"
+                                localization::text(cx, "tasks-spawn-no-history")
                             };
                             Button::new("spawn", label)
                                 .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
@@ -703,8 +713,11 @@ impl PickerDelegate for TasksModalDelegate {
                         })
                     } else {
                         this.child({
-                            let run_entry_label =
-                                if is_recent_selected { "Rerun" } else { "Spawn" };
+                            let run_entry_label = if is_recent_selected {
+                                localization::text(cx, "tasks-rerun")
+                            } else {
+                                localization::text(cx, "tasks-spawn")
+                            };
 
                             Button::new("spawn", run_entry_label)
                                 .key_binding(KeyBinding::for_action(&menu::Confirm, cx))

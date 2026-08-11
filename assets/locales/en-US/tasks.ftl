@@ -1,0 +1,10 @@
+tasks-placeholder-central = Find a task, or run a command in the central pane
+tasks-placeholder = Find a task, or run a command
+tasks-delete-recent = Delete from Recent Tasks
+tasks-rerun-last = Rerun Last Task
+tasks-spawn-once-no-history = Spawn Oneshot Without History
+tasks-spawn-once = Spawn Oneshot
+tasks-rerun-no-history = Rerun Without History
+tasks-spawn-no-history = Spawn Without History
+tasks-rerun = Rerun
+tasks-spawn = Spawn

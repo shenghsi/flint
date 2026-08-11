@@ -237,6 +237,7 @@ fn effective_thread_launch_option_id(
 }
 
 fn launch_option_label(
+    cx: &App,
     kind: &AgentKindDefinition,
     effective_id: Option<&str>,
     default_label: &'static str,
@@ -246,14 +247,28 @@ fn launch_option_label(
             kind.resume_options
                 .iter()
                 .find(|option| option.id == id)
-                .map(|option| option.label.clone())
+                .map(|option| {
+                    let identifier = match option.id {
+                        "bypass-approvals-and-sandbox" => Some("agent-threads-option-bypass"),
+                        "skip-permission-prompts" => Some("agent-threads-option-skip-permissions"),
+                        "auto-approve-permissions" => Some("agent-threads-option-auto-approve"),
+                        _ => None,
+                    };
+                    identifier
+                        .map(|identifier| localization::text(cx, identifier))
+                        .unwrap_or_else(|| option.label.clone())
+                })
         })
-        .unwrap_or_else(|| SharedString::new_static(default_label))
+        .unwrap_or_else(|| match default_label {
+            "New thread" => localization::text(cx, "agent-threads-new-thread"),
+            "Resume" => localization::text(cx, "agent-threads-resume"),
+            _ => SharedString::new_static(default_label),
+        })
 }
 
 fn new_thread_launch_option_label(cx: &App, kind: &AgentKindDefinition) -> SharedString {
     let effective_id = effective_new_thread_launch_option_id(cx, kind);
-    launch_option_label(kind, effective_id.as_deref(), "New thread")
+    launch_option_label(cx, kind, effective_id.as_deref(), "New thread")
 }
 
 fn new_thread_launch_option_visual(cx: &App, kind: &AgentKindDefinition) -> Color {
@@ -267,7 +282,7 @@ fn thread_resume_option_label(
     session_id: &SharedString,
 ) -> SharedString {
     let effective_id = effective_thread_launch_option_id(cx, kind, session_id);
-    launch_option_label(kind, effective_id.as_deref(), "Resume")
+    launch_option_label(cx, kind, effective_id.as_deref(), "Resume")
 }
 
 fn thread_resume_option_visual(
@@ -1683,9 +1698,10 @@ impl AgentThreadsPanel {
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .icon_color(resume_option_visual)
-                            .tooltip(Tooltip::text(format!(
-                                "Resume with options: {}",
-                                resume_option_label
+                            .tooltip(Tooltip::text(localization::tr!(
+                                cx,
+                                "agent-threads-resume-options-tooltip",
+                                option = resume_option_label.to_string()
                             )))
                             .on_click(cx.listener(
                                 move |this, event: &gpui::ClickEvent, window, cx| {

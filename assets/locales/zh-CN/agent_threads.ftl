@@ -47,3 +47,7 @@ agent-threads-hand-off-to = 移交给 { $agent }
 agent-threads-hand-off-question = 要将此线程移交给 { $agent } 吗？
 agent-threads-hand-off-detail = 包含 { $turns } 个对话轮次和 { $files } 个已更改文件。将打开新的 { $agent } 线程并读取移交内容。
 agent-threads-hand-off = 移交
+agent-threads-option-bypass = 绕过批准和沙箱
+agent-threads-option-skip-permissions = 跳过权限提示
+agent-threads-option-auto-approve = 自动批准权限
+agent-threads-resume-options-tooltip = 使用选项恢复：{ $option }

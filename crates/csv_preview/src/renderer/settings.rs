@@ -55,7 +55,7 @@ impl CsvPreviewView {
                         div()
                             .text_sm()
                             .text_color(cx.theme().colors().text_muted)
-                            .child("Text Alignment:"),
+                            .child(localization::text(cx, "preview-csv-alignment")),
                     )
                     .child(
                         DropdownMenu::new(
@@ -65,7 +65,7 @@ impl CsvPreviewView {
                         )
                         .trigger_size(ButtonSize::Compact)
                         .trigger_tooltip(Tooltip::text(
-                            "Choose vertical text alignment within cells",
+                            localization::text(cx, "preview-csv-alignment-help"),
                         )),
                     ),
             );
@@ -79,7 +79,7 @@ impl CsvPreviewView {
                     div()
                         .text_sm()
                         .text_color(cx.theme().colors().text_muted)
-                        .child("Dev-only:"),
+                        .child(localization::text(cx, "preview-csv-dev-only")),
                 )
                 .child(create_dev_only_popover_menu(cx)),
         );
@@ -98,9 +98,7 @@ fn create_dev_only_popover_menu(
     PopoverMenu::new("debug-options-menu")
         .trigger_with_tooltip(
             IconButton::new("debug-options-trigger", IconName::Settings).icon_size(IconSize::Small),
-            Tooltip::text(
-                "Dev-only section used for debugging purposes.\nWill be removed on public release of CSV feature"
-            ),
+            Tooltip::text(localization::text(cx, "preview-csv-dev-help")),
         )
         .menu({
             let view_entity = cx.entity();

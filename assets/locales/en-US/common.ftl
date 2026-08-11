@@ -4,6 +4,7 @@ common-ok = OK
 common-close = Close
 common-dismiss = Dismiss
 common-copied-clipboard = Copied to clipboard
+common-symbolic-link = Symbolic Link
 panel-project = Project Panel
 panel-terminal = Terminal
 panel-git = Git Panel

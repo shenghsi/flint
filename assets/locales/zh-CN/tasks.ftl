@@ -1,0 +1,10 @@
+tasks-placeholder-central = 查找任务，或在中央窗格中运行命令
+tasks-placeholder = 查找任务或运行命令
+tasks-delete-recent = 从最近任务中删除
+tasks-rerun-last = 重新运行上一个任务
+tasks-spawn-once-no-history = 运行一次且不记录历史
+tasks-spawn-once = 运行一次
+tasks-rerun-no-history = 重新运行且不记录历史
+tasks-spawn-no-history = 运行且不记录历史
+tasks-rerun = 重新运行
+tasks-spawn = 运行

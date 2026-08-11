@@ -5785,7 +5785,7 @@ impl ProjectPanel {
                                         Tooltip::with_meta(
                                             path.to_string(),
                                             None,
-                                            "Symbolic Link",
+                                            localization::text(cx, "common-symbolic-link"),
                                             cx,
                                         )
                                     })

@@ -127,9 +127,10 @@ impl CsvPreviewView {
                 )
                 .style(ButtonStyle::Subtle)
                 .size(ButtonSize::Compact)
-                .tooltip(Tooltip::text(
-                    "Toggle between: file line numbers or sequential row numbers",
-                ))
+                .tooltip(Tooltip::text(localization::text(
+                    cx,
+                    "preview-csv-row-numbers",
+                )))
                 .on_click(move |_event, _window, cx| {
                     view.update(cx, |this, cx| {
                         this.settings.numbering_type = match this.settings.numbering_type {
