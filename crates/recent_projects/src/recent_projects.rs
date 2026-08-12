@@ -350,7 +350,7 @@ pub fn init(cx: &mut App) {
                         .collect::<Vec<_>>();
 
                     if paths.is_empty() {
-                        let (title, message, ok) = cx.update(|cx| {
+                        let (title, message, ok) = cx.update(|_, cx| {
                             (
                                 localization::text(cx, "recent-invalid-path"),
                                 localization::text(cx, "recent-invalid-wsl-detail"),
