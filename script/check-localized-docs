@@ -29,7 +29,9 @@ def main() -> None:
         if path.name != "SUMMARY.md"
     }
 
-    release_source = (ROOT / "crates/release_channel/src/lib.rs").read_text()
+    release_source = (ROOT / "crates/release_channel/src/lib.rs").read_text(
+        encoding="utf-8"
+    )
     match = re.search(
         r"CHINESE_DOCUMENTATION_PAGES: &\[&str\] = &\[(.*?)\];",
         release_source,
@@ -46,7 +48,7 @@ def main() -> None:
             f"map={sorted(release_pages)}"
         )
 
-    template = (ROOT / "docs/theme/index.hbs").read_text()
+    template = (ROOT / "docs/theme/index.hbs").read_text(encoding="utf-8")
     match = re.search(r"chinesePages = new Set\(\[(.*?)\]\)", template, re.DOTALL)
     template_pages = (
         set(re.findall(r"'([^']*)'", match.group(1))) if match is not None else set()
@@ -64,7 +66,7 @@ def main() -> None:
         english_path = ENGLISH / path.relative_to(CHINESE)
         if path.name not in {"SUMMARY.md", "index.md"} and not english_path.is_file():
             failures.append(f"Chinese page has no English source page: {path.relative_to(ROOT)}")
-        for target in link_pattern.findall(path.read_text()):
+        for target in link_pattern.findall(path.read_text(encoding="utf-8")):
             target = target.split("#", 1)[0].split("?", 1)[0]
             if not target or target.startswith(("http://", "https://", "mailto:", "/")):
                 continue

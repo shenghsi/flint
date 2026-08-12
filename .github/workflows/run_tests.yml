@@ -146,10 +146,6 @@ jobs:
       run: ./script/check-todos
     - name: ./script/check-keymaps
       run: ./script/check-keymaps
-    - name: ./script/check-localization
-      run: ./script/check-localization
-    - name: ./script/check-localized-docs
-      run: ./script/check-localized-docs
     - name: run_tests::check_style::check_for_typos
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:

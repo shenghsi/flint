@@ -20,7 +20,9 @@ def catalog_messages(path: pathlib.Path) -> dict[str, str]:
     messages: dict[str, str] = {}
     for catalog in sorted(path.glob("*.ftl")):
         current_identifier: str | None = None
-        for line_number, line in enumerate(catalog.read_text().splitlines(), 1):
+        for line_number, line in enumerate(
+            catalog.read_text(encoding="utf-8").splitlines(), 1
+        ):
             if line[:1].isspace():
                 if current_identifier is not None:
                     messages[current_identifier] += "\n" + line
@@ -56,7 +58,7 @@ def check_variable_parity(english: dict[str, str], chinese: dict[str, str]) -> N
 
 def check_unused_messages(identifiers: set[str]) -> None:
     source = "\n".join(
-        path.read_text(errors="ignore")
+        path.read_text(encoding="utf-8", errors="ignore")
         for base in (ROOT / "crates", ROOT / "docs", ROOT / "script")
         for path in base.rglob("*")
         if path.is_file() and path.suffix in {".rs", ".md", ".hbs", ".py"}
@@ -165,7 +167,9 @@ def production_source(source: str) -> str:
 
 
 def check_migrated_crates(identifiers: set[str]) -> None:
-    configuration = tomllib.loads((LOCALES / "migrated_crates.toml").read_text())
+    configuration = tomllib.loads(
+        (LOCALES / "migrated_crates.toml").read_text(encoding="utf-8")
+    )
     allowlist = {
         (entry["file"], entry["text"])
         for entry in configuration.get("allowlist", [])
@@ -176,8 +180,8 @@ def check_migrated_crates(identifiers: set[str]) -> None:
         if not source_root.is_dir():
             fail(f"migrated crate does not exist: {crate_name}")
         for path in source_root.rglob("*.rs"):
-            relative_path = str(path.relative_to(ROOT))
-            source = path.read_text()
+            relative_path = path.relative_to(ROOT).as_posix()
+            source = path.read_text(encoding="utf-8")
             source_without_tests = production_source(source)
             for pattern in UI_LITERAL_PATTERNS:
                 for match in pattern.finditer(source_without_tests):
