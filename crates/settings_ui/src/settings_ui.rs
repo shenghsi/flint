@@ -3375,7 +3375,7 @@ impl SettingsWindow {
                 Label::new(localization::tr!(
                     cx,
                     "settings-no-results-detail",
-                    query = search_query.to_string()
+                    query = search_query
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted),
@@ -4932,6 +4932,8 @@ pub mod test {
     }
 
     pub fn register_settings(cx: &mut App) {
+        localization::init(localization::UiLanguage::English, cx)
+            .expect("test localization must load");
         settings::init(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
@@ -5655,6 +5657,31 @@ pub mod test {
             );
         });
     }
+
+    #[gpui::test]
+    fn settings_search_index_contains_english_and_chinese_terms(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_empty_window();
+        window.update(|window, cx| {
+            register_settings(cx);
+            localization::set_language(localization::UiLanguage::SimplifiedChinese, cx);
+            let mut settings_window = parse("> General*", window, cx);
+            settings_window.pages[0].items = vec![SettingsPageItem::UserLanguageSetting(
+                user_language_setting(cx),
+            )]
+            .into_boxed_slice();
+            settings_window.build_filter_table();
+            settings_window.build_search_index(cx);
+
+            let words = &settings_window
+                .search_index
+                .as_ref()
+                .expect("settings search index should be built")
+                .documents[0]
+                .words;
+            assert!(words.iter().any(|word| word == "language"));
+            assert!(words.iter().any(|word| word == "语言"));
+        });
+    }
 }
 
 #[cfg(test)]
@@ -5679,6 +5706,8 @@ mod project_settings_update_tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();

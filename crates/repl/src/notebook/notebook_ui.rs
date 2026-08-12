@@ -1244,10 +1244,11 @@ impl NotebookEditor {
                                 .size(IconSize::Small)
                                 .color(status_color),
                         ),
-                    Tooltip::text(format!(
-                        "Kernel: {} ({}). Click to change.",
-                        kernel_name,
-                        kernel_status.to_string()
+                    Tooltip::text(localization::tr!(
+                        cx,
+                        "repl-kernel-tooltip",
+                        kernel = kernel_name,
+                        status = kernel_status.to_string(),
                     )),
                 )
                 .with_handle(kernel_picker_handle),

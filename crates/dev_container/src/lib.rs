@@ -14,7 +14,6 @@ use settings::Settings;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::fmt::Display;
 use std::sync::Arc;
 use ui::ActiveTheme;
 use ui::Button;
@@ -35,7 +34,8 @@ use serde::Deserialize;
 use ui::{
     AnyElement, App, Color, CommonAnimationExt, Context, Headline, HeadlineSize, Icon, IconName,
     InteractiveElement, IntoElement, Label, ListItem, ListSeparator, ModalHeader, Navigable,
-    NavigableEntry, ParentElement, Render, Styled, StyledExt, Toggleable, Window, div, rems,
+    NavigableEntry, ParentElement, Render, SharedString, Styled, StyledExt, Toggleable, Window,
+    div, rems,
 };
 use util::ResultExt;
 use util::rel_path::RelPath;
@@ -662,7 +662,8 @@ impl DevContainerModal {
                 .child(
                     div().track_focus(&self.focus_handle).child(
                         ModalHeader::new().child(
-                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                            Headline::new(localization::text(cx, "dev-container-create"))
+                                .size(HeadlineSize::XSmall),
                         ),
                     ),
                 )
@@ -706,7 +707,7 @@ impl DevContainerModal {
     fn render_error(
         &self,
         error_title: String,
-        error: impl Display,
+        error: SharedString,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -716,11 +717,7 @@ impl DevContainerModal {
                 ModalHeader::new().child(Headline::new(error_title).size(HeadlineSize::XSmall)),
             ))
             .child(ListSeparator)
-            .child(
-                v_flex()
-                    .child(Label::new(format!("{}", error)))
-                    .whitespace_normal(),
-            )
+            .child(v_flex().child(Label::new(error)).whitespace_normal())
             .into_any_element()
     }
 
@@ -887,8 +884,11 @@ impl DevContainerModal {
                         ModalHeader::new()
                             .icon(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(
-                                Headline::new("Overwrite Existing Configuration?")
-                                    .size(HeadlineSize::XSmall),
+                                Headline::new(localization::text(
+                                    cx,
+                                    "dev-container-overwrite-configuration",
+                                ))
+                                .size(HeadlineSize::XSmall),
                             ),
                     ),
                 )
@@ -1100,14 +1100,17 @@ impl StatefulModal for DevContainerModal {
                 self.render_confirming_write_dev_container(template_entry, window, cx)
             }
             DevContainerState::TemplateWriteFailed(dev_container_error) => self.render_error(
-                "Error Creating Dev Container Definition".to_string(),
-                dev_container_error,
+                localization::text(cx, "dev-container-error-create-definition").to_string(),
+                dev_container_error.localized_description(cx),
                 window,
                 cx,
             ),
-            DevContainerState::TemplateQueryReturned(Err(e)) => {
-                self.render_error("Error Retrieving Templates".to_string(), e, window, cx)
-            }
+            DevContainerState::TemplateQueryReturned(Err(e)) => self.render_error(
+                localization::text(cx, "dev-container-error-retrieve-templates").to_string(),
+                e.into(),
+                window,
+                cx,
+            ),
         }
     }
 
@@ -1180,7 +1183,7 @@ impl StatefulModal for DevContainerModal {
                     .collect::<Vec<TemplateEntry>>();
                 if self.state == DevContainerState::QueryingTemplates {
                     let delegate = TemplatePickerDelegate::new(
-                        "Select a template".to_string(),
+                        localization::text(cx, "dev-container-select-template").to_string(),
                         cx.weak_entity(),
                         items.clone(),
                         Box::new(|entry, this, window, cx| {
@@ -1311,7 +1314,7 @@ impl StatefulModal for DevContainerModal {
                         })
                         .collect::<Vec<FeatureEntry>>();
                     let delegate = FeaturePickerDelegate::new(
-                        "Select features to add".to_string(),
+                        localization::text(cx, "dev-container-select-features").to_string(),
                         cx.weak_entity(),
                         features,
                         template_entry.clone(),

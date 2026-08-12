@@ -1,4 +1,4 @@
-update-release-notes-failed = Couldn't load release notes
-update-view-browser = View in Browser
-update-complete = Updated to { $app } { $version }
-update-view-release-notes = View Release Notes
+auto-update-package-manager = Flint was installed via a package manager.
+auto-update-check-failed = Could not check for updates
+auto-update-disabled-detail = Auto-updates disabled for non-bundled app.
+auto-update-ok = Ok

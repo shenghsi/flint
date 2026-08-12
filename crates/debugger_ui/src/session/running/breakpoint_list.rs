@@ -943,8 +943,10 @@ impl LineBreakpoint {
                             )
                         }))
                         .when_some(self.dir.as_ref(), |this, parent_dir| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Worktree parent path: {parent_dir}"
+                            this.tooltip(Tooltip::text(localization::tr!(
+                                cx,
+                                "debugger-worktree-parent-path",
+                                path = parent_dir.to_string(),
                             )))
                         }),
                 )

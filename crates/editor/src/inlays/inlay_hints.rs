@@ -4839,6 +4839,8 @@ let c = 3;"#
             cx.set_global(settings_store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("localization should initialize for inlay hint tests");
             crate::init(cx);
         });
 

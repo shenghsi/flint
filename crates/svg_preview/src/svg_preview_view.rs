@@ -331,8 +331,14 @@ impl Item for SvgPreviewView {
         self.buffer
             .as_ref()
             .and_then(|svg_path| svg_path.read(cx).file())
-            .map(|name| format!("Preview {}", name.file_name(cx)).into())
-            .unwrap_or_else(|| "SVG Preview".into())
+            .map(|name| {
+                localization::tr!(
+                    cx,
+                    "preview-svg-tab",
+                    title = name.file_name(cx).to_string(),
+                )
+            })
+            .unwrap_or_else(|| localization::text(cx, "preview-svg-default"))
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}

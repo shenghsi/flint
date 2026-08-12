@@ -413,8 +413,12 @@ impl Render for RenameBranchModal {
                     .gap_1p5()
                     .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
                     .child(
-                        Headline::new(format!("Rename Branch ({})", self.current_branch))
-                            .size(HeadlineSize::XSmall),
+                        Headline::new(localization::tr!(
+                            cx,
+                            "git-rename-branch",
+                            branch = self.current_branch.as_str()
+                        ))
+                        .size(HeadlineSize::XSmall),
                     ),
             )
             .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
@@ -667,7 +671,10 @@ impl Render for RefPickerModal {
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::Hash).size(IconSize::XSmall))
-                    .child(Headline::new("View Commit").size(HeadlineSize::XSmall)),
+                    .child(
+                        Headline::new(localization::text(cx, "git-view-commit-title"))
+                            .size(HeadlineSize::XSmall),
+                    ),
             )
             .child(div().px_3().w_full().child(self.editor.clone()))
             .when_some(commit_preview, |el, preview| {
@@ -907,19 +914,34 @@ mod remote_button {
                     ),
             )
             .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                Some(ContextMenu::build(window, cx, |context_menu, _, cx| {
                     context_menu
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
                             el.context(keybinding_target)
                         })
-                        .action("Fetch", git::Fetch.boxed_clone())
-                        .action("Fetch From", git::FetchFrom.boxed_clone())
-                        .action("Pull", git::Pull.boxed_clone())
-                        .action("Pull (Rebase)", git::PullRebase.boxed_clone())
+                        .action(
+                            localization::text(cx, "git-fetch"),
+                            git::Fetch.boxed_clone(),
+                        )
+                        .action(
+                            localization::text(cx, "git-fetch-from"),
+                            git::FetchFrom.boxed_clone(),
+                        )
+                        .action(localization::text(cx, "git-pull"), git::Pull.boxed_clone())
+                        .action(
+                            localization::text(cx, "git-pull-rebase"),
+                            git::PullRebase.boxed_clone(),
+                        )
                         .separator()
-                        .action("Push", git::Push.boxed_clone())
-                        .action("Push To", git::PushTo.boxed_clone())
-                        .action("Force Push", git::ForcePush.boxed_clone())
+                        .action(localization::text(cx, "git-push"), git::Push.boxed_clone())
+                        .action(
+                            localization::text(cx, "git-push-to"),
+                            git::PushTo.boxed_clone(),
+                        )
+                        .action(
+                            localization::text(cx, "git-force-push"),
+                            git::ForcePush.boxed_clone(),
+                        )
                 }))
             })
             .anchor(Anchor::TopRight)

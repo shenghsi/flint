@@ -448,7 +448,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action(
                     menu_text(cx, "menu-documentation"),
                     super::OpenBrowser {
-                        url: super::DOCS_URL.into(),
+                        url: release_channel::docs_url("", cx),
                     },
                 ),
                 MenuItem::action(

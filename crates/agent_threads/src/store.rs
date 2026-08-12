@@ -10,8 +10,8 @@ use futures::{
     channel::{mpsc, oneshot},
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, PromptLevel,
-    SharedString, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, PromptButton,
+    PromptLevel, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
 };
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -1002,8 +1002,11 @@ impl AgentThreadStore {
             }
             cx.show_desktop_notification(
                 &title,
-                Some(&format!(
-                    "{kind_label} is waiting for you · Project: {project_name}"
+                Some(&localization::tr!(
+                    cx,
+                    "agent-threads-waiting-notification",
+                    agent = kind_label,
+                    project = project_name.clone(),
                 )),
             );
         });
@@ -1747,6 +1750,15 @@ fn prepare_managed_agent(
     });
     let kind = kind.clone();
     let notification_id = managed_agent_notification_id(kind.id, release.version);
+    let download_prompt = localization::tr!(
+        cx,
+        "agent-threads-download-official",
+        agent = kind.label.to_string(),
+        version = release.version.to_string(),
+    );
+    let download_detail = localization::text(cx, "agent-threads-download-official-detail");
+    let download_button = localization::text(cx, "agent-threads-download-and-launch");
+    let cancel_button = localization::text(cx, "common-cancel");
 
     cx.spawn_in(window, async move |workspace, cx| {
         let result = async {
@@ -1771,19 +1783,16 @@ fn prepare_managed_agent(
             let release_is_cached = artifact_cache.release_is_cached(&release).await?;
             if !release_is_cached {
                 notification.update(cx, |notification, cx| {
-                    notification.set_state(
-                        ManagedAgentProgressState::AwaitingConfirmation,
-                        cx,
-                    );
+                    notification.set_state(ManagedAgentProgressState::AwaitingConfirmation, cx);
                 });
                 let prompt = cx.prompt(
                     PromptLevel::Info,
-                    &format!(
-                        "Download the official {} CLI v{}?",
-                        kind.label, release.version
-                    ),
-                    Some("Flint will verify it locally, upload it to this remote host, and launch it by absolute path."),
-                    &["Download and launch", "Cancel"],
+                    &download_prompt,
+                    Some(&download_detail),
+                    &[
+                        PromptButton::new(download_button),
+                        PromptButton::cancel(cancel_button),
+                    ],
                 );
                 if prompt.await? != 0 {
                     return anyhow::Ok(ManagedAgentPreparation::Cancelled);
@@ -1807,8 +1816,7 @@ fn prepare_managed_agent(
                 .install_with_progress(kind.id, &release, {
                     let progress_reporter = progress_reporter.clone();
                     move |phase| {
-                        progress_reporter
-                            .report(ManagedAgentProgressEvent::Install(phase));
+                        progress_reporter.report(ManagedAgentProgressEvent::Install(phase));
                     }
                 })
                 .await?;
@@ -1877,7 +1885,11 @@ fn launch_managed_thread_for_route(
                     spawn_thread_task_for_route(
                         workspace,
                         &kind,
-                        SharedString::from(format!("New {} thread", kind.label)),
+                        localization::tr!(
+                            cx,
+                            "agent-threads-new-agent-thread",
+                            agent = kind.label.to_string(),
+                        ),
                         launch.command,
                         launch.session_id,
                         required_route,

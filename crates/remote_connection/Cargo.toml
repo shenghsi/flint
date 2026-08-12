@@ -22,6 +22,7 @@ auto_update.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
+localization.workspace = true
 markdown.workspace = true
 menu.workspace = true
 release_channel.workspace = true

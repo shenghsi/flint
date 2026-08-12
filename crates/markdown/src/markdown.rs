@@ -1320,6 +1320,7 @@ impl MarkdownElement {
 
     fn push_markdown_image(
         &self,
+        cx: &App,
         builder: &mut MarkdownElementBuilder,
         range: &Range<usize>,
         source: ImageSource,
@@ -1338,7 +1339,23 @@ impl MarkdownElement {
                 .rounded_md()
                 .when_some(height, |this, height| this.h(height))
                 .when_some(width, |this, width| this.w(width))
-                .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
+                .with_fallback({
+                    let label = alt_text
+                        .filter(|alt| !alt.is_empty())
+                        .unwrap_or_else(|| dest_url.clone());
+                    let mut args = localization::FluentArgs::new();
+                    args.set("label", label.to_string());
+                    let failed_label =
+                        localization::text_with_args(cx, "markdown-image-failed", &args);
+                    let failed_tooltip = localization::text(cx, "markdown-image-failed-tooltip");
+                    move || {
+                        image_fallback_element(
+                            failed_label.clone(),
+                            failed_tooltip.clone(),
+                            dest_url.clone(),
+                        )
+                    }
+                }),
         );
 
         builder.push_image_child(image_element);
@@ -2050,6 +2067,7 @@ impl Element for MarkdownElement {
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
+                                    cx,
                                     &mut builder,
                                     range,
                                     image.clone().into(),
@@ -2065,6 +2083,7 @@ impl Element for MarkdownElement {
                             {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
+                                    cx,
                                     &mut builder,
                                     range,
                                     source,
@@ -2132,6 +2151,7 @@ impl Element for MarkdownElement {
                                         range.start,
                                         showing_code,
                                         copy_button_visibility,
+                                        cx,
                                     ),
                                 );
                                 rendered_mermaid_block = true;
@@ -2768,21 +2788,17 @@ fn collect_image_alt_text(
     }
 }
 
-fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>) -> AnyElement {
-    let link_label = alt_text
-        .filter(|alt| !alt.is_empty())
-        .unwrap_or_else(|| dest_url.clone());
-
-    let label = format!("Failed to Load: {link_label}");
-
+fn image_fallback_element(
+    label: SharedString,
+    tooltip: SharedString,
+    dest_url: SharedString,
+) -> AnyElement {
     div()
         .id("image-fallback")
         .cursor_pointer()
         .min_w_0()
         .child(Label::new(label).color(Color::Warning).underline())
-        .tooltip(Tooltip::text(
-            "Image failed to load. Open `flint: log` for more details.",
-        ))
+        .tooltip(Tooltip::text(tooltip))
         .on_click(move |_, _, cx| cx.open_url(&dest_url))
         .into_any_element()
 }
@@ -3865,6 +3881,10 @@ mod tests {
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
+            if !cx.has_global::<localization::Localization>() {
+                localization::init(localization::UiLanguage::English, cx)
+                    .expect("test localization must load");
+            }
             if !cx.has_global::<settings::SettingsStore>() {
                 settings::init(cx);
             }

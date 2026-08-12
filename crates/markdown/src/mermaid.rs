@@ -1,7 +1,7 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClipboardItem, Context, Entity, ImageSource, RenderImage,
-    StyledText, Task, img, pulsating_between,
+    Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Entity, ImageSource,
+    RenderImage, StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -362,6 +362,7 @@ pub(crate) fn render_mermaid_diagram(
     source_offset: usize,
     showing_code: bool,
     copy_button_visibility: CopyButtonVisibility,
+    cx: &App,
 ) -> AnyElement {
     let cached = mermaid_state.cache.get(&parsed.contents);
     let render_result = cached.and_then(|cached| cached.render_image.get());
@@ -382,8 +383,9 @@ pub(crate) fn render_mermaid_diagram(
                     .child(
                         img(ImageSource::Render(render_image.clone()))
                             .max_w_full()
-                            .with_fallback(|| {
-                                Label::new("Failed to Load Mermaid Diagram").into_any_element()
+                            .with_fallback({
+                                let label = localization::text(cx, "markdown-mermaid-failed-title");
+                                move || Label::new(label.clone()).into_any_element()
                             }),
                     )
                     .into_any_element()
@@ -430,10 +432,14 @@ pub(crate) fn render_mermaid_diagram(
                             .child(
                                 img(ImageSource::Render(fallback.clone()))
                                     .max_w_full()
-                                    .with_fallback(|| {
-                                        div()
-                                            .child(Label::new("Failed to load mermaid diagram"))
-                                            .into_any_element()
+                                    .with_fallback({
+                                        let label =
+                                            localization::text(cx, "markdown-mermaid-failed");
+                                        move || {
+                                            div()
+                                                .child(Label::new(label.clone()))
+                                                .into_any_element()
+                                        }
                                     }),
                             )
                             .with_animation(
@@ -458,7 +464,7 @@ pub(crate) fn render_mermaid_diagram(
                     .child(render_mermaid_code_view(&parsed.contents.contents))
                     .child(
                         div().absolute().top_1().right_2().child(
-                            Label::new("Rendering...")
+                            Label::new(localization::text(cx, "markdown-mermaid-rendering"))
                                 .size(LabelSize::XSmall)
                                 .color(Color::Muted)
                                 .with_animation(
@@ -587,6 +593,10 @@ mod tests {
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
+            if !cx.has_global::<localization::Localization>() {
+                localization::init(localization::UiLanguage::English, cx)
+                    .expect("test localization must load");
+            }
             if !cx.has_global::<settings::SettingsStore>() {
                 settings::init(cx);
             }

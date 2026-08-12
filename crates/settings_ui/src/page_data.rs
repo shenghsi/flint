@@ -9253,7 +9253,11 @@ mod tests {
 
     #[gpui::test]
     fn test_security_section_uses_trust_all_worktrees_key(cx: &mut gpui::TestAppContext) {
-        let page = cx.update(|cx| general_page(cx));
+        let page = cx.update(|cx| {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
+            general_page(cx)
+        });
         let pages = [page];
         let setting_item = setting_item_by_title(&pages, "Trust All Projects By Default");
 
@@ -9261,6 +9265,41 @@ mod tests {
             setting_item.field.json_path(),
             Some("session.trust_all_worktrees")
         );
+    }
+
+    #[gpui::test]
+    fn general_page_shows_user_language_setting(cx: &mut gpui::TestAppContext) {
+        let page = cx.update(|cx| {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
+            general_page(cx)
+        });
+
+        assert!(
+            page.items
+                .iter()
+                .any(|item| matches!(item, SettingsPageItem::UserLanguageSetting(_)))
+        );
+    }
+
+    #[gpui::test]
+    fn general_page_uses_chinese_language_setting_text(cx: &mut gpui::TestAppContext) {
+        let page = cx.update(|cx| {
+            localization::init(localization::UiLanguage::SimplifiedChinese, cx)
+                .expect("test localization must load");
+            general_page(cx)
+        });
+        let language_setting = page
+            .items
+            .iter()
+            .find_map(|item| match item {
+                SettingsPageItem::UserLanguageSetting(setting) => Some(setting),
+                _ => None,
+            })
+            .expect("language setting should exist");
+
+        assert_eq!(language_setting.title, "语言");
+        assert_eq!(language_setting.description, "选择 Flint 界面使用的语言。");
     }
 
     #[test]

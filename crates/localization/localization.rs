@@ -12,7 +12,7 @@ use unic_langid::LanguageIdentifier;
 
 const ENGLISH_LOCALE: &str = "en-US";
 const SIMPLIFIED_CHINESE_LOCALE: &str = "zh-CN";
-const SIMPLIFIED_CHINESE_UI_READY: bool = false;
+const SIMPLIFIED_CHINESE_UI_READY: bool = true;
 
 #[derive(
     Clone,
@@ -263,6 +263,11 @@ pub fn init(language: UiLanguage, cx: &mut App) -> Result<()> {
     Ok(())
 }
 
+/// Formats a message without GPUI application state for CLI and helper programs.
+pub fn text_for_language(language: UiLanguage, identifier: &'static str) -> Result<String> {
+    Ok(Localization::load(language)?.text(identifier).to_string())
+}
+
 pub fn language(cx: &App) -> UiLanguage {
     cx.global::<Localization>().language()
 }
@@ -417,6 +422,15 @@ mod tests {
         assert_eq!(
             localization.text_with_args("common-selected-file-count", &args),
             "已选择 5 个文件"
+        );
+    }
+
+    #[test]
+    fn formats_messages_without_application_state_for_cli_programs() {
+        assert_eq!(
+            text_for_language(UiLanguage::SimplifiedChinese, "cli-error-prefix")
+                .expect("CLI message must format"),
+            "错误"
         );
     }
 

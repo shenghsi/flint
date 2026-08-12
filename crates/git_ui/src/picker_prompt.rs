@@ -20,7 +20,7 @@ pub struct PickerPrompt {
 }
 
 pub fn prompt(
-    prompt: &str,
+    prompt: impl Into<SharedString>,
     options: Vec<SharedString>,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
@@ -31,12 +31,12 @@ pub fn prompt(
     } else if options.len() == 1 {
         return Task::ready(Some(0));
     }
-    let prompt = prompt.to_string().into();
+    let prompt = prompt.into();
 
     window.spawn(cx, async move |cx| {
         // Modal branch picker has a longer trailoff than a popover one.
         let (tx, rx) = oneshot::channel();
-        let delegate = PickerPromptDelegate::new(prompt, options, tx, 70);
+        let delegate = PickerPromptDelegate::new(prompt.to_string().into(), options, tx, 70);
 
         workspace
             .update_in(cx, |workspace, window, cx| {

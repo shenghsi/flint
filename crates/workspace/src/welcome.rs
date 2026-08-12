@@ -420,7 +420,7 @@ impl Render for WelcomePage {
                             .child(Vector::square(VectorName::FlintLogo, rems_from_px(45.)))
                             .child(
                                 v_flex().child(Headline::new(welcome_label)).child(
-                                    Label::new("The editor for what's next")
+                                    Label::new(localization::text(cx, "workspace-welcome-tagline"))
                                         .size(LabelSize::Small)
                                         .color(Color::Muted)
                                         .italic(),

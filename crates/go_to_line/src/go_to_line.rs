@@ -145,7 +145,7 @@ impl GoToLine {
             line_editor,
             active_editor,
             active_buffer,
-            current_text: current_text.into(),
+            current_text,
             prev_scroll_position: Some(scroll_position),
             current_line: line,
             _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],

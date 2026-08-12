@@ -96,3 +96,7 @@ remote-none-registered = No remote servers registered yet.
 remote-no-matches = No matching remote projects.
 remote-projects-title = Remote Projects
 remote-select = Select
+remote-connecting = Connecting
+remote-toggle-unmask-password = Toggle to unmask password
+remote-toggle-mask-password = Toggle to mask password
+remote-caps-lock-on = Caps lock is on.

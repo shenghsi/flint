@@ -1,7 +1,13 @@
 common-cancel = Cancel
 common-confirm = Confirm
 common-ok = OK
+common-keybind-count = +{ $count } keybinds
+common-close-tab = Close Tab
+common-close-other-tabs = Close Other Tabs
+common-move-tab-new-window = Move Tab to New Window
+common-show-all-tabs = Show All Tabs
 common-copy = Copy
+common-error-detail = Error: { $error }
 common-open-default-app = Open in Default App
 common-return-onboarding = Return to Onboarding
 common-backup-update = Backup and Update
@@ -34,6 +40,8 @@ dock-move = Dock { $position }
 dock-flex-width = Flex Width
 dock-fixed-width = Fixed Width
 common-hide-button = Hide Button
+common-show = Show
+common-hide = Hide
 common-selected-file-count =
     { $count ->
         [one] { $count } file selected

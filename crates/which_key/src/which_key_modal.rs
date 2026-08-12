@@ -96,7 +96,7 @@ impl WhichKeyModal {
             })
             .collect();
 
-        binding_data = group_bindings(binding_data);
+        binding_data = group_bindings(binding_data, cx);
 
         // Sort bindings from shortest to longest, with groups last
         // Using stable sort to preserve relative order of equal elements
@@ -272,6 +272,7 @@ impl ModalView for WhichKeyModal {
 
 fn group_bindings(
     binding_data: Vec<(Vec<Keystroke>, SharedString)>,
+    cx: &App,
 ) -> Vec<(Vec<Keystroke>, SharedString)> {
     let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, SharedString)>> =
         HashMap::new();
@@ -297,7 +298,10 @@ fn group_bindings(
             // This is a group - create a single entry with just the first keystroke
             let first_keystroke = vec![first_key];
             let count = group_bindings.len();
-            result.push((first_keystroke, format!("+{} keybinds", count).into()));
+            result.push((
+                first_keystroke,
+                localization::tr!(cx, "common-keybind-count", count = count),
+            ));
         } else {
             // Not a group or empty keystrokes - add all bindings as-is
             result.append(&mut group_bindings);

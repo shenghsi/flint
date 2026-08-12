@@ -108,7 +108,18 @@ impl Workspace {
                             log::error!("Task spawn failed: {e:#}");
                             _ = workspace.update(cx, |w, cx| {
                                 let id = NotificationId::unique::<ResolvedTask>();
-                                w.show_toast(Toast::new(id, format!("Task spawn failed: {e}")), cx);
+                                w.show_toast(
+                                    Toast::new(
+                                        id,
+                                        localization::tr!(
+                                            cx,
+                                            "workspace-task-spawn-failed",
+                                            error = e.to_string(),
+                                        )
+                                        .to_string(),
+                                    ),
+                                    cx,
+                                );
                             })
                         }
                         None => log::debug!("Task spawn got cancelled"),
@@ -374,6 +385,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             register_serializable_item::<TestItem>(cx);
         });

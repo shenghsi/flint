@@ -143,7 +143,11 @@ pub fn init(cx: &mut App) {
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
                                         workspace.show_error(
-                                            &format!("Failed to install dev extension: {}", err),
+                                            &localization::tr!(
+                                                cx,
+                                                "extensions-install-dev-failed",
+                                                error = err.to_string(),
+                                            ),
                                             cx,
                                         );
                                     })

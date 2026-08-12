@@ -303,7 +303,13 @@ impl Render for KeyContextView {
                             .iter()
                             .sorted()
                             .map(|(key, equivalent)| {
-                                Label::new(format!("cmd-{} => cmd-{}", key, equivalent)).ml_8()
+                                Label::new(localization::tr!(
+                                    cx,
+                                    "key-context-equivalent-format",
+                                    key = key.to_string(),
+                                    equivalent = equivalent.to_string()
+                                ))
+                                .ml_8()
                             }),
                     )
             })

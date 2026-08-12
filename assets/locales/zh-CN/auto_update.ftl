@@ -1,4 +1,4 @@
-update-release-notes-failed = 无法加载发行说明
-update-view-browser = 在浏览器中查看
-update-complete = 已更新到 { $app } { $version }
-update-view-release-notes = 查看发行说明
+auto-update-package-manager = Flint 是通过软件包管理器安装的。
+auto-update-check-failed = 无法检查更新
+auto-update-disabled-detail = 非捆绑应用已禁用自动更新。
+auto-update-ok = 确定

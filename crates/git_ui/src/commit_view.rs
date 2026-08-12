@@ -15,8 +15,8 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
-    Window, actions,
+    PromptButton, PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task,
+    WeakEntity, Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -140,7 +140,7 @@ impl Addon for CommitDiffAddon {
         menu.when_some(file_to_open, |menu, file| {
             let commit_view = self.commit_view.clone();
             menu.entry(
-                "Open File in Project",
+                localization::text(cx, "git-open-file-in-project"),
                 Some(Box::new(OpenFileAtHead)),
                 move |window, cx| {
                     commit_view
@@ -745,7 +745,7 @@ impl CommitView {
     fn apply_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
-            "Apply",
+            localization::text(cx, "git-apply"),
             window,
             cx,
             async move |repository, sha, stash, commit_view, workspace, cx| {
@@ -772,7 +772,7 @@ impl CommitView {
     fn pop_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
-            "Pop",
+            localization::text(cx, "git-pop"),
             window,
             cx,
             async move |repository, sha, stash, commit_view, workspace, cx| {
@@ -799,7 +799,7 @@ impl CommitView {
     fn remove_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
-            "Drop",
+            localization::text(cx, "git-drop"),
             window,
             cx,
             async move |repository, sha, stash, commit_view, workspace, cx| {
@@ -825,7 +825,7 @@ impl CommitView {
 
     fn stash_action<AsyncFn>(
         workspace: &mut Workspace,
-        str_action: &str,
+        action_label: gpui::SharedString,
         window: &mut Window,
         cx: &mut App,
         callback: AsyncFn,
@@ -849,9 +849,17 @@ impl CommitView {
         let sha = commit_view.read(cx).commit.sha.clone();
         let answer = window.prompt(
             PromptLevel::Info,
-            &format!("{} stash@{{{}}}?", str_action, stash),
+            &localization::tr!(
+                cx,
+                "git-stash-action-question",
+                action = action_label.as_ref(),
+                index = stash
+            ),
             None,
-            &[str_action, "Cancel"],
+            &[
+                PromptButton::ok(action_label),
+                PromptButton::cancel(localization::text(cx, "common-cancel")),
+            ],
             cx,
         );
 

@@ -276,9 +276,9 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
     {
         drop(window.prompt(
             gpui::PromptLevel::Info,
-            "Flint was installed via a package manager.",
+            &localization::text(cx, "auto-update-package-manager"),
             Some(&message),
-            &["Ok"],
+            &[localization::text(cx, "auto-update-ok").as_ref()],
             cx,
         ));
         return;
@@ -296,9 +296,9 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
     } else {
         drop(window.prompt(
             gpui::PromptLevel::Info,
-            "Could not check for updates",
-            Some("Auto-updates disabled for non-bundled app."),
-            &["Ok"],
+            &localization::text(cx, "auto-update-check-failed"),
+            Some(&localization::text(cx, "auto-update-disabled-detail")),
+            &[localization::text(cx, "auto-update-ok").as_ref()],
             cx,
         ));
     }

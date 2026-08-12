@@ -2115,7 +2115,7 @@ impl Render for ProjectDiffToolbar {
                             el.child(
                                 Button::new("stage", localization::text(cx, "git-toggle-staged"))
                                     .tooltip(Tooltip::for_action_title_in(
-                                        "Toggle Staged",
+                                        localization::text(cx, "git-toggle-staged"),
                                         &ToggleStaged,
                                         &focus_handle,
                                     ))
@@ -2132,7 +2132,7 @@ impl Render for ProjectDiffToolbar {
                             el.child(
                                 Button::new("stage", localization::text(cx, "git-stage"))
                                     .tooltip(Tooltip::for_action_title_in(
-                                        "Stage and go to next hunk",
+                                        localization::text(cx, "git-stage-next"),
                                         &StageAndNext,
                                         &focus_handle,
                                     ))
@@ -2148,7 +2148,7 @@ impl Render for ProjectDiffToolbar {
                             .child(
                                 Button::new("unstage", localization::text(cx, "git-unstage"))
                                     .tooltip(Tooltip::for_action_title_in(
-                                        "Unstage and go to next hunk",
+                                        localization::text(cx, "git-unstage-next"),
                                         &UnstageAndNext,
                                         &focus_handle,
                                     ))
@@ -2168,7 +2168,7 @@ impl Render for ProjectDiffToolbar {
                             Button::new("stage", localization::text(cx, "git-stage"))
                                 .disabled(!button_states.stage)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and go to next hunk",
+                                    localization::text(cx, "git-stage-next"),
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
@@ -2180,7 +2180,7 @@ impl Render for ProjectDiffToolbar {
                             Button::new("restore", localization::text(cx, "git-restore"))
                                 .disabled(!button_states.restore)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Restore selected hunks",
+                                    localization::text(cx, "git-restore-selected"),
                                     &git::Restore,
                                     &focus_handle,
                                 ))
@@ -2194,7 +2194,7 @@ impl Render for ProjectDiffToolbar {
                             Button::new("unstage", localization::text(cx, "git-unstage"))
                                 .disabled(!button_states.unstage)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage and go to next hunk",
+                                    localization::text(cx, "git-unstage-next"),
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
@@ -2212,7 +2212,7 @@ impl Render for ProjectDiffToolbar {
                         IconButton::new("up", IconName::ArrowUp)
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Go to previous hunk",
+                                localization::text(cx, "git-previous-hunk"),
                                 &GoToPreviousHunk,
                                 &focus_handle,
                             ))
@@ -2225,7 +2225,7 @@ impl Render for ProjectDiffToolbar {
                         IconButton::new("down", IconName::ArrowDown)
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Go to next hunk",
+                                localization::text(cx, "git-next-hunk"),
                                 &GoToHunk,
                                 &focus_handle,
                             ))
@@ -2249,7 +2249,7 @@ impl Render for ProjectDiffToolbar {
                                     localization::text(cx, "git-unstage-all"),
                                 )
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage all changes",
+                                    localization::text(cx, "git-unstage-all"),
                                     &UnstageAll,
                                     &focus_handle,
                                 ))
@@ -2273,7 +2273,7 @@ impl Render for ProjectDiffToolbar {
                                     )
                                     .disabled(!button_states.stage_all)
                                     .tooltip(Tooltip::for_action_title_in(
-                                        "Stage all changes",
+                                        localization::text(cx, "git-stage-all"),
                                         &StageAll,
                                         &focus_handle,
                                     ))
@@ -2303,7 +2303,7 @@ impl Render for ProjectDiffToolbar {
                         el.child(
                             Button::new("commit", localization::text(cx, "git-commit"))
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Commit",
+                                    localization::text(cx, "git-commit"),
                                     &Commit,
                                     &focus_handle,
                                 ))

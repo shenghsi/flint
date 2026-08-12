@@ -86,6 +86,44 @@ pub enum DevContainerError {
     MultipleMatchingContainers(Vec<String>),
 }
 
+impl DevContainerError {
+    pub fn localized_description(&self, cx: &gpui::App) -> gpui::SharedString {
+        match self {
+            Self::DockerNotAvailable => localization::text(cx, "dev-container-docker-unavailable"),
+            Self::ContainerNotValid(id) => {
+                localization::tr!(cx, "dev-container-container-invalid", id = id.as_str())
+            }
+            Self::DevContainerScriptsFailed => {
+                localization::text(cx, "dev-container-scripts-failed")
+            }
+            Self::DevContainerUpFailed(_) => localization::text(cx, "dev-container-up-failed"),
+            Self::DevContainerTemplateApplyFailed(_) => {
+                localization::text(cx, "dev-container-template-apply-failed")
+            }
+            Self::DevContainerNotFound => localization::text(cx, "dev-container-not-found"),
+            Self::DevContainerParseFailed => localization::text(cx, "dev-container-parse-failed"),
+            Self::NotInValidProject => localization::text(cx, "dev-container-invalid-project"),
+            Self::CommandFailed(program) => {
+                localization::tr!(
+                    cx,
+                    "dev-container-command-failed",
+                    program = program.as_str()
+                )
+            }
+            Self::FilesystemError => localization::text(cx, "dev-container-filesystem-error"),
+            Self::ResourceFetchFailed => {
+                localization::text(cx, "dev-container-resource-fetch-failed")
+            }
+            Self::DevContainerValidationFailed(failure) => failure.clone().into(),
+            Self::MultipleMatchingContainers(ids) => localization::tr!(
+                cx,
+                "dev-container-multiple-containers",
+                ids = ids.join(", ")
+            ),
+        }
+    }
+}
+
 impl Display for DevContainerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

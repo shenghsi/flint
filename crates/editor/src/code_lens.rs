@@ -572,7 +572,13 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
             .items
             .iter()
             .filter_map(|item| {
-                let title = displayed_title(item)?;
+                let title = if item.title.is_some() {
+                    displayed_title(item)?.clone()
+                } else if item.action.resolved {
+                    localization::text(cx.app, "editor-zero-references")
+                } else {
+                    return None;
+                };
                 let action = item.title.is_some().then(|| item.action.clone());
                 Some((title, action))
             })
@@ -600,7 +606,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                     .font(font.clone())
                     .text_size(font_size)
                     .text_color(cx.app.theme().colors().text_muted)
-                    .child(title.clone())
+                    .child(title)
                     .when_some(action, |code_lens_div, action| {
                         let position = line.position;
                         let editor_handle = editor.clone();

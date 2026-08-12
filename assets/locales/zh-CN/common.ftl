@@ -1,7 +1,13 @@
 common-cancel = 取消
 common-confirm = 确认
 common-ok = 确定
+common-keybind-count = +{ $count } 个按键绑定
+common-close-tab = 关闭标签页
+common-close-other-tabs = 关闭其他标签页
+common-move-tab-new-window = 将标签页移至新窗口
+common-show-all-tabs = 显示所有标签页
 common-copy = 复制
+common-error-detail = 错误：{ $error }
 common-open-default-app = 在默认应用中打开
 common-return-onboarding = 返回引导
 common-backup-update = 备份并更新
@@ -34,6 +40,8 @@ dock-move = 停靠到{ $position }
 dock-flex-width = 灵活宽度
 dock-fixed-width = 固定宽度
 common-hide-button = 隐藏按钮
+common-show = 显示
+common-hide = 隐藏
 common-selected-file-count = 已选择 { $count } 个文件
 
 menu-flint = Flint

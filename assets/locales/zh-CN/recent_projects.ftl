@@ -92,3 +92,7 @@ remote-none-registered = 尚未注册远程服务器。
 remote-no-matches = 无匹配的远程项目。
 remote-projects-title = 远程项目
 remote-select = 选择
+remote-connecting = 正在连接
+remote-toggle-unmask-password = 切换为显示密码
+remote-toggle-mask-password = 切换为隐藏密码
+remote-caps-lock-on = 大写锁定已开启。

@@ -150,7 +150,12 @@ impl EncodingSelectorDelegate {
         let current_encoding = self.buffer.read(cx).encoding();
 
         if candidate_encoding.name() == current_encoding.name() {
-            format!("{} (current)", candidate_encoding.name())
+            localization::tr!(
+                cx,
+                "encoding-selector-current",
+                encoding = candidate_encoding.name(),
+            )
+            .to_string()
         } else {
             candidate_encoding.name().to_string()
         }

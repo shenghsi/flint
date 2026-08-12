@@ -1745,7 +1745,10 @@ fn start_handoff(
     if project.read(cx).remote_client().is_some() {
         workspace.update(cx, |workspace, cx| {
             workspace.show_error(
-                &anyhow::anyhow!("Cross-agent handoff isn't supported yet for remote projects."),
+                &anyhow::anyhow!(localization::text(
+                    cx,
+                    "agent-threads-handoff-remote-unsupported",
+                )),
                 cx,
             );
         });
@@ -1759,6 +1762,23 @@ fn start_handoff(
         return;
     };
 
+    let source_agent = source_kind.label.to_string();
+    let handoff_multiple_sessions = localization::tr!(
+        cx,
+        "agent-threads-handoff-multiple-sessions",
+        agent = source_agent.clone(),
+    );
+    let handoff_session_pending = localization::tr!(
+        cx,
+        "agent-threads-handoff-session-pending",
+        agent = source_agent,
+    );
+    let handoff_no_resumable_session =
+        localization::text(cx, "agent-threads-handoff-no-resumable-session");
+    let handoff_not_enough_conversation =
+        localization::text(cx, "agent-threads-handoff-not-enough-conversation");
+    let handoff_unsupported_history =
+        localization::text(cx, "agent-threads-handoff-unsupported-history");
     let workspace_for_error = workspace.clone();
     cx.spawn(async move |cx| {
         let result: anyhow::Result<()> = async {
@@ -1777,7 +1797,7 @@ fn start_handoff(
                 path_style,
             };
             let indexed_kind = agent_history::HistoryKind::from_id(source_kind.id)
-                .ok_or_else(|| anyhow::anyhow!("unsupported agent history kind"))?;
+                .ok_or_else(|| anyhow::anyhow!(handoff_unsupported_history.clone()))?;
 
             let session_id = match &source_metadata.resumed_session_id {
                 Some(id) => id.to_string(),
@@ -1814,19 +1834,15 @@ fn start_handoff(
                         &already_bound,
                     ) {
                         store::DiscoveredSession::Resolved(id) => id.to_string(),
-                        store::DiscoveredSession::Ambiguous(_) => anyhow::bail!(
-                            "Multiple new {} sessions started around the same time; \
-                             Flint can't tell which one is this thread yet.",
-                            source_kind.label
-                        ),
-                        store::DiscoveredSession::NotFound => anyhow::bail!(
-                            "{} hasn't recorded a session for this thread yet. \
-                             Try again in a moment.",
-                            source_kind.label
-                        ),
+                        store::DiscoveredSession::Ambiguous(_) => {
+                            anyhow::bail!(handoff_multiple_sessions.clone())
+                        }
+                        store::DiscoveredSession::NotFound => {
+                            anyhow::bail!(handoff_session_pending.clone())
+                        }
                     }
                 }
-                None => anyhow::bail!("This thread has no resumable session id yet."),
+                None => anyhow::bail!(handoff_no_resumable_session.clone()),
             };
 
             let excerpt = history::local_extract_transcript(
@@ -1837,7 +1853,7 @@ fn start_handoff(
                 Some(source_metadata.project_root.to_string_lossy().into_owned()),
             )
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Not enough conversation to hand off yet."))?;
+            .ok_or_else(|| anyhow::anyhow!(handoff_not_enough_conversation.clone()))?;
 
             let changed_files = project.read_with(cx, |project, cx| {
                 project
@@ -2162,6 +2178,8 @@ mod tests {
             // from concurrently-running tests race each other.
             cx.set_global(db::AppDatabase::test_new());
             theme_settings::init(theme::LoadThemes::JustBase, cx);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             editor::init(cx);
             terminal_view::init(cx);
             crate::init(cx);
@@ -3461,6 +3479,42 @@ mod tests {
         assert_eq!(
             notifications[0].1.as_deref(),
             Some("Codex is waiting for you · Project: notification-project")
+        );
+    }
+
+    #[gpui::test]
+    async fn bell_notification_uses_simplified_chinese(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        cx.update(|cx| {
+            localization::set_language(localization::UiLanguage::SimplifiedChinese, cx);
+        });
+        let temporary_directory =
+            tempfile::tempdir().expect("failed to create temporary directory");
+        let project_root = temporary_directory.path().join("notification-project");
+        std::fs::create_dir(&project_root).expect("failed to create project directory");
+        let project_root = project_root
+            .to_str()
+            .expect("temporary project path should be valid UTF-8")
+            .to_string()
+            .leak();
+        configure_echo_threads(cx, project_root, 5);
+        let window_handle = init_workspace(cx, project_root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_views = terminal_views(&window_handle, cx);
+        assert_eq!(terminal_views.len(), 1);
+        let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        let notifications = cx.shown_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(
+            notifications[0].1.as_deref(),
+            Some("Codex 正在等待您 · 项目：notification-project")
         );
     }
 

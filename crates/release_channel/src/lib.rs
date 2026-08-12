@@ -8,7 +8,7 @@ use gpui::{App, Global};
 use semver::Version;
 
 const FLINT_DOCS_URL: &str = "https://flint.dev/docs";
-const CHINESE_DOCUMENTATION_PAGES: &[&str] = &["", "getting-started"];
+const CHINESE_DOCUMENTATION_PAGES: &[&str] = &["", "development/glossary", "getting-started"];
 
 /// stable | dev | nightly | preview
 pub static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {

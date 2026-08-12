@@ -531,18 +531,28 @@ impl Render for SyntaxTreeView {
                         .max_w_3_5()
                         .map(|this| {
                             if editor_state.is_some_and(|state| !state.has_language()) {
-                                this.child(Label::new("Current editor has no associated language"))
-                                    .child(
-                                        Label::new(concat!(
-                                            "Try assigning a language or",
-                                            "switching to a different buffer"
-                                        ))
-                                        .size(LabelSize::Small),
-                                    )
+                                this.child(Label::new(localization::text(
+                                    cx,
+                                    "language-tools-no-associated-language",
+                                )))
+                                .child(
+                                    Label::new(localization::text(
+                                        cx,
+                                        "language-tools-assign-language",
+                                    ))
+                                    .size(LabelSize::Small),
+                                )
                             } else {
-                                this.child(Label::new("Not attached to an editor")).child(
-                                    Label::new("Focus an editor to show a new tree view")
-                                        .size(LabelSize::Small),
+                                this.child(Label::new(localization::text(
+                                    cx,
+                                    "language-tools-not-attached",
+                                )))
+                                .child(
+                                    Label::new(localization::text(
+                                        cx,
+                                        "language-tools-focus-editor-tree",
+                                    ))
+                                    .size(LabelSize::Small),
                                 )
                             }
                         });

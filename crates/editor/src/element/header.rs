@@ -714,18 +714,19 @@ pub(crate) fn render_buffer_header(
                                         move |_window, cx| {
                                             Tooltip::with_meta_in(
                                                 if is_folded_for_tooltip {
-                                                    "Unfold Excerpt"
+                                                    localization::text(cx, "editor-unfold-excerpt")
                                                 } else {
-                                                    "Fold Excerpt"
+                                                    localization::text(cx, "editor-fold-excerpt")
                                                 },
                                                 Some(&ToggleFold),
-                                                format!(
-                                                    "{} to toggle all",
-                                                    text_for_keystroke(
+                                                localization::tr!(
+                                                    cx,
+                                                    "editor-toggle-all",
+                                                    shortcut = text_for_keystroke(
                                                         &Modifiers::alt(),
                                                         "click",
                                                         cx
-                                                    )
+                                                    ),
                                                 ),
                                                 &focus_handle,
                                                 cx,
@@ -817,7 +818,7 @@ pub(crate) fn render_buffer_header(
                                             )
                                             .tooltip(move |_, cx| {
                                                 Tooltip::with_meta(
-                                                    "Open File",
+                                                    localization::text(cx, "editor-open-file"),
                                                     None,
                                                     full_path.clone(),
                                                     cx,
@@ -971,7 +972,7 @@ pub(crate) fn render_buffer_header(
                     menu = menu
                         .when_some(abs_path, |menu, abs_path| {
                             menu.entry(
-                                "Copy Path",
+                                localization::text(cx, "workspace-copy-path"),
                                 Some(Box::new(flint_actions::workspace::CopyPath)),
                                 window.handler_for(&editor, move |_, _, cx| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(
@@ -982,7 +983,7 @@ pub(crate) fn render_buffer_header(
                         })
                         .when_some(relative_path, |menu, relative_path| {
                             menu.entry(
-                                "Copy Relative Path",
+                                localization::text(cx, "workspace-copy-relative-path"),
                                 Some(Box::new(flint_actions::workspace::CopyRelativePath)),
                                 window.handler_for(&editor, move |_, _, cx| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(
@@ -997,7 +998,7 @@ pub(crate) fn render_buffer_header(
                         )
                         .when_some(reveal_in_project_panel, |menu, entry_id| {
                             menu.entry(
-                                "Reveal In Project Panel",
+                                localization::text(cx, "workspace-reveal-in-project-panel"),
                                 Some(Box::new(RevealInProjectPanel::default())),
                                 window.handler_for(&editor, move |editor, _, cx| {
                                     if let Some(project) = &mut editor.project {
@@ -1010,7 +1011,7 @@ pub(crate) fn render_buffer_header(
                         })
                         .when_some(parent_abs_path, |menu, parent_abs_path| {
                             menu.entry(
-                                "Open in Terminal",
+                                localization::text(cx, "workspace-open-in-terminal"),
                                 Some(Box::new(OpenInTerminal)),
                                 window.handler_for(&editor, move |_, window, cx| {
                                     window.dispatch_action(

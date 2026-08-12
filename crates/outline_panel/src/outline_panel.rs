@@ -4894,7 +4894,7 @@ impl OutlinePanel {
                     })
                     .child(
                         IconButton::new(pin_button_id, icon)
-                            .tooltip(Tooltip::text(icon_tooltip.clone()))
+                            .tooltip(Tooltip::text(icon_tooltip))
                             .shape(IconButtonShape::Square)
                             .on_click(cx.listener(|outline_panel, _, window, cx| {
                                 outline_panel.toggle_active_editor_pin(

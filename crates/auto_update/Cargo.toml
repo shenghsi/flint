@@ -13,6 +13,7 @@ path = "src/auto_update.rs"
 doctest = false
 
 [dependencies]
+localization.workspace = true
 anyhow.workspace = true
 db.workspace = true
 futures-lite.workspace = true

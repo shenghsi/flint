@@ -19,6 +19,7 @@ extensions-upgrade = 升级
 extensions-version-incompatible = v{ $version } 与此版本的 Flint 不兼容。
 extensions-loading = 正在加载扩展…
 extensions-load-failed = 无法加载扩展。请检查连接后重试。
+extensions-install-dev-failed = 无法安装开发扩展：{ $error }
 extensions-no-search = 没有与搜索匹配的扩展。
 extensions-none = 无扩展。
 extensions-no-installed-search = 没有与搜索匹配的已安装扩展。

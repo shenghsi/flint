@@ -19,6 +19,7 @@ extensions-upgrade = Upgrade
 extensions-version-incompatible = v{ $version } is not compatible with this version of Flint.
 extensions-loading = Loading extensions…
 extensions-load-failed = Failed to load extensions. Check your connection and try again.
+extensions-install-dev-failed = Failed to install development extension: { $error }
 extensions-no-search = No extensions match your search.
 extensions-none = No extensions.
 extensions-no-installed-search = No installed extensions match your search.

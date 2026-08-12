@@ -7,8 +7,9 @@ use git::repository::{Branch, delete_branch_flag};
 use gpui::http_client::Url;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptButton,
+    PromptLevel, Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window,
+    actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::{Repository, RepositoryEvent};
@@ -740,7 +741,7 @@ impl Render for DeleteBranchTooltip {
             .unwrap_or(false);
         if force_delete {
             Tooltip::for_action_in(
-                "Force Delete Branch",
+                localization::text(cx, "git-force-delete-branch"),
                 &branch_picker::ForceDeleteBranch,
                 &self.focus_handle,
                 cx,
@@ -748,9 +749,9 @@ impl Render for DeleteBranchTooltip {
             .into_any_element()
         } else {
             Tooltip::with_meta_in(
-                "Delete Branch",
+                localization::text(cx, "git-delete-branch"),
                 Some(&branch_picker::DeleteBranch),
-                "Hold alt to force delete",
+                localization::text(cx, "git-hold-alt-force-delete"),
                 &self.focus_handle,
                 cx,
             )
@@ -977,7 +978,10 @@ impl BranchListDelegate {
                                 PromptLevel::Warning,
                                 &prompt_message,
                                 None,
-                                &["Force Delete", "Cancel"],
+                                &[
+                                    PromptButton::ok(localization::text(cx, "git-force-delete")),
+                                    PromptButton::cancel(localization::text(cx, "common-cancel")),
+                                ],
                                 cx,
                             )
                         })?;
@@ -1047,25 +1051,25 @@ impl BranchListDelegate {
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 if self.is_select_only() {
-                    "Select branch…"
+                    localization::text(cx, "git-select-branch").to_string()
                 } else {
-                    "Switch branch…"
+                    localization::text(cx, "git-switch-branch-placeholder").to_string()
                 }
             }
-            PickerState::CreateRemote(_) => "Enter a name for this remote…",
+            PickerState::CreateRemote(_) => {
+                localization::text(cx, "git-enter-remote-name").to_string()
+            }
         }
         .into()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
         match self.state {
-            PickerState::CreateRemote(_) => {
-                Some(SharedString::new_static("Remote name can't be empty"))
-            }
+            PickerState::CreateRemote(_) => Some(localization::text(cx, "git-remote-name-empty")),
             _ => None,
         }
     }

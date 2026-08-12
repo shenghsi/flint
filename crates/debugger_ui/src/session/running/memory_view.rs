@@ -630,14 +630,14 @@ impl MemoryView {
 
             let mut menu = menu.action_disabled_when(
                 range_too_large || *memory_unreadable,
-                "Go To Selected Address",
+                localization::text(cx, "debugger-go-to-selected-address"),
                 GoToSelectedAddress.boxed_clone(),
             );
 
             if supports_data_breakpoints {
                 menu = menu.action_disabled_when(
                     *memory_unreadable,
-                    "Set Data Breakpoint",
+                    localization::text(cx, "debugger-set-data-breakpoint"),
                     ToggleDataBreakpoint { access_type: None }.boxed_clone(),
                 );
             }

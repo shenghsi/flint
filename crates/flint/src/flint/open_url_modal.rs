@@ -69,7 +69,11 @@ impl OpenUrlModal {
                 cx.emit(DismissEvent);
             }
             Err(e) => {
-                self.last_error = Some(format!("Invalid URL: {}", e).into());
+                self.last_error = Some(localization::tr!(
+                    cx,
+                    "flint-invalid-url",
+                    error = e.to_string(),
+                ));
                 cx.notify();
             }
         }
@@ -106,7 +110,7 @@ impl Render for OpenUrlModal {
                     })
                     .when(self.last_error.is_none(), |this| {
                         this.child(
-                            Label::new("Paste a URL to open.")
+                            Label::new(localization::text(cx, "flint-open-url-hint"))
                                 .color(Color::Muted)
                                 .size(LabelSize::Small),
                         )

@@ -4,4 +4,4 @@
 
 - [中文文档首页](./index.md)
 - [开始使用](./getting-started.md)
-- [英文文档（未翻译页面）](/docs/)
+- [术语表](./development/glossary.md)

@@ -503,13 +503,16 @@ impl DebugPanel {
             })
             .unwrap_or_default();
 
+        let terminate_confirmation = localization::text(cx, "debugger-terminate-session-confirm");
+        let yes = localization::text(cx, "debugger-yes");
+        let no = localization::text(cx, "debugger-no");
         cx.spawn_in(window, async move |this, cx| {
             if should_prompt {
                 let response = cx.prompt(
                     gpui::PromptLevel::Warning,
-                    "This Debug Session is still running. Are you sure you want to terminate it?",
+                    &terminate_confirmation,
                     None,
-                    &["Yes", "No"],
+                    &[yes, no],
                 );
                 if response.await == Ok(1) {
                     return;
@@ -626,7 +629,7 @@ impl DebugPanel {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            "Start Debug Session",
+                            localization::text(cx, "debugger-start-session"),
                             &crate::Start,
                             &focus_handle,
                             cx,
@@ -716,7 +719,7 @@ impl DebugPanel {
                                                     let focus_handle = focus_handle.clone();
                                                     move |_window, cx| {
                                                         Tooltip::for_action_in(
-                                                            "Pause Program",
+                                                            localization::text(cx, "debugger-pause-program"),
                                                             &Pause,
                                                             &focus_handle,
                                                             cx,
@@ -740,7 +743,7 @@ impl DebugPanel {
                                                     let focus_handle = focus_handle.clone();
                                                     move |_window, cx| {
                                                         Tooltip::for_action_in(
-                                                            "Continue Program",
+                                                            localization::text(cx, "debugger-continue-program"),
                                                             &Continue,
                                                             &focus_handle,
                                                             cx,
@@ -764,7 +767,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Step Over",
+                                                        localization::text(cx, "debugger-step-over"),
                                                         &StepOver,
                                                         &focus_handle,
                                                         cx,
@@ -786,7 +789,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Step In",
+                                                        localization::text(cx, "debugger-step-in"),
                                                         &StepInto,
                                                         &focus_handle,
                                                         cx,
@@ -808,7 +811,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Step Out",
+                                                        localization::text(cx, "debugger-step-out"),
                                                         &StepOut,
                                                         &focus_handle,
                                                         cx,
@@ -830,7 +833,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Rerun Session",
+                                                        localization::text(cx, "debugger-rerun-session"),
                                                         &RerunSession,
                                                         &focus_handle,
                                                         cx,
@@ -903,7 +906,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Detach",
+                                                        localization::text(cx, "debugger-detach"),
                                                         &Detach,
                                                         &focus_handle,
                                                         cx,
@@ -1411,12 +1414,16 @@ impl DebugPanel {
                                 .read(cx)
                                 .historic_snapshots();
 
-                            context_menu = context_menu.entry("Current State", None, {
+                            context_menu = context_menu.entry(
+                                localization::text(cx, "debugger-current-state"),
+                                None,
+                                {
                                 let running_state = running_state.clone();
                                 move |_window, cx| {
                                     handler(None, running_state.clone(), cx);
                                 }
-                            });
+                                },
+                            );
                             context_menu = context_menu.separator();
 
                             for (ix, _) in history.iter().enumerate().rev() {
@@ -1852,7 +1859,7 @@ impl Render for DebugPanel {
                         .child(
                             Button::new(
                                 "spawn-new-session-install-extensions",
-                                "Debugger Extensions",
+                                localization::text(cx, "debugger-extensions"),
                             )
                             .start_icon(
                                 Icon::new(IconName::Blocks)

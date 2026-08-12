@@ -1075,4 +1075,35 @@ mod tests {
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 0.5]);
     }
+
+    #[test]
+    fn wraps_simplified_chinese_without_spaces() {
+        let text = "中文界面";
+        let layout = make_layout(vec![
+            glyph_at(0., 0),
+            glyph_at(10., 3),
+            glyph_at(20., 6),
+            glyph_at(30., 9),
+        ]);
+
+        let boundaries = layout.compute_wrap_boundaries(text, px(15.), None);
+
+        assert_eq!(
+            boundaries.as_slice(),
+            [
+                WrapBoundary {
+                    run_ix: 0,
+                    glyph_ix: 1,
+                },
+                WrapBoundary {
+                    run_ix: 0,
+                    glyph_ix: 2,
+                },
+                WrapBoundary {
+                    run_ix: 0,
+                    glyph_ix: 3,
+                },
+            ]
+        );
+    }
 }

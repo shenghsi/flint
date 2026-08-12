@@ -889,9 +889,9 @@ impl Item for MarkdownPreviewView {
             .map(|editor_state| {
                 let buffer = editor_state.editor.read(cx).buffer().read(cx);
                 let title = buffer.title(cx);
-                format!("Preview {}", title).into()
+                localization::tr!(cx, "preview-markdown-tab", title = title.to_string())
             })
-            .unwrap_or_else(|| SharedString::from("Markdown Preview"))
+            .unwrap_or_else(|| localization::text(cx, "preview-markdown-default"))
     }
 
     fn can_save(&self, cx: &App) -> bool {
@@ -1006,14 +1006,18 @@ impl Render for MarkdownPreviewView {
                                 let focus = window.focused(cx);
                                 let context_menu_link =
                                     markdown.read(cx).context_menu_link().cloned();
-                                ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                ContextMenu::build(window, cx, move |menu, _, cx| {
                                     menu.when_some(focus, |menu, focus| menu.context(focus))
                                         .when_some(context_menu_link, |menu, url| {
-                                            menu.entry("Copy Link", None, move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    url.to_string(),
-                                                ));
-                                            })
+                                            menu.entry(
+                                                localization::text(cx, "settings-copy-link"),
+                                                None,
+                                                move |_, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(url.to_string()),
+                                                    );
+                                                },
+                                            )
                                         })
                                 })
                             })

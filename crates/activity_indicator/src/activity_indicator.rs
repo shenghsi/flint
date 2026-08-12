@@ -18,7 +18,6 @@ use smallvec::SmallVec;
 use std::{
     cmp::Reverse,
     collections::HashSet,
-    fmt::Write,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -236,7 +235,17 @@ impl ActivityIndicator {
                     let buffer = create_buffer.await?;
                     buffer.update(cx, |buffer, cx| {
                         buffer.edit(
-                            [(0..0, format!("Language server {server_name}:\n\n{status}"))],
+                            [(
+                                0..0,
+                                format!(
+                                    "{}\n\n{status}",
+                                    localization::tr!(
+                                        cx,
+                                        "activity-language-server-status",
+                                        server = server_name.to_string()
+                                    )
+                                ),
+                            )],
                             None,
                             cx,
                         );
@@ -361,17 +370,34 @@ impl ActivityIndicator {
                 let mut message = progress.title.clone().unwrap_or(progress_token.to_string());
 
                 if let Some(percentage) = progress.percentage {
-                    write!(&mut message, " ({}%)", percentage).unwrap();
+                    message = localization::tr!(
+                        cx,
+                        "activity-progress-percentage",
+                        title = message.as_str(),
+                        percentage = percentage
+                    )
+                    .to_string();
                 }
 
                 if let Some(progress_message) = progress.message.as_ref() {
-                    message.push_str(": ");
-                    message.push_str(progress_message);
+                    message = localization::tr!(
+                        cx,
+                        "activity-progress-message",
+                        title = message.as_str(),
+                        message = progress_message.as_str()
+                    )
+                    .to_string();
                 }
 
                 let additional_work_count = pending_work.count();
                 if additional_work_count > 0 {
-                    write!(&mut message, " + {} more", additional_work_count).unwrap();
+                    message = localization::tr!(
+                        cx,
+                        "activity-progress-more",
+                        message = message.as_str(),
+                        count = additional_work_count
+                    )
+                    .to_string();
                 }
 
                 return Some(Content {
@@ -474,21 +500,20 @@ impl ActivityIndicator {
         });
 
         if !downloading.is_empty() {
+            let items = downloading.iter().map(|name| name.as_ref()).fold(
+                String::new(),
+                |mut accumulator, name| {
+                    if !accumulator.is_empty() {
+                        accumulator.push_str(", ");
+                    }
+                    accumulator.push_str(name);
+                    accumulator
+                },
+            );
             return Some(Content {
                 icon: ActivityIcon::Icon(IconName::Download),
-                message: format!(
-                    "Downloading {}...",
-                    downloading.iter().map(|name| name.as_ref()).fold(
-                        String::new(),
-                        |mut acc, s| {
-                            if !acc.is_empty() {
-                                acc.push_str(", ");
-                            }
-                            acc.push_str(s);
-                            acc
-                        }
-                    )
-                ),
+                message: localization::tr!(cx, "activity-downloading", items = items.as_str())
+                    .to_string(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.statuses
                         .retain(|status| !downloading.contains(&status.name));
@@ -499,21 +524,21 @@ impl ActivityIndicator {
         }
 
         if !checking_for_update.is_empty() {
+            let items = checking_for_update.iter().map(|name| name.as_ref()).fold(
+                String::new(),
+                |mut accumulator, name| {
+                    if !accumulator.is_empty() {
+                        accumulator.push_str(", ");
+                    }
+                    accumulator.push_str(name);
+                    accumulator
+                },
+            );
             return Some(Content {
                 icon: ActivityIcon::Icon(IconName::Download),
-                message: format!(
-                    "Checking for updates to {}...",
-                    checking_for_update.iter().map(|name| name.as_ref()).fold(
-                        String::new(),
-                        |mut acc, s| {
-                            if !acc.is_empty() {
-                                acc.push_str(", ");
-                            }
-                            acc.push_str(s);
-                            acc
-                        }
-                    ),
-                ),
+                message:
+                    localization::tr!(cx, "activity-checking-updates", items = items.as_str(),)
+                        .to_string(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.statuses
                         .retain(|status| !checking_for_update.contains(&status.name));
@@ -524,21 +549,20 @@ impl ActivityIndicator {
         }
 
         if !failed.is_empty() {
+            let items = failed.iter().map(|name| name.as_ref()).fold(
+                String::new(),
+                |mut accumulator, name| {
+                    if !accumulator.is_empty() {
+                        accumulator.push_str(", ");
+                    }
+                    accumulator.push_str(name);
+                    accumulator
+                },
+            );
             return Some(Content {
                 icon: ActivityIcon::Icon(IconName::Warning),
-                message: format!(
-                    "Failed to run {}. Click to show error.",
-                    failed
-                        .iter()
-                        .map(|name| name.as_ref())
-                        .fold(String::new(), |mut acc, s| {
-                            if !acc.is_empty() {
-                                acc.push_str(", ");
-                            }
-                            acc.push_str(s);
-                            acc
-                        }),
-                ),
+                message: localization::tr!(cx, "activity-run-failed", items = items.as_str(),)
+                    .to_string(),
                 on_click: Some(Arc::new(|this, window, cx| {
                     this.show_error_message(&ShowErrorMessage, window, cx)
                 })),
@@ -550,7 +574,8 @@ impl ActivityIndicator {
         if let Some(failure) = self.project.read(cx).last_formatting_failure(cx) {
             return Some(Content {
                 icon: ActivityIcon::Icon(IconName::Warning),
-                message: format!("Formatting failed: {failure}. Click to see logs."),
+                message: localization::tr!(cx, "activity-formatting-failed", failure = failure)
+                    .to_string(),
                 on_click: Some(Arc::new(|indicator, window, cx| {
                     indicator.project.update(cx, |project, cx| {
                         project.reset_last_formatting_failure(cx);
@@ -564,9 +589,22 @@ impl ActivityIndicator {
         // Show any health messages for the language servers
         if let Some((server_name, health, message)) = health_messages.pop() {
             let health_str = match health {
-                ServerHealth::Ok => format!("({server_name}) "),
-                ServerHealth::Warning => format!("({server_name}) Warning: "),
-                ServerHealth::Error => format!("({server_name}) Error: "),
+                ServerHealth::Ok => {
+                    localization::tr!(cx, "activity-server-ok", server = server_name.to_string())
+                        .to_string()
+                }
+                ServerHealth::Warning => localization::tr!(
+                    cx,
+                    "activity-server-warning",
+                    server = server_name.to_string()
+                )
+                .to_string(),
+                ServerHealth::Error => localization::tr!(
+                    cx,
+                    "activity-server-error",
+                    server = server_name.to_string()
+                )
+                .to_string(),
             };
             let single_line_message = message
                 .lines()
@@ -615,15 +653,30 @@ impl ActivityIndicator {
         {
             let (message, icon) = match operation {
                 ExtensionOperation::Install => (
-                    format!("Installing {extension_id} extension…"),
+                    localization::tr!(
+                        cx,
+                        "activity-installing-extension",
+                        extension = extension_id.as_ref()
+                    )
+                    .to_string(),
                     ActivityIcon::LoadingSpinner,
                 ),
                 ExtensionOperation::Upgrade => (
-                    format!("Updating {extension_id} extension…"),
+                    localization::tr!(
+                        cx,
+                        "activity-updating-extension",
+                        extension = extension_id.as_ref()
+                    )
+                    .to_string(),
                     ActivityIcon::Icon(IconName::Download),
                 ),
                 ExtensionOperation::Remove => (
-                    format!("Removing {extension_id} extension…"),
+                    localization::tr!(
+                        cx,
+                        "activity-removing-extension",
+                        extension = extension_id.as_ref()
+                    )
+                    .to_string(),
                     ActivityIcon::LoadingSpinner,
                 ),
             };
@@ -713,7 +766,11 @@ impl Render for ActivityIndicator {
                                     has_cancellable_work = true;
                                     let language_server_id = work.language_server_id;
                                     let token = work.progress_token.clone();
-                                    let title = SharedString::from(format!("Cancel {title}"));
+                                    let title = localization::tr!(
+                                        cx,
+                                        "activity-cancel-work",
+                                        title = title.as_str()
+                                    );
                                     menu = menu.custom_entry(
                                         move |_, _| {
                                             h_flex()

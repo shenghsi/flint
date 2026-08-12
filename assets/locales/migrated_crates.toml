@@ -2,15 +2,22 @@
 # messages or have an explicit allowlist entry.
 crates = [
   "agent_threads",
+  "activity_indicator",
+  "auto_update",
   "auto_update_ui",
   "command_palette",
+  "cli",
   "csv_preview",
   "debugger_ui",
+  "debugger_tools",
   "dev_container",
   "diagnostics",
+  "editor",
   "encoding_selector",
   "extensions_ui",
+  "feedback",
   "file_finder",
+  "flint",
   "go_to_line",
   "git_ui",
   "image_viewer",
@@ -18,22 +25,37 @@ crates = [
   "keymap_editor",
   "language_selector",
   "language_onboarding",
+  "language_tools",
   "line_ending_selector",
+  "lsp_locations",
   "markdown_preview",
+  "markdown",
+  "onboarding",
   "open_path_prompt",
   "outline_panel",
   "picker",
+  "platform_title_bar",
   "project_panel",
   "project_symbols",
   "recent_projects",
+  "remote_connection",
   "repl",
   "search",
+  "settings_ui",
+  "settings_profile_selector",
   "snippets_ui",
   "svg_preview",
   "tab_switcher",
   "tasks_ui",
+  "toolchain_selector",
   "terminal_view",
   "theme_selector",
+  "title_bar",
+  "ui_prompt",
+  "ui_input",
+  "workspace",
+  "which_key",
+  "vim",
 ]
 
 # Each entry permits one technical string that a UI literal sink uses. Add a
@@ -57,6 +79,56 @@ reason = "Localized tooltip layout format"
 file = "crates/search/src/project_search.rs"
 text = "project-search-replace-button"
 reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/settings_ui/src/settings_ui.rs"
+text = "setting-item"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/settings_ui/src/settings_ui.rs"
+text = "copy-link-btn"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/workspace/src/dock.rs"
+text = "test-support"
+reason = "Cargo feature name"
+
+[[allowlist]]
+file = "crates/workspace/src/pane.rs"
+text = "pane-tab-content"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/onboarding/src/basics_page.rs"
+text = "One"
+reason = "Theme family name"
+
+[[allowlist]]
+file = "crates/onboarding/src/basics_page.rs"
+text = "Ayu"
+reason = "Theme family name"
+
+[[allowlist]]
+file = "crates/onboarding/src/basics_page.rs"
+text = "Gruvbox"
+reason = "Theme family name"
+
+[[allowlist]]
+file = "crates/editor/src/code_lens.rs"
+text = "0 references"
+reason = "Internal renderer-diff placeholder; the rendered fallback is localized"
+
+[[allowlist]]
+file = "crates/editor/src/fold.rs"
+text = "\\\\n"
+reason = "Visible fold placeholder glyph"
+
+[[allowlist]]
+file = "crates/editor/src/editor.rs"
+text = ".ZedMono"
+reason = "Internal font-family token"
 
 [[allowlist]]
 file = "crates/outline_panel/src/outline_panel.rs"
@@ -170,6 +242,21 @@ text = "Console"
 reason = "Stable serialized pane identifier"
 
 [[allowlist]]
+file = "crates/debugger_ui/src/session/running/memory_view.rs"
+text = "{:016X}"
+reason = "Debugger memory address display format"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/memory_view.rs"
+text = "{as_visible}"
+reason = "Debugger memory byte display"
+
+[[allowlist]]
+file = "crates/repl/src/session.rs"
+text = "({status_text})"
+reason = "Punctuation around an independently localized kernel status"
+
+[[allowlist]]
 file = "crates/debugger_ui/src/persistence.rs"
 text = "Variables"
 reason = "Stable serialized pane identifier"
@@ -188,6 +275,46 @@ reason = "Stable serialized pane identifier"
 file = "crates/debugger_ui/src/persistence.rs"
 text = "Modules"
 reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "Accept"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "Authorization"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "X-Date"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "X-Content-Sha256"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "Content-Type"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/dev_container/src/oci.rs"
+text = "Authorization"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/dev_container/src/oci.rs"
+text = "Accept"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/repl/src/kernels/remote_kernels.rs"
+text = "Authorization"
+reason = "HTTP protocol header"
 
 [[allowlist]]
 file = "crates/debugger_ui/src/persistence.rs"

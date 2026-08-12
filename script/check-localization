@@ -70,17 +70,98 @@ UI_LITERAL_PATTERNS = (
     re.compile(r"Button::new\([^,]+,\s*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"\.placeholder(?:_text)?\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"\.label\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
-    re.compile(r"\.tooltip\([^\"]*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.tooltip\([^\"\n]*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"\.child\(\s*\"([^\"]*[A-Za-z][^\"]*)\"\s*\)"),
+    re.compile(r"\.child\(\s*format!\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"MenuItem::action\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"ContextMenuEntry::new\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.action\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.toggleable_entry\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.header\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.entry\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(
+        r"\.action_disabled_when\(\s*[^,]+,\s*\"([^\"]*[A-Za-z][^\"]*)\""
+    ),
     re.compile(r"Label::new\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"Label::new\(\s*format!\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"Headline::new\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"ProjectEmptyState::new\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"label_with_contrast\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(
+        r"window\.prompt\(\s*[^,]+,\s*(?:&)?(?:format!\(\s*)?\"([^\"]*[A-Za-z][^\"]*)\"",
+        re.DOTALL,
+    ),
     re.compile(r"ListBulletItem::new\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"Tooltip::(?:text|simple|for_action(?:_title)?(?:_in)?)\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"Tooltip::with_meta(?:_in)?\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"\.tooltip\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
+    re.compile(r"\.tooltip_label\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"(?:window|cx)\.prompt\(\s*[^,]+,\s*\"([^\"]*[A-Za-z][^\"]*)\""),
     re.compile(r"SharedString::new_static\(\s*\"([^\"]*[A-Za-z][^\"]*)\""),
 )
+
+
+def item_end(source: str, start: int) -> int:
+    """Return the first byte after one Rust item that starts at ``start``."""
+    depth = 0
+    in_string = False
+    escaped = False
+    in_line_comment = False
+    in_block_comment = False
+
+    for index in range(start, len(source)):
+        character = source[index]
+        next_character = source[index + 1] if index + 1 < len(source) else ""
+
+        if in_line_comment:
+            if character == "\n":
+                in_line_comment = False
+            continue
+        if in_block_comment:
+            if character == "*" and next_character == "/":
+                in_block_comment = False
+            continue
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+
+        if character == "/" and next_character == "/":
+            in_line_comment = True
+            continue
+        if character == "/" and next_character == "*":
+            in_block_comment = True
+            continue
+        if character == '"':
+            in_string = True
+            continue
+        if character == "{":
+            depth += 1
+            continue
+        if character == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+            continue
+        if character == ";" and depth == 0:
+            return index + 1
+
+    return len(source)
+
+
+def production_source(source: str) -> str:
+    """Remove each item guarded by an exact ``#[cfg(test)]`` attribute."""
+    result: list[str] = []
+    position = 0
+    for match in re.finditer(r"(?m)^\s*#\[cfg\(test\)\]\s*$", source):
+        result.append(source[position:match.start()])
+        position = item_end(source, match.end())
+    result.append(source[position:])
+    return "".join(result)
 
 
 def check_migrated_crates(identifiers: set[str]) -> None:
@@ -96,14 +177,18 @@ def check_migrated_crates(identifiers: set[str]) -> None:
             fail(f"migrated crate does not exist: {crate_name}")
         for path in source_root.rglob("*.rs"):
             relative_path = str(path.relative_to(ROOT))
-            production_source = path.read_text().split("#[cfg(test)]", 1)[0]
+            source = path.read_text()
+            source_without_tests = production_source(source)
             for pattern in UI_LITERAL_PATTERNS:
-                for match in pattern.finditer(production_source):
+                for match in pattern.finditer(source_without_tests):
+                    line_start = source_without_tests.rfind("\n", 0, match.start()) + 1
+                    if "//" in source_without_tests[line_start:match.start()]:
+                        continue
                     text = match.group(1)
                     if text in identifiers:
                         continue
                     if (relative_path, text) not in allowlist:
-                        line = production_source.count("\n", 0, match.start()) + 1
+                        line = source_without_tests.count("\n", 0, match.start()) + 1
                         failures.append(f"{relative_path}:{line}: {text!r}")
     if failures:
         fail("user-facing literals remain:\n" + "\n".join(sorted(failures)))

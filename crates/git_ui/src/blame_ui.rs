@@ -368,7 +368,10 @@ impl BlameRenderer for GitBlameRenderer {
                                             .child(Divider::vertical())
                                             .child(
                                                 CopyButton::new("copy-blame-sha", sha.to_string())
-                                                    .tooltip_label("Copy SHA"),
+                                                    .tooltip_label(localization::text(
+                                                        cx,
+                                                        "git-copy-sha",
+                                                    )),
                                             ),
                                     ),
                             ),
@@ -406,18 +409,24 @@ fn deploy_blame_entry_context_menu(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
+    let context_menu = ContextMenu::build(window, cx, move |menu, _, cx| {
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
-            .entry("Copy Commit SHA", None, move |_, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
-            })
+            .entry(
+                localization::text(cx, "git-copy-commit-sha"),
+                None,
+                move |_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
+                },
+            )
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
                 |this, url| {
-                    this.entry("Open Permalink", None, move |_, cx| {
-                        cx.open_url(url.as_str())
-                    })
+                    this.entry(
+                        localization::text(cx, "git-open-permalink"),
+                        None,
+                        move |_, cx| cx.open_url(url.as_str()),
+                    )
                 },
             )
     });

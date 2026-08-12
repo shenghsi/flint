@@ -163,14 +163,19 @@ impl Render for WorktreeFetchFailedToast {
                     .size(IconSize::Small)
                     .color(Color::Error),
             )
-            .child(Label::new(format!(
-                "git fetch failed for {}",
-                self.remote_branch_name
+            .child(Label::new(localization::tr!(
+                cx,
+                "git-worktree-fetch-failed",
+                branch = self.remote_branch_name.as_str(),
             )))
             .child(
                 Button::new(
                     "use-local-worktree-base",
-                    format!("Use local {}", self.remote_branch_name),
+                    localization::tr!(
+                        cx,
+                        "git-worktree-use-local",
+                        branch = self.remote_branch_name.as_str(),
+                    ),
                 )
                 .color(Color::Muted)
                 .on_click(cx.listener(move |_, _event, window, cx| {
