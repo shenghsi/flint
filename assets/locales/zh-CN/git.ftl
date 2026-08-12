@@ -200,5 +200,6 @@ git-custom-commands = 自定义命令
 git-open-permalink = 打开永久链接
 git-open-file-in-project = 在项目中打开文件
 git-copy-sha = 复制 SHA
+git-compare-working-tree-with-commit = 比较工作区与该提交
 git-worktree-fetch-failed = 无法获取 Git 分支 { $branch }
 git-worktree-use-local = 使用本地分支 { $branch }
