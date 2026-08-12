@@ -142,11 +142,22 @@ impl LatexRendererState {
             .await
             .context("locating node binary for latex rendering")?;
 
-        let mut child = Command::new(&node_path)
+        let mut command = Command::new(&node_path);
+        command
             .arg(&script_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+
+        #[cfg(target_os = "windows")]
+        {
+            use smol::process::windows::CommandExt as _;
+
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = command
             .spawn()
             .context("spawning node for latex rendering")?;
 
