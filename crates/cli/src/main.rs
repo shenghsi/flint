@@ -470,10 +470,9 @@ fn cli_ui_language() -> localization::UiLanguage {
     fs::read_to_string(paths::settings_file())
         .ok()
         .and_then(|settings| serde_json::from_str::<serde_json::Value>(&settings).ok())
-        .and_then(|settings| match settings.get("ui_language")?.as_str()? {
-            "zh-CN" => Some(localization::UiLanguage::SimplifiedChinese),
-            "en-US" => Some(localization::UiLanguage::English),
-            _ => None,
+        .and_then(|settings| {
+            serde_json::from_value::<localization::UiLanguage>(settings.get("ui_language")?.clone())
+                .ok()
         })
         .unwrap_or_default()
 }
@@ -1078,7 +1077,12 @@ mod flatpak {
             && args.flint.is_none()
         {
             args.flint = Some("/app/libexec/flint-editor".into());
-            unsafe { env::set_var("ZED_UPDATE_EXPLANATION", &cli_text("cli-flatpak-update")) };
+            unsafe {
+                env::set_var(
+                    "ZED_UPDATE_EXPLANATION",
+                    &super::cli_text("cli-flatpak-update"),
+                )
+            };
         }
         args
     }

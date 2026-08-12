@@ -337,13 +337,15 @@ mod tests {
                 .expect("embedded catalog must contain UTF-8");
             let mut current_identifier = None;
             for line in source.lines() {
+                let line_is_indented = line.chars().next().is_some_and(char::is_whitespace);
+                if !line_is_indented {
+                    current_identifier = None;
+                }
                 let trimmed = line.trim_start();
                 if trimmed.is_empty() || trimmed.starts_with('#') {
                     continue;
                 }
-                if !line.chars().next().is_some_and(char::is_whitespace)
-                    && let Some((identifier, _)) = line.split_once('=')
-                {
+                if !line_is_indented && let Some((identifier, _)) = line.split_once('=') {
                     let identifier = identifier.trim().to_owned();
                     assert!(
                         messages

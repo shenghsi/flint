@@ -37,7 +37,11 @@ project-panel-files-not-shown =
     }
 project-panel-unsaved-single =
     It has unsaved changes, which will be lost.
-project-panel-unsaved-multiple = { $count } of these have unsaved changes, which will be lost.
+project-panel-unsaved-multiple =
+    { $count ->
+        [one] { $count } of these has unsaved changes, which will be lost.
+       *[other] { $count } of these have unsaved changes, which will be lost.
+    }
 project-panel-delete-cannot-undo = This cannot be undone.
 project-panel-add-to-gitignore = Add to .gitignore
 project-panel-view-history = View History

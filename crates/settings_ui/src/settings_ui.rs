@@ -2321,6 +2321,7 @@ impl SettingsWindow {
                         );
                     }
                 }
+                let current_localized_header = settings_source_text(cx, header_str);
                 push_candidates(&mut fuzzy_match_candidates, key_index, page.title);
                 push_candidates(&mut fuzzy_match_candidates, key_index, header_str);
                 push_candidates(
@@ -2331,7 +2332,7 @@ impl SettingsWindow {
                 push_candidates(
                     &mut fuzzy_match_candidates,
                     key_index,
-                    localized_header.as_ref(),
+                    current_localized_header.as_ref(),
                 );
 
                 key_lut.push(SearchKeyLUTEntry {

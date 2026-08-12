@@ -1,5 +1,8 @@
-trust-project-one = Unrecognized Project
-trust-project-many = Unrecognized Projects ({ $count })
+trust-project-header =
+    { $count ->
+        [1] Unrecognized Project
+       *[other] Unrecognized Projects ({ $count })
+    }
 trust-restricted-description = Untrusted projects are opened in Restricted Mode to protect your system.
 trust-review-settings = Review .flint/settings.json for any extensions or commands configured by this project.
 trust-prevents = Restricted Mode prevents:

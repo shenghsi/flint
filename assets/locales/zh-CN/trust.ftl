@@ -1,5 +1,8 @@
-trust-project-one = 无法识别的项目
-trust-project-many = 无法识别的项目（{ $count }）
+trust-project-header =
+    { $count ->
+        [1] 无法识别的项目
+       *[other] 无法识别的项目（{ $count }）
+    }
 trust-restricted-description = 为保护系统，Flint 会在受限模式下打开不受信任的项目。
 trust-review-settings = 请检查 .flint/settings.json 中由此项目配置的扩展或命令。
 trust-prevents = 受限模式会阻止：

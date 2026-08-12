@@ -420,29 +420,14 @@ fn format_compound_year_month(month_diff: usize) -> String {
 }
 
 /// Calculates the difference in months between two timestamps.
-/// The reference timestamp should always be greater than the timestamp.
+/// If `timestamp` is chronologically after `reference` (e.g. a future-dated
+/// or clock-skewed source), the difference is clamped to 0 rather than
+/// underflowing.
 fn calculate_month_difference(timestamp: OffsetDateTime, reference: OffsetDateTime) -> usize {
-    let timestamp_year = timestamp.year();
-    let reference_year = reference.year();
-    let timestamp_month: u8 = timestamp.month().into();
-    let reference_month: u8 = reference.month().into();
+    let timestamp_total_months = timestamp.year() as i64 * 12 + u8::from(timestamp.month()) as i64;
+    let reference_total_months = reference.year() as i64 * 12 + u8::from(reference.month()) as i64;
 
-    let month_diff = if reference_month >= timestamp_month {
-        reference_month as usize - timestamp_month as usize
-    } else {
-        12 - timestamp_month as usize + reference_month as usize
-    };
-
-    let year_diff = (reference_year - timestamp_year) as usize;
-    if year_diff == 0 {
-        reference_month as usize - timestamp_month as usize
-    } else if month_diff == 0 {
-        year_diff * 12
-    } else if timestamp_month > reference_month {
-        (year_diff - 1) * 12 + month_diff
-    } else {
-        year_diff * 12 + month_diff
-    }
+    (reference_total_months - timestamp_total_months).max(0) as usize
 }
 
 /// Formats a timestamp, which is either in 12-hour or 24-hour time format.

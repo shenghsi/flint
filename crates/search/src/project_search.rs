@@ -1428,7 +1428,11 @@ impl ProjectSearchView {
                         gpui::PromptLevel::Warning,
                         &localization::text(cx, "project-search-unsaved"),
                         None,
-                        &[save.as_ref(), dont_save.as_ref(), cancel.as_ref()],
+                        &[
+                            gpui::PromptButton::ok(save),
+                            gpui::PromptButton::new(dont_save),
+                            gpui::PromptButton::cancel(cancel),
+                        ],
                         cx,
                     )
                 })?;

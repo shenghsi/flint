@@ -432,7 +432,12 @@ pub async fn handle_import_vscode_settings(
                 }) else {
                     return;
                 };
-                let _ = cx.prompt(gpui::PromptLevel::Info, &message, None, &[ok.as_ref()]);
+                let _ = cx.prompt(
+                    gpui::PromptLevel::Info,
+                    &message,
+                    None,
+                    &[gpui::PromptButton::ok(ok)],
+                );
                 return;
             }
         };
@@ -457,7 +462,10 @@ pub async fn handle_import_vscode_settings(
             gpui::PromptLevel::Warning,
             &message,
             None,
-            &[ok.as_ref(), cancel.as_ref()],
+            &[
+                gpui::PromptButton::ok(ok),
+                gpui::PromptButton::cancel(cancel),
+            ],
         );
         let result = cx.spawn(async move |_| prompt.await.ok()).await;
         if result != Some(0) {

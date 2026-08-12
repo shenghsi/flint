@@ -72,13 +72,9 @@ impl Render for SecurityModal {
         }
 
         let restricted_count = self.restricted_paths.len();
-        let header_label = if restricted_count == 1 {
-            localization::text(cx, "trust-project-one")
-        } else {
-            let mut args = localization::FluentArgs::new();
-            args.set("count", restricted_count as i64);
-            localization::text_with_args(cx, "trust-project-many", &args)
-        };
+        let mut args = localization::FluentArgs::new();
+        args.set("count", restricted_count as i64);
+        let header_label = localization::text_with_args(cx, "trust-project-header", &args);
 
         let trust_label = self.build_trust_label(cx);
 

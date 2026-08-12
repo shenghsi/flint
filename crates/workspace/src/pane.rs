@@ -2001,7 +2001,11 @@ impl Pane {
                         PromptLevel::Warning,
                         title.as_ref(),
                         Some(&detail),
-                        &[save_all.as_ref(), discard_all.as_ref(), cancel.as_ref()],
+                        &[
+                            PromptButton::ok(save_all),
+                            PromptButton::new(discard_all),
+                            PromptButton::cancel(cancel),
+                        ],
                         cx,
                     )
                 })?;

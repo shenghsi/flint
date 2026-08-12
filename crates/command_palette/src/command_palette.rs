@@ -86,8 +86,13 @@ fn action_translation_identifier(action_name: &str) -> Option<&'static str> {
         "workspace::NewFile" => "menu-new",
         "workspace::NewWindow" => "menu-new-window",
         "workspace::OpenFiles" => "menu-open-file",
-        "workspace::Open" => "menu-open",
-        "workspace::OpenFolder" => "menu-open-folder",
+        "workspace::Open" => {
+            if cfg!(not(target_os = "macos")) {
+                "menu-open-folder"
+            } else {
+                "menu-open"
+            }
+        }
         "workspace::Save" => "menu-save",
         "workspace::SaveAs" => "menu-save-as",
         "workspace::SaveAll" => "menu-save-all",

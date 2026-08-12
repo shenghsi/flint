@@ -344,7 +344,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             gpui::PromptLevel::Critical,
             &message,
             None,
-            &[cancel.as_ref()],
+            &[gpui::PromptButton::cancel(cancel)],
             cx,
         );
     });
@@ -396,7 +396,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                             gpui::PromptLevel::Warning,
                             &title,
                             Some(&detail),
-                            &[cancel.as_ref()],
+                            &[gpui::PromptButton::cancel(cancel)],
                             cx,
                         );
                         return;
@@ -434,7 +434,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                             gpui::PromptLevel::Warning,
                             &title,
                             Some(&detail),
-                            &[cancel.as_ref()],
+                            &[gpui::PromptButton::cancel(cancel)],
                             cx,
                         );
                         return;
@@ -470,7 +470,10 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                                     gpui::PromptLevel::Warning,
                                     &title,
                                     Some(&detail),
-                                    &[replace.as_ref(), cancel.as_ref()],
+                                    &[
+                                        gpui::PromptButton::ok(replace),
+                                        gpui::PromptButton::cancel(cancel),
+                                    ],
                                     cx,
                                 )
                             });
@@ -573,7 +576,10 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     gpui::PromptLevel::Critical,
                     &title,
                     Some(&detail),
-                    &[replace.as_ref(), cancel.as_ref()],
+                    &[
+                        gpui::PromptButton::ok(replace),
+                        gpui::PromptButton::cancel(cancel),
+                    ],
                     cx,
                 );
                 cx.spawn_in(window, async move |editor, cx| {
@@ -645,7 +651,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 gpui::PromptLevel::Critical,
                 &title,
                 None,
-                &[cancel.as_ref()],
+                &[gpui::PromptButton::cancel(cancel)],
                 cx,
             );
         }
