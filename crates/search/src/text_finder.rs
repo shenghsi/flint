@@ -546,6 +546,8 @@ mod tests {
             cx.set_global(settings);
             cx.set_global(db::AppDatabase::test_new());
 
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
 
             editor::init(cx);

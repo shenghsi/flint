@@ -5721,6 +5721,8 @@ pub mod tests {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
 
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
 
             editor::init(cx);

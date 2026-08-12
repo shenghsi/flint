@@ -393,6 +393,8 @@ mod tests {
                     settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
                 });
             });
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }

@@ -1998,6 +1998,8 @@ mod tests {
             cx.set_global(store);
             editor::init(cx);
 
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });

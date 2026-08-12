@@ -1311,6 +1311,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(LoadThemes::JustBase, cx);
             AllLanguageSettings::register(cx);
             editor::init(cx);
