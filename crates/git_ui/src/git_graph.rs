@@ -2,6 +2,7 @@ use crate::{
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
     git_status_icon,
+    project_diff::CompareWorkingTreeWithCommit,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
@@ -2432,6 +2433,19 @@ impl GitGraph {
                     Some(CopyCommitSha.boxed_clone()),
                     window.handler_for(&git_graph, move |this, _window, cx| {
                         this.copy_commit_sha(index, cx);
+                    }),
+                )
+                .entry(
+                    localization::text(cx, "git-compare-working-tree-with-commit"),
+                    None,
+                    window.handler_for(&git_graph, move |_this, window, cx| {
+                        window.dispatch_action(
+                            CompareWorkingTreeWithCommit {
+                                sha: sha.to_string(),
+                            }
+                            .boxed_clone(),
+                            cx,
+                        );
                     }),
                 )
                 .map(|menu| {

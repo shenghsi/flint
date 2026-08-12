@@ -198,6 +198,7 @@ git-custom-commands = Custom Commands
 git-open-permalink = Open Permalink
 git-open-file-in-project = Open File in Project
 git-copy-sha = Copy SHA
+git-compare-working-tree-with-commit = Compare Working Tree with Commit
 git-learn-more = Learn More
 git-force-delete-branch = Force Delete Branch
 git-delete-branch = Delete Branch
