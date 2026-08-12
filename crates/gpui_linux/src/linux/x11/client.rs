@@ -77,6 +77,16 @@ pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
 pub(crate) const XINPUT_ALL_DEVICE_GROUPS: xinput::DeviceId = 1;
 
 const GPUI_X11_SCALE_FACTOR_ENV: &str = "GPUI_X11_SCALE_FACTOR";
+const XIM_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const MAX_XIM_RECONNECT_ATTEMPTS: u8 = 5;
+
+fn xim_server_name() -> Option<String> {
+    std::env::var("XMODIFIERS")
+        .ok()?
+        .strip_prefix("@im=")
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+}
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -197,6 +207,7 @@ pub struct X11ClientState {
     keyboard_layout: LinuxKeyboardLayout,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
+    xim_reconnect_attempts: u8,
     pub modifiers: Modifiers,
     pub capslock: Capslock,
     // TODO: Can the other updates to `modifiers` be removed so that this is unnecessary?
@@ -445,7 +456,14 @@ impl X11Client {
 
         let xcb_connection = Rc::new(xcb_connection);
 
-        let ximc = X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok();
+        let ximc = xim_server_name().and_then(|xim_server_name| {
+            X11rbClient::init(
+                Rc::clone(&xcb_connection),
+                x_root_index,
+                Some(&xim_server_name),
+            )
+            .ok()
+        });
         let xim_handler = if ximc.is_some() {
             Some(XimHandler::new())
         } else {
@@ -471,6 +489,16 @@ impl X11Client {
                 },
             )
             .map_err(|err| anyhow!("Failed to initialize X11 event source: {err:?}"))?;
+
+        handle
+            .insert_source(
+                calloop::timer::Timer::from_duration(XIM_RECONNECT_DELAY),
+                |_, (), client| {
+                    client.0.borrow_mut().reconnect_xim();
+                    calloop::timer::TimeoutAction::ToDuration(XIM_RECONNECT_DELAY)
+                },
+            )
+            .map_err(|err| anyhow!("Failed to initialize XIM reconnect timer: {err:?}"))?;
 
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
@@ -530,6 +558,7 @@ impl X11Client {
             keyboard_layout,
             ximc,
             xim_handler,
+            xim_reconnect_attempts: 0,
 
             compose_state,
             pre_edit_text: None,
@@ -698,6 +727,7 @@ impl X11Client {
                         log::error!("XIMClientError: {}", err);
                         let mut state = self.0.borrow_mut();
                         state.take_xim();
+                        state.xim_reconnect_attempts = 0;
                         drop(state);
                         self.handle_event(event);
                     }
@@ -1851,6 +1881,33 @@ impl LinuxClient for X11Client {
 }
 
 impl X11ClientState {
+    fn reconnect_xim(&mut self) {
+        if self.has_xim() || self.xim_reconnect_attempts >= MAX_XIM_RECONNECT_ATTEMPTS {
+            return;
+        }
+
+        let Some(xim_server_name) = xim_server_name() else {
+            return;
+        };
+        self.xim_reconnect_attempts += 1;
+        let ximc = match X11rbClient::init(
+            Rc::clone(&self.xcb_connection),
+            self.x_root_index,
+            Some(&xim_server_name),
+        ) {
+            Ok(ximc) => ximc,
+            Err(err) => {
+                log::debug!("Failed to reconnect to XIM: {err}");
+                return;
+            }
+        };
+        let mut xim_handler = XimHandler::new();
+        xim_handler.window = self.keyboard_focused_window.unwrap_or_default();
+        self.restore_xim(ximc, xim_handler);
+        self.xim_reconnect_attempts = 0;
+        log::info!("Reconnected to XIM");
+    }
+
     fn has_xim(&self) -> bool {
         self.ximc.is_some() && self.xim_handler.is_some()
     }
