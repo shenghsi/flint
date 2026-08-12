@@ -26,12 +26,39 @@ pub enum DiffBase {
     Head,
     Index,
     Staged,
-    Merge { base_ref: SharedString },
+    /// Diffs the working tree against the merge base of the current branch and `base_ref` (three-dot diff).
+    Merge {
+        base_ref: SharedString,
+    },
+    /// Diffs the working tree directly against the tip of `base_ref` (two-dot diff).
+    Branch {
+        base_ref: SharedString,
+    },
 }
 
 impl DiffBase {
-    pub fn is_merge_base(&self) -> bool {
-        matches!(self, DiffBase::Merge { .. })
+    /// Constructs a `DiffBase::Merge`. Usable where a `fn(SharedString) -> DiffBase` is needed,
+    /// since `Merge` is a struct-like variant and can't be named as a function item directly.
+    pub fn merge(base_ref: SharedString) -> Self {
+        DiffBase::Merge { base_ref }
+    }
+
+    /// Constructs a `DiffBase::Branch`. See [`DiffBase::merge`].
+    pub fn branch(base_ref: SharedString) -> Self {
+        DiffBase::Branch { base_ref }
+    }
+
+    /// Whether this diff base is computed from a `TreeDiff` against another ref,
+    /// rather than directly from the repository's head-to-worktree/index status.
+    pub fn uses_tree_diff(&self) -> bool {
+        matches!(self, DiffBase::Merge { .. } | DiffBase::Branch { .. })
+    }
+
+    fn base_ref(&self) -> Option<&SharedString> {
+        match self {
+            DiffBase::Merge { base_ref } | DiffBase::Branch { base_ref } => Some(base_ref),
+            DiffBase::Head | DiffBase::Index | DiffBase::Staged => None,
+        }
     }
 }
 
@@ -128,7 +155,7 @@ impl BranchDiff {
 
         self.repo = repo;
         self.tree_diff = None;
-        self.tree_diff_update_needed = self.diff_base.is_merge_base();
+        self.tree_diff_update_needed = self.diff_base.uses_tree_diff();
         self.tree_diff_base_task = None;
         self.base_commit = None;
         self.head_commit = None;
@@ -141,7 +168,7 @@ impl BranchDiff {
             return;
         }
 
-        self.tree_diff_update_needed = diff_base.is_merge_base();
+        self.tree_diff_update_needed = diff_base.uses_tree_diff();
         self.tree_diff = None;
         self.tree_diff_base_task = None;
         self.diff_base = diff_base;
@@ -180,7 +207,7 @@ impl BranchDiff {
                 } else if let Some(repo) = this.repo.as_ref() {
                     repo.update(cx, |repo, _| {
                         if let Some(branch) = &repo.branch
-                            && let DiffBase::Merge { base_ref } = &this.diff_base
+                            && let Some(base_ref) = this.diff_base.base_ref()
                             && let Some(commit) = branch.most_recent_commit.as_ref()
                             && &branch.ref_name == base_ref
                             && this.base_commit.as_ref() != Some(&commit.sha)
@@ -281,7 +308,7 @@ impl BranchDiff {
     }
 
     fn spawn_reload_tree_diff(&mut self, cx: &mut Context<Self>) {
-        if !self.diff_base.is_merge_base() {
+        if !self.diff_base.uses_tree_diff() {
             return;
         }
 
@@ -301,22 +328,22 @@ impl BranchDiff {
 
     pub async fn reload_tree_diff(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let task = this.update(cx, |this, cx| {
-            let DiffBase::Merge { base_ref } = this.diff_base.clone() else {
-                return None;
+            let diff_tree_type = match this.diff_base.clone() {
+                DiffBase::Merge { base_ref } => DiffTreeType::MergeBase {
+                    base: base_ref,
+                    head: "HEAD".into(),
+                },
+                DiffBase::Branch { base_ref } => DiffTreeType::Since {
+                    base: base_ref,
+                    head: "HEAD".into(),
+                },
+                DiffBase::Head | DiffBase::Index | DiffBase::Staged => return None,
             };
             let Some(repo) = this.repo.as_ref() else {
                 this.tree_diff.take();
                 return None;
             };
-            repo.update(cx, |repo, cx| {
-                Some(repo.diff_tree(
-                    DiffTreeType::MergeBase {
-                        base: base_ref,
-                        head: "HEAD".into(),
-                    },
-                    cx,
-                ))
-            })
+            repo.update(cx, |repo, cx| Some(repo.diff_tree(diff_tree_type, cx)))
         })?;
         let Some(task) = task else { return Ok(()) };
 
@@ -338,7 +365,7 @@ impl BranchDiff {
         let Some(repo) = self.repo.clone() else {
             return output;
         };
-        if self.diff_base.is_merge_base() && self.tree_diff.is_none() {
+        if self.diff_base.uses_tree_diff() && self.tree_diff.is_none() {
             return output;
         }
 
@@ -451,7 +478,7 @@ impl BranchDiff {
                         .await?;
                     (index_buffer, changes)
                 }
-                DiffBase::Head | DiffBase::Merge { .. } => {
+                DiffBase::Head | DiffBase::Merge { .. } | DiffBase::Branch { .. } => {
                     let changes = if let Some(entry) = branch_diff {
                         let oid = match entry {
                             git::status::TreeDiffStatus::Added { .. } => None,
