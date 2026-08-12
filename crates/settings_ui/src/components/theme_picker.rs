@@ -67,8 +67,8 @@ impl PickerDelegate for ThemePickerDelegate {
         cx.notify();
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search theme…".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "settings-search-themes").into()
     }
 
     fn update_matches(

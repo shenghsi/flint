@@ -800,6 +800,8 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             cx.set_global(db::AppDatabase::test_new());
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             terminal_view::init(cx);

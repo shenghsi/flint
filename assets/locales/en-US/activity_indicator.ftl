@@ -1,0 +1,16 @@
+activity-language-server-status = Language server { $server }:
+
+activity-progress-percentage = { $title } ({ $percentage }%)
+activity-progress-message = { $title }: { $message }
+activity-progress-more = { $message } + { $count } more
+activity-downloading = Downloading { $items }…
+activity-checking-updates = Checking for updates to { $items }…
+activity-run-failed = Failed to run { $items }. Click to show error.
+activity-formatting-failed = Formatting failed: { $failure }. Click to see logs.
+activity-server-ok = ({ $server })
+activity-server-warning = ({ $server }) Warning:
+activity-server-error = ({ $server }) Error:
+activity-installing-extension = Installing { $extension } extension…
+activity-updating-extension = Updating { $extension } extension…
+activity-removing-extension = Removing { $extension } extension…
+activity-cancel-work = Cancel { $title }

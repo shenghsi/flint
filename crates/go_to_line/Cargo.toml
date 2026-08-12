@@ -16,6 +16,7 @@ doctest = false
 editor.workspace = true
 gpui.workspace = true
 language.workspace = true
+localization.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 serde.workspace = true

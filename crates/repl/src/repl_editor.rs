@@ -99,7 +99,12 @@ pub fn install_ipykernel_and_assign(
             workspace.show_toast(
                 workspace::Toast::new(
                     notification_id.clone(),
-                    format!("Installing ipykernel in {}...", env_name),
+                    localization::tr!(
+                        cx,
+                        "repl-installing-ipykernel",
+                        environment = env_name.as_str()
+                    )
+                    .to_string(),
                 ),
                 cx,
             );
@@ -150,7 +155,12 @@ pub fn install_ipykernel_and_assign(
                             workspace.show_toast(
                                 workspace::Toast::new(
                                     notification_id.clone(),
-                                    format!("ipykernel installed in {}", env_name),
+                                    localization::tr!(
+                                        cx,
+                                        "repl-ipykernel-installed",
+                                        environment = env_name.as_str()
+                                    )
+                                    .to_string(),
                                 )
                                 .autohide(),
                                 cx,
@@ -183,10 +193,13 @@ pub fn install_ipykernel_and_assign(
                             workspace.show_toast(
                                 workspace::Toast::new(
                                     notification_id.clone(),
-                                    format!(
-                                        "Failed to install ipykernel in {}: {}",
-                                        env_name, error
-                                    ),
+                                    localization::tr!(
+                                        cx,
+                                        "repl-ipykernel-install-failed",
+                                        environment = env_name.as_str(),
+                                        error = error.to_string()
+                                    )
+                                    .to_string(),
                                 ),
                                 cx,
                             );

@@ -93,7 +93,6 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 
-const DOCS_URL: &str = "https://github.com/shenghsi/flint/tree/main/docs/src";
 const STATUS_URL: &str = "https://github.com/shenghsi/flint";
 const AGENT_THREAD_SNAPSHOT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -676,19 +675,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 #[allow(unused)]
 fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
-        let message = format!(
-            db::indoc! {r#"
-            inotify_init returned {}
-
-            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://github.com/shenghsi/flint/blob/main/docs/src/linux.md
-            "#},
-            e
-        );
+        let mut arguments = localization::FluentArgs::new();
+        arguments.set("error", e.to_string());
+        let message = localization::text_with_args(cx, "flint-inotify-detail", &arguments);
+        let title = localization::text(cx, "flint-inotify-title");
+        let troubleshoot_and_quit = localization::text(cx, "flint-troubleshoot-and-quit");
         let prompt = window.prompt(
             PromptLevel::Critical,
-            "Could not start inotify",
-            Some(&message),
-            &["Troubleshoot and Quit"],
+            title.as_ref(),
+            Some(message.as_ref()),
+            &[troubleshoot_and_quit.as_ref()],
             cx,
         );
         cx.spawn(async move |_, cx| {
@@ -707,19 +703,16 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
 #[allow(unused)]
 fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
-        let message = format!(
-            db::indoc! {r#"
-            ReadDirectoryChangesW initialization failed: {}
-
-            This may occur on network filesystems and WSL paths. For troubleshooting see: https://github.com/shenghsi/flint/blob/main/docs/src/windows.md
-            "#},
-            e
-        );
+        let mut arguments = localization::FluentArgs::new();
+        arguments.set("error", e.to_string());
+        let message = localization::text_with_args(cx, "flint-windows-watcher-detail", &arguments);
+        let title = localization::text(cx, "flint-windows-watcher-title");
+        let troubleshoot_and_quit = localization::text(cx, "flint-troubleshoot-and-quit");
         let prompt = window.prompt(
             PromptLevel::Critical,
-            "Could not start ReadDirectoryChangesW",
-            Some(&message),
-            &["Troubleshoot and Quit"],
+            title.as_ref(),
+            Some(message.as_ref()),
+            &[troubleshoot_and_quit.as_ref()],
             cx,
         );
         cx.spawn(async move |_, cx| {
@@ -753,23 +746,19 @@ fn show_software_emulation_warning_if_needed(
                 "https://github.com/shenghsi/flint/blob/main/docs/src/linux.md#flint-fails-to-open-windows",
             )
         };
-        let message = format!(
-            db::indoc! {r#"
-            Flint uses {} for rendering and requires a compatible GPU.
-
-            Currently you are using a software emulated GPU ({}) which
-            will result in awful performance.
-
-            For troubleshooting see: {}
-            Set ZED_ALLOW_EMULATED_GPU=1 env var to permanently override.
-            "#},
-            graphics_api, specs.device_name, docs_url
-        );
+        let mut arguments = localization::FluentArgs::new();
+        arguments.set("graphics_api", graphics_api);
+        arguments.set("device_name", specs.device_name);
+        arguments.set("docs_url", docs_url);
+        let message = localization::text_with_args(cx, "flint-unsupported-gpu-detail", &arguments);
+        let title = localization::text(cx, "flint-unsupported-gpu-title");
+        let skip = localization::text(cx, "flint-skip");
+        let troubleshoot_and_quit = localization::text(cx, "flint-troubleshoot-and-quit");
         let prompt = window.prompt(
             PromptLevel::Critical,
-            "Unsupported GPU",
-            Some(&message),
-            &["Skip", "Troubleshoot and Quit"],
+            title.as_ref(),
+            Some(message.as_ref()),
+            &[skip.as_ref(), troubleshoot_and_quit.as_ref()],
             cx,
         );
         cx.spawn(async move |_, cx| {
@@ -826,7 +815,7 @@ fn register_actions(
     cx: &mut Context<Workspace>,
 ) {
     workspace
-        .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
+        .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(&release_channel::docs_url("", cx)))
         .register_action(|_, _: &OpenStatusPage, _, cx| cx.open_url(STATUS_URL))
         .register_action(
             |workspace: &mut Workspace,
@@ -1419,14 +1408,14 @@ fn open_about_window(cx: &mut App) {
                             .child(Headline::new(self.message.clone()))
                             .when_some(self.commit.clone(), |this, commit| {
                                 this.child(
-                                    Label::new("Commit")
+                                    Label::new(localization::text(cx, "flint-commit"))
                                         .color(Color::Muted)
                                         .size(LabelSize::XSmall),
                                 )
                                 .child(Label::new(commit).size(LabelSize::Small))
                             })
                             .child(
-                                Label::new("Version")
+                                Label::new(localization::text(cx, "flint-version"))
                                     .color(Color::Muted)
                                     .size(LabelSize::XSmall),
                             )
@@ -1444,7 +1433,7 @@ fn open_about_window(cx: &mut App) {
                                         window.remove_window();
                                     }))
                                     .child(
-                                        Button::new("ok", "Ok")
+                                        Button::new("ok", localization::text(cx, "common-ok"))
                                             .full_width()
                                             .style(ButtonStyle::OutlinedGhost)
                                             .toggle_state(ok_is_focused)
@@ -1464,7 +1453,7 @@ fn open_about_window(cx: &mut App) {
                                         },
                                     ))
                                     .child(
-                                        Button::new("copy", "Copy")
+                                        Button::new("copy", localization::text(cx, "common-copy"))
                                             .full_width()
                                             .style(ButtonStyle::Tinted(TintColor::Accent))
                                             .toggle_state(copy_is_focused)
@@ -1569,9 +1558,12 @@ fn quit(_: &Quit, cx: &mut App) {
                 .update(cx, |_, window, cx| {
                     window.prompt(
                         PromptLevel::Info,
-                        "Are you sure you want to quit?",
+                        localization::text(cx, "flint-confirm-quit").as_ref(),
                         None,
-                        &["Quit", "Cancel"],
+                        &[
+                            localization::text(cx, "flint-quit").as_ref(),
+                            localization::text(cx, "common-cancel").as_ref(),
+                        ],
                         cx,
                     )
                 })
@@ -2100,7 +2092,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
     cx.set_dock_menu(vec![gpui::MenuItem::action(
-        "New Window",
+        localization::text(cx, "menu-new-window"),
         workspace::NewWindow,
     )]);
     // todo: nicer api here?

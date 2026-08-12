@@ -1,13 +1,13 @@
 ---
-title: Building Zed for macOS
-description: "Guide to building zed for macos for Zed development."
+title: Building Flint for macOS
+description: "Guide to building Flint for macOS development."
 ---
 
-# Building Zed for macOS
+# Building Flint for macOS
 
 ## Repository
 
-Clone the [Zed repository](https://github.com/zed-industries/zed).
+Clone the [Flint repository](https://github.com/shenghsi/flint).
 
 ## Dependencies
 
@@ -36,9 +36,9 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
   brew install cmake
   ```
 
-## Building Zed from Source
+## Building Flint from Source
 
-Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
+Once you have the dependencies installed, you can build Flint using [Cargo](https://doc.rust-lang.org/cargo/).
 
 For a debug build:
 
@@ -60,58 +60,52 @@ cargo test --workspace
 
 ## Visual Regression Tests
 
-Zed includes visual regression tests that capture screenshots of real Zed windows and compare them against baseline images. These tests require macOS with Screen Recording permission.
+Flint includes visual checks that render localized UI previews with the macOS
+Metal renderer. The runner saves narrow and wide screenshots for review.
 
 ### Prerequisites
 
-You must grant Screen Recording permission to your terminal:
-
-1. Run the visual test runner once - macOS will prompt for permission
-2. Or manually: System Settings > Privacy & Security > Screen Recording
-3. Enable your terminal app (e.g., Terminal.app, iTerm2, Ghostty)
-4. Restart your terminal after granting permission
+The visual test runner needs macOS and Metal support. It does not need Screen
+Recording permission because it uses a headless renderer.
 
 ### Running Visual Tests
 
 ```sh
-cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+cargo run -p flint --bin flint_visual_test_runner --features visual-tests
 ```
 
 ### Baseline Images
 
-Baseline images are stored in `crates/zed/test_fixtures/visual_tests/` but are
-**gitignored** to avoid bloating the repository. You must generate them locally
-before running tests.
+Screenshots are written to `target/visual_tests/` by default. Set
+`VISUAL_TEST_OUTPUT_DIR` to write them elsewhere.
 
 #### Initial Setup
 
-Before making any UI changes, generate baseline images from a known-good state:
+Generate the localized previews:
 
 ```sh
-git checkout origin/main
-UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
-git checkout -
+cargo run -p flint --bin flint_visual_test_runner --features visual-tests
 ```
 
-This creates baselines that reflect the current expected UI.
+Review the `chinese-localization-narrow.png` and
+`chinese-localization-wide.png` output files.
 
 #### Updating Baselines
 
-When UI changes are intentional, update the baseline images after your changes:
+To write the preview images to a temporary directory:
 
 ```sh
-UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+VISUAL_TEST_OUTPUT_DIR=/tmp/flint-visual-tests \
+  cargo run -p flint --bin flint_visual_test_runner --features visual-tests
 ```
 
-> **Note:** In the future, baselines may be stored externally. For now, they
-> remain local-only to keep the git repository lightweight.
 
 ## Troubleshooting
 
 ### Error compiling metal shaders
 
 ```sh
-error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/zed)`**
+error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/flint)`**
 
 xcrun: error: unable to find utility "metal", not a developer tool or in PATH
 ```
@@ -175,18 +169,18 @@ This error seems to be caused by OS resource constraints. Installing and running
 
 ### Avoiding continual rebuilds
 
-If Zed continually rebuilds root crates, you may be opening the Zed codebase itself in your development build.
+If Flint continually rebuilds root crates, you may be opening the Flint codebase itself in your development build.
 
 This causes problems because `cargo run` exports a bunch of environment
 variables which are picked up by the `rust-analyzer` that runs in the development
-build of Zed. These environment variables are in turn passed to `cargo check`, which
+build of Flint. These environment variables are in turn passed to `cargo check`, which
 invalidates the build cache of some of the crates we depend on.
 
 To avoid this, run the built binary against a different project, for example `cargo run ~/path/to/other/project`.
 
 ### Speeding up verification
 
-If you build Zed frequently, macOS may keep verifying new builds, which can add a few seconds to each iteration.
+If you build Flint frequently, macOS may keep verifying new builds, which can add a few seconds to each iteration.
 
 To fix this, you can:
 

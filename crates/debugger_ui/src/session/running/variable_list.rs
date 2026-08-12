@@ -703,33 +703,64 @@ impl VariableList {
                 None
             };
             cx.update(|window, cx| {
-                let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+                let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
                     menu.when_some(entry.as_variable(), |menu, _| {
-                        menu.action("Copy Name", CopyVariableName.boxed_clone())
-                            .action("Copy Value", CopyVariableValue.boxed_clone())
+                        menu.action(
+                            localization::text(cx, "debugger-copy-name"),
+                            CopyVariableName.boxed_clone(),
+                        )
+                            .action(
+                                localization::text(cx, "debugger-copy-value"),
+                                CopyVariableValue.boxed_clone(),
+                            )
                             .when(supports_set_variable, |menu| {
-                                menu.action("Edit Value", EditVariable.boxed_clone())
+                                menu.action(
+                                    localization::text(cx, "debugger-edit-value"),
+                                    EditVariable.boxed_clone(),
+                                )
                             })
                             .when(supports_go_to_memory, |menu| {
-                                menu.action("Go To Memory", GoToMemory.boxed_clone())
+                                menu.action(
+                                    localization::text(cx, "debugger-go-to-memory"),
+                                    GoToMemory.boxed_clone(),
+                                )
                             })
-                            .action("Watch Variable", AddWatch.boxed_clone())
+                            .action(
+                                localization::text(cx, "debugger-watch-variable"),
+                                AddWatch.boxed_clone(),
+                            )
                             .when_some(can_toggle_data_breakpoint, |mut menu, data_info| {
                                 menu = menu.separator();
                                 if let Some(access_types) = data_info.access_types {
-                                    for access in access_types {
+                                    for access_type in access_types {
+                                        let access = match access_type {
+                                            dap::DataBreakpointAccessType::Read => {
+                                                localization::text(
+                                                    cx,
+                                                    "debugger-data-breakpoint-read",
+                                                )
+                                            }
+                                            dap::DataBreakpointAccessType::Write => {
+                                                localization::text(
+                                                    cx,
+                                                    "debugger-data-breakpoint-write",
+                                                )
+                                            }
+                                            dap::DataBreakpointAccessType::ReadWrite => {
+                                                localization::text(
+                                                    cx,
+                                                    "debugger-data-breakpoint-read-write",
+                                                )
+                                            }
+                                        };
                                         menu = menu.action(
-                                            format!(
-                                                "Toggle {} Data Breakpoint",
-                                                match access {
-                                                    dap::DataBreakpointAccessType::Read => "Read",
-                                                    dap::DataBreakpointAccessType::Write => "Write",
-                                                    dap::DataBreakpointAccessType::ReadWrite =>
-                                                        "Read/Write",
-                                                }
+                                            localization::tr!(
+                                                cx,
+                                                "debugger-toggle-data-breakpoint-type",
+                                                access = access.to_string(),
                                             ),
                                             crate::ToggleDataBreakpoint {
-                                                access_type: Some(access),
+                                                access_type: Some(access_type),
                                             }
                                             .boxed_clone(),
                                         );
@@ -738,7 +769,7 @@ impl VariableList {
                                     menu
                                 } else {
                                     menu.action(
-                                        "Toggle Data Breakpoint",
+                                        localization::text(cx, "debugger-toggle-data-breakpoint"),
                                         crate::ToggleDataBreakpoint { access_type: None }
                                             .boxed_clone(),
                                     )
@@ -746,12 +777,24 @@ impl VariableList {
                             })
                     })
                     .when(entry.as_watcher().is_some(), |menu| {
-                        menu.action("Copy Name", CopyVariableName.boxed_clone())
-                            .action("Copy Value", CopyVariableValue.boxed_clone())
+                        menu.action(
+                            localization::text(cx, "debugger-copy-name"),
+                            CopyVariableName.boxed_clone(),
+                        )
+                            .action(
+                                localization::text(cx, "debugger-copy-value"),
+                                CopyVariableValue.boxed_clone(),
+                            )
                             .when(supports_set_variable, |menu| {
-                                menu.action("Edit Value", EditVariable.boxed_clone())
+                                menu.action(
+                                    localization::text(cx, "debugger-edit-value"),
+                                    EditVariable.boxed_clone(),
+                                )
                             })
-                            .action("Remove Watch", RemoveWatch.boxed_clone())
+                            .action(
+                                localization::text(cx, "debugger-remove-watch"),
+                                RemoveWatch.boxed_clone(),
+                            )
                     })
                     .context(focus_handle.clone())
                 });
@@ -1344,7 +1387,7 @@ impl VariableList {
                         }
                     })
                     .tooltip(move |_window, cx| {
-                        Tooltip::for_action_in("Remove Watch", &RemoveWatch, &focus_handle, cx)
+                        Tooltip::for_action_in(localization::text(cx, "debugger-remove-watch"), &RemoveWatch, &focus_handle, cx)
                     })
                     .icon_size(ui::IconSize::Indicator),
                 ),

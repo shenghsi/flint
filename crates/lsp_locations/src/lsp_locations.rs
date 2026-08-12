@@ -149,7 +149,7 @@ fn show_no_results_toast(
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<NoLspResults>(),
-                    kind.empty_message(),
+                    localization::text(cx, kind.empty_message_identifier()).to_string(),
                 )
                 .autohide(),
                 cx,
@@ -166,21 +166,21 @@ pub enum LspPickerKind {
 }
 
 impl LspPickerKind {
-    fn placeholder(self) -> &'static str {
+    fn placeholder_identifier(self) -> &'static str {
         match self {
-            LspPickerKind::References => "Filter references…",
-            LspPickerKind::Definition => "Filter definitions…",
-            LspPickerKind::Implementation => "Filter implementations…",
+            LspPickerKind::References => "lsp-locations-filter-references",
+            LspPickerKind::Definition => "lsp-locations-filter-definitions",
+            LspPickerKind::Implementation => "lsp-locations-filter-implementations",
         }
     }
 
     /// Message shown when the query produces no results, so the command does not
     /// appear to silently do nothing.
-    fn empty_message(self) -> &'static str {
+    fn empty_message_identifier(self) -> &'static str {
         match self {
-            LspPickerKind::References => "No references found",
-            LspPickerKind::Definition => "No definitions found",
-            LspPickerKind::Implementation => "No implementations found",
+            LspPickerKind::References => "lsp-locations-no-references",
+            LspPickerKind::Definition => "lsp-locations-no-definitions",
+            LspPickerKind::Implementation => "lsp-locations-no-implementations",
         }
     }
 
@@ -629,8 +629,8 @@ impl PickerDelegate for LspLocationsDelegate {
         "lsp locations picker"
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
-        self.kind.placeholder().into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> std::sync::Arc<str> {
+        localization::text(cx, self.kind.placeholder_identifier()).into()
     }
 
     fn workspace(&self, cx: &App) -> Option<WeakEntity<Workspace>> {

@@ -228,38 +228,57 @@ pub fn deploy_context_menu(
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
             });
 
-        ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
+        ui::ContextMenu::build(window, cx, |menu, _window, cx| {
+            let format_selections_label = localization::text(cx, "editor-format-selections");
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .action("Go to Definition", Box::new(GoToDefinition::default()))
-                .action("Go to Declaration", Box::new(GoToDeclaration))
-                .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action(
-                    "Go to Implementation",
+                    localization::text(cx, "editor-go-to-definition"),
+                    Box::new(GoToDefinition::default()),
+                )
+                .action(
+                    localization::text(cx, "editor-go-to-declaration"),
+                    Box::new(GoToDeclaration),
+                )
+                .action(
+                    localization::text(cx, "editor-go-to-type-definition"),
+                    Box::new(GoToTypeDefinition),
+                )
+                .action(
+                    localization::text(cx, "editor-go-to-implementation"),
                     Box::new(GoToImplementation::default()),
                 )
                 .action(
-                    "Find All References",
+                    localization::text(cx, "editor-find-all-references"),
                     Box::new(FindAllReferences::default()),
                 )
                 .separator()
-                .action("Rename Symbol", Box::new(Rename))
-                .action("Format Buffer", Box::new(Format))
-                .when(format_selections, |cx| {
-                    cx.action("Format Selections", Box::new(FormatSelections))
+                .action(
+                    localization::text(cx, "editor-rename-symbol"),
+                    Box::new(Rename),
+                )
+                .action(
+                    localization::text(cx, "editor-format-buffer"),
+                    Box::new(Format),
+                )
+                .when(format_selections, |menu| {
+                    menu.action(format_selections_label, Box::new(FormatSelections))
                 })
                 .action(
-                    "Show Code Actions",
+                    localization::text(cx, "editor-show-code-actions"),
                     Box::new(ToggleCodeActions {
                         deployed_from: None,
                         quick_launch: false,
                     }),
                 )
                 .separator()
-                .action("Cut", Box::new(Cut))
-                .action("Copy", Box::new(Copy))
-                .action("Copy and Trim", Box::new(CopyAndTrim))
-                .action("Paste", Box::new(Paste))
+                .action(localization::text(cx, "editor-cut"), Box::new(Cut))
+                .action(localization::text(cx, "editor-copy"), Box::new(Copy))
+                .action(
+                    localization::text(cx, "editor-copy-and-trim"),
+                    Box::new(CopyAndTrim),
+                )
+                .action(localization::text(cx, "editor-paste"), Box::new(Paste))
                 .separator()
                 .action_disabled_when(
                     !has_reveal_target,
@@ -267,24 +286,30 @@ pub fn deploy_context_menu(
                     Box::new(RevealInFileManager),
                 )
                 .when(is_markdown, |builder| {
-                    builder.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                    builder.action(
+                        localization::text(cx, "editor-open-markdown-preview"),
+                        Box::new(OpenMarkdownPreview),
+                    )
                 })
                 .when(is_svg, |builder| {
-                    builder.action("Open SVG Preview", Box::new(OpenSvgPreview))
+                    builder.action(
+                        localization::text(cx, "editor-open-svg-preview"),
+                        Box::new(OpenSvgPreview),
+                    )
                 })
                 .action_disabled_when(
                     !has_reveal_target,
-                    "Open in Terminal",
+                    localization::text(cx, "editor-open-in-terminal"),
                     Box::new(OpenInTerminal),
                 )
                 .action_disabled_when(
                     !has_git_repo,
-                    "Copy Permalink",
+                    localization::text(cx, "editor-copy-permalink"),
                     Box::new(CopyPermalinkToLine),
                 )
                 .action_disabled_when(
                     !has_git_repo,
-                    "View File History",
+                    localization::text(cx, "editor-view-file-history"),
                     Box::new(git::FileHistory),
                 );
             match focus {

@@ -20,6 +20,7 @@ test-support = [
 [dependencies]
 component.workspace = true
 gpui.workspace = true
+localization.workspace = true
 ui.workspace = true
 workspace.workspace = true
 flint_actions.workspace = true

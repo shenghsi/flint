@@ -272,25 +272,35 @@ impl StashListDelegate {
         format!("#{}: {}", ix, message)
     }
 
-    fn format_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
+    fn format_timestamp(
+        timestamp: i64,
+        timezone: UtcOffset,
+        language: localization::UiLanguage,
+    ) -> String {
         let timestamp =
             OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
-        time_format::format_localized_timestamp(
+        time_format::format_localized_timestamp_for_language(
             timestamp,
             OffsetDateTime::now_utc(),
             timezone,
             time_format::TimestampFormat::Relative,
+            language,
         )
     }
 
-    fn format_absolute_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
+    fn format_absolute_timestamp(
+        timestamp: i64,
+        timezone: UtcOffset,
+        language: localization::UiLanguage,
+    ) -> String {
         let timestamp =
             OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
-        time_format::format_localized_timestamp(
+        time_format::format_localized_timestamp_for_language(
             timestamp,
             OffsetDateTime::now_utc(),
             timezone,
             time_format::TimestampFormat::EnhancedAbsolute,
+            language,
         )
     }
 
@@ -369,8 +379,10 @@ impl StashListDelegate {
 impl PickerDelegate for StashListDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a stash…".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "git-select-stash")
+            .to_string()
+            .into()
     }
 
     fn match_count(&self) -> usize {
@@ -403,13 +415,17 @@ impl PickerDelegate for StashListDelegate {
         let timezone = self.timezone;
 
         cx.spawn_in(window, async move |picker, cx| {
+            let Ok(language) = cx.update(|_, cx| localization::language(cx)) else {
+                return;
+            };
             let matches: Vec<StashEntryMatch> = if query.is_empty() {
                 all_stash_entries
                     .into_iter()
                     .map(|entry| {
-                        let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+                        let formatted_timestamp =
+                            Self::format_timestamp(entry.timestamp, timezone, language);
                         let formatted_absolute_timestamp =
-                            Self::format_absolute_timestamp(entry.timestamp, timezone);
+                            Self::format_absolute_timestamp(entry.timestamp, timezone, language);
 
                         StashEntryMatch {
                             entry,
@@ -443,9 +459,10 @@ impl PickerDelegate for StashListDelegate {
                 .into_iter()
                 .map(|candidate| {
                     let entry = all_stash_entries[candidate.candidate_id].clone();
-                    let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+                    let formatted_timestamp =
+                        Self::format_timestamp(entry.timestamp, timezone, language);
                     let formatted_absolute_timestamp =
-                        Self::format_absolute_timestamp(entry.timestamp, timezone);
+                        Self::format_absolute_timestamp(entry.timestamp, timezone, language);
 
                     StashEntryMatch {
                         entry,
@@ -532,7 +549,12 @@ impl PickerDelegate for StashListDelegate {
             IconButton::new(("view-stash", ix), IconName::Eye)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_, cx| {
-                    Tooltip::for_action_in("View Stash", &ShowStashItem, &focus_handle, cx)
+                    Tooltip::for_action_in(
+                        localization::text(cx, "git-view-stash"),
+                        &ShowStashItem,
+                        &focus_handle,
+                        cx,
+                    )
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.delegate.show_stash_at(ix, window, cx);
@@ -544,7 +566,12 @@ impl PickerDelegate for StashListDelegate {
             IconButton::new(("pop-stash", ix), IconName::MaximizeAlt)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_, cx| {
-                    Tooltip::for_action_in("Pop Stash", &menu::SecondaryConfirm, &focus_handle, cx)
+                    Tooltip::for_action_in(
+                        localization::text(cx, "git-pop-stash"),
+                        &menu::SecondaryConfirm,
+                        &focus_handle,
+                        cx,
+                    )
                 })
                 .on_click(|_, window, cx| {
                     window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
@@ -556,7 +583,12 @@ impl PickerDelegate for StashListDelegate {
             IconButton::new(("drop-stash", ix), IconName::Trash)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_, cx| {
-                    Tooltip::for_action_in("Drop Stash", &DropStashItem, &focus_handle, cx)
+                    Tooltip::for_action_in(
+                        localization::text(cx, "git-drop-stash"),
+                        &DropStashItem,
+                        &focus_handle,
+                        cx,
+                    )
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.delegate.drop_stash_at(ix, window, cx);
@@ -617,8 +649,8 @@ impl PickerDelegate for StashListDelegate {
         )
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        Some("No stashes found".into())
+    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
+        Some(localization::text(cx, "git-no-stashes"))
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
@@ -638,7 +670,7 @@ impl PickerDelegate for StashListDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("drop-stash", "Drop")
+                    Button::new("drop-stash", localization::text(cx, "git-drop"))
                         .key_binding(
                             KeyBinding::for_action_in(
                                 &stash_picker::DropStashItem,
@@ -652,7 +684,7 @@ impl PickerDelegate for StashListDelegate {
                         }),
                 )
                 .child(
-                    Button::new("view-stash", "View")
+                    Button::new("view-stash", localization::text(cx, "git-view"))
                         .key_binding(
                             KeyBinding::for_action_in(
                                 &stash_picker::ShowStashItem,
@@ -668,7 +700,7 @@ impl PickerDelegate for StashListDelegate {
                         })),
                 )
                 .child(
-                    Button::new("pop-stash", "Pop")
+                    Button::new("pop-stash", localization::text(cx, "git-pop"))
                         .key_binding(
                             KeyBinding::for_action_in(&menu::SecondaryConfirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -678,7 +710,7 @@ impl PickerDelegate for StashListDelegate {
                         }),
                 )
                 .child(
-                    Button::new("apply-stash", "Apply")
+                    Button::new("apply-stash", localization::text(cx, "git-apply"))
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -709,6 +741,8 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
 
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         })

@@ -38,7 +38,8 @@ impl BlameRenderer for GitBlameRenderer {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
+        let relative_timestamp =
+            blame_entry_relative_timestamp(&blame_entry, localization::language(cx));
         let short_commit_id = blame_entry.sha.display_short();
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
@@ -144,7 +145,8 @@ impl BlameRenderer for GitBlameRenderer {
         blame_entry: BlameEntry,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
+        let relative_timestamp =
+            blame_entry_relative_timestamp(&blame_entry, localization::language(cx));
         let author = blame_entry.author.as_deref().unwrap_or_default();
         let summary_enabled = ProjectSettings::get_global(cx)
             .git
@@ -215,11 +217,12 @@ impl BlameRenderer for GitBlameRenderer {
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
         let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-        let absolute_timestamp = time_format::format_localized_timestamp(
+        let absolute_timestamp = time_format::format_localized_timestamp_for_language(
             commit_time,
             OffsetDateTime::now_utc(),
             local_offset,
             time_format::TimestampFormat::MediumAbsolute,
+            localization::language(cx),
         );
         let link_color = cx.theme().colors().text_accent;
         let markdown_style = {
@@ -365,7 +368,10 @@ impl BlameRenderer for GitBlameRenderer {
                                             .child(Divider::vertical())
                                             .child(
                                                 CopyButton::new("copy-blame-sha", sha.to_string())
-                                                    .tooltip_label("Copy SHA"),
+                                                    .tooltip_label(localization::text(
+                                                        cx,
+                                                        "git-copy-sha",
+                                                    )),
                                             ),
                                     ),
                             ),
@@ -403,18 +409,24 @@ fn deploy_blame_entry_context_menu(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
+    let context_menu = ContextMenu::build(window, cx, move |menu, _, cx| {
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
-            .entry("Copy Commit SHA", None, move |_, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
-            })
+            .entry(
+                localization::text(cx, "git-copy-commit-sha"),
+                None,
+                move |_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
+                },
+            )
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
                 |this, url| {
-                    this.entry("Open Permalink", None, move |_, cx| {
-                        cx.open_url(url.as_str())
-                    })
+                    this.entry(
+                        localization::text(cx, "git-open-permalink"),
+                        None,
+                        move |_, cx| cx.open_url(url.as_str()),
+                    )
                 },
             )
     });
@@ -426,16 +438,20 @@ fn deploy_blame_entry_context_menu(
     });
 }
 
-fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
+fn blame_entry_relative_timestamp(
+    blame_entry: &BlameEntry,
+    language: localization::UiLanguage,
+) -> String {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => {
             let local_offset =
                 time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-            time_format::format_localized_timestamp(
+            time_format::format_localized_timestamp_for_language(
                 timestamp,
                 time::OffsetDateTime::now_utc(),
                 local_offset,
                 time_format::TimestampFormat::Relative,
+                language,
             )
         }
         Err(_) => "Error parsing date".to_string(),

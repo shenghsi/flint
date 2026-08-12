@@ -20,6 +20,8 @@ impl VimTestContext {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             release_channel::init(Version::new(0, 0, 0), cx);
             command_palette::init(cx);
             project_panel::init(cx);

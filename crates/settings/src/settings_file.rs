@@ -1,4 +1,7 @@
-use crate::{settings_content::SettingsContent, settings_store::SettingsStore};
+use crate::{
+    settings_content::{SettingsContent, UserSettingsContent},
+    settings_store::SettingsStore,
+};
 use collections::HashSet;
 use fs::{Fs, PathEventKind};
 use futures::{StreamExt, channel::mpsc};
@@ -278,4 +281,20 @@ pub fn update_settings_file_with_completion(
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) -> futures::channel::oneshot::Receiver<anyhow::Result<()>> {
     SettingsStore::global(cx).update_settings_file_with_completion(fs, update)
+}
+
+pub fn update_user_settings_file(
+    fs: Arc<dyn Fs>,
+    cx: &App,
+    update: impl 'static + Send + FnOnce(&mut UserSettingsContent, &App),
+) {
+    SettingsStore::global(cx).update_user_settings_file(fs, update)
+}
+
+pub fn update_user_settings_file_with_completion(
+    fs: Arc<dyn Fs>,
+    cx: &App,
+    update: impl 'static + Send + FnOnce(&mut UserSettingsContent, &App),
+) -> futures::channel::oneshot::Receiver<anyhow::Result<()>> {
+    SettingsStore::global(cx).update_user_settings_file_with_completion(fs, update)
 }

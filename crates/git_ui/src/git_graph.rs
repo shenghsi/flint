@@ -43,12 +43,12 @@ use std::{
     cell::Cell,
     ops::Range,
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
-use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
+use time::{OffsetDateTime, UtcOffset};
 use ui::{
     Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, DiffStat,
     Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
@@ -139,8 +139,8 @@ struct CommitTagPickerDelegate {
 impl PickerDelegate for CommitTagPickerDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Copy Tag".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "git-copy-tag").into()
     }
 
     fn match_count(&self) -> usize {
@@ -299,7 +299,14 @@ impl ChangedFileEntry {
                 } else {
                     format!("{}/{}", dir_path, file_name).into()
                 };
-                move |_, cx| Tooltip::with_meta("View Changes", None, meta.clone(), cx)
+                move |_, cx| {
+                    Tooltip::with_meta(
+                        localization::text(cx, "git-view-changes"),
+                        None,
+                        meta.clone(),
+                        cx,
+                    )
+                }
             })
             .on_click({
                 let entry = self.clone();
@@ -398,7 +405,14 @@ impl ChangedFileDirectoryEntry {
             )
             .tooltip({
                 let name = self.name.clone();
-                move |_, cx| Tooltip::with_meta("Toggle Folder", None, name.clone(), cx)
+                move |_, cx| {
+                    Tooltip::with_meta(
+                        localization::text(cx, "git-toggle-folder"),
+                        None,
+                        name.clone(),
+                        cx,
+                    )
+                }
             })
             .on_click(move |_, _, cx| {
                 git_graph
@@ -621,25 +635,19 @@ pub struct OpenAtCommit {
     pub sha: String,
 }
 
-fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
-    static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
-    FORMAT.get_or_init(|| {
-        time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
-            .unwrap_or_default()
-    })
-}
-
-fn format_timestamp(timestamp: i64) -> String {
+fn format_timestamp(timestamp: i64, cx: &App) -> String {
     let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
-        return "Unknown".to_string();
+        return localization::text(cx, "git-unknown-timestamp").to_string();
     };
 
     let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    let local_datetime = datetime.to_offset(local_offset);
-
-    local_datetime
-        .format(timestamp_format())
-        .unwrap_or_default()
+    time_format::format_localized_timestamp_for_language(
+        datetime,
+        OffsetDateTime::now_utc(),
+        local_offset,
+        time_format::TimestampFormat::Absolute,
+        localization::language(cx),
+    )
 }
 
 fn accent_colors_count(accents: &AccentColors) -> usize {
@@ -1762,7 +1770,7 @@ impl GitGraph {
                 if let CommitDataState::Loaded(ref data) = data {
                     subject = data.subject.clone();
                     author_name = data.author_name.clone();
-                    formatted_time = format_timestamp(data.commit_timestamp);
+                    formatted_time = format_timestamp(data.commit_timestamp, cx);
                 } else {
                     subject = "Loading…".into();
                     author_name = "".into();
@@ -2404,19 +2412,23 @@ impl GitGraph {
 
         let focus_handle = self.focus_handle.clone();
         let git_graph = cx.entity();
-        let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
+        let context_menu = ContextMenu::build(window, cx, |context_menu, window, cx| {
             context_menu
                 .context(focus_handle)
-                .header(format!("Commit {sha_short}"))
+                .header(localization::tr!(
+                    cx,
+                    "git-commit-menu-title",
+                    sha = sha_short
+                ))
                 .entry(
-                    "View Commit",
+                    localization::text(cx, "git-view-commit"),
                     Some(OpenCommitView.boxed_clone()),
                     window.handler_for(&git_graph, move |this, window, cx| {
                         this.open_commit_view(index, window, cx);
                     }),
                 )
                 .entry(
-                    "Copy SHA",
+                    localization::text(cx, "git-copy-sha"),
                     Some(CopyCommitSha.boxed_clone()),
                     window.handler_for(&git_graph, move |this, _window, cx| {
                         this.copy_commit_sha(index, cx);
@@ -2429,7 +2441,7 @@ impl GitGraph {
                         .into_iter()
                         .map(|tag_name| SharedString::from(tag_name.to_string()))
                         .collect::<Vec<_>>();
-                    let copy_tag_label = "Copy Tag";
+                    let copy_tag_label = localization::text(cx, "git-copy-tag");
 
                     match tag_names.as_slice() {
                         [] => menu.item(
@@ -2439,7 +2451,8 @@ impl GitGraph {
                         ),
                         [tag_name] => {
                             let tag_name = tag_name.clone();
-                            let label = format!("{copy_tag_label}: {tag_name}");
+                            let label =
+                                localization::tr!(cx, "git-copy-tag-name", tag = tag_name.as_ref());
                             menu.entry(
                                 label,
                                 Some(CopyCommitTag.boxed_clone()),
@@ -2467,11 +2480,13 @@ impl GitGraph {
                     }
                 })
                 .map(|mut menu| {
-                    menu = menu.separator().header("Custom Commands");
+                    menu = menu
+                        .separator()
+                        .header(localization::text(cx, "git-custom-commands"));
 
                     if git_tasks.is_empty() {
                         return menu.item(
-                            ContextMenuEntry::new("Learn More")
+                            ContextMenuEntry::new(localization::text(cx, "git-learn-more"))
                                 .icon(IconName::ArrowUpRight)
                                 .icon_color(Color::Muted)
                                 .icon_position(IconPosition::End)
@@ -2588,6 +2603,7 @@ impl GitGraph {
                         search_options,
                         SearchSource::Buffer,
                         query_focus_handle,
+                        cx,
                     )),
             )
             .child(
@@ -2601,7 +2617,7 @@ impl GitGraph {
                             .icon_size(IconSize::Small)
                             .tooltip(move |_, cx| {
                                 Tooltip::for_action_in(
-                                    "Select Previous Match",
+                                    localization::text(cx, "git-select-previous-match"),
                                     &SelectPreviousMatch,
                                     &focus_handle,
                                     cx,
@@ -2624,7 +2640,7 @@ impl GitGraph {
                             .icon_size(IconSize::Small)
                             .tooltip(move |_, cx| {
                                 Tooltip::for_action_in(
-                                    "Select Next Match",
+                                    localization::text(cx, "git-select-next-match"),
                                     &SelectNextMatch,
                                     &focus_handle,
                                     cx,
@@ -3015,14 +3031,10 @@ impl GitGraph {
                             .w_full()
                             .justify_between()
                             .child(
-                                Label::new(format!(
-                                    "{} Changed {}",
-                                    changed_files_count,
-                                    if changed_files_count == 1 {
-                                        "File"
-                                    } else {
-                                        "Files"
-                                    }
+                                Label::new(localization::tr!(
+                                    cx,
+                                    "git-changed-files",
+                                    count = changed_files_count
                                 ))
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
@@ -3046,13 +3058,13 @@ impl GitGraph {
                                         .tooltip({
                                             let tooltip = if self.changed_files_view_mode.is_tree()
                                             {
-                                                "Show Flat View"
+                                                localization::text(cx, "git-show-flat-view")
                                             } else {
-                                                "Show Tree View"
+                                                localization::text(cx, "git-show-tree-view")
                                             };
                                             move |_, cx| {
                                                 Tooltip::for_action(
-                                                    tooltip,
+                                                    tooltip.clone(),
                                                     &ToggleChangedFilesView,
                                                     cx,
                                                 )
@@ -3139,7 +3151,7 @@ impl GitGraph {
             .child(Divider::horizontal())
             .child(
                 h_flex().p_1p5().w_full().child(
-                    Button::new("view-commit", "View Commit")
+                    Button::new("view-commit", localization::text(cx, "git-view-commit"))
                         .full_width()
                         .style(ButtonStyle::OutlinedGhost)
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -3685,28 +3697,40 @@ impl Render for GitGraph {
                             if !is_path_history {
                                 TableRow::from_vec(
                                     vec![
-                                        Label::new("Graph")
+                                        Label::new(localization::text(cx, "git-graph"))
                                             .color(Color::Muted)
                                             .truncate()
                                             .into_any_element(),
-                                        Label::new("Description")
+                                        Label::new(localization::text(cx, "git-description"))
                                             .color(Color::Muted)
                                             .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
-                                        Label::new("Author").color(Color::Muted).into_any_element(),
-                                        Label::new("Commit").color(Color::Muted).into_any_element(),
+                                        Label::new(localization::text(cx, "git-date"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new(localization::text(cx, "git-author"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new(localization::text(cx, "git-commit"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
                                     ],
                                     5,
                                 )
                             } else {
                                 TableRow::from_vec(
                                     vec![
-                                        Label::new("Description")
+                                        Label::new(localization::text(cx, "git-description"))
                                             .color(Color::Muted)
                                             .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
-                                        Label::new("Author").color(Color::Muted).into_any_element(),
-                                        Label::new("Commit").color(Color::Muted).into_any_element(),
+                                        Label::new(localization::text(cx, "git-date"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new(localization::text(cx, "git-author"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new(localization::text(cx, "git-commit"))
+                                            .color(Color::Muted)
+                                            .into_any_element(),
                                     ],
                                     4,
                                 )
@@ -3977,12 +4001,12 @@ impl Item for GitGraph {
         };
 
         Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
-            move |_, _| {
+            move |_, cx| {
                 v_flex()
                     .child(Label::new(if path_history_path.is_some() {
-                        "Path History"
+                        localization::text(cx, "git-path-history")
                     } else {
-                        "Git Graph"
+                        localization::text(cx, "git-graph")
                     }))
                     .when_some(path_history_path.clone(), |this, path| {
                         this.child(Label::new(path).color(Color::Muted).size(LabelSize::Small))
@@ -4525,6 +4549,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });

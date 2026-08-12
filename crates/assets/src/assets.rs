@@ -38,12 +38,15 @@ impl AssetSource for Assets {
 }
 
 impl Assets {
-    /// Populate the [`TextSystem`] of the given [`AppContext`] with all `.ttf` fonts in the `fonts` directory.
+    /// Populate the [`TextSystem`] with all supported fonts in the `fonts` directory.
     pub fn load_fonts(&self, cx: &App) -> anyhow::Result<()> {
         let font_paths = self.list("fonts")?;
         let mut embedded_fonts = Vec::new();
         for font_path in font_paths {
-            if font_path.ends_with(".ttf") {
+            if font_path.ends_with(".ttf")
+                || font_path.ends_with(".ttc")
+                || font_path.ends_with(".otf")
+            {
                 let font_bytes = cx
                     .asset_source()
                     .load(&font_path)?
@@ -61,5 +64,15 @@ impl Assets {
                 self.load("fonts/lilex/Lilex-Regular.ttf").unwrap().unwrap(),
             ])
             .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Assets;
+
+    #[test]
+    fn embeds_noto_sans_cjk_sc_regular() {
+        assert!(Assets::get("fonts/noto-sans-cjk-sc/NotoSansCJKsc-Regular.otf").is_some());
     }
 }

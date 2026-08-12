@@ -22,6 +22,7 @@ editor.workspace = true
 gpui.workspace = true
 gpui_util.workspace = true
 language.workspace = true
+localization.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 project.workspace = true

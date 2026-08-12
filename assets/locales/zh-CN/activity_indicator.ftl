@@ -1,0 +1,16 @@
+activity-language-server-status = 语言服务器 { $server }：
+
+activity-progress-percentage = { $title }（{ $percentage }%）
+activity-progress-message = { $title}：{ $message }
+activity-progress-more = { $message }，以及其他 { $count } 项
+activity-downloading = 正在下载 { $items }…
+activity-checking-updates = 正在检查 { $items } 的更新…
+activity-run-failed = 无法运行 { $items }。单击以显示错误。
+activity-formatting-failed = 格式化失败：{ $failure }。单击以查看日志。
+activity-server-ok = （{ $server }）
+activity-server-warning = （{ $server }）警告：
+activity-server-error = （{ $server }）错误：
+activity-installing-extension = 正在安装扩展 { $extension }…
+activity-updating-extension = 正在更新扩展 { $extension }…
+activity-removing-extension = 正在移除扩展 { $extension }…
+activity-cancel-work = 取消 { $title }

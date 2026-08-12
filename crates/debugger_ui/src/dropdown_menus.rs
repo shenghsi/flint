@@ -121,7 +121,7 @@ impl DebugPanel {
                 active_session.label(cx).unwrap_or("(child)".into())
             })
         } else {
-            SharedString::new_static("Unknown Session")
+            localization::text(cx, "debugger-unknown-session")
         };
         let running_state = running_state.read(cx);
 

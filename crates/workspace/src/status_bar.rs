@@ -212,7 +212,11 @@ impl StatusBar {
                 .indicator_border_color(Some(indicator_border))
         })
         .tooltip(move |_, cx| {
-            Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+            Tooltip::for_action(
+                localization::text(cx, "workspace-open-threads-sidebar"),
+                &ToggleWorkspaceSidebar,
+                cx,
+            )
         })
         .on_click(move |_, window, cx| {
             if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
@@ -250,17 +254,17 @@ fn render_hideable_item(
         .trigger(move |_is_active, _window, _cx| view)
         .menu(move |window, cx| {
             let hide = hide.clone();
-            ContextMenu::build(window, cx, move |menu, _window, _cx| {
-                add_hide_button_entry(menu, hide)
+            ContextMenu::build(window, cx, move |menu, _window, cx| {
+                add_hide_button_entry(menu, hide, cx)
             })
         })
         .into_any_element()
 }
 
 /// Appends a "Hide Button" entry aligned with surrounding toggleable entries.
-pub fn add_hide_button_entry(menu: ContextMenu, hide: HideStatusItem) -> ContextMenu {
+pub fn add_hide_button_entry(menu: ContextMenu, hide: HideStatusItem, cx: &App) -> ContextMenu {
     menu.toggleable_entry(
-        "Hide Button",
+        localization::text(cx, "common-hide-button"),
         false,
         IconPosition::Start,
         None,

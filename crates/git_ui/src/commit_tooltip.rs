@@ -243,11 +243,12 @@ impl Render for CommitTooltip {
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string();
         let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-        let absolute_timestamp = time_format::format_localized_timestamp(
+        let absolute_timestamp = time_format::format_localized_timestamp_for_language(
             self.commit.commit_time,
             OffsetDateTime::now_utc(),
             local_offset,
             time_format::TimestampFormat::MediumAbsolute,
+            localization::language(cx),
         );
         let markdown_style = {
             let style = hover_markdown_style(window, cx);
@@ -390,7 +391,10 @@ impl Render for CommitTooltip {
                                         .child(Divider::vertical())
                                         .child(
                                             CopyButton::new("copy-commit-sha", full_sha)
-                                                .tooltip_label("Copy SHA"),
+                                                .tooltip_label(localization::text(
+                                                    cx,
+                                                    "git-copy-sha",
+                                                )),
                                         ),
                                 ),
                         ),

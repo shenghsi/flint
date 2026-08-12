@@ -283,14 +283,14 @@ impl CommitModal {
                     let signoff_enabled = git_panel.signoff_enabled();
                     let has_previous_commit = git_panel.head_commit(cx).is_some();
 
-                    Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                    Some(ContextMenu::build(window, cx, |context_menu, _, cx| {
                         context_menu
                             .when_some(keybinding_target.clone(), |el, keybinding_target| {
                                 el.context(keybinding_target)
                             })
                             .when(has_previous_commit, |this| {
                                 this.toggleable_entry(
-                                    "Amend",
+                                    localization::text(cx, "git-amend"),
                                     amend_enabled,
                                     IconPosition::Start,
                                     Some(Box::new(Amend)),
@@ -307,7 +307,7 @@ impl CommitModal {
                                 )
                             })
                             .toggleable_entry(
-                                "Signoff",
+                                localization::text(cx, "git-signoff"),
                                 signoff_enabled,
                                 IconPosition::Start,
                                 Some(Box::new(Signoff)),
@@ -340,7 +340,7 @@ impl CommitModal {
             workspace,
         ) = self.git_panel.update(cx, |git_panel, cx| {
             let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
-            let title = git_panel.commit_button_title();
+            let title = git_panel.commit_button_title(cx);
             let co_authors = git_panel.render_co_authors(cx);
             let generate_commit_message = git_panel.render_generate_commit_message_button(cx);
             let active_repo = git_panel.active_repository.clone();
@@ -390,7 +390,10 @@ impl CommitModal {
             .with_handle(self.branch_list_handle.clone())
             .trigger_with_tooltip(
                 branch_picker_button,
-                Tooltip::for_action_title("Switch Branch", &flint_actions::git::Branch),
+                Tooltip::for_action_title(
+                    localization::text(cx, "git-switch-branch"),
+                    &flint_actions::git::Branch,
+                ),
             )
             .anchor(Anchor::BottomLeft)
             .offset(gpui::Point {
@@ -443,7 +446,7 @@ impl CommitModal {
                         .size(ui::ButtonSize::Compact)
                         .child(
                             div()
-                                .child(Label::new(commit_label).size(LabelSize::Small))
+                                .child(Label::new(commit_label.clone()).size(LabelSize::Small))
                                 .mr_0p5(),
                         )
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -466,7 +469,7 @@ impl CommitModal {
                             move |_window, cx| {
                                 if can_commit {
                                     Tooltip::with_meta_in(
-                                        tooltip,
+                                        tooltip.clone(),
                                         Some(&git::Commit),
                                         format!(
                                             "git commit{}{}",
@@ -477,7 +480,7 @@ impl CommitModal {
                                         cx,
                                     )
                                 } else {
-                                    Tooltip::simple(tooltip, cx)
+                                    Tooltip::simple(tooltip.clone(), cx)
                                 }
                             }
                         }),
@@ -654,8 +657,10 @@ impl Render for CommitModal {
                                         .color(Color::Warning),
                                 )
                                 .child(
-                                    Label::new(format!(
-                                        "Commit message title exceeds {max_title_length}-character limit."
+                                    Label::new(localization::tr!(
+                                        cx,
+                                        "git-commit-title-too-long",
+                                        limit = max_title_length,
                                     ))
                                     .size(LabelSize::Small),
                                 ),

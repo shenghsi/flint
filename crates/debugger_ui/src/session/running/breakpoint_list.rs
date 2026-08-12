@@ -595,11 +595,11 @@ impl BreakpointList {
         let toggle_label = selection_kind.map(|(_, is_enabled)| {
             if is_enabled {
                 (
-                    "Disable Breakpoint",
-                    "Disable a breakpoint without removing it from the list",
+                    "debugger-disable-breakpoint",
+                    "debugger-disable-breakpoint-help",
                 )
             } else {
-                ("Enable Breakpoint", "Re-enable a breakpoint")
+                ("debugger-enable-breakpoint", "debugger-enable-breakpoint-help")
             }
         });
 
@@ -615,9 +615,9 @@ impl BreakpointList {
                         let focus_handle = focus_handle.clone();
                         move |_window, cx| {
                             Tooltip::with_meta_in(
-                                label,
+                                localization::text(cx, label),
                                 Some(&ToggleEnableBreakpoint),
-                                meta,
+                                localization::text(cx, meta),
                                 &focus_handle,
                                 cx,
                             )
@@ -641,7 +641,7 @@ impl BreakpointList {
                             let focus_handle = focus_handle.clone();
                             move |_window, cx| {
                                 Tooltip::with_meta_in(
-                                    "Remove Breakpoint",
+                                    localization::text(cx, "debugger-remove-breakpoint"),
                                     Some(&UnsetBreakpoint),
                                     tooltip,
                                     &focus_handle,
@@ -852,11 +852,11 @@ impl LineBreakpoint {
                 let focus_handle = focus_handle.clone();
                 move |_window, cx| {
                     Tooltip::for_action_in(
-                        if is_enabled {
-                            "Disable Breakpoint"
+                        localization::text(cx, if is_enabled {
+                            "debugger-disable-breakpoint"
                         } else {
-                            "Enable Breakpoint"
-                        },
+                            "debugger-enable-breakpoint"
+                        }),
                         &ToggleEnableBreakpoint,
                         &focus_handle,
                         cx,
@@ -943,8 +943,10 @@ impl LineBreakpoint {
                             )
                         }))
                         .when_some(self.dir.as_ref(), |this, parent_dir| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Worktree parent path: {parent_dir}"
+                            this.tooltip(Tooltip::text(localization::tr!(
+                                cx,
+                                "debugger-worktree-parent-path",
+                                path = parent_dir.to_string(),
                             )))
                         }),
                 )
@@ -1012,11 +1014,11 @@ impl DataBreakpoint {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            if is_enabled {
-                                "Disable Data Breakpoint"
+                            localization::text(cx, if is_enabled {
+                                "debugger-disable-data-breakpoint"
                             } else {
-                                "Enable Data Breakpoint"
-                            },
+                                "debugger-enable-breakpoint"
+                            }),
                             &ToggleEnableBreakpoint,
                             &focus_handle,
                             cx,
@@ -1116,11 +1118,11 @@ impl ExceptionBreakpoint {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            if is_enabled {
-                                "Disable Exception Breakpoint"
+                            localization::text(cx, if is_enabled {
+                                "debugger-disable-exception-breakpoint"
                             } else {
-                                "Enable Exception Breakpoint"
-                            },
+                                "debugger-enable-breakpoint"
+                            }),
                             &ToggleEnableBreakpoint,
                             &focus_handle,
                             cx,
@@ -1433,9 +1435,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::Log))
                         .tooltip(|_window, cx|  {
                             Tooltip::with_meta(
-                                "Set Log Message",
+                                localization::text(cx, "debugger-set-log-message"),
                                 None,
-                                "Set log message to display (instead of stopping) when a breakpoint is hit.",
+                                localization::text(cx, "debugger-set-log-help"),
                                 cx,
                             )
                         }),
@@ -1469,9 +1471,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                             .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition))
                             .tooltip(|_window, cx|  {
                                 Tooltip::with_meta(
-                                    "Set Condition",
+                                    localization::text(cx, "debugger-set-condition"),
                                     None,
-                                    "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met.",
+                                    localization::text(cx, "debugger-set-condition-help"),
                                     cx,
                                 )
                             }),
@@ -1504,9 +1506,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::HitCondition))
                         .tooltip(|_window, cx|  {
                             Tooltip::with_meta(
-                                "Set Hit Condition",
+                                localization::text(cx, "debugger-set-hit-condition"),
                                 None,
-                                "Set expression that controls how many hits of the breakpoint are ignored.",
+                                localization::text(cx, "debugger-set-hit-help"),
                                 cx,
                             )
                         }),

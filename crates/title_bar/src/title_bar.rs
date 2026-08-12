@@ -448,33 +448,53 @@ impl TitleBar {
         let (nickname, tooltip_title, icon) = match options {
             RemoteConnectionOptions::Ssh(options) => (
                 options.nickname.map(|nick| nick.into()),
-                "Remote Project",
+                localization::text(cx, "title-bar-remote-project"),
                 IconName::Server,
             ),
-            RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
-            RemoteConnectionOptions::Docker(_dev_container_connection) => {
-                (None, "Dev Container", IconName::Box)
-            }
+            RemoteConnectionOptions::Wsl(_) => (
+                None,
+                localization::text(cx, "title-bar-remote-project"),
+                IconName::Linux,
+            ),
+            RemoteConnectionOptions::Docker(_dev_container_connection) => (
+                None,
+                localization::text(cx, "title-bar-dev-container"),
+                IconName::Box,
+            ),
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
+            RemoteConnectionOptions::Mock(_) => (
+                None,
+                localization::text(cx, "title-bar-mock-remote-project"),
+                IconName::Server,
+            ),
         };
 
         let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, mut meta) = match self.project.read(cx).remote_connection_state(cx)? {
-            remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
-            remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
+            remote::ConnectionState::Connecting => (
+                Color::Info,
+                localization::tr!(cx, "title-bar-connecting", host = host.to_string()).to_string(),
+            ),
+            remote::ConnectionState::Connected => (
+                Color::Success,
+                localization::tr!(cx, "title-bar-connected", host = host.to_string()).to_string(),
+            ),
             remote::ConnectionState::HeartbeatMissed => (
                 Color::Warning,
-                format!("Connection attempt to {host} missed. Retrying..."),
+                localization::tr!(cx, "title-bar-connection-missed", host = host.to_string())
+                    .to_string(),
             ),
             remote::ConnectionState::Reconnecting => (
                 Color::Warning,
-                format!("Lost connection to {host}. Reconnecting..."),
+                localization::tr!(cx, "title-bar-connection-lost", host = host.to_string())
+                    .to_string(),
             ),
-            remote::ConnectionState::Disconnected => {
-                (Color::Error, format!("Disconnected from {host}"))
-            }
+            remote::ConnectionState::Disconnected => (
+                Color::Error,
+                localization::tr!(cx, "title-bar-disconnected-from", host = host.to_string())
+                    .to_string(),
+            ),
         };
         if is_tunneled {
             meta.push_str(&format!(" · {}", recent_projects::TUNNELED_ROUTE_TOOLTIP));
@@ -535,7 +555,7 @@ impl TitleBar {
                         ),
                     move |_window, cx| {
                         Tooltip::with_meta(
-                            tooltip_title,
+                            tooltip_title.clone(),
                             Some(&OpenRemote {
                                 from_existing_connection: false,
                                 create_new_window: false,
@@ -557,32 +577,35 @@ impl TitleBar {
             return None;
         }
 
-        let button = Button::new("restricted_mode_trigger", "Restricted Mode")
-            .style(ButtonStyle::Tinted(TintColor::Warning))
-            .label_size(LabelSize::Small)
-            .color(Color::Warning)
-            .start_icon(
-                Icon::new(IconName::Warning)
-                    .size(IconSize::Small)
-                    .color(Color::Warning),
+        let button = Button::new(
+            "restricted_mode_trigger",
+            localization::text(cx, "title-bar-restricted-mode"),
+        )
+        .style(ButtonStyle::Tinted(TintColor::Warning))
+        .label_size(LabelSize::Small)
+        .color(Color::Warning)
+        .start_icon(
+            Icon::new(IconName::Warning)
+                .size(IconSize::Small)
+                .color(Color::Warning),
+        )
+        .tooltip(|_, cx| {
+            Tooltip::with_meta(
+                localization::text(cx, "title-bar-restricted-mode-title"),
+                Some(&ToggleWorktreeSecurity),
+                localization::text(cx, "title-bar-restricted-mode-description"),
+                cx,
             )
-            .tooltip(|_, cx| {
-                Tooltip::with_meta(
-                    "You're in Restricted Mode",
-                    Some(&ToggleWorktreeSecurity),
-                    "Mark this project as trusted and unlock all features",
-                    cx,
-                )
+        })
+        .on_click({
+            cx.listener(move |this, _, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_worktree_trust_security_modal(true, window, cx)
+                    })
+                    .log_err();
             })
-            .on_click({
-                cx.listener(move |this, _, window, cx| {
-                    this.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.show_worktree_trust_security_modal(true, window, cx)
-                        })
-                        .log_err();
-                })
-            });
+        });
 
         if ui::utils::MACOS_SDK_26_OR_LATER {
             // Make up for Tahoe's traffic light buttons having less spacing around them
@@ -599,11 +622,14 @@ impl TitleBar {
 
         if self.project.read(cx).is_disconnected(cx) {
             return Some(
-                Button::new("disconnected", "Disconnected")
-                    .disabled(true)
-                    .color(Color::Disabled)
-                    .label_size(LabelSize::Small)
-                    .into_any_element(),
+                Button::new(
+                    "disconnected",
+                    localization::text(cx, "title-bar-disconnected"),
+                )
+                .disabled(true)
+                .color(Color::Disabled)
+                .label_size(LabelSize::Small)
+                .into_any_element(),
             );
         }
 
@@ -623,7 +649,7 @@ impl TitleBar {
         let display_name = if let Some(ref name) = name {
             util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
         } else {
-            "Open Recent Project".to_string()
+            localization::text(cx, "title-bar-open-recent-project").to_string()
         };
 
         let is_sidebar_open = self
@@ -684,7 +710,7 @@ impl TitleBar {
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
                 move |_window, cx| {
                     Tooltip::for_action(
-                        "Recent Projects",
+                        localization::text(cx, "title-bar-recent-projects"),
                         &flint_actions::OpenRecent {
                             create_new_window: false,
                         },
@@ -741,7 +767,7 @@ impl TitleBar {
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
                 move |_window, cx| {
                     Tooltip::for_action(
-                        "Recent Projects",
+                        localization::text(cx, "title-bar-recent-projects"),
                         &flint_actions::OpenRecent {
                             create_new_window: false,
                         },
@@ -814,9 +840,9 @@ impl TitleBar {
 
         let display_label: SharedString = if let Some(ref name) = creation_in_progress {
             if is_switch {
-                format!("Loading {}…", name).into()
+                localization::tr!(cx, "title-bar-loading", name = name.to_string())
             } else {
-                format!("Creating {}…", name).into()
+                localization::tr!(cx, "title-bar-creating", name = name.to_string())
             }
         } else {
             worktree_label.clone()
@@ -847,9 +873,13 @@ impl TitleBar {
                         ),
                     move |_window, cx| {
                         Tooltip::with_meta(
-                            "Worktree",
+                            localization::text(cx, "title-bar-worktree"),
                             Some(&flint_actions::git::Worktree),
-                            format!("Currently In Use: {}", worktree_label),
+                            localization::tr!(
+                                cx,
+                                "title-bar-currently-in-use",
+                                name = worktree_label.to_string()
+                            ),
                             cx,
                         )
                     },
@@ -867,14 +897,17 @@ impl TitleBar {
                 };
 
                 let trigger = if is_detached_head {
-                    Button::new("project_branch_trigger", "Create Branch")
-                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                        .label_size(LabelSize::Small)
-                        .start_icon(
-                            Icon::new(IconName::GitBranchPlus)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
+                    Button::new(
+                        "project_branch_trigger",
+                        localization::text(cx, "title-bar-create-branch"),
+                    )
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .label_size(LabelSize::Small)
+                    .start_icon(
+                        Icon::new(IconName::GitBranchPlus)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
                 } else {
                     Button::new("project_branch_trigger", branch_name)
                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
@@ -900,12 +933,20 @@ impl TitleBar {
                     })
                     .trigger_with_tooltip(trigger, move |_window, cx| {
                         let meta = if is_detached_head {
-                            format!("Detached HEAD: {}", branch_tooltip_label)
+                            localization::tr!(
+                                cx,
+                                "title-bar-detached-head",
+                                name = branch_tooltip_label.to_string()
+                            )
                         } else {
-                            format!("Currently Checked Out: {}", branch_tooltip_label)
+                            localization::tr!(
+                                cx,
+                                "title-bar-currently-checked-out",
+                                name = branch_tooltip_label.to_string()
+                            )
                         };
                         Tooltip::with_meta(
-                            "Branch & Stash",
+                            localization::text(cx, "title-bar-branch-and-stash"),
                             Some(&flint_actions::git::Branch),
                             meta,
                             cx,

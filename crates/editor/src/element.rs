@@ -2538,7 +2538,7 @@ impl EditorElement {
                         });
                     })
                     .tooltip(Tooltip::for_action_title(
-                        "Expand Excerpt",
+                        localization::text(cx, "editor-expand-excerpt"),
                         &crate::actions::ExpandExcerpts::default(),
                     ))
                     .into_any_element();
@@ -6595,7 +6595,10 @@ pub fn render_breadcrumb_text(
                                     h_flex()
                                         .gap_1()
                                         .justify_between()
-                                        .child(Label::new("Show Symbol Outline"))
+                                        .child(Label::new(localization::text(
+                                            cx,
+                                            "editor-show-symbol-outline",
+                                        )))
                                         .child(ui::KeyBinding::for_action_in(
                                             &flint_actions::outline::ToggleOutline,
                                             &focus_handle,
@@ -6610,7 +6613,10 @@ pub fn render_breadcrumb_text(
                                             .pt_1()
                                             .border_t_1()
                                             .border_color(cx.theme().colors().border_variant)
-                                            .child(Label::new("Right-Click to Copy Path")),
+                                            .child(Label::new(localization::text(
+                                                cx,
+                                                "editor-right-click-copy-path",
+                                            ))),
                                     )
                                 })
                                 .into_any_element()

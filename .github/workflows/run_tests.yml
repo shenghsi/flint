@@ -685,7 +685,7 @@ jobs:
     - name: deploy_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
-        args: --no-progress --exclude '^http' './docs/src/**/*'
+        args: --no-progress --exclude '^http' './docs/src/**/*' './docs/src.zh-CN/**/*'
         fail: true
         jobSummary: false
     - name: deploy_docs::install_mdbook
@@ -696,6 +696,7 @@ jobs:
       run: |
         mkdir -p target/deploy
         mdbook build ./docs --dest-dir=../target/deploy/docs/
+        MDBOOK_BOOK__LANGUAGE=zh-CN MDBOOK_BOOK__MULTILINGUAL=true MDBOOK_BOOK__SRC=src.zh-CN MDBOOK_BOOK__TITLE='Flint 文档' MDBOOK_BOOK__SITE_URL=/docs/zh-CN/ mdbook build ./docs --dest-dir=../target/deploy/docs/zh-CN/
       env:
         DOCS_CHANNEL: stable
         MDBOOK_BOOK__SITE_URL: /docs/

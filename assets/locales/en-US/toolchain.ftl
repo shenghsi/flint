@@ -1,0 +1,17 @@
+toolchain-name = Toolchain
+toolchain-select = Select { $term }
+toolchain-select-path = Select Toolchain Path
+toolchain-add = Add
+toolchain-scope = Scope
+toolchain-scope-subproject = Subproject
+toolchain-scope-project = Project
+toolchain-scope-global = Global
+toolchain-scope-subproject-description = Available only in the subproject you're currently in.
+toolchain-scope-project-description = Available in all locations in your current project.
+toolchain-scope-global-description = Available in all of your projects on this machine.
+toolchain-add-term = Add { $term }
+toolchain-worktree-root = worktree root
+toolchain-select-for-path = Select a { $term } for { $path }…
+toolchain-placeholder = Select a toolchain…
+toolchain-add-toolchain = Add Toolchain
+toolchain-select-button = Select

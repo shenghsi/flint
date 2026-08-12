@@ -3834,9 +3834,9 @@ impl Editor {
             }))
             .tooltip(move |_window, cx| {
                 Tooltip::with_meta_in(
-                    "Remove Bookmark",
+                    localization::text(cx, "editor-remove-bookmark"),
                     Some(&ToggleBookmark),
-                    SharedString::from("Right-click for more options"),
+                    localization::text(cx, "editor-right-click-more-options"),
                     &focus_handle,
                     cx,
                 )
@@ -3972,25 +3972,33 @@ impl Editor {
         let (anchor, breakpoint) =
             breakpoint.unwrap_or_else(|| (anchor, Arc::new(Breakpoint::new_standard())));
 
-        ui::ContextMenu::build(window, cx, |menu, _, _cx| {
+        ui::ContextMenu::build(window, cx, |menu, _, cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
-                    this.entry("Run to Cursor", None, move |window, cx| {
-                        weak_editor
-                            .update(cx, |editor, cx| {
-                                editor.change_selections(
-                                    SelectionEffects::no_scroll(),
-                                    window,
-                                    cx,
-                                    |s| s.select_ranges([Point::new(row, 0)..Point::new(row, 0)]),
-                                );
-                            })
-                            .ok();
+                    this.entry(
+                        localization::text(cx, "editor-run-to-cursor"),
+                        None,
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::no_scroll(),
+                                        window,
+                                        cx,
+                                        |s| {
+                                            s.select_ranges(
+                                                [Point::new(row, 0)..Point::new(row, 0)],
+                                            )
+                                        },
+                                    );
+                                })
+                                .ok();
 
-                        window.dispatch_action(Box::new(RunToCursor), cx);
-                    })
+                            window.dispatch_action(Box::new(RunToCursor), cx);
+                        },
+                    )
                     .separator()
                 })
                 .when_some(toggle_state_msg, |this, msg| {
@@ -4345,7 +4353,12 @@ impl Editor {
                 editor.toggle_bookmark_at_row(row, cx);
             }))
             .tooltip(move |_window, cx| {
-                Tooltip::for_action_in("Add Bookmark", &ToggleBookmark, &focus_handle, cx)
+                Tooltip::for_action_in(
+                    localization::text(cx, "editor-add-bookmark"),
+                    &ToggleBookmark,
+                    &focus_handle,
+                    cx,
+                )
             })
     }
 
@@ -10528,7 +10541,7 @@ impl Editor {
                         if multibuffer.is_singleton() {
                             multibuffer.title(cx).to_string()
                         } else {
-                            "untitled".to_string()
+                            localization::text(cx, "editor-untitled").to_string()
                         }
                     })
             });
@@ -11919,7 +11932,12 @@ impl BreakpointPromptEditor {
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
             .tooltip(move |_window, cx| {
-                Tooltip::for_action_in("Cancel", &menu::Cancel, &focus_handle, cx)
+                Tooltip::for_action_in(
+                    localization::text(cx, "common-cancel"),
+                    &menu::Cancel,
+                    &focus_handle,
+                    cx,
+                )
             })
             .on_click(cx.listener(|this, _, window, cx| {
                 this.cancel(&menu::Cancel, window, cx);
@@ -11932,7 +11950,12 @@ impl BreakpointPromptEditor {
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
             .tooltip(move |_window, cx| {
-                Tooltip::for_action_in("Confirm", &menu::Confirm, &focus_handle, cx)
+                Tooltip::for_action_in(
+                    localization::text(cx, "common-confirm"),
+                    &menu::Confirm,
+                    &focus_handle,
+                    cx,
+                )
             })
             .on_click(cx.listener(|this, _, window, cx| {
                 this.confirm(&menu::Confirm, window, cx);

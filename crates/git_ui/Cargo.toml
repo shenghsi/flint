@@ -33,6 +33,7 @@ fuzzy_nucleo.workspace = true
 git.workspace = true
 gpui.workspace = true
 itertools.workspace = true
+localization.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true

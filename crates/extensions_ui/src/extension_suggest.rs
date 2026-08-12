@@ -171,13 +171,15 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
         workspace.show_notification(notification_id, cx, |cx| {
             cx.new(move |cx| {
                 MessageNotification::new(
-                    format!(
-                        "Do you want to install the recommended '{}' extension for '{}' files?",
-                        extension_id, file_name_or_extension
+                    localization::tr!(
+                        cx,
+                        "extensions-recommended",
+                        extension = extension_id.to_string(),
+                        file_type = file_name_or_extension.to_string()
                     ),
                     cx,
                 )
-                .primary_message("Yes, install extension")
+                .primary_message(localization::text(cx, "extensions-install-recommended"))
                 .primary_icon(IconName::Check)
                 .primary_icon_color(Color::Success)
                 .primary_on_click({
@@ -190,7 +192,7 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
                         });
                     }
                 })
-                .secondary_message("No, don't install it")
+                .secondary_message(localization::text(cx, "extensions-do-not-install"))
                 .secondary_icon(IconName::Close)
                 .secondary_icon_color(Color::Error)
                 .secondary_on_click(move |_window, cx| {

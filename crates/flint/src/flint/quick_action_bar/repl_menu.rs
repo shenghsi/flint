@@ -86,19 +86,23 @@ impl QuickActionBar {
                     let menu_state = session_state(session, cx);
                     let status = menu_state.status;
                     let editor = editor.clone();
+                    let kernel_label = localization::tr!(
+                        cx,
+                        "flint-repl-kernel",
+                        name = menu_state.kernel_name.to_string(),
+                        language = menu_state.kernel_language.to_string(),
+                    );
 
                     menu.map(|menu| {
                         if status.is_connected() {
                             let status = status.clone();
+                            let kernel_label = kernel_label.clone();
                             menu.custom_row(move |_window, _cx| {
                                 h_flex()
                                     .child(
-                                        Label::new(format!(
-                                            "kernel: {} ({})",
-                                            menu_state.kernel_name, menu_state.kernel_language
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
+                                        Label::new(kernel_label.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
                                     )
                                     .into_any_element()
                             })
@@ -126,11 +130,11 @@ impl QuickActionBar {
                     })
                     .separator()
                     .custom_entry(
-                        move |_window, _cx| {
+                        move |_window, cx| {
                             Label::new(if has_nonempty_selection {
-                                "Run Selection"
+                                localization::text(cx, "flint-run-selection")
                             } else {
-                                "Run Line"
+                                localization::text(cx, "flint-run-line")
                             })
                             .into_any_element()
                         },
@@ -142,8 +146,8 @@ impl QuickActionBar {
                         },
                     )
                     .custom_entry(
-                        move |_window, _cx| {
-                            Label::new("Interrupt")
+                        move |_window, cx| {
+                            Label::new(localization::text(cx, "repl-interrupt"))
                                 .size(LabelSize::Small)
                                 .color(Color::Error)
                                 .into_any_element()
@@ -156,8 +160,8 @@ impl QuickActionBar {
                         },
                     )
                     .custom_entry(
-                        move |_window, _cx| {
-                            Label::new("Clear Outputs")
+                        move |_window, cx| {
+                            Label::new(localization::text(cx, "repl-clear-outputs"))
                                 .size(LabelSize::Small)
                                 .color(Color::Muted)
                                 .into_any_element()
@@ -171,8 +175,8 @@ impl QuickActionBar {
                     )
                     .separator()
                     .custom_entry(
-                        move |_window, _cx| {
-                            Label::new("Shut Down Kernel")
+                        move |_window, cx| {
+                            Label::new(localization::text(cx, "repl-shutdown"))
                                 .size(LabelSize::Small)
                                 .color(Color::Error)
                                 .into_any_element()
@@ -185,8 +189,8 @@ impl QuickActionBar {
                         },
                     )
                     .custom_entry(
-                        move |_window, _cx| {
-                            Label::new("Restart Kernel")
+                        move |_window, cx| {
+                            Label::new(localization::text(cx, "repl-restart-kernel"))
                                 .size(LabelSize::Small)
                                 .color(Color::Error)
                                 .into_any_element()
@@ -198,7 +202,10 @@ impl QuickActionBar {
                         },
                     )
                     .separator()
-                    .action("View Sessions", Box::new(repl::Sessions))
+                    .action(
+                        localization::text(cx, "flint-view-sessions"),
+                        Box::new(repl::Sessions),
+                    )
                     // TODO: Add shut down all kernels action
                     // .action("Shut Down all Kernels", Box::new(gpui::NoAction))
                 })
@@ -213,7 +220,7 @@ impl QuickActionBar {
                     )
                     .width(rems(1.))
                     .disabled(menu_state.popover_disabled),
-                Tooltip::text("REPL Menu"),
+                Tooltip::text(localization::text(cx, "flint-repl-menu")),
             );
 
         let button = ButtonLike::new_rounded_left("toggle_repl_icon")
@@ -249,8 +256,11 @@ impl QuickActionBar {
         kernel_specification: KernelSpecification,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let tooltip: SharedString =
-            SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
+        let tooltip = localization::tr!(
+            cx,
+            "flint-start-repl-for",
+            kernel = kernel_specification.name().to_string(),
+        );
 
         Some(
             h_flex()
@@ -343,7 +353,7 @@ impl QuickActionBar {
                                     Label::new(if let Some(name) = current_kernel_name {
                                         name
                                     } else {
-                                        SharedString::from("Select Kernel")
+                                        localization::text(cx, "repl-select-kernel")
                                     })
                                     .size(LabelSize::Small)
                                     .color(if current_kernelspec.is_some() {
@@ -360,15 +370,14 @@ impl QuickActionBar {
                                 .size(IconSize::XSmall),
                         ),
                 ),
-            Tooltip::text("Select Kernel"),
+            Tooltip::text(localization::text(cx, "repl-select-kernel")),
         )
         .with_handle(menu_handle)
         .into_any_element()
     }
 
     pub fn render_repl_setup(&self, language: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let tooltip: SharedString =
-            SharedString::from(format!("Setup Flint REPL for {}", language));
+        let tooltip = localization::tr!(cx, "flint-setup-repl-for", language = language);
         Some(
             h_flex()
                 .gap(DynamicSpacing::Base06.rems(cx))
@@ -394,10 +403,30 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
 
     let kernel_name = session.kernel_specification.name();
     let kernel_language: SharedString = session.kernel_specification.language();
+    let nothing_running = localization::text(cx, "repl-kernel-nothing-running");
+    let starting_tooltip =
+        localization::tr!(cx, "repl-kernel-starting", kernel = kernel_name.as_ref());
+    let restarting_tooltip =
+        localization::tr!(cx, "repl-kernel-restarting", kernel = kernel_name.as_ref());
+    let shutting_down_tooltip = localization::tr!(
+        cx,
+        "repl-kernel-shutting-down",
+        kernel = kernel_name.as_ref()
+    );
+    let auto_restarting_tooltip = localization::tr!(
+        cx,
+        "repl-kernel-auto-restarting",
+        kernel = kernel_name.as_ref()
+    );
+    let unknown_tooltip = localization::tr!(
+        cx,
+        "repl-kernel-state-unknown",
+        kernel = kernel_name.as_ref()
+    );
 
     let fill_fields = || {
         ReplMenuState {
-            tooltip: "Nothing running".into(),
+            tooltip: nothing_running.clone(),
             icon: IconName::ReplNeutral,
             icon_color: Color::Default,
             icon_is_animating: false,
@@ -422,33 +451,14 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
             ..fill_fields()
         };
 
-    let starting = || transitional(format!("{} is starting", kernel_name).into(), true, true);
-    let restarting = || transitional(format!("Restarting {}", kernel_name).into(), true, true);
-    let shutting_down = || {
-        transitional(
-            format!("{} is shutting down", kernel_name).into(),
-            false,
-            true,
-        )
-    };
-    let auto_restarting = || {
-        transitional(
-            format!("Auto-restarting {}", kernel_name).into(),
-            true,
-            true,
-        )
-    };
-    let unknown = || transitional(format!("{} state unknown", kernel_name).into(), false, true);
-    let other = |state: &str| {
-        transitional(
-            format!("{} state: {}", kernel_name, state).into(),
-            false,
-            true,
-        )
-    };
+    let starting = || transitional(starting_tooltip.clone(), true, true);
+    let restarting = || transitional(restarting_tooltip.clone(), true, true);
+    let shutting_down = || transitional(shutting_down_tooltip.clone(), false, true);
+    let auto_restarting = || transitional(auto_restarting_tooltip.clone(), true, true);
+    let unknown = || transitional(unknown_tooltip.clone(), false, true);
 
     let shutdown = || ReplMenuState {
-        tooltip: "Nothing running".into(),
+        tooltip: nothing_running.clone(),
         icon: IconName::ReplNeutral,
         icon_color: Color::Default,
         icon_is_animating: false,
@@ -462,13 +472,23 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
         Kernel::Restarting => restarting(),
         Kernel::RunningKernel(kernel) => match &kernel.execution_state() {
             ExecutionState::Idle => ReplMenuState {
-                tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
+                tooltip: localization::tr!(
+                    cx,
+                    "repl-kernel-run-code",
+                    kernel = kernel_name.as_ref(),
+                    language = kernel_language.as_ref(),
+                ),
                 indicator: Some(Indicator::dot().color(Color::Success)),
                 status: session.kernel.status(),
                 ..fill_fields()
             },
             ExecutionState::Busy => ReplMenuState {
-                tooltip: format!("Interrupt {} ({})", kernel_name, kernel_language).into(),
+                tooltip: localization::tr!(
+                    cx,
+                    "repl-kernel-interrupt",
+                    kernel = kernel_name.as_ref(),
+                    language = kernel_language.as_ref(),
+                ),
                 icon_is_animating: true,
                 popover_disabled: false,
                 indicator: None,
@@ -481,7 +501,16 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
             ExecutionState::Terminating => shutting_down(),
             ExecutionState::AutoRestarting => auto_restarting(),
             ExecutionState::Dead => shutdown(),
-            ExecutionState::Other(state) => other(state),
+            ExecutionState::Other(state) => transitional(
+                localization::tr!(
+                    cx,
+                    "repl-kernel-state-other",
+                    kernel = kernel_name.as_ref(),
+                    state = state,
+                ),
+                false,
+                true,
+            ),
         },
         Kernel::StartingKernel(_) => starting(),
         Kernel::ErroredLaunch(e) => ReplMenuState {

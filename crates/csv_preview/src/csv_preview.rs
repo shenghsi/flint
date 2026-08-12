@@ -275,12 +275,11 @@ impl Item for CsvPreviewView {
             .and_then(|b| {
                 let file = b.read(cx).file()?;
                 let local_file = file.as_local()?;
-                local_file
-                    .abs_path(cx)
-                    .file_name()
-                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+                local_file.abs_path(cx).file_name().map(|name| {
+                    localization::tr!(cx, "csv-preview-tab-file", file = name.to_string_lossy())
+                })
             })
-            .unwrap_or_else(|| SharedString::from("CSV Preview"))
+            .unwrap_or_else(|| localization::text(cx, "csv-preview-tab"))
     }
 }
 

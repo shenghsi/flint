@@ -2175,6 +2175,8 @@ mod tests {
                 });
             });
             theme_settings::init(theme::LoadThemes::JustBase, cx);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("localization should initialize for split editor tests");
             crate::init(cx);
         });
         let fs = FakeFs::new(cx.executor());

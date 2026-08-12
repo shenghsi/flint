@@ -378,8 +378,8 @@ fn retain_original_opposing_theme(
 impl PickerDelegate for ThemeSelectorDelegate {
     type ListItem = ui::ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select Theme...".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "theme-selector-placeholder").into()
     }
 
     fn match_count(&self) -> usize {
@@ -537,20 +537,22 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("docs", "View Theme Docs")
+                    Button::new("docs", localization::text(cx, "theme-selector-view-docs"))
                         .end_icon(
                             Icon::new(IconName::ArrowUpRight)
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
                         )
                         .on_click(cx.listener(|_, _, _, cx| {
-                            cx.open_url(
-                                "https://github.com/shenghsi/flint/blob/main/docs/src/themes.md",
-                            );
+                            cx.open_url(&release_channel::docs_url("themes", cx));
                         })),
                 )
                 .child(
-                    Button::new("more-themes", "Install Themes").on_click(cx.listener({
+                    Button::new(
+                        "more-themes",
+                        localization::text(cx, "theme-selector-install"),
+                    )
+                    .on_click(cx.listener({
                         move |_, _, window, cx| {
                             window.dispatch_action(
                                 Box::new(Extensions {

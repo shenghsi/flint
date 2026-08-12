@@ -1,6 +1,6 @@
 use extension_host::ExtensionStore;
 use flint_actions::feedback::{EmailFlint, FileBugReport, RequestFeature};
-use gpui::{App, ClipboardItem, PromptLevel, actions};
+use gpui::{App, ClipboardItem, PromptButton, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs, os_name, os_version};
 use util::ResultExt;
 use workspace::Workspace;
@@ -57,18 +57,24 @@ pub fn init(cx: &mut App) {
                 cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await.to_string();
 
-                    cx.update(|_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(specs.clone()))
-                    })
-                    .log_err();
+                    let Ok((message, ok)) = cx.update(|_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(specs.clone()));
+                        (
+                            localization::text(cx, "common-copied-clipboard"),
+                            localization::text(cx, "common-ok"),
+                        )
+                    }) else {
+                        return;
+                    };
 
                     cx.prompt(
                         PromptLevel::Info,
-                        "Copied into clipboard",
+                        &message,
                         Some(&specs),
-                        &["OK"],
+                        &[PromptButton::ok(ok)],
                     )
                     .await
+                    .log_err();
                 })
                 .detach();
             })
@@ -77,9 +83,9 @@ pub fn init(cx: &mut App) {
                 cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text.clone()));
                 drop(window.prompt(
                     PromptLevel::Info,
-                    "Copied into clipboard",
+                    &localization::text(cx, "common-copied-clipboard"),
                     Some(&clipboard_text),
-                    &["OK"],
+                    &[PromptButton::ok(localization::text(cx, "common-ok"))],
                     cx,
                 ));
             })

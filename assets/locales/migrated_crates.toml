@@ -1,0 +1,392 @@
+# Add a crate only after all its user-facing string literals use localization
+# messages or have an explicit allowlist entry.
+crates = [
+  "agent_threads",
+  "activity_indicator",
+  "auto_update",
+  "auto_update_ui",
+  "command_palette",
+  "cli",
+  "csv_preview",
+  "debugger_ui",
+  "debugger_tools",
+  "dev_container",
+  "diagnostics",
+  "editor",
+  "encoding_selector",
+  "extensions_ui",
+  "feedback",
+  "file_finder",
+  "flint",
+  "go_to_line",
+  "git_ui",
+  "image_viewer",
+  "install_cli",
+  "keymap_editor",
+  "language_selector",
+  "language_onboarding",
+  "language_tools",
+  "line_ending_selector",
+  "lsp_locations",
+  "markdown_preview",
+  "markdown",
+  "onboarding",
+  "open_path_prompt",
+  "outline_panel",
+  "picker",
+  "platform_title_bar",
+  "project_panel",
+  "project_symbols",
+  "recent_projects",
+  "remote_connection",
+  "repl",
+  "search",
+  "settings_ui",
+  "settings_profile_selector",
+  "snippets_ui",
+  "svg_preview",
+  "tab_switcher",
+  "tasks_ui",
+  "toolchain_selector",
+  "terminal_view",
+  "theme_selector",
+  "title_bar",
+  "ui_prompt",
+  "ui_input",
+  "workspace",
+  "which_key",
+  "vim",
+]
+
+# Each entry permits one technical string that a UI literal sink uses. Add a
+# narrow entry only when the text is not visible to a user.
+[[allowlist]]
+file = "crates/diagnostics/src/items.rs"
+text = "diagnostic-indicator"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/search/src/buffer_search.rs"
+text = "multibuffer-collapse-expand-empty"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/search/src/project_search.rs"
+text = "{}\\n{}"
+reason = "Localized tooltip layout format"
+
+[[allowlist]]
+file = "crates/search/src/project_search.rs"
+text = "project-search-replace-button"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/settings_ui/src/settings_ui.rs"
+text = "setting-item"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/settings_ui/src/settings_ui.rs"
+text = "copy-link-btn"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/workspace/src/dock.rs"
+text = "test-support"
+reason = "Cargo feature name"
+
+[[allowlist]]
+file = "crates/workspace/src/pane.rs"
+text = "pane-tab-content"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/onboarding/src/basics_page.rs"
+text = "One"
+reason = "Theme family name"
+
+[[allowlist]]
+file = "crates/onboarding/src/basics_page.rs"
+text = "Ayu"
+reason = "Theme family name"
+
+[[allowlist]]
+file = "crates/onboarding/src/basics_page.rs"
+text = "Gruvbox"
+reason = "Theme family name"
+
+[[allowlist]]
+file = "crates/editor/src/code_lens.rs"
+text = "0 references"
+reason = "Internal renderer-diff placeholder; the rendered fallback is localized"
+
+[[allowlist]]
+file = "crates/editor/src/fold.rs"
+text = "\\\\n"
+reason = "Visible fold placeholder glyph"
+
+[[allowlist]]
+file = "crates/editor/src/editor.rs"
+text = ".ZedMono"
+reason = "Internal font-family token"
+
+[[allowlist]]
+file = "crates/outline_panel/src/outline_panel.rs"
+text = "buffers_inside_directory called on a non-directory entry {dir_entry:?}"
+reason = "Developer-only debug panic message"
+
+[[allowlist]]
+file = "crates/terminal_view/src/terminal_element.rs"
+text = '''Terminal paint: {} text runs, {} rects, \
+                        text paint took {:?}, total paint took {total_paint_time:?}'''
+reason = "Developer-only performance log"
+
+[[allowlist]]
+file = "crates/keymap_editor/src/keymap_editor.rs"
+text = "keymap context"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/keymap_editor/src/keymap_editor.rs"
+text = "keymap-row-wrapper"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/keymap_editor/src/keymap_editor.rs"
+text = "<null>"
+reason = "Stable keymap argument syntax"
+
+[[allowlist]]
+file = "crates/keymap_editor/src/keymap_editor.rs"
+text = "<no arguments>"
+reason = "Stable keymap argument sentinel"
+
+[[allowlist]]
+file = "crates/recent_projects/src/remote_servers.rs"
+text = "\\n"
+reason = "Path-list separator"
+
+[[allowlist]]
+file = "crates/extensions_ui/src/extensions_ui.rs"
+text = "v{version}"
+reason = "Extension version format"
+
+[[allowlist]]
+file = "crates/git_ui/src/commit_modal.rs"
+text = "git commit{}{}"
+reason = "Stable Git command preview"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "git commit{}{}"
+reason = "Stable Git command preview"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "git config --global --add safe.directory {}"
+reason = "Stable Git command preview"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "git init"
+reason = "Stable Git command"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "remote-button"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_panel.rs"
+text = "commit-wrapper"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/git_ui/src/git_ui.rs"
+text = "split-button-right-{}"
+reason = "Element identifier format"
+
+[[allowlist]]
+file = "crates/git_ui/src/worktree_picker.rs"
+text = "HEAD"
+reason = "Stable Git reference"
+
+[[allowlist]]
+file = "crates/git_ui/src/worktree_picker.rs"
+text = "Modal just created"
+reason = "Developer-only assertion message"
+
+[[allowlist]]
+file = "crates/git_ui/src/worktree_picker.rs"
+text = "\\u{2022}"
+reason = "Visual separator"
+
+[[allowlist]]
+file = "crates/repl/src/notebook/notebook_ui.rs"
+text = "notebook controls"
+reason = "Text in disabled example code"
+
+[[allowlist]]
+file = "crates/tasks_ui/src/modal.rs"
+text = "delete"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/project_panel/src/undo.rs"
+text = "project_panel_undo"
+reason = "Notification identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Console"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/memory_view.rs"
+text = "{:016X}"
+reason = "Debugger memory address display format"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/memory_view.rs"
+text = "{as_visible}"
+reason = "Debugger memory byte display"
+
+[[allowlist]]
+file = "crates/repl/src/session.rs"
+text = "({status_text})"
+reason = "Punctuation around an independently localized kernel status"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Variables"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Breakpoints"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Frames"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Modules"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "Accept"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "Authorization"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "X-Date"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "X-Content-Sha256"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/agent_threads/src/plan_usage.rs"
+text = "Content-Type"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/dev_container/src/oci.rs"
+text = "Authorization"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/dev_container/src/oci.rs"
+text = "Accept"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/repl/src/kernels/remote_kernels.rs"
+text = "Authorization"
+reason = "HTTP protocol header"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Sources"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Terminal"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/persistence.rs"
+text = "Memory View"
+reason = "Stable serialized pane identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running.rs"
+text = "debug-toggle-zoom-{}"
+reason = "Element identifier format"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/breakpoint_list.rs"
+text = "source-breakpoint-control-strip-{:?}:{}"
+reason = "Element identifier format"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/breakpoint_list.rs"
+text = "remove-breakpoint-breakpoint-list"
+reason = "Element identifier"
+
+[[allowlist]]
+file = "crates/debugger_ui/src/session/running/breakpoint_list.rs"
+text = "Worktree parent path: {parent_dir}"
+reason = "Developer-only assertion message"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Codex"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Claude"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Pi"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "OpenCode"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Bypass approvals & sandbox"
+reason = "Stable launch option label used for legacy settings migration"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Skip permission prompts"
+reason = "Stable launch option label used for legacy settings migration"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
+text = "Auto-approve permissions"
+reason = "Stable launch option label used for legacy settings migration"
+
+[[allowlist]]
+file = "crates/agent_threads/src/panel.rs"
+text = "agent"
+reason = "Fluent variable name in a tooltip expression"

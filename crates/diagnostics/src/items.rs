@@ -66,9 +66,9 @@ impl Render for DiagnosticIndicator {
                 .map_or(&*diagnostic.message, |(first, _)| first);
             let diagnostics_already_active = self.any_active_diagnostics(cx);
             let tooltip = if !diagnostics_already_active {
-                "Expand Diagnostics"
+                localization::text(cx, "diagnostics-expand")
             } else {
-                "Next Diagnostic"
+                localization::text(cx, "diagnostics-next")
             };
             Some(
                 Button::new("diagnostic_message", SharedString::new(message))
@@ -76,7 +76,7 @@ impl Render for DiagnosticIndicator {
                     .truncate(true)
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action(
-                            tooltip,
+                            tooltip.clone(),
                             &editor::actions::GoToDiagnostic::default(),
                             cx,
                         )
@@ -94,7 +94,11 @@ impl Render for DiagnosticIndicator {
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
                     .tooltip(move |_window, cx| {
-                        Tooltip::for_action("Project Diagnostics", &Deploy, cx)
+                        Tooltip::for_action(
+                            localization::text(cx, "diagnostics-project"),
+                            &Deploy,
+                            cx,
+                        )
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {

@@ -244,7 +244,7 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str>;
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        Some("No matches".into())
+        Some(localization::text(_cx, "picker-no-matches"))
     }
     fn update_matches(
         &mut self,
@@ -1431,6 +1431,8 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
@@ -1774,9 +1776,13 @@ impl<D: PickerDelegate> Render for Picker<D> {
                         .border_color(cx.theme().colors().border_variant)
                         .child(
                             Label::new(if self.multi_select_enabled {
-                                format!("{selected_count} selected")
+                                localization::tr!(
+                                    cx,
+                                    "picker-selected-count",
+                                    count = selected_count as i64
+                                )
                             } else {
-                                "Select multiple items".to_string()
+                                localization::text(cx, "picker-select-multiple")
                             })
                             .size(ui::LabelSize::Small)
                             .color(Color::Muted),
@@ -1785,9 +1791,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             Button::new(
                                 "toggle-picker-multi-select",
                                 if self.multi_select_enabled {
-                                    "Done"
+                                    localization::text(cx, "picker-done")
                                 } else {
-                                    "Select Multiple"
+                                    localization::text(cx, "picker-select-multiple-action")
                                 },
                             )
                             .on_click(|_, window, cx| {
@@ -2053,11 +2059,14 @@ impl<D: PickerDelegate> Picker<D> {
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
-                Button::new("picker-preview-toggle", "Preview")
-                    .when(preview_visible, |button| button.color(Color::Accent))
-                    .on_click(cx.listener(|picker, _, window, cx| {
-                        picker.toggle_preview_visible(window, cx);
-                    })),
+                Button::new(
+                    "picker-preview-toggle",
+                    localization::text(cx, "picker-preview"),
+                )
+                .when(preview_visible, |button| button.color(Color::Accent))
+                .on_click(cx.listener(|picker, _, window, cx| {
+                    picker.toggle_preview_visible(window, cx);
+                })),
             )
             .when(preview_visible, |controls| {
                 controls
@@ -2065,7 +2074,10 @@ impl<D: PickerDelegate> Picker<D> {
                     .child(
                         IconButton::new("picker-preview-right", IconName::DiffSplit)
                             .toggle_state(current_layout == PreviewLayout::Right)
-                            .tooltip(Tooltip::text("Preview to the Right"))
+                            .tooltip(Tooltip::text(localization::text(
+                                cx,
+                                "picker-preview-right",
+                            )))
                             .on_click(cx.listener(|picker, _, window, cx| {
                                 picker.set_preview_layout(PreviewLayout::Right, window, cx);
                             })),
@@ -2073,7 +2085,10 @@ impl<D: PickerDelegate> Picker<D> {
                     .child(
                         IconButton::new("picker-preview-below", IconName::DiffUnified)
                             .toggle_state(current_layout == PreviewLayout::Below)
-                            .tooltip(Tooltip::text("Preview Below"))
+                            .tooltip(Tooltip::text(localization::text(
+                                cx,
+                                "picker-preview-below",
+                            )))
                             .on_click(cx.listener(|picker, _, window, cx| {
                                 picker.set_preview_layout(PreviewLayout::Below, window, cx);
                             })),

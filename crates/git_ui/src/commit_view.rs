@@ -15,8 +15,8 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
-    Window, actions,
+    PromptButton, PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task,
+    WeakEntity, Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -140,7 +140,7 @@ impl Addon for CommitDiffAddon {
         menu.when_some(file_to_open, |menu, file| {
             let commit_view = self.commit_view.clone();
             menu.entry(
-                "Open File in Project",
+                localization::text(cx, "git-open-file-in-project"),
                 Some(Box::new(OpenFileAtHead)),
                 move |window, cx| {
                     commit_view
@@ -548,11 +548,12 @@ impl CommitView {
         let commit_date = time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
             .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
         let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-        let date_string = time_format::format_localized_timestamp(
+        let date_string = time_format::format_localized_timestamp_for_language(
             commit_date,
             time::OffsetDateTime::now_utc(),
             local_offset,
             time_format::TimestampFormat::MediumAbsolute,
+            localization::language(cx),
         );
 
         let avatar_size = rems_from_px(40.);
@@ -664,7 +665,7 @@ impl CommitView {
                     )
                     .when(self.stash.is_none(), |this| {
                         this.child(
-                            Button::new("sha", "Commit SHA")
+                            Button::new("sha", localization::text(cx, "git-commit-sha"))
                                 .start_icon(
                                     Icon::new(copy_icon)
                                         .size(IconSize::Small)
@@ -674,7 +675,7 @@ impl CommitView {
                                     let commit_sha = commit_sha.clone();
                                     move |_, cx| {
                                         Tooltip::with_meta(
-                                            "Copy Commit SHA",
+                                            localization::text(cx, "git-copy-commit-sha"),
                                             None,
                                             commit_sha.clone(),
                                             cx,
@@ -744,7 +745,7 @@ impl CommitView {
     fn apply_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
-            "Apply",
+            localization::text(cx, "git-apply"),
             window,
             cx,
             async move |repository, sha, stash, commit_view, workspace, cx| {
@@ -771,7 +772,7 @@ impl CommitView {
     fn pop_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
-            "Pop",
+            localization::text(cx, "git-pop"),
             window,
             cx,
             async move |repository, sha, stash, commit_view, workspace, cx| {
@@ -798,7 +799,7 @@ impl CommitView {
     fn remove_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
-            "Drop",
+            localization::text(cx, "git-drop"),
             window,
             cx,
             async move |repository, sha, stash, commit_view, workspace, cx| {
@@ -824,7 +825,7 @@ impl CommitView {
 
     fn stash_action<AsyncFn>(
         workspace: &mut Workspace,
-        str_action: &str,
+        action_label: gpui::SharedString,
         window: &mut Window,
         cx: &mut App,
         callback: AsyncFn,
@@ -848,9 +849,17 @@ impl CommitView {
         let sha = commit_view.read(cx).commit.sha.clone();
         let answer = window.prompt(
             PromptLevel::Info,
-            &format!("{} stash@{{{}}}?", str_action, stash),
+            &localization::tr!(
+                cx,
+                "git-stash-action-question",
+                action = action_label.as_ref(),
+                index = stash
+            ),
             None,
-            &[str_action, "Cancel"],
+            &[
+                PromptButton::ok(action_label),
+                PromptButton::cancel(localization::text(cx, "common-cancel")),
+            ],
             cx,
         );
 
@@ -1301,7 +1310,7 @@ impl Render for CommitViewToolbar {
                     .icon_size(IconSize::Small)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action(
-                            "Buffer Search",
+                            localization::text(cx, "git-buffer-search"),
                             &flint_actions::buffer_search::Deploy::find(),
                             cx,
                         )
@@ -1317,7 +1326,7 @@ impl Render for CommitViewToolbar {
                 this.child(
                     IconButton::new("show-in-git-graph", IconName::GitGraph)
                         .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Show in Git Graph"))
+                        .tooltip(Tooltip::text(localization::text(cx, "git-show-graph")))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
                                 Box::new(crate::git_graph::OpenAtCommit {
@@ -1332,7 +1341,11 @@ impl Render for CommitViewToolbar {
 
                     IconButton::new("view_on_provider", icon)
                         .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text(format!("View on {}", provider_name)))
+                        .tooltip(Tooltip::text(localization::tr!(
+                            cx,
+                            "git-view-provider",
+                            provider = provider_name
+                        )))
                         .on_click(move |_, _, cx| cx.open_url(&url))
                 }))
             })

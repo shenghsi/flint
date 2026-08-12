@@ -98,8 +98,15 @@ impl HistoryManager {
         self.update_jump_list(cx);
     }
 
+    pub fn refresh_jump_list(&mut self, cx: &mut Context<'_, HistoryManager>) {
+        self.update_jump_list(cx);
+    }
+
     fn update_jump_list(&mut self, cx: &mut Context<'_, HistoryManager>) {
-        let menus = vec![MenuItem::action("New Window", NewWindow)];
+        let menus = vec![MenuItem::action(
+            localization::text(cx, "menu-new-window"),
+            NewWindow,
+        )];
         let entries = self
             .history
             .iter()

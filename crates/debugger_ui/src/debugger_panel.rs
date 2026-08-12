@@ -503,13 +503,16 @@ impl DebugPanel {
             })
             .unwrap_or_default();
 
+        let terminate_confirmation = localization::text(cx, "debugger-terminate-session-confirm");
+        let yes = localization::text(cx, "debugger-yes");
+        let no = localization::text(cx, "debugger-no");
         cx.spawn_in(window, async move |this, cx| {
             if should_prompt {
                 let response = cx.prompt(
                     gpui::PromptLevel::Warning,
-                    "This Debug Session is still running. Are you sure you want to terminate it?",
+                    &terminate_confirmation,
                     None,
-                    &["Yes", "No"],
+                    &[yes, no],
                 );
                 if response.await == Ok(1) {
                     return;
@@ -626,7 +629,7 @@ impl DebugPanel {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            "Start Debug Session",
+                            localization::text(cx, "debugger-start-session"),
                             &crate::Start,
                             &focus_handle,
                             cx,
@@ -641,14 +644,14 @@ impl DebugPanel {
                 .on_click(|_, window, cx| {
                     window.dispatch_action(flint_actions::OpenProjectDebugTasks.boxed_clone(), cx);
                 })
-                .tooltip(Tooltip::text("Edit debug.json"))
+                .tooltip(Tooltip::text(localization::text(cx, "debugger-edit-json")))
         };
 
         let documentation_button = || {
             IconButton::new("debug-open-documentation", IconName::CircleHelp)
                 .icon_size(IconSize::Small)
                 .on_click(move |_, _, cx| cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/debugger.md"))
-                .tooltip(Tooltip::text("Open Documentation"))
+                .tooltip(Tooltip::text(localization::text(cx, "debugger-open-docs")))
         };
 
         let logs_button = || {
@@ -657,7 +660,7 @@ impl DebugPanel {
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(debugger_tools::OpenDebugAdapterLogs.boxed_clone(), cx)
                 })
-                .tooltip(Tooltip::text("Open Debug Adapter Logs"))
+                .tooltip(Tooltip::text(localization::text(cx, "debugger-open-logs")))
         };
 
         let close_bottom_panel_button = {
@@ -667,7 +670,7 @@ impl DebugPanel {
                     .on_click(move |_, window, cx| {
                         window.dispatch_action(workspace::ToggleBottomDock.boxed_clone(), cx)
                     })
-                    .tooltip(Tooltip::text("Close Panel")),
+                    .tooltip(Tooltip::text(localization::text(cx, "debugger-close-panel"))),
             )
         };
 
@@ -716,7 +719,7 @@ impl DebugPanel {
                                                     let focus_handle = focus_handle.clone();
                                                     move |_window, cx| {
                                                         Tooltip::for_action_in(
-                                                            "Pause Program",
+                                                            localization::text(cx, "debugger-pause-program"),
                                                             &Pause,
                                                             &focus_handle,
                                                             cx,
@@ -740,7 +743,7 @@ impl DebugPanel {
                                                     let focus_handle = focus_handle.clone();
                                                     move |_window, cx| {
                                                         Tooltip::for_action_in(
-                                                            "Continue Program",
+                                                            localization::text(cx, "debugger-continue-program"),
                                                             &Continue,
                                                             &focus_handle,
                                                             cx,
@@ -764,7 +767,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Step Over",
+                                                        localization::text(cx, "debugger-step-over"),
                                                         &StepOver,
                                                         &focus_handle,
                                                         cx,
@@ -786,7 +789,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Step In",
+                                                        localization::text(cx, "debugger-step-in"),
                                                         &StepInto,
                                                         &focus_handle,
                                                         cx,
@@ -808,7 +811,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Step Out",
+                                                        localization::text(cx, "debugger-step-out"),
                                                         &StepOut,
                                                         &focus_handle,
                                                         cx,
@@ -830,7 +833,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Rerun Session",
+                                                        localization::text(cx, "debugger-rerun-session"),
                                                         &RerunSession,
                                                         &focus_handle,
                                                         cx,
@@ -903,7 +906,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |_window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Detach",
+                                                        localization::text(cx, "debugger-detach"),
                                                         &Detach,
                                                         &focus_handle,
                                                         cx,
@@ -1411,12 +1414,16 @@ impl DebugPanel {
                                 .read(cx)
                                 .historic_snapshots();
 
-                            context_menu = context_menu.entry("Current State", None, {
+                            context_menu = context_menu.entry(
+                                localization::text(cx, "debugger-current-state"),
+                                None,
+                                {
                                 let running_state = running_state.clone();
                                 move |_window, cx| {
                                     handler(None, running_state.clone(), cx);
                                 }
-                            });
+                                },
+                            );
                             context_menu = context_menu.separator();
 
                             for (ix, _) in history.iter().enumerate().rev() {
@@ -1582,9 +1589,9 @@ impl Panel for DebugPanel {
             .then_some(IconName::Debug)
     }
 
-    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<SharedString> {
         if DebuggerSettings::get_global(cx).button {
-            Some("Debug Panel")
+            Some(localization::text(cx, "panel-debugger"))
         } else {
             None
         }
@@ -1816,7 +1823,7 @@ impl Render for DebugPanel {
                         .justify_center()
                         .gap_2()
                         .child(
-                            Button::new("spawn-new-session-empty-state", "New Session")
+                            Button::new("spawn-new-session-empty-state", localization::text(cx, "debugger-new-session"))
                                 .start_icon(
                                     Icon::new(IconName::Plus)
                                         .size(IconSize::Small)
@@ -1827,7 +1834,7 @@ impl Render for DebugPanel {
                                 }),
                         )
                         .child(
-                            Button::new("edit-debug-settings", "Edit debug.json")
+                            Button::new("edit-debug-settings", localization::text(cx, "debugger-edit-json"))
                                 .start_icon(
                                     Icon::new(IconName::Code)
                                         .size(IconSize::Small)
@@ -1841,7 +1848,7 @@ impl Render for DebugPanel {
                                 }),
                         )
                         .child(
-                            Button::new("open-debugger-docs", "Debugger Docs")
+                            Button::new("open-debugger-docs", localization::text(cx, "debugger-docs"))
                                 .start_icon(
                                     Icon::new(IconName::Book)
                                         .size(IconSize::Small)
@@ -1852,7 +1859,7 @@ impl Render for DebugPanel {
                         .child(
                             Button::new(
                                 "spawn-new-session-install-extensions",
-                                "Debugger Extensions",
+                                localization::text(cx, "debugger-extensions"),
                             )
                             .start_icon(
                                 Icon::new(IconName::Blocks)
@@ -1898,7 +1905,7 @@ impl Render for DebugPanel {
                                 .justify_between()
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border_variant)
-                                .child(Label::new("Breakpoints").size(LabelSize::Small))
+                                .child(Label::new(localization::text(cx, "debugger-breakpoints")).size(LabelSize::Small))
                                 .child(
                                     h_flex().visible_on_hover("base-breakpoint-list").child(
                                         self.breakpoint_list.read(cx).render_control_strip(),
@@ -1911,7 +1918,7 @@ impl Render for DebugPanel {
                         .when(!has_breakpoints, |this| {
                             this.child(
                                 v_flex().size_full().items_center().justify_center().child(
-                                    Label::new("No Breakpoints Set")
+                                    Label::new(localization::text(cx, "debugger-no-breakpoints"))
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                 ),

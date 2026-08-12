@@ -196,19 +196,19 @@ impl Render for KeyContextView {
                     });
                 }),
             )
-            .child(Label::new("Keyboard Context").size(LabelSize::Large))
-            .child(Label::new("This view lets you determine the current context stack for creating custom key bindings in Flint. When a keyboard shortcut is triggered, it also shows all the possible contexts it could have triggered in, and which one matched."))
+            .child(Label::new(localization::text(cx, "key-context-title")).size(LabelSize::Large))
+            .child(Label::new(localization::text(cx, "key-context-description")))
             .child(
                 h_flex()
                     .mt_4()
                     .gap_4()
                     .child(
-                        Button::new("open_documentation", "Open Documentation")
+                        Button::new("open_documentation", localization::text(cx, "key-context-open-documentation"))
                             .style(ButtonStyle::Filled)
                             .on_click(|_, _, cx| cx.open_url("https://github.com/shenghsi/flint/blob/main/docs/src/key-bindings.md")),
                     )
                     .child(
-                        Button::new("view_default_keymap", "View Default Keymap")
+                        Button::new("view_default_keymap", localization::text(cx, "key-context-view-default-keymap"))
                             .style(ButtonStyle::Filled)
                             .key_binding(ui::KeyBinding::for_action(
                                 &flint_actions::OpenDefaultKeymap,
@@ -219,7 +219,7 @@ impl Render for KeyContextView {
                             }),
                     )
                     .child(
-                        Button::new("edit_your_keymap", "Edit Keymap File")
+                        Button::new("edit_your_keymap", localization::text(cx, "key-context-edit-keymap"))
                             .style(ButtonStyle::Filled)
                             .key_binding(ui::KeyBinding::for_action(&flint_actions::OpenKeymapFile, cx))
                             .on_click(|_, window, cx| {
@@ -228,7 +228,7 @@ impl Render for KeyContextView {
                     ),
             )
             .child(
-                Label::new("Current Context Stack")
+                Label::new(localization::text(cx, "key-context-current-stack"))
                     .size(LabelSize::Large)
                     .mt_8(),
             )
@@ -248,26 +248,43 @@ impl Render for KeyContextView {
                     Label::new(format!("{} {}", primary, secondary)).ml(px(12. * (i + 1) as f32))
                 })
             })
-            .child(Label::new("Last Keystroke").mt_4().size(LabelSize::Large))
+            .child(Label::new(localization::text(cx, "key-context-last-keystroke")).mt_4().size(LabelSize::Large))
             .when_some(self.pending_keystrokes.as_ref(), |el, keystrokes| {
                 el.child(
-                    Label::new(format!(
-                        "Waiting for more input: {}",
-                        keystrokes.iter().map(|k| k.unparse()).join(" ")
+                    Label::new(localization::tr!(
+                        cx,
+                        "key-context-waiting-input",
+                        keystrokes = keystrokes.iter().map(|k| k.unparse()).join(" ")
                     ))
                     .ml(px(12.)),
                 )
             })
             .when_some(self.last_keystrokes.as_ref(), |el, keystrokes| {
-                el.child(Label::new(format!("Typed: {}", keystrokes)).ml_4())
+                el.child(
+                    Label::new(localization::tr!(
+                        cx,
+                        "key-context-typed",
+                        keystrokes = keystrokes.as_ref()
+                    ))
+                    .ml_4(),
+                )
                     .children(
                         self.last_possibilities
                             .iter()
                             .map(|(name, predicate, state)| {
                                 let (text, color) = match state {
-                                    Some(true) => ("(match)", ui::Color::Success),
-                                    Some(false) => ("(low precedence)", ui::Color::Hint),
-                                    None => ("(no match)", ui::Color::Error),
+                                    Some(true) => (
+                                        localization::text(cx, "key-context-match"),
+                                        ui::Color::Success,
+                                    ),
+                                    Some(false) => (
+                                        localization::text(cx, "key-context-low-precedence"),
+                                        ui::Color::Hint,
+                                    ),
+                                    None => (
+                                        localization::text(cx, "key-context-no-match"),
+                                        ui::Color::Error,
+                                    ),
                                 };
                                 h_flex()
                                     .gap_2()
@@ -279,14 +296,20 @@ impl Render for KeyContextView {
                     )
             })
             .when_some(key_equivalents, |el, key_equivalents| {
-                el.child(Label::new("Key Equivalents").mt_4().size(LabelSize::Large))
-                    .child(Label::new("Shortcuts defined using some characters have been remapped so that shortcuts can be typed without holding option."))
+                el.child(Label::new(localization::text(cx, "key-context-equivalents")).mt_4().size(LabelSize::Large))
+                    .child(Label::new(localization::text(cx, "key-context-equivalents-description")))
                     .children(
                         key_equivalents
                             .iter()
                             .sorted()
                             .map(|(key, equivalent)| {
-                                Label::new(format!("cmd-{} => cmd-{}", key, equivalent)).ml_8()
+                                Label::new(localization::tr!(
+                                    cx,
+                                    "key-context-equivalent-format",
+                                    key = key.to_string(),
+                                    equivalent = equivalent.to_string()
+                                ))
+                                .ml_8()
                             }),
                     )
             })

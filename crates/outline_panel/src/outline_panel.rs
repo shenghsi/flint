@@ -710,7 +710,11 @@ impl OutlinePanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Search buffer symbols…", window, cx);
+                editor.set_placeholder_text(
+                    &localization::text(cx, "outline-search-placeholder"),
+                    window,
+                    cx,
+                );
                 editor
             });
             let filter_update_subscription = cx.subscribe_in(
@@ -1449,23 +1453,35 @@ impl OutlinePanel {
         let is_foldable = auto_fold_dirs && !is_root && self.is_foldable(&entry);
         let is_unfoldable = auto_fold_dirs && !is_root && self.is_unfoldable(&entry);
 
-        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+        let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
             menu.context(self.focus_handle.clone())
                 .action(
                     ui::utils::reveal_in_file_manager_label(false),
                     Box::new(RevealInFileManager),
                 )
-                .action("Open in Terminal", Box::new(OpenInTerminal))
+                .action(
+                    localization::text(cx, "outline-open-terminal"),
+                    Box::new(OpenInTerminal),
+                )
                 .when(is_unfoldable, |menu| {
-                    menu.action("Unfold Directory", Box::new(UnfoldDirectory))
+                    menu.action(
+                        localization::text(cx, "outline-unfold-directory"),
+                        Box::new(UnfoldDirectory),
+                    )
                 })
                 .when(is_foldable, |menu| {
-                    menu.action("Fold Directory", Box::new(FoldDirectory))
+                    menu.action(
+                        localization::text(cx, "outline-fold-directory"),
+                        Box::new(FoldDirectory),
+                    )
                 })
                 .separator()
-                .action("Copy Path", Box::new(flint_actions::workspace::CopyPath))
                 .action(
-                    "Copy Relative Path",
+                    localization::text(cx, "outline-copy-path"),
+                    Box::new(flint_actions::workspace::CopyPath),
+                )
+                .action(
+                    localization::text(cx, "outline-copy-relative-path"),
                     Box::new(flint_actions::workspace::CopyRelativePath),
                 )
         });
@@ -2265,11 +2281,15 @@ impl OutlinePanel {
     fn excerpt_label(&self, range: &ExcerptRange<language::Anchor>, cx: &App) -> Option<String> {
         let buffer_snapshot = self.buffer_snapshot_for_id(range.context.start.buffer_id, cx)?;
         let excerpt_range = range.context.to_point(&buffer_snapshot);
-        Some(format!(
-            "Lines {}- {}",
-            excerpt_range.start.row + 1,
-            excerpt_range.end.row + 1,
-        ))
+        Some(
+            localization::tr!(
+                cx,
+                "outline-lines",
+                start = excerpt_range.start.row + 1,
+                end = excerpt_range.end.row + 1
+            )
+            .to_string(),
+        )
     }
 
     fn render_outline(
@@ -2422,9 +2442,12 @@ impl OutlinePanel {
                             .map(|icon| icon.color(color).into_any_element());
                             (icon, file_name(path.as_std_path()))
                         }
-                        None => (None, "Untitled".to_string()),
+                        None => (None, localization::text(cx, "outline-untitled").to_string()),
                     },
-                    None => (None, "Unknown buffer".to_string()),
+                    None => (
+                        None,
+                        localization::text(cx, "outline-unknown-buffer").to_string(),
+                    ),
                 };
                 (
                     ElementId::from(external_file.buffer_id.to_proto() as usize),
@@ -4621,9 +4644,9 @@ impl OutlinePanel {
     ) -> impl IntoElement {
         let contents = if self.cached_entries.is_empty() {
             let header = if query.is_some() {
-                "No matches for query"
+                localization::text(cx, "outline-no-query-matches")
             } else {
-                "No outlines available"
+                localization::text(cx, "outline-empty")
             };
 
             v_flex()
@@ -4646,7 +4669,10 @@ impl OutlinePanel {
                     h_flex()
                         .gap_1()
                         .justify_center()
-                        .child(Label::new("Toggle Panel With").color(Color::Muted))
+                        .child(
+                            Label::new(localization::text(cx, "outline-toggle-panel-with"))
+                                .color(Color::Muted),
+                        )
                         .child({
                             let key_binding = match self.position(window, cx) {
                                 DockPosition::Left => {
@@ -4816,9 +4842,17 @@ impl OutlinePanel {
 
     fn render_filter_footer(&mut self, pinned: bool, cx: &mut Context<Self>) -> Div {
         let (pin_button_id, icon, icon_tooltip) = if pinned {
-            ("unpin_button", IconName::Unpin, "Unpin Outline")
+            (
+                "unpin_button",
+                IconName::Unpin,
+                localization::text(cx, "outline-unpin"),
+            )
         } else {
-            ("pin_button", IconName::Pin, "Pin Active Outline")
+            (
+                "pin_button",
+                IconName::Pin,
+                localization::text(cx, "outline-pin"),
+            )
         };
 
         let has_query = self.query(cx).is_some();
@@ -4846,7 +4880,10 @@ impl OutlinePanel {
                         this.child(
                             IconButton::new("clear_filter", IconName::Close)
                                 .shape(IconButtonShape::Square)
-                                .tooltip(Tooltip::text("Clear Filter"))
+                                .tooltip(Tooltip::text(localization::text(
+                                    cx,
+                                    "outline-clear-filter",
+                                )))
                                 .on_click(cx.listener(|outline_panel, _, window, cx| {
                                     outline_panel.filter_editor.update(cx, |editor, cx| {
                                         editor.set_text("", window, cx);
@@ -4992,8 +5029,8 @@ impl Panel for OutlinePanel {
             .then_some(IconName::ListTree)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _: &App) -> Option<&'static str> {
-        Some("Outline Panel")
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<SharedString> {
+        Some(localization::text(cx, "outline-panel"))
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
@@ -5141,7 +5178,10 @@ impl Render for OutlinePanel {
                         .gap_0p5()
                         .border_b_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .child(Label::new("Searching:").color(Color::Muted))
+                        .child(
+                            Label::new(localization::text(cx, "outline-searching"))
+                                .color(Color::Muted),
+                        )
                         .child(Label::new(query_text)),
                 )
             })
@@ -6875,6 +6915,8 @@ outline: struct OutlineEntryExcerpt
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
 
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
 
             editor::init(cx);

@@ -277,12 +277,12 @@ impl Item for SubView {
 
     /// This is used to serialize debugger pane layouts
     /// A SharedString gets converted to a enum and back during serialization/deserialization.
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        self.kind.to_shared_string()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        self.kind.localized_label(cx)
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some(self.kind.tab_tooltip())
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+        Some(self.kind.tab_tooltip(cx))
     }
 
     fn tab_content(
@@ -291,7 +291,7 @@ impl Item for SubView {
         _: &Window,
         cx: &App,
     ) -> AnyElement {
-        let label = Label::new(self.kind.to_shared_string())
+        let label = Label::new(self.kind.localized_label(cx))
             .size(ui::LabelSize::Small)
             .color(params.text_color())
             .line_height_style(ui::LineHeightStyle::UiLabel);
@@ -603,8 +603,10 @@ pub(crate) fn new_debugger_pane(
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |_window, cx| {
-                                        let zoomed_text =
-                                            if zoomed { "Minimize" } else { "Expand" };
+                                        let zoomed_text = localization::text(
+                                            cx,
+                                            if zoomed { "debugger-minimize" } else { "debugger-expand" },
+                                        );
                                         Tooltip::for_action_in(
                                             zoomed_text,
                                             &ToggleExpandItem,

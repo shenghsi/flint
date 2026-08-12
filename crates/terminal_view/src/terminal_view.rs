@@ -630,36 +630,52 @@ impl TerminalView {
             });
         let workspace = self.workspace.clone();
 
-        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+        let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
             let menu = menu
                 .context(self.focus_handle.clone())
-                .action("New Terminal", Box::new(NewTerminal::default()))
-                .action("New Terminal Item", Box::new(NewCenterTerminal::default()))
+                .action(
+                    localization::text(cx, "terminal-new-terminal"),
+                    Box::new(NewTerminal::default()),
+                )
+                .action(
+                    localization::text(cx, "terminal-new-item"),
+                    Box::new(NewCenterTerminal::default()),
+                )
                 .separator()
-                .action("Copy", Box::new(Copy))
-                .action("Paste", Box::new(Paste))
-                .action("Paste Text", Box::new(PasteText))
-                .action("Select All", Box::new(SelectAll))
-                .action("Clear", Box::new(Clear));
+                .action(localization::text(cx, "terminal-copy"), Box::new(Copy))
+                .action(localization::text(cx, "terminal-paste"), Box::new(Paste))
+                .action(
+                    localization::text(cx, "terminal-paste-text"),
+                    Box::new(PasteText),
+                )
+                .action(
+                    localization::text(cx, "terminal-select-all"),
+                    Box::new(SelectAll),
+                )
+                .action(localization::text(cx, "terminal-clear"), Box::new(Clear));
 
             let menu = menu.when_some(
                 hovered_path_like_target.clone(),
                 |menu, path_like_target| {
-                    let menu = menu.separator().entry("Open in Flint", None, {
-                        let workspace = workspace.clone();
-                        let path_like_target = path_like_target.clone();
-                        move |window, cx| {
-                            open_path_like_target_from_menu(
-                                workspace.clone(),
-                                path_like_target.clone(),
-                                false,
-                                window,
-                                cx,
-                            );
-                        }
-                    });
+                    let menu = menu.separator().entry(
+                        localization::text(cx, "terminal-open-in-flint"),
+                        None,
+                        {
+                            let workspace = workspace.clone();
+                            let path_like_target = path_like_target.clone();
+                            move |window, cx| {
+                                open_path_like_target_from_menu(
+                                    workspace.clone(),
+                                    path_like_target.clone(),
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        },
+                    );
                     menu.when(can_open_with_system, |menu| {
-                        menu.entry("Open with Default App", None, {
+                        menu.entry(localization::text(cx, "terminal-open-default-app"), None, {
                             let workspace = workspace.clone();
                             let path_like_target = path_like_target.clone();
                             move |window, cx| {
@@ -677,7 +693,7 @@ impl TerminalView {
             );
 
             menu.separator().action(
-                "Close Terminal Tab",
+                localization::text(cx, "terminal-close-tab"),
                 Box::new(CloseActiveItem {
                     save_intent: None,
                     close_pinned: true,
@@ -1207,7 +1223,13 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(move |_window, cx| Tooltip::for_action("Rerun task", &RerunTask, cx))
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action(
+                        localization::text(cx, "terminal-rerun-task"),
+                        &RerunTask,
+                        cx,
+                    )
+                })
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
@@ -1555,13 +1577,14 @@ impl Item for TerminalView {
             let title = terminal.title(false);
             let pid = terminal.pid_getter()?.fallback_pid();
 
+            let process_id = localization::tr!(cx, "terminal-process-id", pid = pid.to_string());
             move |_, _| {
                 v_flex()
                     .gap_1()
                     .child(Label::new(title.clone()))
                     .child(h_flex().flex_grow_1().child(Divider::horizontal()))
                     .child(
-                        Label::new(format!("Process ID (PID): {}", pid))
+                        Label::new(process_id.clone())
                             .color(Color::Muted)
                             .size(LabelSize::Small),
                     )

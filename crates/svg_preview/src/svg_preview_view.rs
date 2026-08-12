@@ -279,6 +279,8 @@ impl SvgPreviewView {
 
 impl Render for SvgPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let load_failed = localization::text(cx, "preview-svg-load-failed");
+        let no_file = localization::text(cx, "preview-svg-none");
         v_flex()
             .id("SvgPreview")
             .key_context("SvgPreview")
@@ -290,17 +292,17 @@ impl Render for SvgPreviewView {
             .items_center()
             .map(|this| match self.current_svg.clone() {
                 Some(Ok(image)) => {
-                    this.child(img(image).max_w_full().max_h_full().with_fallback(|| {
+                    this.child(img(image).max_w_full().max_h_full().with_fallback(move || {
                         h_flex()
                             .p_4()
                             .gap_2()
                             .child(Icon::new(IconName::Warning))
-                            .child("Failed to load SVG image")
+                            .child(load_failed.clone())
                             .into_any_element()
                     }))
                 }
                 Some(Err(e)) => this.child(div().p_4().child(e).into_any_element()),
-                None => this.child(div().p_4().child("No SVG file selected")),
+                None => this.child(div().p_4().child(no_file)),
             })
     }
 }
@@ -329,8 +331,14 @@ impl Item for SvgPreviewView {
         self.buffer
             .as_ref()
             .and_then(|svg_path| svg_path.read(cx).file())
-            .map(|name| format!("Preview {}", name.file_name(cx)).into())
-            .unwrap_or_else(|| "SVG Preview".into())
+            .map(|name| {
+                localization::tr!(
+                    cx,
+                    "preview-svg-tab",
+                    title = name.file_name(cx).to_string(),
+                )
+            })
+            .unwrap_or_else(|| localization::text(cx, "preview-svg-default"))
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}

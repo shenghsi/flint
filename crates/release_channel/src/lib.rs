@@ -7,7 +7,8 @@ use std::{env, str::FromStr, sync::LazyLock};
 use gpui::{App, Global};
 use semver::Version;
 
-const FLINT_DOCS_URL: &str = "https://github.com/shenghsi/flint/blob/main/docs/src";
+const FLINT_DOCS_URL: &str = "https://flint.dev/docs";
+const CHINESE_DOCUMENTATION_PAGES: &[&str] = &["", "development/glossary", "getting-started"];
 
 /// stable | dev | nightly | preview
 pub static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
@@ -163,9 +164,37 @@ pub fn init_test(app_version: Version, release_channel: ReleaseChannel, cx: &mut
 /// Returns the Flint docs URL for the current release channel for the given
 /// `slug`.
 pub fn docs_url(slug: &str, cx: &App) -> String {
-    ReleaseChannel::try_global(cx)
+    let english_url = ReleaseChannel::try_global(cx)
         .unwrap_or(*RELEASE_CHANNEL)
-        .docs_url(slug)
+        .docs_url(slug);
+    if localization::try_language(cx) != Some(localization::UiLanguage::SimplifiedChinese) {
+        return english_url;
+    }
+
+    let (page, anchor) = slug
+        .split_once('#')
+        .map_or((slug, None), |(page, anchor)| (page, Some(anchor)));
+    if !CHINESE_DOCUMENTATION_PAGES.contains(&page) {
+        let english_page_url = ReleaseChannel::try_global(cx)
+            .unwrap_or(*RELEASE_CHANNEL)
+            .docs_url(page);
+        return match anchor {
+            Some(anchor) => {
+                format!("{english_page_url}?language-fallback=zh-CN#{anchor}")
+            }
+            None => format!("{english_page_url}?language-fallback=zh-CN"),
+        };
+    }
+
+    let page = if page.is_empty() {
+        String::new()
+    } else {
+        format!("{page}.html")
+    };
+    match anchor {
+        Some(anchor) => format!("{FLINT_DOCS_URL}/zh-CN/{page}#{anchor}"),
+        None => format!("{FLINT_DOCS_URL}/zh-CN/{page}"),
+    }
 }
 
 impl ReleaseChannel {
@@ -237,17 +266,15 @@ impl ReleaseChannel {
 
     /// Returns the Flint docs URL for the given `slug`.
     ///
-    /// Flint's docs live in this repo's own `docs/src` directory rather than
-    /// a hosted docs site, so there's no per-channel (nightly/preview) copy
-    /// to link to.
+    /// Documentation has one hosted copy for all release channels.
     pub fn docs_url(&self, slug: &str) -> String {
         if slug.is_empty() {
             return FLINT_DOCS_URL.to_string();
         }
 
         match slug.split_once('#') {
-            Some((page, anchor)) => format!("{FLINT_DOCS_URL}/{page}.md#{anchor}"),
-            None => format!("{FLINT_DOCS_URL}/{slug}.md"),
+            Some((page, anchor)) => format!("{FLINT_DOCS_URL}/{page}.html#{anchor}"),
+            None => format!("{FLINT_DOCS_URL}/{slug}.html"),
         }
     }
 }
@@ -273,17 +300,36 @@ impl FromStr for ReleaseChannel {
 #[cfg(test)]
 mod tests {
     use super::ReleaseChannel;
+    use gpui::TestAppContext;
 
     #[test]
     fn test_docs_url_for_release_channel() {
-        let expected = "https://github.com/shenghsi/flint/blob/main/docs/src/settings.md";
+        let expected = "https://flint.dev/docs/settings.html";
         assert_eq!(ReleaseChannel::Dev.docs_url("settings"), expected);
         assert_eq!(ReleaseChannel::Nightly.docs_url("settings"), expected);
         assert_eq!(ReleaseChannel::Preview.docs_url("settings"), expected);
         assert_eq!(ReleaseChannel::Stable.docs_url("settings"), expected);
         assert_eq!(
             ReleaseChannel::Stable.docs_url("tasks#custom-git-commands"),
-            "https://github.com/shenghsi/flint/blob/main/docs/src/tasks.md#custom-git-commands"
+            "https://flint.dev/docs/tasks.html#custom-git-commands"
         );
+    }
+
+    #[gpui::test]
+    fn test_chinese_docs_url_and_english_fallback(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            super::init_test(semver::Version::new(1, 0, 0), ReleaseChannel::Stable, cx);
+            localization::init(localization::UiLanguage::SimplifiedChinese, cx)
+                .expect("test localization must load");
+
+            assert_eq!(
+                super::docs_url("getting-started", cx),
+                "https://flint.dev/docs/zh-CN/getting-started.html"
+            );
+            assert_eq!(
+                super::docs_url("tasks#custom-git-commands", cx),
+                "https://flint.dev/docs/tasks.html?language-fallback=zh-CN#custom-git-commands"
+            );
+        });
     }
 }

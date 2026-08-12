@@ -35,7 +35,7 @@ impl CsvPreviewView {
             .flex()
             .flex_col()
             .gap_1()
-            .child("Performance metrics:")
+            .child(localization::text(cx, "preview-csv-performance"))
             .children(
                 format_performance_metrics(&self.performance_metrics)
                     .into_iter()

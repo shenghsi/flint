@@ -531,6 +531,33 @@ fn test_ime_composition(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_simplified_chinese_ime_composition(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| language::Buffer::local("abcde", cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+    cx.add_window(|window, cx| {
+        let mut editor = build_editor(buffer, window, cx);
+
+        editor.replace_and_mark_text_in_range(Some(0..1), "中", None, window, cx);
+        assert_eq!(editor.text(cx), "中bcde");
+        assert_eq!(
+            editor.marked_text_ranges(cx),
+            Some(vec![
+                MultiBufferOffsetUtf16(OffsetUtf16(0))..MultiBufferOffsetUtf16(OffsetUtf16(1))
+            ])
+        );
+
+        editor.replace_text_in_range(None, "文", window, cx);
+        assert_eq!(editor.text(cx), "文bcde");
+        assert_eq!(editor.marked_text_ranges(cx), None);
+
+        editor
+    });
+}
+
+#[gpui::test]
 fn test_selection_with_mouse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -30999,6 +31026,8 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         cx.set_global(store);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
+        localization::init(localization::UiLanguage::English, cx)
+            .expect("localization should initialize for editor tests");
         crate::init(cx);
     });
     zlog::init_test();

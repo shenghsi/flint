@@ -358,12 +358,15 @@ impl Console {
                     .is_some(),
                 |this| {
                     this.menu(move |window, cx| {
-                        Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                        Some(ContextMenu::build(window, cx, |context_menu, _, cx| {
                             context_menu
                                 .when_some(keybinding_target.clone(), |el, keybinding_target| {
                                     el.context(keybinding_target)
                                 })
-                                .action("Watch Expression", WatchExpression.boxed_clone())
+                                .action(
+                                    localization::text(cx, "debugger-watch-expression"),
+                                    WatchExpression.boxed_clone(),
+                                )
                         }))
                     })
                 },
@@ -476,13 +479,13 @@ impl Render for Console {
                             })
                             .layer(ui::ElevationIndex::ModalSurface)
                             .size(ui::ButtonSize::Compact)
-                            .child(Label::new("Evaluate"))
+                            .child(Label::new(localization::text(cx, "debugger-evaluate")))
                             .tooltip({
                                 let query_focus_handle = query_focus_handle.clone();
 
                                 move |_window, cx| {
                                     Tooltip::for_action_in(
-                                        "Evaluate",
+                                        localization::text(cx, "debugger-evaluate"),
                                         &Confirm,
                                         &query_focus_handle,
                                         cx,

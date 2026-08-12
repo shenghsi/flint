@@ -1475,9 +1475,9 @@ fn render_unstaged_hunk_controls(
         .mr_1()
         .gap_1()
         .child(
-            Button::new(("stage", row as u64), "Stage")
+            Button::new(("stage", row as u64), localization::text(cx, "git-stage"))
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                .tooltip(Tooltip::text("Stage Hunk"))
+                .tooltip(Tooltip::text(localization::text(cx, "git-stage-hunk")))
                 .on_click({
                     let editor = editor.clone();
                     move |_event, _window, cx| {
@@ -1492,19 +1492,22 @@ fn render_unstaged_hunk_controls(
                 }),
         )
         .child(
-            Button::new(("restore", row as u64), "Restore")
-                .tooltip(Tooltip::text("Restore Hunk"))
-                .disabled(is_created_file)
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let point = restore_range.start.to_point(&snapshot.buffer_snapshot());
-                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
-                        });
-                    }
-                }),
+            Button::new(
+                ("restore", row as u64),
+                localization::text(cx, "git-restore"),
+            )
+            .tooltip(Tooltip::text(localization::text(cx, "git-restore-hunk")))
+            .disabled(is_created_file)
+            .on_click({
+                let editor = editor.clone();
+                move |_event, window, cx| {
+                    editor.update(cx, |editor, cx| {
+                        let snapshot = editor.snapshot(window, cx);
+                        let point = restore_range.start.to_point(&snapshot.buffer_snapshot());
+                        editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                    });
+                }
+            }),
         )
         .into_any_element()
 }
@@ -1530,21 +1533,24 @@ fn render_staged_hunk_controls(
         .h(line_height)
         .mr_1()
         .child(
-            Button::new(("unstage", row as u64), "Unstage")
-                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                .tooltip(Tooltip::text("Unstage Hunk"))
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, _window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.stage_or_unstage_diff_hunks(
-                                false,
-                                vec![hunk_range.start..hunk_range.start],
-                                cx,
-                            );
-                        });
-                    }
-                }),
+            Button::new(
+                ("unstage", row as u64),
+                localization::text(cx, "git-unstage"),
+            )
+            .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+            .tooltip(Tooltip::text(localization::text(cx, "git-unstage-hunk")))
+            .on_click({
+                let editor = editor.clone();
+                move |_event, _window, cx| {
+                    editor.update(cx, |editor, cx| {
+                        editor.stage_or_unstage_diff_hunks(
+                            false,
+                            vec![hunk_range.start..hunk_range.start],
+                            cx,
+                        );
+                    });
+                }
+            }),
         )
         .into_any_element()
 }
@@ -1802,32 +1808,33 @@ impl Render for ProjectDiff {
                         .child(
                             h_flex()
                                 .justify_around()
-                                .child(Label::new("No uncommitted changes")),
+                                .child(Label::new(localization::text(cx, "git-no-uncommitted"))),
                         )
                         .map(|el| match remote_button {
                             Some(button) => el.child(h_flex().justify_around().child(button)),
-                            None => el.child(
-                                h_flex()
-                                    .justify_around()
-                                    .child(Label::new("Remote up to date")),
-                            ),
+                            None => {
+                                el.child(h_flex().justify_around().child(Label::new(
+                                    localization::text(cx, "git-remote-current"),
+                                )))
+                            }
                         })
                         .child(
                             h_flex().justify_around().mt_1().child(
-                                Button::new("project-diff-close-button", "Close")
-                                    // .style(ButtonStyle::Transparent)
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &CloseActiveItem::default(),
-                                        &keybinding_focus_handle,
-                                        cx,
-                                    ))
-                                    .on_click(move |_, window, cx| {
-                                        window.focus(&keybinding_focus_handle, cx);
-                                        window.dispatch_action(
-                                            Box::new(CloseActiveItem::default()),
-                                            cx,
-                                        );
-                                    }),
+                                Button::new(
+                                    "project-diff-close-button",
+                                    localization::text(cx, "common-close"),
+                                )
+                                // .style(ButtonStyle::Transparent)
+                                .key_binding(KeyBinding::for_action_in(
+                                    &CloseActiveItem::default(),
+                                    &keybinding_focus_handle,
+                                    cx,
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    window.focus(&keybinding_focus_handle, cx);
+                                    window
+                                        .dispatch_action(Box::new(CloseActiveItem::default()), cx);
+                                }),
                             ),
                         ),
                 )
@@ -2106,9 +2113,9 @@ impl Render for ProjectDiffToolbar {
                         diff_base == DiffBase::Head && button_states.selection,
                         |el| {
                             el.child(
-                                Button::new("stage", "Toggle Staged")
+                                Button::new("stage", localization::text(cx, "git-toggle-staged"))
                                     .tooltip(Tooltip::for_action_title_in(
-                                        "Toggle Staged",
+                                        localization::text(cx, "git-toggle-staged"),
                                         &ToggleStaged,
                                         &focus_handle,
                                     ))
@@ -2123,9 +2130,9 @@ impl Render for ProjectDiffToolbar {
                         diff_base == DiffBase::Head && !button_states.selection,
                         |el| {
                             el.child(
-                                Button::new("stage", "Stage")
+                                Button::new("stage", localization::text(cx, "git-stage"))
                                     .tooltip(Tooltip::for_action_title_in(
-                                        "Stage and go to next hunk",
+                                        localization::text(cx, "git-stage-next"),
                                         &StageAndNext,
                                         &focus_handle,
                                     ))
@@ -2139,9 +2146,9 @@ impl Render for ProjectDiffToolbar {
                                     })),
                             )
                             .child(
-                                Button::new("unstage", "Unstage")
+                                Button::new("unstage", localization::text(cx, "git-unstage"))
                                     .tooltip(Tooltip::for_action_title_in(
-                                        "Unstage and go to next hunk",
+                                        localization::text(cx, "git-unstage-next"),
                                         &UnstageAndNext,
                                         &focus_handle,
                                     ))
@@ -2158,10 +2165,10 @@ impl Render for ProjectDiffToolbar {
                     )
                     .when(diff_base == DiffBase::Index, |el| {
                         el.child(
-                            Button::new("stage", "Stage")
+                            Button::new("stage", localization::text(cx, "git-stage"))
                                 .disabled(!button_states.stage)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and go to next hunk",
+                                    localization::text(cx, "git-stage-next"),
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
@@ -2170,10 +2177,10 @@ impl Render for ProjectDiffToolbar {
                                 })),
                         )
                         .child(
-                            Button::new("restore", "Restore")
+                            Button::new("restore", localization::text(cx, "git-restore"))
                                 .disabled(!button_states.restore)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Restore selected hunks",
+                                    localization::text(cx, "git-restore-selected"),
                                     &git::Restore,
                                     &focus_handle,
                                 ))
@@ -2184,10 +2191,10 @@ impl Render for ProjectDiffToolbar {
                     })
                     .when(diff_base == DiffBase::Staged, |el| {
                         el.child(
-                            Button::new("unstage", "Unstage")
+                            Button::new("unstage", localization::text(cx, "git-unstage"))
                                 .disabled(!button_states.unstage)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage and go to next hunk",
+                                    localization::text(cx, "git-unstage-next"),
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
@@ -2205,7 +2212,7 @@ impl Render for ProjectDiffToolbar {
                         IconButton::new("up", IconName::ArrowUp)
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Go to previous hunk",
+                                localization::text(cx, "git-previous-hunk"),
                                 &GoToPreviousHunk,
                                 &focus_handle,
                             ))
@@ -2218,7 +2225,7 @@ impl Render for ProjectDiffToolbar {
                         IconButton::new("down", IconName::ArrowDown)
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Go to next hunk",
+                                localization::text(cx, "git-next-hunk"),
                                 &GoToHunk,
                                 &focus_handle,
                             ))
@@ -2237,15 +2244,18 @@ impl Render for ProjectDiffToolbar {
                             && (diff_base == DiffBase::Staged || !button_states.stage_all),
                         |el| {
                             el.child(
-                                Button::new("unstage-all", "Unstage All")
-                                    .tooltip(Tooltip::for_action_title_in(
-                                        "Unstage all changes",
-                                        &UnstageAll,
-                                        &focus_handle,
-                                    ))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.unstage_all(window, cx)
-                                    })),
+                                Button::new(
+                                    "unstage-all",
+                                    localization::text(cx, "git-unstage-all"),
+                                )
+                                .tooltip(Tooltip::for_action_title_in(
+                                    localization::text(cx, "git-unstage-all"),
+                                    &UnstageAll,
+                                    &focus_handle,
+                                ))
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.unstage_all(window, cx)),
+                                ),
                             )
                         },
                     )
@@ -2257,25 +2267,33 @@ impl Render for ProjectDiffToolbar {
                                 // todo make it so that changing to say "Unstaged"
                                 // doesn't change the position.
                                 div().child(
-                                    Button::new("stage-all", "Stage All")
-                                        .disabled(!button_states.stage_all)
-                                        .tooltip(Tooltip::for_action_title_in(
-                                            "Stage all changes",
-                                            &StageAll,
-                                            &focus_handle,
-                                        ))
-                                        .on_click(cx.listener(|this, _, window, cx| {
+                                    Button::new(
+                                        "stage-all",
+                                        localization::text(cx, "git-stage-all"),
+                                    )
+                                    .disabled(!button_states.stage_all)
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        localization::text(cx, "git-stage-all"),
+                                        &StageAll,
+                                        &focus_handle,
+                                    ))
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| {
                                             this.stage_all(window, cx)
-                                        })),
+                                        }),
+                                    ),
                                 ),
                             )
                         },
                     )
                     .when(diff_base == DiffBase::Index, |el| {
                         el.child(
-                            Button::new("restore-all", "Restore All")
+                            Button::new("restore-all", localization::text(cx, "git-restore-all"))
                                 .disabled(!button_states.restore_all)
-                                .tooltip(Tooltip::text("Restore All Changes"))
+                                .tooltip(Tooltip::text(localization::text(
+                                    cx,
+                                    "git-restore-all-tooltip",
+                                )))
                                 .on_click(
                                     cx.listener(|this, _, window, cx| this.restore_all(window, cx)),
                                 ),
@@ -2283,9 +2301,9 @@ impl Render for ProjectDiffToolbar {
                     })
                     .when(diff_base != DiffBase::Index, |el| {
                         el.child(
-                            Button::new("commit", "Commit")
+                            Button::new("commit", localization::text(cx, "git-commit"))
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Commit",
+                                    localization::text(cx, "git-commit"),
                                     &Commit,
                                     &focus_handle,
                                 ))
@@ -2404,7 +2422,7 @@ impl Render for BranchDiffToolbar {
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted),
                             ),
-                        Tooltip::text("Select base branch"),
+                        Tooltip::text(localization::text(cx, "git-select-base")),
                     ),
             )
             .when(!is_multibuffer_empty, |this| {
@@ -2474,6 +2492,8 @@ mod tests {
                     settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
                 });
             });
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);

@@ -72,6 +72,9 @@ impl TextSystem {
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font(".ZedMono"),
                 font(".ZedSans"),
+                font("PingFang SC"),        // macOS Simplified Chinese
+                font("Microsoft YaHei UI"), // Windows Simplified Chinese
+                font("Noto Sans CJK SC"),   // Linux Simplified Chinese
                 font("Helvetica"),
                 font("Segoe UI"),     // Windows
                 font("Ubuntu"),       // Gnome (Ubuntu)

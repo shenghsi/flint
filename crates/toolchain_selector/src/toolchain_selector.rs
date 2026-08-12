@@ -16,7 +16,6 @@ use open_path_prompt::OpenPathDelegate;
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -175,22 +174,24 @@ impl AddToolchainState {
                                 .p_1()
                                 .justify_between()
                                 .gap_2()
-                                .child(Label::new("Select Toolchain Path").color(Color::Muted).map(
-                                    |this| {
-                                        if is_loading {
-                                            this.with_animation(
-                                                "select-toolchain-label",
-                                                Animation::new(Duration::from_secs(2))
-                                                    .repeat()
-                                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                                |label, delta| label.alpha(delta),
-                                            )
-                                            .into_any()
-                                        } else {
-                                            this.into_any_element()
-                                        }
-                                    },
-                                ))
+                                .child(
+                                    Label::new(localization::text(cx, "toolchain-select-path"))
+                                        .color(Color::Muted)
+                                        .map(|this| {
+                                            if is_loading {
+                                                this.with_animation(
+                                                    "select-toolchain-label",
+                                                    Animation::new(Duration::from_secs(2))
+                                                        .repeat()
+                                                        .with_easing(pulsating_between(0.4, 0.8)),
+                                                    |label, delta| label.alpha(delta),
+                                                )
+                                                .into_any()
+                                            } else {
+                                                this.into_any_element()
+                                            }
+                                        }),
+                                )
                                 .when_some(error, |this, error| {
                                     this.child(Label::new(error).color(Color::Error))
                                 }),
@@ -385,7 +386,7 @@ impl Render for AddToolchainState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let weak = self.weak.upgrade();
-        let label = SharedString::new_static("Add");
+        let label = localization::text(cx, "toolchain-add");
 
         v_flex()
             .size_full()
@@ -435,7 +436,7 @@ impl Render for AddToolchainState {
                             .child(
                                 v_flex()
                                     .child(
-                                        Label::new("Scope")
+                                        Label::new(localization::text(cx, "toolchain-scope"))
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
                                             .mt_1()
@@ -444,8 +445,24 @@ impl Render for AddToolchainState {
                                     .child(List::new().children(
                                         scope_options.iter().enumerate().map(|(i, scope)| {
                                             let is_selected = *scope == scope_picker.selected_scope;
-                                            let label = scope.label();
-                                            let description = scope.description();
+                                            let (label_identifier, description_identifier) =
+                                                match scope {
+                                                    ToolchainScope::Subproject(_, _) => (
+                                                        "toolchain-scope-subproject",
+                                                        "toolchain-scope-subproject-description",
+                                                    ),
+                                                    ToolchainScope::Project => (
+                                                        "toolchain-scope-project",
+                                                        "toolchain-scope-project-description",
+                                                    ),
+                                                    ToolchainScope::Global => (
+                                                        "toolchain-scope-global",
+                                                        "toolchain-scope-global-description",
+                                                    ),
+                                                };
+                                            let label = localization::text(cx, label_identifier);
+                                            let description =
+                                                localization::text(cx, description_identifier);
                                             let scope_clone_for_action = scope.clone();
                                             let scope_clone_for_click = scope.clone();
 
@@ -792,9 +809,10 @@ impl ToolchainSelectorDelegate {
                     .await?;
                 let relative_path = this
                     .update(cx, |this, cx| {
-                        this.delegate.add_toolchain_text = format!(
-                            "Add {}",
-                            meta.term.as_ref().to_case(convert_case::Case::Title)
+                        this.delegate.add_toolchain_text = localization::tr!(
+                            cx,
+                            "toolchain-add-term",
+                            term = meta.term.as_ref().to_case(convert_case::Case::Title)
                         )
                         .into();
                         cx.notify();
@@ -818,18 +836,24 @@ impl ToolchainSelectorDelegate {
                         )
                     })
                     .await?;
-                let pretty_path = {
-                    if relative_path.is_empty() {
-                        Cow::Borrowed("worktree root")
-                    } else {
-                        Cow::Owned(format!("`{}`", relative_path.display(path_style)))
-                    }
-                };
-                let placeholder_text =
-                    format!("Select a {} for {pretty_path}…", meta.term.to_lowercase(),).into();
+                let placeholder_text = this
+                    .update(cx, |_, cx| {
+                        let pretty_path = if relative_path.is_empty() {
+                            localization::text(cx, "toolchain-worktree-root").to_string()
+                        } else {
+                            format!("`{}`", relative_path.display(path_style))
+                        };
+                        localization::tr!(
+                            cx,
+                            "toolchain-select-for-path",
+                            term = meta.term.to_lowercase(),
+                            path = pretty_path
+                        )
+                    })
+                    .ok()?;
                 let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.relative_path = relative_path;
-                    this.delegate.placeholder_text = placeholder_text;
+                    this.delegate.placeholder_text = placeholder_text.into();
                     this.refresh_placeholder(window, cx);
                 });
 
@@ -864,7 +888,7 @@ impl ToolchainSelectorDelegate {
                 Some(())
             }
         });
-        let placeholder_text = "Select a toolchain…".to_string().into();
+        let placeholder_text = localization::text(cx, "toolchain-placeholder").into();
         Self {
             toolchain_selector,
             candidates: Default::default(),
@@ -878,7 +902,7 @@ impl ToolchainSelectorDelegate {
             _fetch_candidates_task,
             project,
             focus_handle: cx.focus_handle(),
-            add_toolchain_text: Arc::from("Add Toolchain"),
+            add_toolchain_text: localization::text(cx, "toolchain-add-toolchain").into(),
         }
     }
     fn relativize_path(
@@ -1143,15 +1167,18 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                                 }),
                         )
                         .child(
-                            Button::new("select", "Select")
-                                .key_binding(KeyBinding::for_action_in(
-                                    &menu::Confirm,
-                                    &self.focus_handle,
-                                    cx,
-                                ))
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                                }),
+                            Button::new(
+                                "select",
+                                localization::text(cx, "toolchain-select-button"),
+                            )
+                            .key_binding(KeyBinding::for_action_in(
+                                &menu::Confirm,
+                                &self.focus_handle,
+                                cx,
+                            ))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                            }),
                         ),
                 )
                 .into_any_element(),

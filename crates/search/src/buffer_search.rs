@@ -134,7 +134,7 @@ impl Render for BufferSearchBar {
                             IconButton::new("diff-unified", IconName::DiffUnified)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(diff_view_style == DiffViewStyle::Unified)
-                                .tooltip(Tooltip::text("Unified"))
+                                .tooltip(Tooltip::text(localization::text(cx, "search-unified")))
                                 .on_click({
                                     let splittable_editor = splittable_editor.downgrade();
                                     move |_, window, cx| {
@@ -166,10 +166,13 @@ impl Render for BufferSearchBar {
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     let message = if is_split_set && !is_split_active {
-                                        format!("Split when wider than {} columns", min_columns)
-                                            .into()
+                                        localization::tr!(
+                                            cx,
+                                            "search-split-columns",
+                                            columns = min_columns
+                                        )
                                     } else {
-                                        SharedString::from("Split")
+                                        localization::text(cx, "search-split")
                                     };
 
                                     v_flex()
@@ -186,7 +189,10 @@ impl Render for BufferSearchBar {
                                                     Some(TextSize::Small.rems(cx).into()),
                                                     false,
                                                 ))
-                                                .child("click to change min width"),
+                                                .child(localization::text(
+                                                    cx,
+                                                    "search-change-min-width",
+                                                )),
                                         )
                                         .into_any()
                                 }))
@@ -242,9 +248,15 @@ impl Render for BufferSearchBar {
                 .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
                 .unwrap_or_default();
             let (icon, tooltip_label) = if is_collapsed {
-                (IconName::ChevronUpDown, "Expand All Files")
+                (
+                    IconName::ChevronUpDown,
+                    localization::text(cx, "search-expand-all-files"),
+                )
             } else {
-                (IconName::ChevronDownUp, "Collapse All Files")
+                (
+                    IconName::ChevronDownUp,
+                    localization::text(cx, "search-collapse-all-files"),
+                )
             };
 
             let collapse_expand_icon_button = |id| {
@@ -252,7 +264,7 @@ impl Render for BufferSearchBar {
                     .icon_size(IconSize::Small)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
-                            tooltip_label,
+                            tooltip_label.clone(),
                             &ToggleFoldAll,
                             &query_editor_focus,
                             cx,
@@ -300,12 +312,20 @@ impl Render for BufferSearchBar {
 
         self.query_editor.update(cx, |query_editor, cx| {
             if query_editor.placeholder_text(cx).is_none() {
-                query_editor.set_placeholder_text("Search…", window, cx);
+                query_editor.set_placeholder_text(
+                    &localization::text(cx, "search-placeholder"),
+                    window,
+                    cx,
+                );
             }
         });
 
         self.replacement_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Replace with…", window, cx);
+            editor.set_placeholder_text(
+                &localization::text(cx, "search-replace-placeholder"),
+                window,
+                cx,
+            );
         });
 
         let mut color_override = None;
@@ -367,6 +387,7 @@ impl Render for BufferSearchBar {
                             self.search_options,
                             SearchSource::Buffer,
                             focus_handle.clone(),
+                            cx,
                         ))
                     })
                     .when(word, |div| {
@@ -374,6 +395,7 @@ impl Render for BufferSearchBar {
                             self.search_options,
                             SearchSource::Buffer,
                             focus_handle.clone(),
+                            cx,
                         ))
                     })
                     .when(regex, |div| {
@@ -381,6 +403,7 @@ impl Render for BufferSearchBar {
                             self.search_options,
                             SearchSource::Buffer,
                             focus_handle.clone(),
+                            cx,
                         ))
                     }),
             );
@@ -393,7 +416,7 @@ impl Render for BufferSearchBar {
                     "buffer-search-bar-toggle",
                     IconName::Replace,
                     self.replace_enabled.then_some(ActionButtonState::Toggled),
-                    "Toggle Replace",
+                    localization::text(cx, "search-toggle-replace"),
                     &ToggleReplace,
                     focus_handle.clone(),
                 ))
@@ -417,7 +440,7 @@ impl Render for BufferSearchBar {
                         let focus_handle = focus_handle.clone();
                         move |_window, cx| {
                             Tooltip::for_action_in(
-                                "Toggle Search Selection",
+                                localization::text(cx, "search-toggle-selection"),
                                 &ToggleSelection,
                                 &focus_handle,
                                 cx,
@@ -439,7 +462,7 @@ impl Render for BufferSearchBar {
                         self.active_match_index
                             .is_none()
                             .then_some(ActionButtonState::Disabled),
-                        "Select Previous Match",
+                        localization::text(cx, "search-previous-match"),
                         &SelectPreviousMatch,
                         query_focus.clone(),
                     ))
@@ -449,7 +472,7 @@ impl Render for BufferSearchBar {
                         self.active_match_index
                             .is_none()
                             .then_some(ActionButtonState::Disabled),
-                        "Select Next Match",
+                        localization::text(cx, "search-next-match"),
                         &SelectNextMatch,
                         query_focus.clone(),
                     ))
@@ -470,7 +493,7 @@ impl Render for BufferSearchBar {
                         "buffer-search-nav-button",
                         IconName::SelectAll,
                         Default::default(),
-                        "Select All Matches",
+                        localization::text(cx, "search-select-all-matches"),
                         &SelectAllMatches,
                         query_focus.clone(),
                     ))
@@ -482,7 +505,7 @@ impl Render for BufferSearchBar {
                     "buffer-search",
                     IconName::Close,
                     Default::default(),
-                    "Close Search Bar",
+                    localization::text(cx, "search-close-bar"),
                     &Dismiss,
                     focus_handle.clone(),
                 ))
@@ -516,7 +539,7 @@ impl Render for BufferSearchBar {
                     "buffer-search-replace-button",
                     IconName::ReplaceNext,
                     Default::default(),
-                    "Replace Next Match",
+                    localization::text(cx, "search-replace-next"),
                     &ReplaceNext,
                     focus_handle.clone(),
                 ))
@@ -524,7 +547,7 @@ impl Render for BufferSearchBar {
                     "buffer-search-replace-button",
                     IconName::ReplaceAll,
                     Default::default(),
-                    "Replace All Matches",
+                    localization::text(cx, "search-replace-all"),
                     &ReplaceAll,
                     focus_handle,
                 ));
@@ -569,7 +592,7 @@ impl Render for BufferSearchBar {
                                 "buffer-search",
                                 IconName::Close,
                                 Default::default(),
-                                "Close Search Bar",
+                                localization::text(cx, "search-close-bar"),
                                 &Dismiss,
                                 focus_handle.clone(),
                             )),
@@ -1975,6 +1998,8 @@ mod tests {
             cx.set_global(store);
             editor::init(cx);
 
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });

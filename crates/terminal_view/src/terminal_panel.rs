@@ -131,23 +131,23 @@ impl TerminalPanel {
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger_with_tooltip(
                                 IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
-                                Tooltip::text("New…"),
+                                Tooltip::text(localization::text(cx, "terminal-new")),
                             )
                             .anchor(Anchor::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(window, cx, |menu, _, _| {
+                                let menu = ContextMenu::build(window, cx, |menu, _, cx| {
                                     menu.context(focus_handle.clone())
                                         .action(
-                                            "New Terminal",
+                                            localization::text(cx, "terminal-new-terminal"),
                                             workspace::NewTerminal::default().boxed_clone(),
                                         )
                                         // We want the focus to go back to the terminal once task modal is dismissed,
                                         // hence we focus that first. Otherwise, we'd end up without a focused element, as
                                         // context menu will be gone the moment we spawn the modal.
                                         .action(
-                                            "Spawn Task",
+                                            localization::text(cx, "terminal-spawn-task"),
                                             flint_actions::Spawn::modal().boxed_clone(),
                                         )
                                 });
@@ -160,21 +160,33 @@ impl TerminalPanel {
                             .trigger_with_tooltip(
                                 IconButton::new("terminal-pane-split", IconName::Split)
                                     .icon_size(IconSize::Small),
-                                Tooltip::text("Split Pane"),
+                                Tooltip::text(localization::text(cx, "terminal-split-pane")),
                             )
                             .anchor(Anchor::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu({
                                 move |window, cx| {
-                                    ContextMenu::build(window, cx, |menu, _, _| {
+                                    ContextMenu::build(window, cx, |menu, _, cx| {
                                         menu.when_some(
                                             split_context.clone(),
                                             |menu, split_context| menu.context(split_context),
                                         )
-                                        .action("Split Right", SplitRight::default().boxed_clone())
-                                        .action("Split Left", SplitLeft::default().boxed_clone())
-                                        .action("Split Up", SplitUp::default().boxed_clone())
-                                        .action("Split Down", SplitDown::default().boxed_clone())
+                                        .action(
+                                            localization::text(cx, "terminal-split-right"),
+                                            SplitRight::default().boxed_clone(),
+                                        )
+                                        .action(
+                                            localization::text(cx, "terminal-split-left"),
+                                            SplitLeft::default().boxed_clone(),
+                                        )
+                                        .action(
+                                            localization::text(cx, "terminal-split-up"),
+                                            SplitUp::default().boxed_clone(),
+                                        )
+                                        .action(
+                                            localization::text(cx, "terminal-split-down"),
+                                            SplitDown::default().boxed_clone(),
+                                        )
                                     })
                                     .into()
                                 }
@@ -191,7 +203,14 @@ impl TerminalPanel {
                             }))
                             .tooltip(move |_window, cx| {
                                 Tooltip::for_action(
-                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    localization::text(
+                                        cx,
+                                        if zoomed {
+                                            "terminal-zoom-out"
+                                        } else {
+                                            "terminal-zoom-in"
+                                        },
+                                    ),
                                     &ToggleZoom,
                                     cx,
                                 )
@@ -1258,11 +1277,14 @@ impl Render for FailedToSpawnTerminal {
                     .icon_size(IconSize::XSmall),
             )
             .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                Some(ContextMenu::build(window, cx, |context_menu, _, cx| {
                     context_menu
-                        .action("Open Settings", flint_actions::OpenSettings.boxed_clone())
                         .action(
-                            "Edit settings.json",
+                            localization::text(cx, "terminal-open-settings"),
+                            flint_actions::OpenSettings.boxed_clone(),
+                        )
+                        .action(
+                            localization::text(cx, "terminal-edit-settings-json"),
                             flint_actions::OpenSettingsFile.boxed_clone(),
                         )
                 }))
@@ -1286,7 +1308,7 @@ impl Render for FailedToSpawnTerminal {
                     .items_center()
                     .justify_center()
                     .text_center()
-                    .child(Label::new("Failed to spawn terminal"))
+                    .child(Label::new(localization::text(cx, "terminal-spawn-failed")))
                     .child(
                         Label::new(self.error.to_string())
                             .size(LabelSize::Small)
@@ -1295,7 +1317,10 @@ impl Render for FailedToSpawnTerminal {
                     )
                     .child(SplitButton::new(
                         ButtonLike::new("open-settings-ui")
-                            .child(Label::new("Edit Settings").size(LabelSize::Small))
+                            .child(
+                                Label::new(localization::text(cx, "terminal-edit-settings"))
+                                    .size(LabelSize::Small),
+                            )
                             .on_click(|_, window, cx| {
                                 window
                                     .dispatch_action(flint_actions::OpenSettings.boxed_clone(), cx);
@@ -1311,8 +1336,8 @@ impl EventEmitter<()> for FailedToSpawnTerminal {}
 impl workspace::Item for FailedToSpawnTerminal {
     type Event = ();
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        SharedString::new_static("Failed to spawn terminal")
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        localization::text(cx, "terminal-spawn-failed")
     }
 }
 
@@ -1601,8 +1626,8 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Terminal")
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<SharedString> {
+        Some(localization::text(cx, "panel-terminal"))
     }
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
@@ -2576,6 +2601,8 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);

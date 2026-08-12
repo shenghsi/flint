@@ -1,62 +1,114 @@
 use flint_actions::dev;
-use gpui::{App, Menu, MenuItem, OsAction};
+use gpui::{App, Menu, MenuItem, OsAction, SharedString};
 use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
+
+fn menu_text(cx: &App, identifier: &'static str) -> SharedString {
+    localization::text(cx, identifier)
+}
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use flint_actions::Quit;
 
     let mut view_items = vec![
         MenuItem::action(
-            "Zoom In",
+            menu_text(cx, "menu-zoom-in"),
             flint_actions::IncreaseBufferFontSize { persist: false },
         ),
         MenuItem::action(
-            "Zoom Out",
+            menu_text(cx, "menu-zoom-out"),
             flint_actions::DecreaseBufferFontSize { persist: false },
         ),
         MenuItem::action(
-            "Reset Zoom",
+            menu_text(cx, "menu-reset-zoom"),
             flint_actions::ResetBufferFontSize { persist: false },
         ),
         MenuItem::action(
-            "Reset All Zoom",
+            menu_text(cx, "menu-reset-all-zoom"),
             flint_actions::ResetAllZoom { persist: false },
         ),
         MenuItem::separator(),
-        MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
-        MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
-        MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
-        MenuItem::action("Toggle All Docks", workspace::ToggleAllDocks),
+        MenuItem::action(
+            menu_text(cx, "menu-toggle-left-dock"),
+            workspace::ToggleLeftDock,
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-toggle-right-dock"),
+            workspace::ToggleRightDock,
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-toggle-bottom-dock"),
+            workspace::ToggleBottomDock,
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-toggle-all-docks"),
+            workspace::ToggleAllDocks,
+        ),
         MenuItem::submenu(Menu {
-            name: "Editor Layout".into(),
+            name: menu_text(cx, "menu-editor-layout"),
             disabled: false,
             items: vec![
-                MenuItem::action("Split Up", workspace::SplitUp::default()),
-                MenuItem::action("Split Down", workspace::SplitDown::default()),
-                MenuItem::action("Split Left", workspace::SplitLeft::default()),
-                MenuItem::action("Split Right", workspace::SplitRight::default()),
+                MenuItem::action(
+                    menu_text(cx, "menu-split-up"),
+                    workspace::SplitUp::default(),
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-split-down"),
+                    workspace::SplitDown::default(),
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-split-left"),
+                    workspace::SplitLeft::default(),
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-split-right"),
+                    workspace::SplitRight::default(),
+                ),
             ],
         }),
         MenuItem::separator(),
-        MenuItem::action("Project Panel", flint_actions::project_panel::ToggleFocus),
-        MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
-        MenuItem::action("Terminal", terminal_panel::ToggleFocus),
+        MenuItem::action(
+            menu_text(cx, "menu-project-panel"),
+            flint_actions::project_panel::ToggleFocus,
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-outline-panel"),
+            outline_panel::ToggleFocus,
+        ),
+        MenuItem::action(menu_text(cx, "menu-terminal"), terminal_panel::ToggleFocus),
         MenuItem::separator(),
-        MenuItem::action("Extensions", flint_actions::Extensions::default()),
-        MenuItem::action("Agent Threads", flint_actions::agent_threads::ToggleFocus),
-        MenuItem::action("New Codex Thread", agent_threads::NewCodexThread),
-        MenuItem::action("New Claude Thread", agent_threads::NewClaudeThread),
-        MenuItem::action("New Pi Thread", agent_threads::NewPiThread),
-        MenuItem::action("New OpenCode Thread", agent_threads::NewOpenCodeThread),
+        MenuItem::action(
+            menu_text(cx, "menu-extensions"),
+            flint_actions::Extensions::default(),
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-agent-threads"),
+            flint_actions::agent_threads::ToggleFocus,
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-new-codex-thread"),
+            agent_threads::NewCodexThread,
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-new-claude-thread"),
+            agent_threads::NewClaudeThread,
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-new-pi-thread"),
+            agent_threads::NewPiThread,
+        ),
+        MenuItem::action(
+            menu_text(cx, "menu-new-opencode-thread"),
+            agent_threads::NewOpenCodeThread,
+        ),
         MenuItem::separator(),
-        MenuItem::action("Diagnostics", diagnostics::Deploy),
+        MenuItem::action(menu_text(cx, "menu-diagnostics"), diagnostics::Deploy),
         MenuItem::separator(),
     ];
 
     if ReleaseChannel::try_global(cx) == Some(ReleaseChannel::Dev) {
         view_items.push(MenuItem::action(
-            "Toggle GPUI Inspector",
+            menu_text(cx, "menu-toggle-gpui-inspector"),
             dev::ToggleInspector,
         ));
         view_items.push(MenuItem::separator());
@@ -64,242 +116,345 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
 
     vec![
         Menu {
-            name: "Flint".into(),
+            name: menu_text(cx, "menu-flint"),
             disabled: false,
             items: vec![
-                MenuItem::action("About Flint", flint_actions::About),
-                MenuItem::action("Check for Updates", auto_update::Check),
+                MenuItem::action(menu_text(cx, "menu-about-flint"), flint_actions::About),
+                MenuItem::action(menu_text(cx, "menu-check-for-updates"), auto_update::Check),
                 MenuItem::separator(),
-                MenuItem::submenu(Menu::new("Settings").items([
-                    MenuItem::action("Open Settings File", super::OpenSettingsFile),
-                    MenuItem::action("Open Project Settings File", super::OpenProjectSettingsFile),
-                    MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
-                    MenuItem::separator(),
-                    MenuItem::action("Open Keymap", flint_actions::OpenKeymap),
-                    MenuItem::action("Open Keymap File", flint_actions::OpenKeymapFile),
+                MenuItem::submenu(Menu::new(menu_text(cx, "menu-settings")).items([
                     MenuItem::action(
-                        "Open Default Key Bindings",
+                        menu_text(cx, "menu-open-settings-file"),
+                        super::OpenSettingsFile,
+                    ),
+                    MenuItem::action(
+                        menu_text(cx, "menu-open-project-settings-file"),
+                        super::OpenProjectSettingsFile,
+                    ),
+                    MenuItem::action(
+                        menu_text(cx, "menu-open-default-settings"),
+                        super::OpenDefaultSettings,
+                    ),
+                    MenuItem::separator(),
+                    MenuItem::action(menu_text(cx, "menu-open-keymap"), flint_actions::OpenKeymap),
+                    MenuItem::action(
+                        menu_text(cx, "menu-open-keymap-file"),
+                        flint_actions::OpenKeymapFile,
+                    ),
+                    MenuItem::action(
+                        menu_text(cx, "menu-open-default-key-bindings"),
                         flint_actions::OpenDefaultKeymap,
                     ),
                     MenuItem::separator(),
                     MenuItem::action(
-                        "Select Theme...",
+                        menu_text(cx, "menu-select-theme"),
                         flint_actions::theme_selector::Toggle::default(),
                     ),
                     MenuItem::action(
-                        "Select Icon Theme...",
+                        menu_text(cx, "menu-select-icon-theme"),
                         flint_actions::icon_theme_selector::Toggle::default(),
                     ),
                 ])),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
-                MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
+                MenuItem::os_submenu(
+                    menu_text(cx, "menu-services"),
+                    gpui::SystemMenuType::Services,
+                ),
                 MenuItem::separator(),
                 #[cfg(not(target_os = "windows"))]
-                MenuItem::action("Install CLI", install_cli::InstallCliBinary),
+                MenuItem::action(
+                    menu_text(cx, "menu-install-cli"),
+                    install_cli::InstallCliBinary,
+                ),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
-                MenuItem::action("Hide Flint", super::Hide),
+                MenuItem::action(menu_text(cx, "menu-hide-flint"), super::Hide),
                 #[cfg(target_os = "macos")]
-                MenuItem::action("Hide Others", super::HideOthers),
+                MenuItem::action(menu_text(cx, "menu-hide-others"), super::HideOthers),
                 #[cfg(target_os = "macos")]
-                MenuItem::action("Show All", super::ShowAll),
+                MenuItem::action(menu_text(cx, "menu-show-all"), super::ShowAll),
                 MenuItem::separator(),
-                MenuItem::action("Quit Flint", Quit),
+                MenuItem::action(menu_text(cx, "menu-quit-flint"), Quit),
             ],
         },
         Menu {
-            name: "File".into(),
+            name: menu_text(cx, "menu-file"),
             disabled: false,
             items: vec![
-                MenuItem::action("New", workspace::NewFile),
-                MenuItem::action("New Window", workspace::NewWindow),
+                MenuItem::action(menu_text(cx, "menu-new"), workspace::NewFile),
+                MenuItem::action(menu_text(cx, "menu-new-window"), workspace::NewWindow),
                 MenuItem::separator(),
                 #[cfg(not(target_os = "macos"))]
-                MenuItem::action("Open File...", workspace::OpenFiles),
+                MenuItem::action(menu_text(cx, "menu-open-file"), workspace::OpenFiles),
                 MenuItem::action(
                     if cfg!(not(target_os = "macos")) {
-                        "Open Folder..."
+                        menu_text(cx, "menu-open-folder")
                     } else {
-                        "Open…"
+                        menu_text(cx, "menu-open")
                     },
                     workspace::Open::default(),
                 ),
                 MenuItem::action(
-                    "Open Recent...",
+                    menu_text(cx, "menu-open-recent"),
                     flint_actions::OpenRecent {
                         create_new_window: false,
                     },
                 ),
                 MenuItem::action(
-                    "Open Remote...",
+                    menu_text(cx, "menu-open-remote"),
                     flint_actions::OpenRemote {
                         create_new_window: false,
                         from_existing_connection: false,
                     },
                 ),
                 MenuItem::separator(),
-                MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
-                MenuItem::separator(),
-                MenuItem::action("Save", workspace::Save { save_intent: None }),
-                MenuItem::action("Save As…", workspace::SaveAs),
-                MenuItem::action("Save All", workspace::SaveAll { save_intent: None }),
+                MenuItem::action(
+                    menu_text(cx, "menu-add-folder-to-project"),
+                    workspace::AddFolderToProject,
+                ),
                 MenuItem::separator(),
                 MenuItem::action(
-                    "Close Editor",
+                    menu_text(cx, "menu-save"),
+                    workspace::Save { save_intent: None },
+                ),
+                MenuItem::action(menu_text(cx, "menu-save-as"), workspace::SaveAs),
+                MenuItem::action(
+                    menu_text(cx, "menu-save-all"),
+                    workspace::SaveAll { save_intent: None },
+                ),
+                MenuItem::separator(),
+                MenuItem::action(
+                    menu_text(cx, "menu-close-editor"),
                     workspace::CloseActiveItem {
                         save_intent: None,
                         close_pinned: true,
                     },
                 ),
-                MenuItem::action("Close Project", workspace::CloseProject),
-                MenuItem::action("Close Window", workspace::CloseWindow),
+                MenuItem::action(menu_text(cx, "menu-close-project"), workspace::CloseProject),
+                MenuItem::action(menu_text(cx, "menu-close-window"), workspace::CloseWindow),
             ],
         },
         Menu {
-            name: "Edit".into(),
+            name: menu_text(cx, "menu-edit"),
             disabled: false,
             items: vec![
-                MenuItem::os_action("Undo", editor::actions::Undo, OsAction::Undo),
-                MenuItem::os_action("Redo", editor::actions::Redo, OsAction::Redo),
+                MenuItem::os_action(
+                    menu_text(cx, "menu-undo"),
+                    editor::actions::Undo,
+                    OsAction::Undo,
+                ),
+                MenuItem::os_action(
+                    menu_text(cx, "menu-redo"),
+                    editor::actions::Redo,
+                    OsAction::Redo,
+                ),
                 MenuItem::separator(),
-                MenuItem::os_action("Cut", editor::actions::Cut, OsAction::Cut),
-                MenuItem::os_action("Copy", editor::actions::Copy, OsAction::Copy),
-                MenuItem::action("Copy and Trim", editor::actions::CopyAndTrim),
-                MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
-                MenuItem::separator(),
-                MenuItem::action("Find", search::buffer_search::Deploy::find()),
-                MenuItem::action("Find in Project", workspace::DeploySearch::default()),
-                MenuItem::action("Text Finder", flint_actions::text_finder::Toggle),
+                MenuItem::os_action(
+                    menu_text(cx, "menu-cut"),
+                    editor::actions::Cut,
+                    OsAction::Cut,
+                ),
+                MenuItem::os_action(
+                    menu_text(cx, "menu-copy"),
+                    editor::actions::Copy,
+                    OsAction::Copy,
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-copy-and-trim"),
+                    editor::actions::CopyAndTrim,
+                ),
+                MenuItem::os_action(
+                    menu_text(cx, "menu-paste"),
+                    editor::actions::Paste,
+                    OsAction::Paste,
+                ),
                 MenuItem::separator(),
                 MenuItem::action(
-                    "Toggle Line Comment",
+                    menu_text(cx, "menu-find"),
+                    search::buffer_search::Deploy::find(),
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-find-in-project"),
+                    workspace::DeploySearch::default(),
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-text-finder"),
+                    flint_actions::text_finder::Toggle,
+                ),
+                MenuItem::separator(),
+                MenuItem::action(
+                    menu_text(cx, "menu-toggle-line-comment"),
                     editor::actions::ToggleComments::default(),
                 ),
             ],
         },
         Menu {
-            name: "Selection".into(),
+            name: menu_text(cx, "menu-selection"),
             disabled: false,
             items: vec![
                 MenuItem::os_action(
-                    "Select All",
+                    menu_text(cx, "menu-select-all"),
                     editor::actions::SelectAll,
                     OsAction::SelectAll,
                 ),
-                MenuItem::action("Expand Selection", editor::actions::SelectLargerSyntaxNode),
-                MenuItem::action("Shrink Selection", editor::actions::SelectSmallerSyntaxNode),
-                MenuItem::action("Select Next Sibling", editor::actions::SelectNextSyntaxNode),
                 MenuItem::action(
-                    "Select Previous Sibling",
+                    menu_text(cx, "menu-expand-selection"),
+                    editor::actions::SelectLargerSyntaxNode,
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-shrink-selection"),
+                    editor::actions::SelectSmallerSyntaxNode,
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-select-next-sibling"),
+                    editor::actions::SelectNextSyntaxNode,
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-select-previous-sibling"),
                     editor::actions::SelectPreviousSyntaxNode,
                 ),
                 MenuItem::separator(),
                 MenuItem::action(
-                    "Add Cursor Above",
+                    menu_text(cx, "menu-add-cursor-above"),
                     editor::actions::AddSelectionAbove {
                         skip_soft_wrap: true,
                     },
                 ),
                 MenuItem::action(
-                    "Add Cursor Below",
+                    menu_text(cx, "menu-add-cursor-below"),
                     editor::actions::AddSelectionBelow {
                         skip_soft_wrap: true,
                     },
                 ),
                 MenuItem::action(
-                    "Select Next Occurrence",
+                    menu_text(cx, "menu-select-next-occurrence"),
                     editor::actions::SelectNext {
                         replace_newest: false,
                     },
                 ),
                 MenuItem::action(
-                    "Select Previous Occurrence",
+                    menu_text(cx, "menu-select-previous-occurrence"),
                     editor::actions::SelectPrevious {
                         replace_newest: false,
                     },
                 ),
-                MenuItem::action("Select All Occurrences", editor::actions::SelectAllMatches),
+                MenuItem::action(
+                    menu_text(cx, "menu-select-all-occurrences"),
+                    editor::actions::SelectAllMatches,
+                ),
                 MenuItem::separator(),
-                MenuItem::action("Move Line Up", editor::actions::MoveLineUp),
-                MenuItem::action("Move Line Down", editor::actions::MoveLineDown),
-                MenuItem::action("Duplicate Selection", editor::actions::DuplicateLineDown),
+                MenuItem::action(
+                    menu_text(cx, "menu-move-line-up"),
+                    editor::actions::MoveLineUp,
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-move-line-down"),
+                    editor::actions::MoveLineDown,
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-duplicate-selection"),
+                    editor::actions::DuplicateLineDown,
+                ),
             ],
         },
         Menu {
-            name: "View".into(),
+            name: menu_text(cx, "menu-view"),
             disabled: false,
             items: view_items,
         },
         Menu {
-            name: "Go".into(),
+            name: menu_text(cx, "menu-go"),
             disabled: false,
             items: vec![
-                MenuItem::action("Back", workspace::GoBack),
-                MenuItem::action("Forward", workspace::GoForward),
+                MenuItem::action(menu_text(cx, "menu-back"), workspace::GoBack),
+                MenuItem::action(menu_text(cx, "menu-forward"), workspace::GoForward),
                 MenuItem::separator(),
-                MenuItem::action("Command Palette...", flint_actions::command_palette::Toggle),
-                MenuItem::separator(),
-                MenuItem::action("Go to File...", workspace::ToggleFileFinder::default()),
-                // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
                 MenuItem::action(
-                    "Go to Symbol in Editor...",
+                    menu_text(cx, "menu-command-palette"),
+                    flint_actions::command_palette::Toggle,
+                ),
+                MenuItem::separator(),
+                MenuItem::action(
+                    menu_text(cx, "menu-go-to-file"),
+                    workspace::ToggleFileFinder::default(),
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-go-to-symbol-in-editor"),
                     flint_actions::outline::ToggleOutline,
                 ),
-                MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
+                MenuItem::action(
+                    menu_text(cx, "menu-go-to-line-column"),
+                    editor::actions::ToggleGoToLine,
+                ),
                 MenuItem::separator(),
                 MenuItem::action(
-                    "Go to Definition",
+                    menu_text(cx, "menu-go-to-definition"),
                     editor::actions::GoToDefinition::default(),
                 ),
-                MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
-                MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
                 MenuItem::action(
-                    "Find All References",
+                    menu_text(cx, "menu-go-to-declaration"),
+                    editor::actions::GoToDeclaration,
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-go-to-type-definition"),
+                    editor::actions::GoToTypeDefinition,
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-find-all-references"),
                     editor::actions::FindAllReferences::default(),
                 ),
                 MenuItem::separator(),
-                MenuItem::action("Next Problem", editor::actions::GoToDiagnostic::default()),
                 MenuItem::action(
-                    "Previous Problem",
+                    menu_text(cx, "menu-next-problem"),
+                    editor::actions::GoToDiagnostic::default(),
+                ),
+                MenuItem::action(
+                    menu_text(cx, "menu-previous-problem"),
                     editor::actions::GoToPreviousDiagnostic::default(),
                 ),
             ],
         },
         Menu {
-            name: "Run".into(),
+            name: menu_text(cx, "menu-run"),
             disabled: false,
             items: vec![
                 MenuItem::action(
-                    "Spawn Task",
+                    menu_text(cx, "menu-spawn-task"),
                     flint_actions::Spawn::ViaModal {
                         reveal_target: None,
                     },
                 ),
                 MenuItem::separator(),
-                MenuItem::action("Edit tasks.json...", crate::flint::OpenProjectTasks),
+                MenuItem::action(
+                    menu_text(cx, "menu-edit-tasks-json"),
+                    crate::flint::OpenProjectTasks,
+                ),
             ],
         },
         Menu {
-            name: "Window".into(),
+            name: menu_text(cx, "menu-window"),
             disabled: false,
             items: vec![
-                MenuItem::action("Minimize", super::Minimize),
-                MenuItem::action("Zoom", super::Zoom),
+                MenuItem::action(menu_text(cx, "menu-minimize"), super::Minimize),
+                MenuItem::action(menu_text(cx, "menu-window-zoom"), super::Zoom),
                 MenuItem::separator(),
             ],
         },
         Menu {
-            name: "Help".into(),
+            name: menu_text(cx, "menu-help"),
             disabled: false,
             items: vec![
                 MenuItem::action(
-                    "Documentation",
+                    menu_text(cx, "menu-documentation"),
                     super::OpenBrowser {
-                        url: super::DOCS_URL.into(),
+                        url: release_channel::docs_url("", cx),
                     },
                 ),
-                MenuItem::action("Flint Repository", feedback::OpenFlintRepo),
+                MenuItem::action(
+                    menu_text(cx, "menu-flint-repository"),
+                    feedback::OpenFlintRepo,
+                ),
             ],
         },
     ]
@@ -308,6 +463,16 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn menus(cx: &mut gpui::TestAppContext) -> Vec<Menu> {
+        cx.update(|cx| {
+            if !cx.has_global::<localization::Localization>() {
+                localization::init(localization::UiLanguage::English, cx)
+                    .expect("test localization must load");
+            }
+            app_menus(cx)
+        })
+    }
 
     fn collect_menu_labels(menus: &[Menu], labels: &mut Vec<String>) {
         for menu in menus {
@@ -332,7 +497,7 @@ mod tests {
 
     #[gpui::test]
     fn test_terminal_first_menus_omit_retired_surfaces(cx: &mut gpui::TestAppContext) {
-        let menus = cx.update(app_menus);
+        let menus = menus(cx);
         let mut labels = Vec::new();
         collect_menu_labels(&menus, &mut labels);
 
@@ -370,7 +535,7 @@ mod tests {
 
     #[gpui::test]
     fn view_menu_exposes_every_agent_thread_action(cx: &mut gpui::TestAppContext) {
-        let menus = cx.update(app_menus);
+        let menus = menus(cx);
         let mut labels = Vec::new();
         collect_menu_labels(&menus, &mut labels);
 
@@ -384,6 +549,21 @@ mod tests {
                 labels.iter().any(|candidate| candidate == label),
                 "missing first-class agent action {label:?}"
             );
+        }
+    }
+
+    #[gpui::test]
+    fn menus_use_the_selected_language(cx: &mut gpui::TestAppContext) {
+        let _ = menus(cx);
+        let menus = cx.update(|cx| {
+            localization::set_language(localization::UiLanguage::SimplifiedChinese, cx);
+            app_menus(cx)
+        });
+        let mut labels = Vec::new();
+        collect_menu_labels(&menus, &mut labels);
+
+        for label in ["文件", "编辑", "设置", "命令面板...", "新建 Codex 线程"] {
+            assert!(labels.iter().any(|candidate| candidate == label));
         }
     }
 }

@@ -46,9 +46,15 @@ impl Render for ToolbarControls {
         }
 
         let (warning_tooltip, warning_color) = if include_warnings {
-            ("Exclude Warnings", Color::Warning)
+            (
+                localization::text(cx, "diagnostics-exclude-warnings"),
+                Color::Warning,
+            )
         } else {
-            ("Include Warnings", Color::Disabled)
+            (
+                localization::text(cx, "diagnostics-include-warnings"),
+                Color::Disabled,
+            )
         };
 
         h_flex()
@@ -57,7 +63,7 @@ impl Render for ToolbarControls {
                 IconButton::new("toggle_search", IconName::MagnifyingGlass)
                     .icon_size(IconSize::Small)
                     .tooltip(Tooltip::for_action_title(
-                        "Buffer Search",
+                        localization::text(cx, "diagnostics-buffer-search"),
                         &buffer_search::Deploy::find(),
                     ))
                     .on_click(|_, window, cx| {
@@ -71,7 +77,7 @@ impl Render for ToolbarControls {
                             .icon_color(Color::Error)
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::for_action_title(
-                                "Stop Diagnostics Update",
+                                localization::text(cx, "diagnostics-stop-update"),
                                 &ToggleDiagnosticsRefresh,
                             ))
                             .on_click(cx.listener(move |toolbar_controls, _, _, cx| {
@@ -86,7 +92,7 @@ impl Render for ToolbarControls {
                         IconButton::new("refresh-diagnostics", IconName::ArrowCircle)
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::for_action_title(
-                                "Refresh Diagnostics",
+                                localization::text(cx, "diagnostics-refresh"),
                                 &ToggleDiagnosticsRefresh,
                             ))
                             .on_click(cx.listener({

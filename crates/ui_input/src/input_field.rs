@@ -203,7 +203,11 @@ impl Render for InputField {
                             )
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text(if is_masked { "Show" } else { "Hide" }))
+                            .tooltip(Tooltip::text(if is_masked {
+                                localization::text(cx, "common-show")
+                            } else {
+                                localization::text(cx, "common-hide")
+                            }))
                             .on_click(cx.listener(
                                 |this, _, window, cx| {
                                     if let Some(ref mut masked) = this.masked {
@@ -231,12 +235,14 @@ impl Component for InputField {
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> AnyElement {
-        let input_small =
-            cx.new(|cx| InputField::new(window, cx, "placeholder").label("Small Label"));
+        let input_small = cx.new(|cx| {
+            InputField::new(window, cx, "placeholder")
+                .label(localization::text(cx, "ui-input-small-label"))
+        });
 
         let input_regular = cx.new(|cx| {
             InputField::new(window, cx, "placeholder")
-                .label("Regular Label")
+                .label(localization::text(cx, "ui-input-regular-label"))
                 .label_size(LabelSize::Default)
         });
 

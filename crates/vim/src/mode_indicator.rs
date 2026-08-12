@@ -128,9 +128,14 @@ impl Render for ModeIndicator {
             (label, None)
         } else {
             let mode_str = if temp_mode {
-                format!("(insert) {}", mode)
+                localization::tr!(
+                    cx,
+                    "vim-mode-insert-temporary",
+                    mode = mode.localized(cx).to_string()
+                )
+                .to_string()
             } else {
-                mode.to_string()
+                mode.localized(cx).to_string()
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
@@ -141,7 +146,7 @@ impl Render for ModeIndicator {
             let mode = if bg_color != system_transparent {
                 mode_str.into()
             } else {
-                format!("-- {} --", mode_str).into()
+                localization::tr!(cx, "vim-mode-decorated", mode = mode_str)
             };
             (pending.into(), Some(mode))
         };

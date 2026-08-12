@@ -42,6 +42,7 @@ gpui.workspace = true
 http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
+localization.workspace = true
 log.workspace = true
 menu.workspace = true
 markdown.workspace = true

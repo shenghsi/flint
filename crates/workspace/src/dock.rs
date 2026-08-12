@@ -57,7 +57,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     ) {
     }
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<SharedString>;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _window: &Window, _: &App) -> Option<String> {
         None
@@ -107,7 +107,7 @@ pub trait PanelHandle: Send + Sync {
     fn has_flexible_size(&self, window: &Window, cx: &App) -> bool;
     fn set_flexible_size(&self, flexible: bool, window: &mut Window, cx: &mut App);
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<SharedString>;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
     fn icon_label(&self, window: &Window, cx: &App) -> Option<String>;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
@@ -209,7 +209,7 @@ where
         self.read(cx).icon(window, cx)
     }
 
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str> {
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<SharedString> {
         self.read(cx).icon_tooltip(window, cx)
     }
 
@@ -1230,15 +1230,19 @@ impl Render for PanelButtons {
                 let is_active_button = Some(i) == active_index && is_open;
                 let (action, tooltip) = if is_active_button {
                     let action = dock.toggle_action();
-
-                    let tooltip: SharedString =
-                        format!("Close {} Dock", dock.position.label()).into();
+                    let position = match dock.position {
+                        DockPosition::Left => localization::text(cx, "dock-left"),
+                        DockPosition::Right => localization::text(cx, "dock-right"),
+                        DockPosition::Bottom => localization::text(cx, "dock-bottom"),
+                    };
+                    let tooltip =
+                        localization::tr!(cx, "dock-close", position = position.to_string());
 
                     (action, tooltip)
                 } else {
                     let action = entry.panel.toggle_action(window, cx);
 
-                    (action, icon_tooltip.into())
+                    (action, icon_tooltip)
                 };
 
                 let focus_handle = dock.focus_handle(cx);
@@ -1260,8 +1264,23 @@ impl Render for PanelButtons {
                                     if panel.position_is_valid(position, cx) {
                                         let is_current = position == dock_position;
                                         let panel = panel.clone();
+                                        let position_name = match position {
+                                            DockPosition::Left => {
+                                                localization::text(cx, "dock-left")
+                                            }
+                                            DockPosition::Right => {
+                                                localization::text(cx, "dock-right")
+                                            }
+                                            DockPosition::Bottom => {
+                                                localization::text(cx, "dock-bottom")
+                                            }
+                                        };
                                         menu = menu.toggleable_entry(
-                                            format!("Dock {}", position.label()),
+                                            localization::tr!(
+                                                cx,
+                                                "dock-move",
+                                                position = position_name.to_string()
+                                            ),
                                             is_current,
                                             IconPosition::Start,
                                             None,
@@ -1282,7 +1301,7 @@ impl Render for PanelButtons {
                                     let dock_for_flex = dock_for_menu.clone();
                                     let workspace_for_flex = workspace_for_menu.clone();
                                     menu = menu.toggleable_entry(
-                                        "Flex Width",
+                                        localization::text(cx, "dock-flex-width"),
                                         currently_flexible,
                                         IconPosition::Start,
                                         None,
@@ -1305,7 +1324,7 @@ impl Render for PanelButtons {
                                     let dock_for_fixed = dock_for_menu.clone();
                                     let workspace_for_fixed = workspace_for_menu.clone();
                                     menu = menu.toggleable_entry(
-                                        "Fixed Width",
+                                        localization::text(cx, "dock-fixed-width"),
                                         !currently_flexible,
                                         IconPosition::Start,
                                         None,
@@ -1329,6 +1348,7 @@ impl Render for PanelButtons {
                                     menu = crate::status_bar::add_hide_button_entry(
                                         menu.separator(),
                                         hide,
+                                        cx,
                                     );
                                 }
                                 menu
@@ -1508,7 +1528,7 @@ pub mod test {
             None
         }
 
-        fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
+        fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
             None
         }
 

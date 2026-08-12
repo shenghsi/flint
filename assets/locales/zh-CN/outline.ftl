@@ -1,0 +1,17 @@
+outline-search-placeholder = 搜索缓冲区符号…
+outline-open-terminal = 在终端中打开
+outline-unfold-directory = 展开目录
+outline-fold-directory = 折叠目录
+outline-copy-path = 复制路径
+outline-copy-relative-path = 复制相对路径
+outline-lines = 第 { $start }-{ $end } 行
+outline-untitled = 未命名
+outline-unknown-buffer = 未知缓冲区
+outline-no-query-matches = 没有与查询匹配的结果
+outline-empty = 没有可用的大纲
+outline-toggle-panel-with = 切换面板方式
+outline-unpin = 取消固定大纲
+outline-pin = 固定当前大纲
+outline-clear-filter = 清除筛选器
+outline-panel = 大纲面板
+outline-searching = 正在搜索：

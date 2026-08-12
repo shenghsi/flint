@@ -2,8 +2,8 @@ use crate::{MultiWorkspace, SuppressNotification, Toast, Workspace};
 use anyhow::Context as _;
 use gpui::{
     AnyEntity, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, ClickEvent, Context,
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
-    Task, TextStyleRefinement, UnderlineStyle, WeakEntity, svg,
+    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptButton, PromptLevel, Render,
+    ScrollHandle, Task, TextStyleRefinement, UnderlineStyle, WeakEntity, svg,
 };
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
@@ -163,7 +163,12 @@ impl Workspace {
         E: std::fmt::Debug + std::fmt::Display,
     {
         self.show_notification(workspace_error_notification_id(), cx, |cx| {
-            cx.new(|cx| ErrorMessagePrompt::new(format!("Error: {err}"), cx))
+            cx.new(|cx| {
+                ErrorMessagePrompt::new(
+                    localization::tr!(cx, "common-error-detail", error = err.to_string()),
+                    cx,
+                )
+            })
         });
     }
 
@@ -173,8 +178,9 @@ impl Workspace {
         self.show_notification(NotificationId::unique::<PortalError>(), cx, |cx| {
             cx.new(|cx| {
                 ErrorMessagePrompt::new(err.to_string(), cx).with_link_button(
-                    "See docs",
-                    "https://github.com/shenghsi/flint/blob/main/docs/src/linux.md#i-cant-open-any-files",
+                    localization::text(cx, "workspace-see-docs").to_string(),
+                    "https://github.com/shenghsi/flint/blob/main/docs/src/linux.md#i-cant-open-any-files"
+                        .to_string(),
                 )
             })
         });
@@ -364,23 +370,34 @@ impl Render for LanguageServerPrompt {
                                             "copy-description",
                                             request.message.clone(),
                                         )
-                                        .tooltip_label("Copy Description"),
+                                        .tooltip_label(
+                                            localization::text(cx, "workspace-copy-description"),
+                                        ),
                                     )
                                     .child(
                                         IconButton::new(close_id, close_icon)
                                             .tooltip(move |_window, cx| {
                                                 if suppress {
                                                     Tooltip::with_meta(
-                                                        "Suppress",
+                                                        localization::text(
+                                                            cx,
+                                                            "workspace-suppress",
+                                                        ),
                                                         Some(&SuppressNotification),
-                                                        "Click to close",
+                                                        localization::text(
+                                                            cx,
+                                                            "workspace-click-to-close",
+                                                        ),
                                                         cx,
                                                     )
                                                 } else {
                                                     Tooltip::with_meta(
-                                                        "Close",
+                                                        localization::text(cx, "common-close"),
                                                         Some(&menu::Cancel),
-                                                        "Suppress with shift-click",
+                                                        localization::text(
+                                                            cx,
+                                                            "workspace-suppress-with-shift-click",
+                                                        ),
                                                         cx,
                                                     )
                                                 }
@@ -539,7 +556,10 @@ impl Render for ErrorMessagePrompt {
                                     .gap_1()
                                     .child(
                                         CopyButton::new("copy-error-message", self.message.clone())
-                                            .tooltip_label("Copy Error Message"),
+                                            .tooltip_label(localization::text(
+                                                cx,
+                                                "workspace-copy-error-message",
+                                            )),
                                     )
                                     .child(
                                         ui::IconButton::new("close", ui::IconName::Close).on_click(
@@ -674,20 +694,27 @@ impl RenderOnce for NotificationFrame {
                                     .tooltip(move |_window, cx| {
                                         if suppress {
                                             Tooltip::with_meta(
-                                                "Suppress",
+                                                localization::text(cx, "workspace-suppress"),
                                                 Some(&SuppressNotification),
-                                                "Click to Close",
+                                                localization::text(cx, "workspace-click-to-close"),
                                                 cx,
                                             )
                                         } else if show_suppress_button {
                                             Tooltip::with_meta(
-                                                "Close",
+                                                localization::text(cx, "common-close"),
                                                 Some(&menu::Cancel),
-                                                "Shift-click to Suppress",
+                                                localization::text(
+                                                    cx,
+                                                    "workspace-shift-click-to-suppress",
+                                                ),
                                                 cx,
                                             )
                                         } else {
-                                            Tooltip::for_action("Close", &menu::Cancel, cx)
+                                            Tooltip::for_action(
+                                                localization::text(cx, "common-close"),
+                                                &menu::Cancel,
+                                                cx,
+                                            )
                                         }
                                     })
                                     .on_click({
@@ -712,14 +739,15 @@ impl Component for NotificationFrame {
         and a slot for the notification's contents."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         single_example(
             "Default",
             NotificationFrame::new()
                 .with_title(Some("Notification Title"))
-                .with_content(Label::new(
-                    "This is the content of a workspace notification.",
-                ))
+                .with_content(Label::new(localization::text(
+                    cx,
+                    "workspace-notification-preview-content",
+                )))
                 .into_any_element(),
         )
         .into_any_element()
@@ -1171,7 +1199,7 @@ where
         match self {
             Ok(value) => Some(value),
             Err(err) => {
-                let message: SharedString = format!("Error: {err}").into();
+                let message = localization::tr!(cx, "common-error-detail", error = err.to_string());
                 log::error!("Showing error notification in app: {message}");
                 show_app_notification(workspace_error_notification_id(), cx, {
                     move |cx| {
@@ -1256,7 +1284,13 @@ where
                         display.push('.');
                     }
                     let detail = f(err, window, cx).unwrap_or(display);
-                    window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"], cx)
+                    window.prompt(
+                        PromptLevel::Critical,
+                        &msg,
+                        Some(&detail),
+                        &[PromptButton::ok(localization::text(cx, "common-ok"))],
+                        cx,
+                    )
                 }) {
                     prompt.await.ok();
                 }

@@ -87,7 +87,7 @@ impl SettingsProfileSelectorDelegate {
                 candidate_id: ix,
                 score: 0.0,
                 positions: Default::default(),
-                string: display_name(profile_name),
+                string: display_name(profile_name, cx),
             })
             .collect();
 
@@ -149,8 +149,8 @@ impl SettingsProfileSelectorDelegate {
 impl PickerDelegate for SettingsProfileSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _: &mut Window, _: &mut App) -> std::sync::Arc<str> {
-        "Select a settings profile...".into()
+    fn placeholder_text(&self, _: &mut Window, cx: &mut App) -> std::sync::Arc<str> {
+        localization::text(cx, "settings-profile-selector-placeholder").into()
     }
 
     fn match_count(&self) -> usize {
@@ -182,7 +182,9 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
             .profile_names
             .iter()
             .enumerate()
-            .map(|(id, profile_name)| StringMatchCandidate::new(id, &display_name(profile_name)))
+            .map(|(id, profile_name)| {
+                StringMatchCandidate::new(id, &display_name(profile_name, cx))
+            })
             .collect::<Vec<_>>();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -255,7 +257,7 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         ix: usize,
         selected: bool,
         _: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches.get(ix)?;
         let profile_name = &self.profile_names.get(mat.candidate_id)?;
@@ -266,15 +268,17 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(HighlightedLabel::new(
-                    display_name(profile_name),
+                    display_name(profile_name, cx),
                     mat.positions.clone(),
                 )),
         )
     }
 }
 
-fn display_name(profile_name: &Option<String>) -> String {
-    profile_name.clone().unwrap_or("Disabled".into())
+fn display_name(profile_name: &Option<String>, cx: &App) -> String {
+    profile_name
+        .clone()
+        .unwrap_or_else(|| localization::text(cx, "settings-profile-selector-disabled").to_string())
 }
 
 #[cfg(test)]
@@ -296,6 +300,8 @@ mod tests {
     ) -> (Entity<Workspace>, &mut VisualTestContext) {
         cx.update(|cx| {
             let state = AppState::test(cx);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("English localization catalog must initialize");
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             settings::init(cx);
@@ -370,7 +376,7 @@ mod tests {
 
         picker.read_with(cx, |picker, cx| {
             assert_eq!(picker.delegate.matches.len(), 3);
-            assert_eq!(picker.delegate.matches[0].string, display_name(&None));
+            assert_eq!(picker.delegate.matches[0].string, display_name(&None, cx));
             assert_eq!(
                 picker.delegate.matches[1].string,
                 classroom_and_streaming_profile_name
@@ -708,9 +714,9 @@ mod tests {
         cx.dispatch_action(settings_profile_selector::Toggle);
         let picker = active_settings_profile_picker(&workspace, cx);
 
-        picker.read_with(cx, |picker, _| {
+        picker.read_with(cx, |picker, app| {
             assert_eq!(picker.delegate.matches.len(), 11);
-            assert_eq!(picker.delegate.matches[0].string, display_name(&None));
+            assert_eq!(picker.delegate.matches[0].string, display_name(&None, app));
             assert_eq!(picker.delegate.matches[1].string, "z");
             assert_eq!(picker.delegate.matches[2].string, "e");
             assert_eq!(picker.delegate.matches[3].string, "d");

@@ -8,8 +8,8 @@ use futures::StreamExt as _;
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton, MouseDownEvent, ParentElement,
-    Pixels, Point, PromptLevel, Render, SharedString, Styled, Subscription, Task, WeakEntity,
-    Window, anchored, deferred, div,
+    Pixels, Point, PromptButton, PromptLevel, Render, SharedString, Styled, Subscription, Task,
+    WeakEntity, Window, anchored, deferred, div,
 };
 use settings::{DockSide, Settings, SettingsStore};
 use ui::{
@@ -38,6 +38,12 @@ enum HistoricalState {
     Loading,
     Loaded(Arc<[HistoricalThread]>),
     Unavailable,
+}
+
+fn localized_agent_message(cx: &App, identifier: &'static str, agent: &str) -> SharedString {
+    let mut args = localization::FluentArgs::new();
+    args.set("agent", agent.to_owned());
+    localization::text_with_args(cx, identifier, &args)
 }
 
 struct SectionState {
@@ -231,6 +237,7 @@ fn effective_thread_launch_option_id(
 }
 
 fn launch_option_label(
+    cx: &App,
     kind: &AgentKindDefinition,
     effective_id: Option<&str>,
     default_label: &'static str,
@@ -240,14 +247,28 @@ fn launch_option_label(
             kind.resume_options
                 .iter()
                 .find(|option| option.id == id)
-                .map(|option| option.label.clone())
+                .map(|option| {
+                    let identifier = match option.id {
+                        "bypass-approvals-and-sandbox" => Some("agent-threads-option-bypass"),
+                        "skip-permission-prompts" => Some("agent-threads-option-skip-permissions"),
+                        "auto-approve-permissions" => Some("agent-threads-option-auto-approve"),
+                        _ => None,
+                    };
+                    identifier
+                        .map(|identifier| localization::text(cx, identifier))
+                        .unwrap_or_else(|| option.label.clone())
+                })
         })
-        .unwrap_or_else(|| SharedString::new_static(default_label))
+        .unwrap_or_else(|| match default_label {
+            "New thread" => localization::text(cx, "agent-threads-new-thread"),
+            "Resume" => localization::text(cx, "agent-threads-resume"),
+            _ => SharedString::new_static(default_label),
+        })
 }
 
 fn new_thread_launch_option_label(cx: &App, kind: &AgentKindDefinition) -> SharedString {
     let effective_id = effective_new_thread_launch_option_id(cx, kind);
-    launch_option_label(kind, effective_id.as_deref(), "New thread")
+    launch_option_label(cx, kind, effective_id.as_deref(), "New thread")
 }
 
 fn new_thread_launch_option_visual(cx: &App, kind: &AgentKindDefinition) -> Color {
@@ -261,7 +282,7 @@ fn thread_resume_option_label(
     session_id: &SharedString,
 ) -> SharedString {
     let effective_id = effective_thread_launch_option_id(cx, kind, session_id);
-    launch_option_label(kind, effective_id.as_deref(), "Resume")
+    launch_option_label(cx, kind, effective_id.as_deref(), "Resume")
 }
 
 fn thread_resume_option_visual(
@@ -773,16 +794,17 @@ impl AgentThreadsPanel {
                 .remote_client()
                 .is_some()
         });
-        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
+        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, cx| {
             {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
                 let is_selected = effective_id.is_none();
                 let visual = launch_option_visual(None);
+                let new_thread_label = localization::text(cx, "agent-threads-new-thread");
                 context_menu = context_menu.custom_entry(
                     move |_, _| {
                         render_launch_option_menu_entry(
-                            SharedString::new_static("New thread"),
+                            new_thread_label.clone(),
                             visual,
                             is_selected,
                         )
@@ -802,7 +824,9 @@ impl AgentThreadsPanel {
             for option in resume_options {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
-                let label = SharedString::from(format!("New — {}", option.label));
+                let mut args = localization::FluentArgs::new();
+                args.set("option", option.label.to_string());
+                let label = localization::text_with_args(cx, "agent-threads-new-option", &args);
                 let args = option.args.clone();
                 let is_selected = effective_id.as_deref() == Some(option.id);
                 let option_id = option.id;
@@ -835,7 +859,7 @@ impl AgentThreadsPanel {
                     let workspace = workspace.clone();
                     let kind = kind.clone();
                     context_menu = context_menu.entry(
-                        SharedString::from(format!("Sign in to {} on remote", kind.label)),
+                        localized_agent_message(cx, "agent-threads-sign-in-remote", &kind.label),
                         None,
                         move |window, cx| {
                             let Some(workspace) = workspace.upgrade() else {
@@ -846,7 +870,11 @@ impl AgentThreadsPanel {
                                 store::launch_credential_command(
                                     workspace,
                                     &kind,
-                                    SharedString::from(format!("Sign in to {}", kind.label)),
+                                    localized_agent_message(
+                                        cx,
+                                        "agent-threads-sign-in",
+                                        &kind.label,
+                                    ),
                                     credential_policy.login_arguments,
                                     window,
                                     cx,
@@ -859,7 +887,7 @@ impl AgentThreadsPanel {
                     let workspace = workspace.clone();
                     let kind = kind.clone();
                     context_menu = context_menu.entry(
-                        SharedString::from(format!("Check {} sign-in", kind.label)),
+                        localized_agent_message(cx, "agent-threads-check-sign-in", &kind.label),
                         None,
                         move |window, cx| {
                             let Some(workspace) = workspace.upgrade() else {
@@ -870,7 +898,11 @@ impl AgentThreadsPanel {
                                 store::launch_credential_command(
                                     workspace,
                                     &kind,
-                                    SharedString::from(format!("{} sign-in status", kind.label)),
+                                    localized_agent_message(
+                                        cx,
+                                        "agent-threads-sign-in-status",
+                                        &kind.label,
+                                    ),
                                     credential_policy.status_arguments,
                                     window,
                                     cx,
@@ -882,16 +914,31 @@ impl AgentThreadsPanel {
                 if menu_policy.sign_out {
                     let workspace = workspace.clone();
                     let kind = kind.clone();
-                    let label = SharedString::from(format!("Sign out {} on remote…", kind.label));
+                    let label = localized_agent_message(
+                        cx,
+                        "agent-threads-sign-out-remote-menu",
+                        &kind.label,
+                    );
                     let handler = move |window: &mut Window, cx: &mut App| {
+                        let message = localized_agent_message(
+                            cx,
+                            "agent-threads-remove-credential",
+                            &kind.label,
+                        );
                         let confirmation = window.prompt(
                             PromptLevel::Warning,
-                            &format!(
-                                "Remove the {} credential from this remote host?",
-                                kind.label
-                            ),
-                            Some("This does not revoke the credential at the provider."),
-                            &["Sign out on remote", "Cancel"],
+                            &message,
+                            Some(&localization::text(
+                                cx,
+                                "agent-threads-remove-credential-detail",
+                            )),
+                            &[
+                                PromptButton::new(localization::text(
+                                    cx,
+                                    "agent-threads-sign-out-remote",
+                                )),
+                                PromptButton::cancel(localization::text(cx, "common-cancel")),
+                            ],
                             cx,
                         );
                         let workspace = workspace.clone();
@@ -913,10 +960,11 @@ impl AgentThreadsPanel {
                                     store::launch_credential_command(
                                         workspace,
                                         &kind,
-                                        SharedString::from(format!(
-                                            "Sign out {} on remote",
-                                            kind.label
-                                        )),
+                                        localized_agent_message(
+                                            cx,
+                                            "agent-threads-sign-out-title",
+                                            &kind.label,
+                                        ),
                                         credential_policy.logout_arguments,
                                         window,
                                         cx,
@@ -944,10 +992,7 @@ impl AgentThreadsPanel {
                 }
                 if menu_policy.provider_management {
                     context_menu = context_menu.entry(
-                        SharedString::from(format!(
-                            "Revoke {} credential at provider…",
-                            kind.label
-                        )),
+                        localized_agent_message(cx, "agent-threads-revoke-provider", &kind.label),
                         None,
                         move |_, cx| cx.open_url(credential_policy.provider_management_url),
                     );
@@ -1032,20 +1077,17 @@ impl AgentThreadsPanel {
         let workspace = self.workspace.clone();
         let resume_options = kind.resume_options.clone();
         let effective_id = effective_thread_launch_option_id(cx, &kind, &thread.session_id);
-        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
+        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, cx| {
             {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
                 let thread = thread.clone();
                 let is_selected = effective_id.is_none();
                 let visual = launch_option_visual(None);
+                let resume_label = localization::text(cx, "agent-threads-resume");
                 context_menu = context_menu.custom_entry(
                     move |_, _| {
-                        render_launch_option_menu_entry(
-                            SharedString::new_static("Resume"),
-                            visual,
-                            is_selected,
-                        )
+                        render_launch_option_menu_entry(resume_label.clone(), visual, is_selected)
                     },
                     move |window, cx| {
                         let Some(workspace) = workspace.upgrade() else {
@@ -1064,7 +1106,9 @@ impl AgentThreadsPanel {
                 let workspace = workspace.clone();
                 let kind = kind.clone();
                 let thread = thread.clone();
-                let label = SharedString::from(format!("Resume — {}", option.label));
+                let mut args = localization::FluentArgs::new();
+                args.set("option", option.label.to_string());
+                let label = localization::text_with_args(cx, "agent-threads-resume-option", &args);
                 let args = option.args.clone();
                 let is_selected = effective_id.as_deref() == Some(option.id);
                 let option_id = option.id;
@@ -1109,7 +1153,7 @@ impl AgentThreadsPanel {
         let history_index = self.history_index.clone();
         let store = self.store.clone();
         let targets = self.handoff_targets(source_kind.id, cx);
-        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _| {
+        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, cx| {
             for target_kind in &targets {
                 let workspace = workspace.clone();
                 let fs = fs.clone();
@@ -1119,7 +1163,7 @@ impl AgentThreadsPanel {
                 let source_metadata = source_metadata.clone();
                 let target_kind = target_kind.clone();
                 context_menu = context_menu.entry(
-                    SharedString::from(format!("Hand off to {}", target_kind.label)),
+                    localized_agent_message(cx, "agent-threads-hand-off-to", &target_kind.label),
                     None,
                     move |window, cx| {
                         let Some(workspace) = workspace.upgrade() else {
@@ -1187,8 +1231,14 @@ impl AgentThreadsPanel {
         let visible_override = section.visible_override;
         let (historical, scan_status) = match &section.historical {
             HistoricalState::Loaded(threads) => (Some(threads.clone()), None),
-            HistoricalState::Loading => (None, Some("Scanning history…")),
-            HistoricalState::Unavailable => (None, Some("Couldn't scan history")),
+            HistoricalState::Loading => (
+                None,
+                Some(localization::text(cx, "agent-threads-scanning-history")),
+            ),
+            HistoricalState::Unavailable => (
+                None,
+                Some(localization::text(cx, "agent-threads-scan-failed")),
+            ),
         };
 
         let rows = merge_threads(
@@ -1303,10 +1353,12 @@ impl AgentThreadsPanel {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .icon_color(new_thread_launch_option_visual)
-                        .tooltip(Tooltip::text(format!(
-                            "New {} thread: {}",
-                            kind.label, new_thread_launch_option_label
-                        )))
+                        .tooltip(Tooltip::text({
+                            let mut args = localization::FluentArgs::new();
+                            args.set("agent", kind.label.to_string());
+                            args.set("option", new_thread_launch_option_label.to_string());
+                            localization::text_with_args(cx, "agent-threads-new-tooltip", &args)
+                        }))
                         .on_click(cx.listener({
                             let kind = kind.clone();
                             move |this, _, window, cx| {
@@ -1322,10 +1374,16 @@ impl AgentThreadsPanel {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .icon_color(new_thread_launch_option_visual)
-                        .tooltip(Tooltip::text(format!(
-                            "New {} thread options: {}",
-                            kind.label, new_thread_launch_option_label
-                        )))
+                        .tooltip(Tooltip::text({
+                            let mut args = localization::FluentArgs::new();
+                            args.set("agent", kind.label.to_string());
+                            args.set("option", new_thread_launch_option_label.to_string());
+                            localization::text_with_args(
+                                cx,
+                                "agent-threads-new-options-tooltip",
+                                &args,
+                            )
+                        }))
                         .on_click(cx.listener({
                             let kind = kind.clone();
                             move |this, event: &gpui::ClickEvent, window, cx| {
@@ -1343,11 +1401,11 @@ impl AgentThreadsPanel {
         let mut body_children: Vec<AnyElement> = Vec::new();
         if !collapsed {
             if rows.is_empty() {
-                let message = scan_status
-                    .map(SharedString::new_static)
-                    .unwrap_or_else(|| {
-                        SharedString::from(format!("No {} threads yet", kind.label))
-                    });
+                let message = scan_status.unwrap_or_else(|| {
+                    let mut args = localization::FluentArgs::new();
+                    args.set("agent", kind.label.to_string());
+                    localization::text_with_args(cx, "agent-threads-empty", &args)
+                });
                 body_children.push(
                     Label::new(message)
                         .size(LabelSize::Small)
@@ -1365,7 +1423,15 @@ impl AgentThreadsPanel {
                         controls = controls.child(
                             Button::new(
                                 SharedString::from(format!("agent-thread-show-more-{kind_id}")),
-                                format!("Show {more_count} more"),
+                                {
+                                    let mut args = localization::FluentArgs::new();
+                                    args.set("count", more_count as i64);
+                                    localization::text_with_args(
+                                        cx,
+                                        "agent-threads-show-more",
+                                        &args,
+                                    )
+                                },
                             )
                             .size(ButtonSize::Compact)
                             .label_size(LabelSize::Small)
@@ -1381,7 +1447,7 @@ impl AgentThreadsPanel {
                         controls = controls.child(
                             Button::new(
                                 SharedString::from(format!("agent-thread-show-less-{kind_id}")),
-                                "Show less",
+                                localization::text(cx, "agent-threads-show-less"),
                             )
                             .size(ButtonSize::Compact)
                             .label_size(LabelSize::Small)
@@ -1395,7 +1461,7 @@ impl AgentThreadsPanel {
                         controls = controls.child(
                             Button::new(
                                 SharedString::from(format!("agent-thread-show-default-{kind_id}")),
-                                "Show default",
+                                localization::text(cx, "agent-threads-show-default"),
                             )
                             .size(ButtonSize::Compact)
                             .label_size(LabelSize::Small)
@@ -1632,9 +1698,10 @@ impl AgentThreadsPanel {
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .icon_color(resume_option_visual)
-                            .tooltip(Tooltip::text(format!(
-                                "Resume with options: {}",
-                                resume_option_label
+                            .tooltip(Tooltip::text(localization::tr!(
+                                cx,
+                                "agent-threads-resume-options-tooltip",
+                                option = resume_option_label.to_string()
                             )))
                             .on_click(cx.listener(
                                 move |this, event: &gpui::ClickEvent, window, cx| {
@@ -1678,7 +1745,10 @@ fn start_handoff(
     if project.read(cx).remote_client().is_some() {
         workspace.update(cx, |workspace, cx| {
             workspace.show_error(
-                &anyhow::anyhow!("Cross-agent handoff isn't supported yet for remote projects."),
+                &anyhow::anyhow!(localization::text(
+                    cx,
+                    "agent-threads-handoff-remote-unsupported",
+                )),
                 cx,
             );
         });
@@ -1692,6 +1762,23 @@ fn start_handoff(
         return;
     };
 
+    let source_agent = source_kind.label.to_string();
+    let handoff_multiple_sessions = localization::tr!(
+        cx,
+        "agent-threads-handoff-multiple-sessions",
+        agent = source_agent.clone(),
+    );
+    let handoff_session_pending = localization::tr!(
+        cx,
+        "agent-threads-handoff-session-pending",
+        agent = source_agent,
+    );
+    let handoff_no_resumable_session =
+        localization::text(cx, "agent-threads-handoff-no-resumable-session");
+    let handoff_not_enough_conversation =
+        localization::text(cx, "agent-threads-handoff-not-enough-conversation");
+    let handoff_unsupported_history =
+        localization::text(cx, "agent-threads-handoff-unsupported-history");
     let workspace_for_error = workspace.clone();
     cx.spawn(async move |cx| {
         let result: anyhow::Result<()> = async {
@@ -1710,7 +1797,7 @@ fn start_handoff(
                 path_style,
             };
             let indexed_kind = agent_history::HistoryKind::from_id(source_kind.id)
-                .ok_or_else(|| anyhow::anyhow!("unsupported agent history kind"))?;
+                .ok_or_else(|| anyhow::anyhow!(handoff_unsupported_history.clone()))?;
 
             let session_id = match &source_metadata.resumed_session_id {
                 Some(id) => id.to_string(),
@@ -1747,19 +1834,15 @@ fn start_handoff(
                         &already_bound,
                     ) {
                         store::DiscoveredSession::Resolved(id) => id.to_string(),
-                        store::DiscoveredSession::Ambiguous(_) => anyhow::bail!(
-                            "Multiple new {} sessions started around the same time; \
-                             Flint can't tell which one is this thread yet.",
-                            source_kind.label
-                        ),
-                        store::DiscoveredSession::NotFound => anyhow::bail!(
-                            "{} hasn't recorded a session for this thread yet. \
-                             Try again in a moment.",
-                            source_kind.label
-                        ),
+                        store::DiscoveredSession::Ambiguous(_) => {
+                            anyhow::bail!(handoff_multiple_sessions.clone())
+                        }
+                        store::DiscoveredSession::NotFound => {
+                            anyhow::bail!(handoff_session_pending.clone())
+                        }
                     }
                 }
-                None => anyhow::bail!("This thread has no resumable session id yet."),
+                None => anyhow::bail!(handoff_no_resumable_session.clone()),
             };
 
             let excerpt = history::local_extract_transcript(
@@ -1770,7 +1853,7 @@ fn start_handoff(
                 Some(source_metadata.project_root.to_string_lossy().into_owned()),
             )
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Not enough conversation to hand off yet."))?;
+            .ok_or_else(|| anyhow::anyhow!(handoff_not_enough_conversation.clone()))?;
 
             let changed_files = project.read_with(cx, |project, cx| {
                 project
@@ -1799,17 +1882,28 @@ fn start_handoff(
             });
 
             let confirmation = window_handle.update(cx, |_, window, cx| {
+                let question = localized_agent_message(
+                    cx,
+                    "agent-threads-hand-off-question",
+                    &target_kind.label,
+                );
+                let mut args = localization::FluentArgs::new();
+                args.set("turns", excerpt.included_turns as i64);
+                args.set("files", changed_files.len() as i64);
+                args.set("agent", target_kind.label.to_string());
+                let detail = localization::text_with_args(
+                    cx,
+                    "agent-threads-hand-off-detail",
+                    &args,
+                );
                 window.prompt(
                     PromptLevel::Info,
-                    &format!("Hand off this thread to {}?", target_kind.label),
-                    Some(&format!(
-                        "{} conversation turn(s), {} changed file(s). A new {} thread \
-                         will open, seeded to read the handoff.",
-                        excerpt.included_turns,
-                        changed_files.len(),
-                        target_kind.label,
-                    )),
-                    &["Hand off", "Cancel"],
+                    &question,
+                    Some(&detail),
+                    &[
+                        PromptButton::new(localization::text(cx, "agent-threads-hand-off")),
+                        PromptButton::cancel(localization::text(cx, "common-cancel")),
+                    ],
                     cx,
                 )
             })?;
@@ -1915,8 +2009,8 @@ impl Panel for AgentThreadsPanel {
         Some(IconName::Sparkle)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _: &App) -> Option<&'static str> {
-        Some("Agent Threads")
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<SharedString> {
+        Some(localization::text(cx, "panel-agent-threads"))
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
@@ -2084,6 +2178,8 @@ mod tests {
             // from concurrently-running tests race each other.
             cx.set_global(db::AppDatabase::test_new());
             theme_settings::init(theme::LoadThemes::JustBase, cx);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             editor::init(cx);
             terminal_view::init(cx);
             crate::init(cx);
@@ -3383,6 +3479,42 @@ mod tests {
         assert_eq!(
             notifications[0].1.as_deref(),
             Some("Codex is waiting for you · Project: notification-project")
+        );
+    }
+
+    #[gpui::test]
+    async fn bell_notification_uses_simplified_chinese(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        cx.update(|cx| {
+            localization::set_language(localization::UiLanguage::SimplifiedChinese, cx);
+        });
+        let temporary_directory =
+            tempfile::tempdir().expect("failed to create temporary directory");
+        let project_root = temporary_directory.path().join("notification-project");
+        std::fs::create_dir(&project_root).expect("failed to create project directory");
+        let project_root = project_root
+            .to_str()
+            .expect("temporary project path should be valid UTF-8")
+            .to_string()
+            .leak();
+        configure_echo_threads(cx, project_root, 5);
+        let window_handle = init_workspace(cx, project_root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_views = terminal_views(&window_handle, cx);
+        assert_eq!(terminal_views.len(), 1);
+        let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        let notifications = cx.shown_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(
+            notifications[0].1.as_deref(),
+            Some("Codex 正在等待您 · 项目：notification-project")
         );
     }
 

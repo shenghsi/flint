@@ -242,13 +242,13 @@ impl Render for CursorPosition {
                     }))
                     .tooltip(move |_window, cx| match context.as_ref() {
                         Some(context) => Tooltip::for_action_in(
-                            "Go to Line/Column",
+                            localization::text(cx, "go-to-line-action"),
                             &editor::actions::ToggleGoToLine,
                             context,
                             cx,
                         ),
                         None => Tooltip::for_action(
-                            "Go to Line/Column",
+                            localization::text(cx, "go-to-line-action"),
                             &editor::actions::ToggleGoToLine,
                             cx,
                         ),

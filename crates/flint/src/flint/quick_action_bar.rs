@@ -131,7 +131,7 @@ impl Render for QuickActionBar {
             IconButton::new("open_changes_icon", IconName::Diff)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
-                .tooltip(Tooltip::text("Open Changes"))
+                .tooltip(Tooltip::text(localization::text(cx, "common-open-changes")))
                 .on_click(move |_, window, cx| {
                     let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
                         return;
@@ -196,7 +196,7 @@ impl Render for QuickActionBar {
                         .when(!is_deployed, |this| {
                             this.when(has_available_code_actions, |this| {
                                 this.tooltip(Tooltip::for_action_title(
-                                    "Code Actions",
+                                    localization::text(cx, "flint-code-actions"),
                                     &ToggleCodeActions::default(),
                                 ))
                             })
@@ -204,7 +204,7 @@ impl Render for QuickActionBar {
                                 !has_available_code_actions,
                                 |this| {
                                     this.tooltip(Tooltip::for_action_title(
-                                        "No Code Actions Available",
+                                        localization::text(cx, "flint-no-code-actions"),
                                         &ToggleCodeActions::default(),
                                     ))
                                 },
@@ -252,55 +252,86 @@ impl Render for QuickActionBar {
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_selections_handle.is_deployed()),
-                    Tooltip::text("Selection Controls"),
+                    Tooltip::text(localization::text(cx, "flint-selection-controls")),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
                 .anchor(Anchor::TopRight)
                 .menu(move |window, cx| {
                     let focus = focus.clone();
-                    let menu = ContextMenu::build(window, cx, move |menu, _, _| {
+                    let menu = ContextMenu::build(window, cx, move |menu, _, cx| {
                         menu.context(focus.clone())
-                            .action("Select All", Box::new(SelectAll))
                             .action(
-                                "Select Next Occurrence",
+                                localization::text(cx, "menu-select-all"),
+                                Box::new(SelectAll),
+                            )
+                            .action(
+                                localization::text(cx, "menu-select-next-occurrence"),
                                 Box::new(SelectNext {
                                     replace_newest: false,
                                 }),
                             )
-                            .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
-                            .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
                             .action(
-                                "Add Cursor Above",
+                                localization::text(cx, "menu-expand-selection"),
+                                Box::new(SelectLargerSyntaxNode),
+                            )
+                            .action(
+                                localization::text(cx, "menu-shrink-selection"),
+                                Box::new(SelectSmallerSyntaxNode),
+                            )
+                            .action(
+                                localization::text(cx, "menu-add-cursor-above"),
                                 Box::new(AddSelectionAbove {
                                     skip_soft_wrap: true,
                                 }),
                             )
                             .action(
-                                "Add Cursor Below",
+                                localization::text(cx, "menu-add-cursor-below"),
                                 Box::new(AddSelectionBelow {
                                     skip_soft_wrap: true,
                                 }),
                             )
                             .separator()
-                            .action("Go to Symbol", Box::new(ToggleOutline))
-                            .action("Go to Line/Column", Box::new(ToggleGoToLine))
-                            .separator()
-                            .action("Next Problem", Box::new(GoToDiagnostic::default()))
                             .action(
-                                "Previous Problem",
+                                localization::text(cx, "menu-go-to-symbol-in-editor"),
+                                Box::new(ToggleOutline),
+                            )
+                            .action(
+                                localization::text(cx, "menu-go-to-line-column"),
+                                Box::new(ToggleGoToLine),
+                            )
+                            .separator()
+                            .action(
+                                localization::text(cx, "menu-next-problem"),
+                                Box::new(GoToDiagnostic::default()),
+                            )
+                            .action(
+                                localization::text(cx, "menu-previous-problem"),
                                 Box::new(GoToPreviousDiagnostic::default()),
                             )
                             .separator()
-                            .action_disabled_when(!has_diff_hunks, "Next Hunk", Box::new(GoToHunk))
                             .action_disabled_when(
                                 !has_diff_hunks,
-                                "Previous Hunk",
+                                localization::text(cx, "flint-next-hunk"),
+                                Box::new(GoToHunk),
+                            )
+                            .action_disabled_when(
+                                !has_diff_hunks,
+                                localization::text(cx, "flint-previous-hunk"),
                                 Box::new(GoToPreviousHunk),
                             )
                             .separator()
-                            .action("Move Line Up", Box::new(MoveLineUp))
-                            .action("Move Line Down", Box::new(MoveLineDown))
-                            .action("Duplicate Selection", Box::new(DuplicateLineDown))
+                            .action(
+                                localization::text(cx, "menu-move-line-up"),
+                                Box::new(MoveLineUp),
+                            )
+                            .action(
+                                localization::text(cx, "menu-move-line-down"),
+                                Box::new(MoveLineDown),
+                            )
+                            .action(
+                                localization::text(cx, "menu-duplicate-selection"),
+                                Box::new(DuplicateLineDown),
+                            )
                     });
                     Some(menu)
                 })
@@ -318,19 +349,19 @@ impl Render for QuickActionBar {
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
-                    Tooltip::text("Editor Controls"),
+                    Tooltip::text(localization::text(cx, "flint-editor-controls")),
                 )
                 .anchor(Anchor::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |window, cx| {
                     let menu = ContextMenu::build(window, cx, {
                         let focus_handle = editor_focus_handle.clone();
-                        |mut menu, _, _| {
+                        |mut menu, _, cx| {
                             menu = menu.context(focus_handle);
 
                             if supports_inlay_hints {
                                 menu = menu.toggleable_entry(
-                                    "Inlay Hints",
+                                    localization::text(cx, "flint-inlay-hints"),
                                     inlay_hints_enabled,
                                     IconPosition::Start,
                                     Some(editor::actions::ToggleInlayHints.boxed_clone()),
@@ -353,7 +384,7 @@ impl Render for QuickActionBar {
 
                             if supports_semantic_tokens {
                                 menu = menu.toggleable_entry(
-                                    "Semantic Highlights",
+                                    localization::text(cx, "flint-semantic-highlights"),
                                     semantic_highlights_enabled,
                                     IconPosition::Start,
                                     Some(editor::actions::ToggleSemanticHighlights.boxed_clone()),
@@ -376,7 +407,7 @@ impl Render for QuickActionBar {
 
                             if supports_code_lens {
                                 menu = menu.toggleable_entry(
-                                    "Code Lens",
+                                    localization::text(cx, "flint-code-lens"),
                                     code_lens_enabled,
                                     IconPosition::Start,
                                     Some(editor::actions::ToggleCodeLens.boxed_clone()),
@@ -398,29 +429,33 @@ impl Render for QuickActionBar {
                             }
 
                             if supports_minimap {
-                                menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
-                                    let editor = editor.clone();
-                                    move |window, cx| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                editor.toggle_minimap(
-                                                    &editor::actions::ToggleMinimap,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                },)
+                                menu = menu.toggleable_entry(
+                                    localization::text(cx, "flint-minimap"),
+                                    minimap_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleMinimap.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_minimap(
+                                                        &editor::actions::ToggleMinimap,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                )
                             }
-
-
 
                             menu = menu.separator();
 
                             if is_full {
                                 menu = menu.toggleable_entry(
-                                    "Diagnostics",
+                                    localization::text(cx, "flint-diagnostics"),
                                     diagnostics_enabled,
                                     IconPosition::Start,
                                     Some(ToggleDiagnostics.boxed_clone()),
@@ -441,25 +476,38 @@ impl Render for QuickActionBar {
                                 );
 
                                 if supports_inline_diagnostics {
-                                    let mut inline_diagnostics_item = ContextMenuEntry::new("Inline Diagnostics")
-                                        .toggleable(IconPosition::Start, diagnostics_enabled && inline_diagnostics_enabled)
-                                        .action(ToggleInlineDiagnostics.boxed_clone())
-                                        .handler({
-                                            let editor = editor.clone();
-                                            move |window, cx| {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.toggle_inline_diagnostics(
-                                                            &ToggleInlineDiagnostics,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                            }
-                                        });
+                                    let mut inline_diagnostics_item = ContextMenuEntry::new(
+                                        localization::text(cx, "flint-inline-diagnostics"),
+                                    )
+                                    .toggleable(
+                                        IconPosition::Start,
+                                        diagnostics_enabled && inline_diagnostics_enabled,
+                                    )
+                                    .action(ToggleInlineDiagnostics.boxed_clone())
+                                    .handler({
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_inline_diagnostics(
+                                                        &ToggleInlineDiagnostics,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    });
                                     if !diagnostics_enabled {
-                                        inline_diagnostics_item = inline_diagnostics_item.disabled(true).documentation_aside(DocumentationSide::Left, |_|  Label::new("Inline diagnostics are not available until regular diagnostics are enabled.").into_any_element());
+                                        inline_diagnostics_item = inline_diagnostics_item
+                                            .disabled(true)
+                                            .documentation_aside(DocumentationSide::Left, |cx| {
+                                                Label::new(localization::text(
+                                                    cx,
+                                                    "flint-inline-diagnostics-unavailable",
+                                                ))
+                                                .into_any_element()
+                                            });
                                     }
                                     menu = menu.item(inline_diagnostics_item)
                                 }
@@ -468,7 +516,7 @@ impl Render for QuickActionBar {
                             }
 
                             menu = menu.toggleable_entry(
-                                "Line Numbers",
+                                localization::text(cx, "flint-line-numbers"),
                                 show_line_numbers,
                                 IconPosition::Start,
                                 Some(editor::actions::ToggleLineNumbers.boxed_clone()),
@@ -489,7 +537,7 @@ impl Render for QuickActionBar {
                             );
 
                             menu = menu.toggleable_entry(
-                                "Selection Menu",
+                                localization::text(cx, "flint-selection-menu"),
                                 selection_menu_enabled,
                                 IconPosition::Start,
                                 Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
@@ -510,7 +558,7 @@ impl Render for QuickActionBar {
                             );
 
                             menu = menu.toggleable_entry(
-                                "Auto Signature Help",
+                                localization::text(cx, "flint-auto-signature-help"),
                                 auto_signature_help_enabled,
                                 IconPosition::Start,
                                 Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
@@ -533,7 +581,7 @@ impl Render for QuickActionBar {
                             menu = menu.separator();
 
                             menu = menu.toggleable_entry(
-                                "Inline Git Blame",
+                                localization::text(cx, "flint-inline-git-blame"),
                                 git_blame_inline_enabled,
                                 IconPosition::Start,
                                 Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
@@ -554,7 +602,7 @@ impl Render for QuickActionBar {
                             );
 
                             menu = menu.toggleable_entry(
-                                "Column Git Blame",
+                                localization::text(cx, "flint-column-git-blame"),
                                 show_git_blame_gutter,
                                 IconPosition::Start,
                                 Some(git::Blame.boxed_clone()),
@@ -563,11 +611,7 @@ impl Render for QuickActionBar {
                                     move |window, cx| {
                                         editor
                                             .update(cx, |editor, cx| {
-                                                editor.toggle_git_blame(
-                                                    &git::Blame,
-                                                    window,
-                                                    cx,
-                                                )
+                                                editor.toggle_git_blame(&git::Blame, window, cx)
                                             })
                                             .ok();
                                     }
@@ -577,32 +621,41 @@ impl Render for QuickActionBar {
                             menu = menu.separator();
 
                             menu = menu.toggleable_entry(
-                                "Vim Mode",
+                                localization::text(cx, "flint-vim-mode"),
                                 vim_mode_enabled,
                                 IconPosition::Start,
                                 None,
                                 {
                                     move |window, cx| {
                                         let new_value = !vim_mode_enabled;
-                                        VimModeSetting::override_global(VimModeSetting(new_value), cx);
-                                        HelixModeSetting::override_global(HelixModeSetting(false), cx);
+                                        VimModeSetting::override_global(
+                                            VimModeSetting(new_value),
+                                            cx,
+                                        );
+                                        HelixModeSetting::override_global(
+                                            HelixModeSetting(false),
+                                            cx,
+                                        );
                                         window.refresh();
                                     }
                                 },
                             );
                             menu = menu.toggleable_entry(
-                                "Helix Mode",
+                                localization::text(cx, "flint-helix-mode"),
                                 helix_mode_enabled,
                                 IconPosition::Start,
                                 None,
                                 {
                                     move |window, cx| {
                                         let new_value = !helix_mode_enabled;
-                                        HelixModeSetting::override_global(HelixModeSetting(new_value), cx);
+                                        HelixModeSetting::override_global(
+                                            HelixModeSetting(new_value),
+                                            cx,
+                                        );
                                         VimModeSetting::override_global(VimModeSetting(false), cx);
                                         window.refresh();
                                     }
-                                }
+                                },
                             );
 
                             menu

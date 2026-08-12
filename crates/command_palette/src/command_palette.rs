@@ -65,6 +65,126 @@ pub fn normalize_action_query(input: &str) -> String {
     result
 }
 
+fn localized_action_name(action: &dyn Action, cx: &App) -> String {
+    action_translation_identifier(action.name())
+        .map(|identifier| localization::text(cx, identifier).to_string())
+        .unwrap_or_else(|| humanize_action_name(action.name()))
+}
+
+fn action_search_name(action: &dyn Action, cx: &App) -> String {
+    let english_name = humanize_action_name(action.name());
+    let localized_name = localized_action_name(action, cx);
+    if localized_name == english_name {
+        localized_name
+    } else {
+        format!("{localized_name} {english_name}")
+    }
+}
+
+fn action_translation_identifier(action_name: &str) -> Option<&'static str> {
+    Some(match action_name {
+        "workspace::NewFile" => "menu-new",
+        "workspace::NewWindow" => "menu-new-window",
+        "workspace::OpenFiles" => "menu-open-file",
+        "workspace::Open" => {
+            if cfg!(not(target_os = "macos")) {
+                "menu-open-folder"
+            } else {
+                "menu-open"
+            }
+        }
+        "workspace::Save" => "menu-save",
+        "workspace::SaveAs" => "menu-save-as",
+        "workspace::SaveAll" => "menu-save-all",
+        "workspace::CloseActiveItem" => "menu-close-editor",
+        "workspace::CloseProject" => "menu-close-project",
+        "workspace::CloseWindow" => "menu-close-window",
+        "workspace::GoBack" => "menu-back",
+        "workspace::GoForward" => "menu-forward",
+        "workspace::DeploySearch" => "menu-find-in-project",
+        "workspace::ToggleFileFinder" => "menu-go-to-file",
+        "workspace::SplitUp" => "menu-split-up",
+        "workspace::SplitDown" => "menu-split-down",
+        "workspace::SplitLeft" => "menu-split-left",
+        "workspace::SplitRight" => "menu-split-right",
+        "flint::IncreaseBufferFontSize" => "menu-zoom-in",
+        "flint::DecreaseBufferFontSize" => "menu-zoom-out",
+        "flint::ResetBufferFontSize" => "menu-reset-zoom",
+        "flint::ResetAllZoom" => "menu-reset-all-zoom",
+        "workspace::ToggleLeftDock" => "menu-toggle-left-dock",
+        "workspace::ToggleRightDock" => "menu-toggle-right-dock",
+        "workspace::ToggleBottomDock" => "menu-toggle-bottom-dock",
+        "workspace::ToggleAllDocks" => "menu-toggle-all-docks",
+        "flint::Extensions" => "menu-extensions",
+        "agent_threads::ToggleFocus" => "menu-agent-threads",
+        "agent_threads::NewCodexThread" => "menu-new-codex-thread",
+        "agent_threads::NewClaudeThread" => "menu-new-claude-thread",
+        "agent_threads::NewPiThread" => "menu-new-pi-thread",
+        "agent_threads::NewOpenCodeThread" => "menu-new-opencode-thread",
+        "auto_update::Check" => "menu-check-for-updates",
+        "theme_selector::Toggle" => "menu-select-theme",
+        "icon_theme_selector::Toggle" => "menu-select-icon-theme",
+        "cli::InstallCliBinary" => "menu-install-cli",
+        "flint::OpenSettings" => "menu-open-settings",
+        "flint::OpenSettingsFile" => "menu-open-settings-file",
+        "flint::OpenProjectSettingsFile" => "menu-open-project-settings-file",
+        "flint::OpenDefaultSettings" => "menu-open-default-settings",
+        "flint::OpenKeymap" => "menu-open-keymap",
+        "flint::OpenKeymapFile" => "menu-open-keymap-file",
+        "flint::OpenDefaultKeymap" => "menu-open-default-key-bindings",
+        "flint::About" => "menu-about-flint",
+        "flint::Quit" => "menu-quit-flint",
+        "flint::OpenRecent" => "menu-open-recent",
+        "flint::OpenRemote" => "menu-open-remote",
+        "flint::OpenProjectTasks" => "menu-edit-tasks-json",
+        "flint::OpenFlintRepo" => "menu-flint-repository",
+        "flint::Hide" => "menu-hide-flint",
+        "flint::HideOthers" => "menu-hide-others",
+        "flint::ShowAll" => "menu-show-all",
+        "flint::Minimize" => "menu-minimize",
+        "flint::Zoom" => "menu-window-zoom",
+        "command_palette::Toggle" => "menu-command-palette",
+        "project_panel::ToggleFocus" => "menu-project-panel",
+        "outline_panel::ToggleFocus" => "menu-outline-panel",
+        "terminal_panel::ToggleFocus" => "menu-terminal",
+        "extensions_ui::Toggle" => "menu-extensions",
+        "editor::Undo" => "menu-undo",
+        "editor::Redo" => "menu-redo",
+        "editor::Cut" => "menu-cut",
+        "editor::Copy" => "menu-copy",
+        "editor::CopyAndTrim" => "menu-copy-and-trim",
+        "editor::Paste" => "menu-paste",
+        "editor::ToggleComments" => "menu-toggle-line-comment",
+        "search::buffer_search::Deploy" => "menu-find",
+        "text_finder::Toggle" => "menu-text-finder",
+        "diagnostics::Deploy" => "menu-diagnostics",
+        "editor::SelectAll" => "menu-select-all",
+        "editor::SelectLargerSyntaxNode" => "menu-expand-selection",
+        "editor::SelectSmallerSyntaxNode" => "menu-shrink-selection",
+        "editor::SelectNextSyntaxNode" => "menu-select-next-sibling",
+        "editor::SelectPreviousSyntaxNode" => "menu-select-previous-sibling",
+        "editor::AddSelectionAbove" => "menu-add-cursor-above",
+        "editor::AddSelectionBelow" => "menu-add-cursor-below",
+        "editor::SelectNext" => "menu-select-next-occurrence",
+        "editor::SelectPrevious" => "menu-select-previous-occurrence",
+        "editor::SelectAllMatches" => "menu-select-all-occurrences",
+        "editor::MoveLineUp" => "menu-move-line-up",
+        "editor::MoveLineDown" => "menu-move-line-down",
+        "editor::DuplicateLineDown" => "menu-duplicate-selection",
+        "editor::GoToDefinition" => "menu-go-to-definition",
+        "editor::GoToDeclaration" => "menu-go-to-declaration",
+        "editor::GoToTypeDefinition" => "menu-go-to-type-definition",
+        "editor::FindAllReferences" => "menu-find-all-references",
+        "editor::GoToDiagnostic" => "menu-next-problem",
+        "editor::GoToPreviousDiagnostic" => "menu-previous-problem",
+        "workspace::AddFolderToProject" => "menu-add-folder-to-project",
+        "outline::Toggle" => "menu-go-to-symbol-in-editor",
+        "editor::ToggleGoToLine" => "menu-go-to-line-column",
+        "task::Spawn" => "menu-spawn-task",
+        _ => return None,
+    })
+}
+
 impl CommandPalette {
     fn register(
         workspace: &mut Workspace,
@@ -110,7 +230,9 @@ impl CommandPalette {
                 }
 
                 Some(Command {
-                    name: humanize_action_name(action.name()),
+                    name: localized_action_name(&*action, cx),
+                    search_name: action_search_name(&*action, cx),
+                    history_key: action.name().to_string(),
                     action,
                 })
             })
@@ -172,6 +294,8 @@ pub struct CommandPaletteDelegate {
 
 struct Command {
     name: String,
+    search_name: String,
+    history_key: String,
     action: Box<dyn Action>,
 }
 
@@ -264,6 +388,8 @@ impl Clone for Command {
     fn clone(&self) -> Self {
         Self {
             name: self.name.clone(),
+            search_name: self.search_name.clone(),
+            history_key: self.history_key.clone(),
             action: self.action.boxed_clone(),
         }
     }
@@ -317,6 +443,8 @@ impl CommandPaletteDelegate {
             }
             commands.push(Command {
                 name: string.clone(),
+                search_name: string.clone(),
+                history_key: action.name().to_string(),
                 action,
             });
             new_matches.push(StringMatch {
@@ -375,8 +503,8 @@ impl CommandPaletteDelegate {
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Execute a command...".into()
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
+        localization::text(cx, "command-palette-placeholder").into()
     }
 
     fn select_history(
@@ -459,7 +587,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             async move {
                 commands.sort_by_key(|action| {
                     (
-                        Reverse(hit_counts.get(&action.name).cloned()),
+                        Reverse(hit_counts.get(&action.history_key).cloned()),
                         action.name.clone(),
                     )
                 });
@@ -467,7 +595,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 let candidates = commands
                     .iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.search_name))
                     .collect::<Vec<_>>();
 
                 let matches = fuzzy_nucleo::match_strings_async(
@@ -573,7 +701,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         let command = self.commands.swap_remove(action_ix);
         self.matches.clear();
         self.commands.clear();
-        let command_name = command.name.clone();
+        let command_name = command.history_key.clone();
         let latest_query = self.latest_query.clone();
         let db = CommandPaletteDB::global(cx);
         cx.background_spawn(async move {
@@ -607,10 +735,15 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .w_full()
                         .py_px()
                         .justify_between()
-                        .child(HighlightedLabel::new(
-                            command.name.clone(),
-                            matching_command.positions.clone(),
-                        ))
+                        .child(HighlightedLabel::new(command.name.clone(), {
+                            let displayed_character_count = command.name.chars().count();
+                            matching_command
+                                .positions
+                                .iter()
+                                .copied()
+                                .filter(|position| *position < displayed_character_count)
+                                .collect::<Vec<_>>()
+                        }))
                         .child(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,
@@ -631,23 +764,29 @@ impl PickerDelegate for CommandPaletteDelegate {
 
         let focus_handle = &self.previous_focus_handle;
         let keybinding_buttons = if keybind.has_binding(window) {
-            Button::new("change", "Change Keybinding…")
-                .key_binding(
-                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
-                        .map(|kb| kb.size(rems_from_px(12.))),
-                )
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
-                })
+            Button::new(
+                "change",
+                localization::text(cx, "command-palette-change-keybinding"),
+            )
+            .key_binding(
+                KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
+                    .map(|kb| kb.size(rems_from_px(12.))),
+            )
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+            })
         } else {
-            Button::new("add", "Add Keybinding…")
-                .key_binding(
-                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
-                        .map(|kb| kb.size(rems_from_px(12.))),
-                )
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
-                })
+            Button::new(
+                "add",
+                localization::text(cx, "command-palette-add-keybinding"),
+            )
+            .key_binding(
+                KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
+                    .map(|kb| kb.size(rems_from_px(12.))),
+            )
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+            })
         };
 
         Some(
@@ -660,7 +799,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(keybinding_buttons)
                 .child(
-                    Button::new("run-action", "Run")
+                    Button::new("run-action", localization::text(cx, "command-palette-run"))
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -761,6 +900,65 @@ mod tests {
     use project::Project;
     use settings::KeymapFile;
     use workspace::{AppState, MultiWorkspace, Workspace};
+
+    #[test]
+    fn core_menu_actions_have_translation_identifiers() {
+        for action_name in [
+            "flint::IncreaseBufferFontSize",
+            "flint::DecreaseBufferFontSize",
+            "flint::ResetBufferFontSize",
+            "flint::ResetAllZoom",
+            "workspace::ToggleLeftDock",
+            "workspace::ToggleRightDock",
+            "workspace::ToggleBottomDock",
+            "workspace::ToggleAllDocks",
+            "flint::Extensions",
+            "agent_threads::ToggleFocus",
+            "agent_threads::NewCodexThread",
+            "agent_threads::NewClaudeThread",
+            "agent_threads::NewPiThread",
+            "agent_threads::NewOpenCodeThread",
+            "auto_update::Check",
+            "theme_selector::Toggle",
+            "icon_theme_selector::Toggle",
+            "cli::InstallCliBinary",
+            "outline_panel::ToggleFocus",
+            "terminal_panel::ToggleFocus",
+            "diagnostics::Deploy",
+            "search::buffer_search::Deploy",
+            "text_finder::Toggle",
+            "flint::OpenSettingsFile",
+            "flint::OpenProjectSettingsFile",
+            "flint::OpenDefaultSettings",
+            "flint::OpenKeymapFile",
+            "flint::OpenDefaultKeymap",
+            "flint::OpenRecent",
+            "flint::OpenRemote",
+            "workspace::Open",
+            "workspace::AddFolderToProject",
+            "workspace::Save",
+            "workspace::SplitRight",
+            "editor::ToggleComments",
+            "editor::Copy",
+            "outline::Toggle",
+            "editor::ToggleGoToLine",
+            "editor::GoToDefinition",
+            "editor::GoToDiagnostic",
+            "task::Spawn",
+            "flint::OpenProjectTasks",
+            "flint::OpenFlintRepo",
+            "flint::Hide",
+            "flint::HideOthers",
+            "flint::ShowAll",
+            "flint::Minimize",
+            "flint::Zoom",
+        ] {
+            assert!(
+                action_translation_identifier(action_name).is_some(),
+                "missing translation identifier for {action_name}"
+            );
+        }
+    }
 
     #[test]
     fn test_humanize_action_name() {
@@ -887,7 +1085,7 @@ mod tests {
         });
 
         cx.simulate_keystrokes("cmd-shift-p");
-        cx.simulate_input("bcksp");
+        cx.simulate_input("editor: bcksp");
 
         let palette = workspace.update(cx, |workspace, cx| {
             workspace
@@ -1008,6 +1206,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
@@ -1030,6 +1230,17 @@ mod tests {
             ));
             app_state
         })
+    }
+
+    #[gpui::test]
+    fn chinese_action_search_keeps_the_english_alias(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            localization::init(localization::UiLanguage::SimplifiedChinese, cx)
+                .expect("test localization must load");
+            let action = workspace::NewFile;
+            assert_eq!(localized_action_name(&action, cx), "新建");
+            assert_eq!(action_search_name(&action, cx), "新建 workspace: new file");
+        });
     }
 
     fn open_palette_with_history(

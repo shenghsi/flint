@@ -109,6 +109,7 @@
             </button>
             {{/if}}
             <div class="right-container">
+                <a id="documentation-language" class="icon-button" href="/docs/zh-CN/" title="简体中文文档" aria-label="简体中文文档">文</a>
                 <button id="theme-toggle" class="icon-button" type="button" title="Change Theme" aria-label="Change Theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                     <i class="fa fa-paint-brush"></i>
                 </button>
@@ -137,6 +138,43 @@
                 {{/if}}
             </div>
         </header>
+
+        <script>
+            (function() {
+                var languageLink = document.getElementById('documentation-language');
+                var chinesePrefix = '/docs/zh-CN/';
+                var englishPrefix = '/docs/';
+                var chinesePages = new Set(['', 'development/glossary.html', 'index.html', 'getting-started.html']);
+                if (window.location.pathname.startsWith(chinesePrefix)) {
+                    var chinesePage = window.location.pathname.slice(chinesePrefix.length);
+                    languageLink.href = englishPrefix + chinesePage;
+                    languageLink.title = 'English documentation';
+                    languageLink.setAttribute('aria-label', 'English documentation');
+                    languageLink.textContent = 'EN';
+                } else if (window.location.pathname.startsWith(englishPrefix)) {
+                    var englishPage = window.location.pathname.slice(englishPrefix.length);
+                    if (chinesePages.has(englishPage)) {
+                        languageLink.href = chinesePrefix + englishPage;
+                    } else {
+                        languageLink.href = window.location.pathname + '?language-fallback=zh-CN';
+                        languageLink.title = '简体中文文档（此页面使用英文回退）';
+                        languageLink.setAttribute('aria-label', languageLink.title);
+                    }
+                }
+
+                if (new URLSearchParams(window.location.search).has('language-fallback')) {
+                    document.addEventListener('DOMContentLoaded', function() {
+                        var fallback = document.createElement('div');
+                        fallback.setAttribute('role', 'status');
+                        fallback.style.padding = '0.75rem 1rem';
+                        fallback.style.textAlign = 'center';
+                        fallback.style.background = 'var(--quote-bg)';
+                        fallback.textContent = '此页面还没有中文版本。现在显示英文页面。';
+                        document.getElementById('page-wrapper').prepend(fallback);
+                    });
+                }
+            })();
+        </script>
 
         <div id="page-wrapper" class="page-wrapper">
 

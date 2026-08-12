@@ -20,6 +20,7 @@ collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
 log.workspace = true
+localization.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

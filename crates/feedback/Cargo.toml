@@ -17,6 +17,7 @@ test-support = []
 [dependencies]
 extension_host.workspace = true
 gpui.workspace = true
+localization.workspace = true
 system_specs.workspace = true
 urlencoding.workspace = true
 util.workspace = true

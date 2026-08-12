@@ -655,7 +655,7 @@ impl StackFrameList {
                                     }
                                 }))
                                 .tooltip(move |window, cx| {
-                                    Tooltip::text("Restart Stack Frame")(window, cx)
+                                    Tooltip::text(localization::text(cx, "debugger-restart-frame"))(window, cx)
                                 }),
                             ),
                     )
@@ -695,6 +695,27 @@ impl StackFrameList {
     ) -> AnyElement {
         let first_stack_frame = &stack_frames[0];
         let is_selected = Some(ix) == self.selected_ix;
+        let more_frames = first_stack_frame
+            .source
+            .as_ref()
+            .and_then(|source| source.origin.as_ref())
+            .map_or_else(
+                || {
+                    localization::tr!(
+                        cx,
+                        "debugger-show-more-frames",
+                        count = stack_frames.len(),
+                    )
+                },
+                |origin| {
+                    localization::tr!(
+                        cx,
+                        "debugger-show-more-frames-from-origin",
+                        count = stack_frames.len(),
+                        origin = origin,
+                    )
+                },
+            );
 
         h_flex()
             .rounded_md()
@@ -719,15 +740,7 @@ impl StackFrameList {
                     .text_ui_sm(cx)
                     .truncate()
                     .text_color(cx.theme().colors().text_muted)
-                    .child(format!(
-                        "Show {} more{}",
-                        stack_frames.len(),
-                        first_stack_frame
-                            .source
-                            .as_ref()
-                            .and_then(|source| source.origin.as_ref())
-                            .map_or(String::new(), |origin| format!(": {}", origin))
-                    )),
+                    .child(more_frames),
             )
             .into_any()
     }

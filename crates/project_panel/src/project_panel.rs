@@ -27,10 +27,10 @@ use gpui::{
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
     ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
     ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
-    Render, ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window, actions, anchored, deferred, div, hsla, linear_color_stop, linear_gradient,
-    point, px, size, transparent_white, uniform_list,
+    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels, Point, PromptButton,
+    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
+    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -1118,112 +1118,169 @@ impl ProjectPanel {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
                         menu.when(is_dir, |menu| {
-                            menu.action("Search Inside", Box::new(NewSearchInDirectory))
+                            menu.action(
+                                localization::text(cx, "project-panel-search-inside"),
+                                Box::new(NewSearchInDirectory),
+                            )
                         })
                     } else {
-                        menu.action("New File", Box::new(NewFile))
-                            .action("New Folder", Box::new(NewDirectory))
-                            .separator()
-                            .when(is_local, |menu| {
-                                menu.action(
-                                    ui::utils::reveal_in_file_manager_label(is_remote),
-                                    Box::new(RevealInFileManager),
-                                )
-                            })
-                            .when(is_local, |menu| {
-                                menu.action("Open in Default App", Box::new(OpenWithSystem))
-                            })
-                            .action("Open in Terminal", Box::new(OpenInTerminal))
-                            .when(is_dir, |menu| {
-                                menu.separator()
-                                    .action("Find in Folder…", Box::new(NewSearchInDirectory))
-                            })
-                            .when(is_unfoldable, |menu| {
-                                menu.action("Unfold Directory", Box::new(UnfoldDirectory))
-                            })
-                            .when(is_foldable, |menu| {
-                                menu.action("Fold Directory", Box::new(FoldDirectory))
-                            })
-                            .when(should_show_compare, |menu| {
-                                menu.separator()
-                                    .action("Compare Marked Files", Box::new(CompareMarkedFiles))
-                            })
-                            .separator()
-                            .action("Cut", Box::new(Cut))
-                            .action("Copy", Box::new(Copy))
-                            .action("Duplicate", Box::new(Duplicate))
-                            // TODO: Paste should always be visible, cbut disabled when clipboard is empty
-                            .action_disabled_when(!has_pasteable_content, "Paste", Box::new(Paste))
-                            .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |menu| {
-                                menu.action_disabled_when(
-                                    !self.undo_manager.can_undo(),
-                                    "Undo",
-                                    Box::new(Undo),
-                                )
-                                .action_disabled_when(
-                                    !self.undo_manager.can_redo(),
-                                    "Redo",
-                                    Box::new(Redo),
-                                )
-                            })
-                            .when(is_remote, |menu| {
-                                menu.separator()
-                                    .action("Download...", Box::new(DownloadFromRemote))
-                            })
-                            .separator()
-                            .action("Copy Path", Box::new(flint_actions::workspace::CopyPath))
-                            .action(
-                                "Copy Relative Path",
-                                Box::new(flint_actions::workspace::CopyRelativePath),
+                        menu.action(
+                            localization::text(cx, "project-panel-new-file"),
+                            Box::new(NewFile),
+                        )
+                        .action(
+                            localization::text(cx, "project-panel-new-folder"),
+                            Box::new(NewDirectory),
+                        )
+                        .separator()
+                        .when(is_local, |menu| {
+                            menu.action(
+                                ui::utils::reveal_in_file_manager_label(is_remote),
+                                Box::new(RevealInFileManager),
                             )
-                            .when(has_git_repo, |menu| {
-                                menu.separator()
-                                    .when(!is_dir && self.has_git_changes(entry_id), |menu| {
-                                        menu.action(
-                                            "Restore File",
-                                            Box::new(git::RestoreFile { skip_prompt: false }),
-                                        )
-                                    })
-                                    .action("Add to .gitignore", Box::new(git::AddToGitignore))
-                                    .when(has_history, |menu| {
-                                        menu.action("View History", Box::new(git::FileHistory))
-                                    })
-                            })
-                            .when(!should_hide_rename, |menu| {
-                                menu.separator().action("Rename", Box::new(Rename))
-                            })
-                            .when(!is_root && !is_remote, |menu| {
-                                menu.action("Trash", Box::new(Trash { skip_prompt: false }))
-                            })
-                            .when(!is_root, |menu| {
-                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
-                            })
-                            .when(is_root, |menu| {
-                                menu.separator()
-                                    .action(
-                                        "Add Folders to Project…",
-                                        Box::new(workspace::AddFolderToProject),
+                        })
+                        .when(is_local, |menu| {
+                            menu.action(
+                                localization::text(cx, "project-panel-open-in-default-app"),
+                                Box::new(OpenWithSystem),
+                            )
+                        })
+                        .action(
+                            localization::text(cx, "project-panel-open-in-terminal"),
+                            Box::new(OpenInTerminal),
+                        )
+                        .when(is_dir, |menu| {
+                            menu.separator().action(
+                                localization::text(cx, "project-panel-find-in-folder"),
+                                Box::new(NewSearchInDirectory),
+                            )
+                        })
+                        .when(is_unfoldable, |menu| {
+                            menu.action(
+                                localization::text(cx, "project-panel-unfold-directory"),
+                                Box::new(UnfoldDirectory),
+                            )
+                        })
+                        .when(is_foldable, |menu| {
+                            menu.action(
+                                localization::text(cx, "project-panel-fold-directory"),
+                                Box::new(FoldDirectory),
+                            )
+                        })
+                        .when(should_show_compare, |menu| {
+                            menu.separator().action(
+                                localization::text(cx, "project-panel-compare-marked-files"),
+                                Box::new(CompareMarkedFiles),
+                            )
+                        })
+                        .separator()
+                        .action(localization::text(cx, "project-panel-cut"), Box::new(Cut))
+                        .action(localization::text(cx, "project-panel-copy"), Box::new(Copy))
+                        .action(
+                            localization::text(cx, "project-panel-duplicate"),
+                            Box::new(Duplicate),
+                        )
+                        // TODO: Paste should always be visible, cbut disabled when clipboard is empty
+                        .action_disabled_when(
+                            !has_pasteable_content,
+                            localization::text(cx, "project-panel-paste"),
+                            Box::new(Paste),
+                        )
+                        .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |menu| {
+                            menu.action_disabled_when(
+                                !self.undo_manager.can_undo(),
+                                localization::text(cx, "project-panel-undo"),
+                                Box::new(Undo),
+                            )
+                            .action_disabled_when(
+                                !self.undo_manager.can_redo(),
+                                localization::text(cx, "project-panel-redo"),
+                                Box::new(Redo),
+                            )
+                        })
+                        .when(is_remote, |menu| {
+                            menu.separator().action(
+                                localization::text(cx, "project-panel-download"),
+                                Box::new(DownloadFromRemote),
+                            )
+                        })
+                        .separator()
+                        .action(
+                            localization::text(cx, "project-panel-copy-path"),
+                            Box::new(flint_actions::workspace::CopyPath),
+                        )
+                        .action(
+                            localization::text(cx, "project-panel-copy-relative-path"),
+                            Box::new(flint_actions::workspace::CopyRelativePath),
+                        )
+                        .when(has_git_repo, |menu| {
+                            menu.separator()
+                                .when(!is_dir && self.has_git_changes(entry_id), |menu| {
+                                    menu.action(
+                                        localization::text(cx, "project-panel-restore-file"),
+                                        Box::new(git::RestoreFile { skip_prompt: false }),
                                     )
-                                    .action("Remove from Project", Box::new(RemoveFromProject))
-                            })
-                            .when(is_dir && !is_root, |menu| {
-                                menu.separator().action(
-                                    "Collapse All",
-                                    Box::new(CollapseSelectedEntryAndChildren),
+                                })
+                                .action(
+                                    localization::text(cx, "project-panel-add-to-gitignore"),
+                                    Box::new(git::AddToGitignore),
                                 )
-                            })
-                            .when(is_dir && is_root, |menu| {
-                                let entity = entity.clone();
-                                menu.separator().item(
-                                    ContextMenuEntry::new("Collapse All").handler(
-                                        move |window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.collapse_all_for_root(window, cx);
-                                            });
-                                        },
-                                    ),
+                                .when(has_history, |menu| {
+                                    menu.action(
+                                        localization::text(cx, "project-panel-view-history"),
+                                        Box::new(git::FileHistory),
+                                    )
+                                })
+                        })
+                        .when(!should_hide_rename, |menu| {
+                            menu.separator().action(
+                                localization::text(cx, "project-panel-rename"),
+                                Box::new(Rename),
+                            )
+                        })
+                        .when(!is_root && !is_remote, |menu| {
+                            menu.action(
+                                localization::text(cx, "project-panel-trash"),
+                                Box::new(Trash { skip_prompt: false }),
+                            )
+                        })
+                        .when(!is_root, |menu| {
+                            menu.action(
+                                localization::text(cx, "project-panel-delete"),
+                                Box::new(Delete { skip_prompt: false }),
+                            )
+                        })
+                        .when(is_root, |menu| {
+                            menu.separator()
+                                .action(
+                                    localization::text(cx, "project-panel-add-folders-to-project"),
+                                    Box::new(workspace::AddFolderToProject),
                                 )
-                            })
+                                .action(
+                                    localization::text(cx, "project-panel-remove-from-project"),
+                                    Box::new(RemoveFromProject),
+                                )
+                        })
+                        .when(is_dir && !is_root, |menu| {
+                            menu.separator().action(
+                                localization::text(cx, "project-panel-collapse-all"),
+                                Box::new(CollapseSelectedEntryAndChildren),
+                            )
+                        })
+                        .when(is_dir && is_root, |menu| {
+                            let entity = entity.clone();
+                            menu.separator().item(
+                                ContextMenuEntry::new(localization::text(
+                                    cx,
+                                    "project-panel-collapse-all",
+                                ))
+                                .handler(move |window, cx| {
+                                    entity.update(cx, |this, cx| {
+                                        this.collapse_all_for_root(window, cx);
+                                    });
+                                }),
+                            )
+                        })
                     }
                 })
             });
@@ -1718,7 +1775,7 @@ impl ProjectPanel {
             let trimmed_filename = filename.trim();
             if trimmed_filename != filename {
                 edit_state.validation_state = ValidationState::Warning(
-                    "File or directory name contains leading or trailing whitespace.".to_string(),
+                    localization::text(cx, "project-panel-name-has-whitespace").to_string(),
                 );
                 cx.notify();
                 return;
@@ -1727,7 +1784,7 @@ impl ProjectPanel {
 
             let Ok(filename) = RelPath::unix(trimmed_filename) else {
                 edit_state.validation_state = ValidationState::Warning(
-                    "File or directory name contains leading or trailing whitespace.".to_string(),
+                    localization::text(cx, "project-panel-name-has-whitespace").to_string(),
                 );
                 cx.notify();
                 return;
@@ -1758,10 +1815,14 @@ impl ProjectPanel {
                     }
                 };
                 if already_exists {
-                    edit_state.validation_state = ValidationState::Error(format!(
-                        "File or directory '{}' already exists at location. Please choose a different name.",
-                        filename.as_unix_str()
-                    ));
+                    edit_state.validation_state = ValidationState::Error(
+                        localization::tr!(
+                            cx,
+                            "project-panel-name-already-exists",
+                            name = filename.as_unix_str().to_string(),
+                        )
+                        .to_string(),
+                    );
                     cx.notify();
                     return;
                 }
@@ -2240,8 +2301,21 @@ impl ProjectPanel {
             let file_name = entry.path.file_name()?.to_string();
 
             let answer = if !action.skip_prompt {
-                let prompt = format!("Discard changes to {}?", file_name);
-                Some(window.prompt(PromptLevel::Info, &prompt, None, &["Restore", "Cancel"], cx))
+                let prompt = localization::tr!(
+                    cx,
+                    "project-panel-discard-changes",
+                    name = file_name.clone(),
+                );
+                Some(window.prompt(
+                    PromptLevel::Info,
+                    &prompt,
+                    None,
+                    &[
+                        PromptButton::ok(localization::text(cx, "project-panel-restore-file")),
+                        PromptButton::cancel(localization::text(cx, "common-cancel")),
+                    ],
+                    cx,
+                ))
             } else {
                 None
             };
@@ -2262,7 +2336,13 @@ impl ProjectPanel {
                 if let Err(e) = task.await {
                     panel
                         .update(cx, |panel, cx| {
-                            let message = format!("Failed to restore {}: {}", file_name, e);
+                            let message = localization::tr!(
+                                cx,
+                                "project-panel-restore-failed",
+                                name = file_name.clone(),
+                                error = e.to_string(),
+                            )
+                            .to_string();
                             let toast = StatusToast::new(message, cx, |this, _| {
                                 this.icon(
                                     Icon::new(IconName::XCircle)
@@ -2334,7 +2414,12 @@ impl ProjectPanel {
                 if let Err(e) = receiver.await? {
                     if let Some(workspace) = workspace.upgrade() {
                         cx.update(|cx| {
-                            let message = format!("Failed to add to .gitignore: {}", e);
+                            let message = localization::tr!(
+                                cx,
+                                "project-panel-gitignore-failed",
+                                error = e.to_string(),
+                            )
+                            .to_string();
                             let toast = StatusToast::new(message, cx, |this, _| {
                                 this.icon(Icon::new(IconName::XCircle).color(Color::Error))
                                     .dismiss_button(true)
@@ -2386,24 +2471,35 @@ impl ProjectPanel {
                 return None;
             }
             let answer = if !skip_prompt {
-                let operation = if trash { "Trash" } else { "Delete" };
-                let message_start = if trash {
-                    "Do you want to trash"
+                let operation = if trash {
+                    PromptButton::ok(localization::text(cx, "project-panel-trash"))
                 } else {
-                    "Are you sure you want to permanently delete"
+                    PromptButton::ok(localization::text(cx, "project-panel-delete"))
                 };
                 let prompt = match file_paths.first() {
                     Some((_, _, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
-                            "\n\nIt has unsaved changes, which will be lost."
+                            format!(
+                                "\n\n{}",
+                                localization::text(cx, "project-panel-unsaved-single")
+                            )
                         } else {
-                            ""
+                            String::new()
                         };
-
-                        format!(
-                            "{message_start} {}?{unsaved_warning}",
-                            MarkdownInlineCode(path)
-                        )
+                        let prompt_text = if trash {
+                            localization::tr!(
+                                cx,
+                                "project-panel-trash-single",
+                                name = MarkdownInlineCode(path).to_string(),
+                            )
+                        } else {
+                            localization::tr!(
+                                cx,
+                                "project-panel-delete-single",
+                                name = MarkdownInlineCode(path).to_string(),
+                            )
+                        };
+                        format!("{prompt_text}{unsaved_warning}")
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2415,11 +2511,14 @@ impl ProjectPanel {
                                 .take(CUTOFF_POINT)
                                 .collect::<Vec<_>>();
                             paths.truncate(CUTOFF_POINT);
-                            if truncated_path_counts == 1 {
-                                paths.push(".. 1 file not shown".into());
-                            } else {
-                                paths.push(format!(".. {} files not shown", truncated_path_counts));
-                            }
+                            paths.push(
+                                localization::tr!(
+                                    cx,
+                                    "project-panel-files-not-shown",
+                                    count = truncated_path_counts,
+                                )
+                                .to_string(),
+                            );
                             paths
                         } else {
                             file_paths
@@ -2429,27 +2528,44 @@ impl ProjectPanel {
                         };
                         let unsaved_warning = if dirty_buffers == 0 {
                             String::new()
-                        } else if dirty_buffers == 1 {
-                            "\n\n1 of these has unsaved changes, which will be lost.".to_string()
                         } else {
                             format!(
-                                "\n\n{dirty_buffers} of these have unsaved changes, which will be lost."
+                                "\n\n{}",
+                                localization::tr!(
+                                    cx,
+                                    "project-panel-unsaved-multiple",
+                                    count = dirty_buffers,
+                                )
                             )
                         };
-
-                        format!(
-                            "{message_start} the following {} files?\n{}{unsaved_warning}",
-                            file_paths.len(),
-                            names.join("\n")
-                        )
+                        let prompt_text = if trash {
+                            localization::tr!(
+                                cx,
+                                "project-panel-trash-multiple",
+                                count = file_paths.len(),
+                                names = names.join("\n"),
+                            )
+                        } else {
+                            localization::tr!(
+                                cx,
+                                "project-panel-delete-multiple",
+                                count = file_paths.len(),
+                                names = names.join("\n"),
+                            )
+                        };
+                        format!("{prompt_text}{unsaved_warning}")
                     }
                 };
-                let detail = (!trash).then_some("This cannot be undone.");
+                let detail =
+                    (!trash).then(|| localization::text(cx, "project-panel-delete-cannot-undo"));
                 Some(window.prompt(
                     PromptLevel::Info,
                     &prompt,
-                    detail,
-                    &[operation, "Cancel"],
+                    detail.as_deref(),
+                    &[
+                        operation,
+                        PromptButton::cancel(localization::text(cx, "common-cancel")),
+                    ],
                     cx,
                 ))
             } else {
@@ -3366,7 +3482,13 @@ impl ProjectPanel {
                             workspace.show_toast(
                                 workspace::Toast::new(
                                     notification_id.clone(),
-                                    format!("Downloading 0/{} files...", total_files),
+                                    localization::tr!(
+                                        cx,
+                                        "project-panel-download-progress",
+                                        current = 0,
+                                        total = total_files,
+                                    )
+                                    .to_string(),
                                 ),
                                 cx,
                             );
@@ -3382,11 +3504,13 @@ impl ProjectPanel {
                                 workspace.show_toast(
                                     workspace::Toast::new(
                                         notification_id.clone(),
-                                        format!(
-                                            "Downloading {}/{} files...",
-                                            index + 1,
-                                            total_files
-                                        ),
+                                        localization::tr!(
+                                            cx,
+                                            "project-panel-download-progress",
+                                            current = index + 1,
+                                            total = total_files,
+                                        )
+                                        .to_string(),
                                     ),
                                     cx,
                                 );
@@ -3419,7 +3543,12 @@ impl ProjectPanel {
                             workspace.show_toast(
                                 workspace::Toast::new(
                                     notification_id.clone(),
-                                    format!("Downloaded {} files", total_files),
+                                    localization::tr!(
+                                        cx,
+                                        "project-panel-download-complete",
+                                        count = total_files,
+                                    )
+                                    .to_string(),
                                 ),
                                 cx,
                             );
@@ -4364,21 +4493,26 @@ impl ProjectPanel {
         cx.spawn_in(window, async move |this, cx| {
             async move {
                 for (filename, original_path) in &paths_to_replace {
-                    let prompt_message = format!(
-                        concat!(
-                            "A file or folder with name {} ",
-                            "already exists in the destination folder. ",
-                            "Do you want to replace it?"
-                        ),
-                        filename
-                    );
+                    let prompt_message = cx.update(|_, cx| {
+                        localization::tr!(
+                            cx,
+                            "project-panel-replace-existing",
+                            name = filename.as_str()
+                        )
+                    })?;
                     let answer = cx
                         .update(|window, cx| {
                             window.prompt(
                                 PromptLevel::Info,
                                 &prompt_message,
                                 None,
-                                &["Replace", "Cancel"],
+                                &[
+                                    PromptButton::ok(localization::text(
+                                        cx,
+                                        "project-panel-replace",
+                                    )),
+                                    PromptButton::cancel(localization::text(cx, "common-cancel")),
+                                ],
                                 cx,
                             )
                         })?
@@ -5785,7 +5919,7 @@ impl ProjectPanel {
                                         Tooltip::with_meta(
                                             path.to_string(),
                                             None,
-                                            "Symbolic Link",
+                                            localization::text(cx, "common-symbolic-link"),
                                             cx,
                                         )
                                     })
@@ -7148,7 +7282,7 @@ impl Render for ProjectPanel {
                 .size_full()
                 .child(
                     ProjectEmptyState::new(
-                        "Project Panel",
+                        localization::text(cx, "panel-project"),
                         focus_handle.clone(),
                         KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
                     )
@@ -7218,7 +7352,11 @@ impl Render for DraggedProjectEntryView {
                     .bg(cx.theme().colors().background)
                     .map(|this| {
                         if self.selections.len() > 1 && self.selections.contains(&self.selection) {
-                            this.child(Label::new(format!("{} entries", self.selections.len())))
+                            this.child(Label::new(localization::tr!(
+                                cx,
+                                "project-panel-selected-entries",
+                                count = self.selections.len(),
+                            )))
                         } else {
                             this.child(if let Some(icon) = &self.icon {
                                 div().child(Icon::from_path(icon.clone()))
@@ -7268,8 +7406,8 @@ impl Panel for ProjectPanel {
             .then_some(IconName::FileTree)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Project Panel")
+    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<SharedString> {
+        Some(localization::text(cx, "panel-project"))
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

@@ -808,7 +808,7 @@ impl Editor {
                     .border_color(icon_color.opacity(0.5))
             })
             .child(Icon::new(IconName::Plus).size(IconSize::Small))
-            .tooltip(Tooltip::text("Add Review (drag to select multiple lines)"))
+            .tooltip(Tooltip::text(localization::text(cx, "editor-add-review")))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(move |editor, _event: &gpui::MouseDownEvent, window, cx| {
@@ -2221,7 +2221,7 @@ impl Editor {
                                 IconButton::new("diff-review-close", IconName::Close)
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Close"))
+                                    .tooltip(Tooltip::text(localization::text(cx, "common-close")))
                                     .on_click(|_, window, cx| {
                                         window
                                             .dispatch_action(Box::new(crate::actions::Cancel), cx);
@@ -2231,7 +2231,10 @@ impl Editor {
                                 IconButton::new("diff-review-add", IconName::Return)
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Add comment"))
+                                    .tooltip(Tooltip::text(localization::text(
+                                        cx,
+                                        "editor-add-comment",
+                                    )))
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(crate::actions::SubmitDiffReviewComment),
@@ -2251,6 +2254,7 @@ impl Editor {
                     avatar_size,
                     action_icon_size,
                     colors,
+                    cx,
                 ))
             })
             .into_any_element()
@@ -2264,6 +2268,7 @@ impl Editor {
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
+        cx: &App,
     ) -> impl IntoElement {
         let comment_count = comments.len();
 
@@ -2298,10 +2303,10 @@ impl Editor {
                         .color(ui::Color::Muted),
                     )
                     .child(
-                        Label::new(format!(
-                            "{} Comment{}",
-                            comment_count,
-                            if comment_count == 1 { "" } else { "s" }
+                        Label::new(localization::tr!(
+                            cx,
+                            "editor-comment-count",
+                            count = comment_count,
                         ))
                         .size(LabelSize::Small)
                         .color(Color::Muted),
@@ -2318,6 +2323,7 @@ impl Editor {
                         avatar_size,
                         action_icon_size,
                         colors,
+                        cx,
                     )
                 }))
             })
@@ -2330,6 +2336,7 @@ impl Editor {
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
+        cx: &App,
     ) -> impl IntoElement {
         let comment_id = comment.id;
         let is_editing = inline_editor.is_some();
@@ -2391,7 +2398,7 @@ impl Editor {
                         )
                         .icon_color(ui::Color::Muted)
                         .icon_size(action_icon_size)
-                        .tooltip(Tooltip::text("Cancel"))
+                        .tooltip(Tooltip::text(localization::text(cx, "common-cancel")))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
                                 Box::new(crate::actions::CancelEditReviewComment {
@@ -2408,7 +2415,7 @@ impl Editor {
                         )
                         .icon_color(ui::Color::Muted)
                         .icon_size(action_icon_size)
-                        .tooltip(Tooltip::text("Confirm"))
+                        .tooltip(Tooltip::text(localization::text(cx, "common-confirm")))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
                                 Box::new(crate::actions::ConfirmEditReviewComment {
@@ -2636,84 +2643,93 @@ pub(super) fn render_diff_hunk_controls(
         .shadow_md()
         .when(show_stage_restore, |el| {
             el.child(if status.has_secondary_hunk() {
-                Button::new(("stage", row as u64), "Stage")
-                    .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Stage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
+                Button::new(
+                    ("stage", row as u64),
+                    localization::text(cx, "editor-stage"),
+                )
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            localization::text(cx, "editor-stage-hunk"),
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, _window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                true,
+                                vec![hunk_range.start..hunk_range.start],
                                 cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, _window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    true,
-                                    vec![hunk_range.start..hunk_range.start],
-                                    cx,
-                                );
-                            });
-                        }
-                    })
+                            );
+                        });
+                    }
+                })
             } else {
-                Button::new(("unstage", row as u64), "Unstage")
-                    .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Unstage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
+                Button::new(
+                    ("unstage", row as u64),
+                    localization::text(cx, "editor-unstage"),
+                )
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            localization::text(cx, "editor-unstage-hunk"),
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, _window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                false,
+                                vec![hunk_range.start..hunk_range.start],
                                 cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, _window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    false,
-                                    vec![hunk_range.start..hunk_range.start],
-                                    cx,
-                                );
-                            });
-                        }
-                    })
+                            );
+                        });
+                    }
+                })
             })
         })
         .when(show_stage_restore, |el| {
             el.child(
-                Button::new(("restore", row as u64), "Restore")
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Restore Hunk",
-                                &::git::Restore,
-                                &focus_handle,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                let snapshot = editor.snapshot(window, cx);
-                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
-                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
-                            });
-                        }
-                    })
-                    .disabled(is_created_file),
+                Button::new(
+                    ("restore", row as u64),
+                    localization::text(cx, "editor-restore"),
+                )
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            localization::text(cx, "editor-restore-hunk"),
+                            &::git::Restore,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
+                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                        });
+                    }
+                })
+                .disabled(is_created_file),
             )
         })
         .when(
@@ -2727,7 +2743,12 @@ pub(super) fn render_diff_hunk_controls(
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
                             move |_window, cx| {
-                                Tooltip::for_action_in("Next Hunk", &GoToHunk, &focus_handle, cx)
+                                Tooltip::for_action_in(
+                                    localization::text(cx, "editor-next-hunk"),
+                                    &GoToHunk,
+                                    &focus_handle,
+                                    cx,
+                                )
                             }
                         })
                         .on_click({
@@ -2759,7 +2780,7 @@ pub(super) fn render_diff_hunk_controls(
                             let focus_handle = editor.focus_handle(cx);
                             move |_window, cx| {
                                 Tooltip::for_action_in(
-                                    "Previous Hunk",
+                                    localization::text(cx, "editor-previous-hunk"),
                                     &GoToPreviousHunk,
                                     &focus_handle,
                                     cx,

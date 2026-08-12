@@ -1,0 +1,27 @@
+[package]
+name = "localization"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "localization.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+fluent-bundle.workspace = true
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+rust-embed.workspace = true
+schemars.workspace = true
+serde.workspace = true
+strum.workspace = true
+unic-langid.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

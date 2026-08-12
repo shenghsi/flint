@@ -37,7 +37,7 @@ use crate::{
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
         ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent, RootUserSettings,
-        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
+        SettingsContent, UiLanguage, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
@@ -498,6 +498,13 @@ impl SettingsStore {
         self.user_settings.as_ref()
     }
 
+    pub fn ui_language(&self) -> UiLanguage {
+        self.user_settings
+            .as_ref()
+            .and_then(|settings| settings.ui_language)
+            .unwrap_or_default()
+    }
+
     /// Get the default settings content as a raw JSON value.
     pub fn raw_default_settings(&self) -> &SettingsContent {
         &self.default_settings
@@ -629,6 +636,26 @@ impl SettingsStore {
         self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
             cx.read_global(|store: &SettingsStore, cx| {
                 store.new_text_for_update(old_text, |content| update(content, cx))
+            })
+        })
+    }
+
+    pub fn update_user_settings_file(
+        &self,
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut UserSettingsContent, &App),
+    ) {
+        _ = self.update_user_settings_file_with_completion(fs, update);
+    }
+
+    pub fn update_user_settings_file_with_completion(
+        &self,
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut UserSettingsContent, &App),
+    ) -> oneshot::Receiver<Result<()>> {
+        self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
+            cx.read_global(|store: &SettingsStore, cx| {
+                store.new_text_for_user_settings_update(old_text, |content| update(content, cx))
             })
         })
     }
@@ -833,7 +860,15 @@ impl SettingsStore {
         old_text: String,
         update: impl FnOnce(&mut SettingsContent),
     ) -> Result<String> {
-        let edits = self.edits_for_update(&old_text, update)?;
+        self.new_text_for_user_settings_update(old_text, |content| update(&mut content.content))
+    }
+
+    pub fn new_text_for_user_settings_update(
+        &self,
+        old_text: String,
+        update: impl FnOnce(&mut UserSettingsContent),
+    ) -> Result<String> {
+        let edits = self.edits_for_user_settings_update(&old_text, update)?;
         let mut new_text = old_text;
         for (range, replacement) in edits.into_iter() {
             new_text.replace_range(range, &replacement);
@@ -854,6 +889,14 @@ impl SettingsStore {
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
     ) -> Result<Vec<(Range<usize>, String)>> {
+        self.edits_for_user_settings_update(text, |content| update(&mut content.content))
+    }
+
+    pub fn edits_for_user_settings_update(
+        &self,
+        text: &str,
+        update: impl FnOnce(&mut UserSettingsContent),
+    ) -> Result<Vec<(Range<usize>, String)>> {
         let old_content = if text.trim().is_empty() {
             UserSettingsContent::default()
         } else {
@@ -865,7 +908,7 @@ impl SettingsStore {
                 .context("Settings file could not be parsed. Fix syntax errors before updating.")?
         };
         let mut new_content = old_content.clone();
-        update(&mut new_content.content);
+        update(&mut new_content);
 
         let old_value = serde_json::to_value(&old_content).unwrap();
         let new_value = serde_json::to_value(new_content).unwrap();
@@ -2122,6 +2165,33 @@ mod tests {
             .unindent(),
             cx,
         );
+    }
+
+    #[gpui::test]
+    fn ui_language_is_read_only_from_user_settings(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        assert_eq!(store.ui_language(), UiLanguage::English);
+
+        store
+            .set_user_settings(r#"{ "ui_language": "zh-CN" }"#, cx)
+            .unwrap();
+        assert_eq!(store.ui_language(), UiLanguage::SimplifiedChinese);
+
+        let project_schema = serde_json::to_value(schemars::schema_for!(ProjectSettingsContent))
+            .expect("project settings schema must serialize");
+        assert!(project_schema.pointer("/properties/ui_language").is_none());
+    }
+
+    #[gpui::test]
+    fn edits_ui_language_in_user_settings(cx: &mut App) {
+        let store = SettingsStore::new(cx, &test_settings());
+        let updated = store
+            .new_text_for_user_settings_update("{}".into(), |content| {
+                content.ui_language = Some(UiLanguage::SimplifiedChinese);
+            })
+            .unwrap();
+
+        assert_eq!(updated, "{\n  \"ui_language\": \"zh-CN\"\n}\n");
     }
 
     #[gpui::test]

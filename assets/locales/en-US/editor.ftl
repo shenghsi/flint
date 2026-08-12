@@ -1,0 +1,49 @@
+editor-untitled = untitled
+editor-unfold-excerpt = Unfold Excerpt
+editor-fold-excerpt = Fold Excerpt
+editor-toggle-all = { $shortcut } to toggle all
+editor-comment-count =
+    { $count ->
+        [one] { $count } Comment
+       *[other] { $count } Comments
+    }
+editor-open-file = Open File
+editor-add-review = Add Review (drag to select multiple lines)
+editor-add-comment = Add comment
+editor-zero-references = 0 references
+editor-toggle-code-actions = Toggle Code Actions
+editor-go-to-definition = Go to Definition
+editor-go-to-declaration = Go to Declaration
+editor-go-to-type-definition = Go to Type Definition
+editor-go-to-implementation = Go to Implementation
+editor-find-all-references = Find All References
+editor-rename-symbol = Rename Symbol
+editor-format-buffer = Format Buffer
+editor-format-selections = Format Selections
+editor-show-code-actions = Show Code Actions
+editor-cut = Cut
+editor-copy = Copy
+editor-copy-and-trim = Copy and Trim
+editor-paste = Paste
+editor-open-markdown-preview = Open Markdown Preview
+editor-open-svg-preview = Open SVG Preview
+editor-open-in-terminal = Open in Terminal
+editor-copy-permalink = Copy Permalink
+editor-view-file-history = View File History
+editor-run-to-cursor = Run to Cursor
+editor-remove-bookmark = Remove Bookmark
+editor-add-bookmark = Add Bookmark
+editor-right-click-more-options = Right-click for more options
+editor-expand-excerpt = Expand Excerpt
+editor-show-symbol-outline = Show Symbol Outline
+editor-right-click-copy-path = Right-click to copy path
+editor-stage = Stage
+editor-unstage = Unstage
+editor-restore = Restore
+editor-stage-hunk = Stage Hunk
+editor-unstage-hunk = Unstage Hunk
+editor-restore-hunk = Restore Hunk
+editor-next-hunk = Next Hunk
+editor-previous-hunk = Previous Hunk
+editor-previous-signature = Previous Signature
+editor-next-signature = Next Signature

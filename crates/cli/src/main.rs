@@ -461,9 +461,25 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("error: {error:#}");
+        eprintln!("{}: {error:#}", cli_text("cli-error-prefix"));
         std::process::exit(1);
     }
+}
+
+fn cli_ui_language() -> localization::UiLanguage {
+    fs::read_to_string(paths::settings_file())
+        .ok()
+        .and_then(|settings| serde_json::from_str::<serde_json::Value>(&settings).ok())
+        .and_then(|settings| {
+            serde_json::from_value::<localization::UiLanguage>(settings.get("ui_language")?.clone())
+                .ok()
+        })
+        .unwrap_or_default()
+}
+
+fn cli_text(identifier: &'static str) -> String {
+    localization::text_for_language(cli_ui_language(), identifier)
+        .unwrap_or_else(|_| identifier.to_string())
 }
 
 fn run() -> Result<()> {
@@ -513,10 +529,11 @@ fn run() -> Result<()> {
 
     if args.system_specs {
         let path = app.path();
+        let command = format!("{} --system-specs", path.display());
         let msg = [
-            "The `--system-specs` argument is not supported in the Flint CLI, only on Flint binary.",
-            "To retrieve the system specs on the command line, run the following command:",
-            &format!("{} --system-specs", path.display()),
+            cli_text("cli-system-specs-unsupported"),
+            cli_text("cli-system-specs-command"),
+            command,
         ];
         anyhow::bail!(msg.join("\n"));
     }
@@ -814,16 +831,21 @@ fn prompt_open_behavior() -> Option<cli::CliBehaviorSetting> {
     let blue = console::Style::new().blue();
     let items = [
         format!(
-            "Add to existing Flint window ({})",
+            "{} ({})",
+            cli_text("cli-open-existing-window"),
             blue.apply_to("flint --existing")
         ),
-        format!("Open a new window ({})", blue.apply_to("flint --classic")),
+        format!(
+            "{} ({})",
+            cli_text("cli-open-new-window"),
+            blue.apply_to("flint --classic")
+        ),
     ];
 
     let prompt = format!(
-        "Configure default behavior for {}\n{}",
-        blue.apply_to("flint <path>"),
-        console::style("You can change this later in Flint settings"),
+        "{}\n{}",
+        cli_text("cli-open-behavior-prompt"),
+        console::style(cli_text("cli-open-behavior-hint")),
     );
 
     let selection = dialoguer::Select::new()
@@ -1058,7 +1080,7 @@ mod flatpak {
             unsafe {
                 env::set_var(
                     "ZED_UPDATE_EXPLANATION",
-                    "Please use flatpak to update flint",
+                    &super::cli_text("cli-flatpak-update"),
                 )
             };
         }

@@ -413,8 +413,12 @@ impl Render for RenameBranchModal {
                     .gap_1p5()
                     .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
                     .child(
-                        Headline::new(format!("Rename Branch ({})", self.current_branch))
-                            .size(HeadlineSize::XSmall),
+                        Headline::new(localization::tr!(
+                            cx,
+                            "git-rename-branch",
+                            branch = self.current_branch.as_str()
+                        ))
+                        .size(HeadlineSize::XSmall),
                     ),
             )
             .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
@@ -622,11 +626,12 @@ impl Render for RefPickerModal {
                 .unwrap_or_else(|_| OffsetDateTime::now_utc());
             let local_offset =
                 time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-            let formatted_time = time_format::format_localized_timestamp(
+            let formatted_time = time_format::format_localized_timestamp_for_language(
                 commit_time,
                 OffsetDateTime::now_utc(),
                 local_offset,
                 time_format::TimestampFormat::Relative,
+                localization::language(cx),
             );
 
             let subject = details.message.lines().next().unwrap_or("").to_string();
@@ -666,7 +671,10 @@ impl Render for RefPickerModal {
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::Hash).size(IconSize::XSmall))
-                    .child(Headline::new("View Commit").size(HeadlineSize::XSmall)),
+                    .child(
+                        Headline::new(localization::text(cx, "git-view-commit-title"))
+                            .size(HeadlineSize::XSmall),
+                    ),
             )
             .child(div().px_3().w_full().child(self.editor.clone()))
             .when_some(commit_preview, |el, preview| {
@@ -906,19 +914,34 @@ mod remote_button {
                     ),
             )
             .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                Some(ContextMenu::build(window, cx, |context_menu, _, cx| {
                     context_menu
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
                             el.context(keybinding_target)
                         })
-                        .action("Fetch", git::Fetch.boxed_clone())
-                        .action("Fetch From", git::FetchFrom.boxed_clone())
-                        .action("Pull", git::Pull.boxed_clone())
-                        .action("Pull (Rebase)", git::PullRebase.boxed_clone())
+                        .action(
+                            localization::text(cx, "git-fetch"),
+                            git::Fetch.boxed_clone(),
+                        )
+                        .action(
+                            localization::text(cx, "git-fetch-from"),
+                            git::FetchFrom.boxed_clone(),
+                        )
+                        .action(localization::text(cx, "git-pull"), git::Pull.boxed_clone())
+                        .action(
+                            localization::text(cx, "git-pull-rebase"),
+                            git::PullRebase.boxed_clone(),
+                        )
                         .separator()
-                        .action("Push", git::Push.boxed_clone())
-                        .action("Push To", git::PushTo.boxed_clone())
-                        .action("Force Push", git::ForcePush.boxed_clone())
+                        .action(localization::text(cx, "git-push"), git::Push.boxed_clone())
+                        .action(
+                            localization::text(cx, "git-push-to"),
+                            git::PushTo.boxed_clone(),
+                        )
+                        .action(
+                            localization::text(cx, "git-force-push"),
+                            git::ForcePush.boxed_clone(),
+                        )
                 }))
             })
             .anchor(Anchor::TopRight)
@@ -1134,12 +1157,12 @@ impl Render for GitCloneModal {
                     .rounded_b_sm()
                     .bg(cx.theme().colors().editor_background)
                     .child(
-                        Label::new("Clone a repository from GitHub or other sources.")
+                        Label::new(localization::text(cx, "git-clone-description"))
                             .color(Color::Muted)
                             .size(LabelSize::Small),
                     )
                     .child(
-                        Button::new("learn-more", "Learn More")
+                        Button::new("learn-more", localization::text(cx, "git-learn-more"))
                             .label_size(LabelSize::Small)
                             .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
                             .on_click(|_, _, cx| {
@@ -1184,6 +1207,8 @@ mod view_commit_tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(LoadThemes::JustBase, cx);
             AllLanguageSettings::register(cx);
             editor::init(cx);

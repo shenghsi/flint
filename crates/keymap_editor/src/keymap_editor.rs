@@ -554,7 +554,11 @@ impl KeymapEditor {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Filter action names…", window, cx);
+            editor.set_placeholder_text(
+                &localization::text(cx, "keymap-filter-actions"),
+                window,
+                cx,
+            );
             editor
         });
 
@@ -1061,32 +1065,38 @@ impl KeymapEditor {
             let selected_binding_is_non_interactable =
                 selected_binding_is_unmapped || selected_binding_is_suppressed;
 
-            let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            let context_menu = ContextMenu::build(window, cx, |menu, _window, cx| {
                 menu.context(self.focus_handle.clone())
                     .when(selected_binding_is_unmapped, |this| {
-                        this.action("Create", Box::new(CreateBinding))
+                        this.action(
+                            localization::text(cx, "keymap-create"),
+                            Box::new(CreateBinding),
+                        )
                     })
                     .action_disabled_when(
                         selected_binding_is_non_interactable,
-                        "Edit",
+                        localization::text(cx, "keymap-edit"),
                         Box::new(EditBinding),
                     )
                     .action_disabled_when(
                         selected_binding_is_non_interactable,
-                        "Delete",
+                        localization::text(cx, "keymap-delete"),
                         Box::new(DeleteBinding),
                     )
                     .separator()
-                    .action("Copy Action", Box::new(CopyAction))
+                    .action(
+                        localization::text(cx, "keymap-copy-action"),
+                        Box::new(CopyAction),
+                    )
                     .action_disabled_when(
                         selected_binding_has_no_context,
-                        "Copy Context",
+                        localization::text(cx, "keymap-copy-context"),
                         Box::new(CopyContext),
                     )
                     .separator()
                     .action_disabled_when(
                         selected_binding_has_no_context,
-                        "Show Matching Keybindings",
+                        localization::text(cx, "keymap-show-matching"),
                         Box::new(ShowMatchingKeybinds),
                     )
             });
@@ -1127,7 +1137,7 @@ impl KeymapEditor {
             base_button_style(index, IconName::Warning)
                 .icon_color(Color::Warning)
                 .disabled(true)
-                .tooltip(Tooltip::text("This action is unbound"))
+                .tooltip(Tooltip::text(localization::text(cx, "keymap-unbound")))
         } else if self.filter_state != FilterState::Conflicts
             && let Some(conflict) = conflict
         {
@@ -1136,9 +1146,9 @@ impl KeymapEditor {
                     .icon_color(Color::Warning)
                     .tooltip(|_window, cx| {
                         Tooltip::with_meta(
-                            "View conflicts",
+                            localization::text(cx, "keymap-view-conflicts"),
                             Some(&ToggleConflictFilter),
-                            "Use alt+click to show all conflicts",
+                            localization::text(cx, "keymap-view-conflicts-meta"),
                             cx,
                         )
                     })
@@ -1155,9 +1165,9 @@ impl KeymapEditor {
                 base_button_style(index, IconName::Info)
                     .tooltip(|_window, cx| {
                         Tooltip::with_meta(
-                            "Edit this binding",
+                            localization::text(cx, "keymap-edit-binding"),
                             Some(&ShowMatchingKeybinds),
-                            "This binding is overridden by other bindings.",
+                            localization::text(cx, "keymap-overridden"),
                             cx,
                         )
                     })
@@ -1168,11 +1178,11 @@ impl KeymapEditor {
                     }))
             } else {
                 base_button_style(index, IconName::Info)
-                    .tooltip(|_window, cx|  {
+                    .tooltip(|_window, cx| {
                         Tooltip::with_meta(
-                            "Show matching keybinds",
+                            localization::text(cx, "keymap-show-matching-short"),
                             Some(&ShowMatchingKeybinds),
-                            "This binding is overridden by other bindings.\nUse alt+click to edit this binding",
+                            localization::text(cx, "keymap-overridden-edit"),
                             cx,
                         )
                     })
@@ -1197,7 +1207,12 @@ impl KeymapEditor {
                 })
                 .when(
                     self.show_hover_menus && !self.context_menu_deployed(),
-                    |this| this.tooltip(Tooltip::for_action_title("Edit Keybinding", &EditBinding)),
+                    |this| {
+                        this.tooltip(Tooltip::for_action_title(
+                            localization::text(cx, "keymap-edit-keybinding"),
+                            &EditBinding,
+                        ))
+                    },
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.select_index(index, None, window, cx);
@@ -1207,22 +1222,22 @@ impl KeymapEditor {
         }
     }
 
-    fn render_no_matches_hint(&self, _window: &mut Window, _cx: &App) -> AnyElement {
+    fn render_no_matches_hint(&self, _window: &mut Window, cx: &App) -> AnyElement {
         let hint = match (self.filter_state, &self.search_mode) {
             (FilterState::Conflicts, _) => {
                 if self.keybinding_conflict_state.any_user_binding_conflicts() {
-                    "No conflicting keybinds found that match the provided query"
+                    "keymap-no-conflict-query"
                 } else {
-                    "No conflicting keybinds found"
+                    "keymap-no-conflicts"
                 }
             }
-            (FilterState::All, SearchMode::KeyStroke { .. }) => {
-                "No keybinds found matching the entered keystrokes"
-            }
-            (FilterState::All, SearchMode::Normal) => "No matches found for the provided query",
+            (FilterState::All, SearchMode::KeyStroke { .. }) => "keymap-no-keystrokes",
+            (FilterState::All, SearchMode::Normal) => "keymap-no-query",
         };
 
-        Label::new(hint).color(Color::Muted).into_any_element()
+        Label::new(localization::text(cx, hint))
+            .color(Color::Muted)
+            .into_any_element()
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
@@ -1564,9 +1579,9 @@ impl KeymapEditor {
 
                         menu = menu
                             .context(focus_handle.clone())
-                            .header("Filters")
+                            .header(localization::text(cx, "keymap-filters"))
                             .map(add_filter(
-                                "Conflicts",
+                                localization::text(cx, "keymap-conflicts"),
                                 matches!(filter_state, FilterState::Conflicts),
                                 Some(ToggleConflictFilter.boxed_clone()),
                                 &focus_handle,
@@ -1574,7 +1589,7 @@ impl KeymapEditor {
                                 None,
                             ))
                             .map(add_filter(
-                                "No Action",
+                                localization::text(cx, "keymap-no-action"),
                                 show_no_action_bindings,
                                 Some(ToggleNoActionBindings.boxed_clone()),
                                 &focus_handle,
@@ -1582,9 +1597,9 @@ impl KeymapEditor {
                                 None,
                             ))
                             .separator()
-                            .header("Categories")
+                            .header(localization::text(cx, "keymap-categories"))
                             .map(add_filter(
-                                "User",
+                                localization::text(cx, "keymap-user"),
                                 source_filters.user,
                                 None,
                                 &focus_handle,
@@ -1594,7 +1609,7 @@ impl KeymapEditor {
                                 }),
                             ))
                             .map(add_filter(
-                                "Default",
+                                localization::text(cx, "keymap-default"),
                                 source_filters.flint_defaults,
                                 None,
                                 &focus_handle,
@@ -1604,7 +1619,7 @@ impl KeymapEditor {
                                 }),
                             ))
                             .map(add_filter(
-                                "Vim",
+                                localization::text(cx, "keymap-vim"),
                                 source_filters.vim_defaults,
                                 None,
                                 &focus_handle,
@@ -1629,11 +1644,11 @@ impl KeymapEditor {
                         self.keybinding_conflict_state.any_user_binding_conflicts(),
                         |this| this.indicator(Indicator::dot().color(Color::Warning)),
                     ),
-                Tooltip::text("Filters"),
+                Tooltip::text(localization::text(cx, "keymap-filters")),
             );
 
         fn add_filter(
-            name: &'static str,
+            name: SharedString,
             toggled: bool,
             action: Option<Box<dyn Action>>,
             focus_handle: &FocusHandle,
@@ -1853,8 +1868,6 @@ enum KeybindContextString {
 }
 
 impl KeybindContextString {
-    const GLOBAL: SharedString = SharedString::new_static("<global>");
-
     pub fn local(&self) -> Option<&SharedString> {
         match self {
             KeybindContextString::Global => None,
@@ -1874,7 +1887,7 @@ impl RenderOnce for KeybindContextString {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         match self {
             KeybindContextString::Global => {
-                muted_styled_text(KeybindContextString::GLOBAL, cx).into_any_element()
+                muted_styled_text(localization::text(cx, "keymap-global"), cx).into_any_element()
             }
             KeybindContextString::Local(name, language) => {
                 SyntaxHighlightedText::new(name, language).into_any_element()
@@ -1894,8 +1907,8 @@ fn muted_styled_text(text: SharedString, cx: &App) -> StyledText {
 impl Item for KeymapEditor {
     type Event = ();
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> ui::SharedString {
-        "Keymap Editor".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> ui::SharedString {
+        localization::text(cx, "keymap-title")
     }
 }
 
@@ -1905,7 +1918,7 @@ impl Render for KeymapEditor {
             let button = IconButton::new("keystrokes-exact-match", IconName::CaseSensitive)
                 .tooltip(move |_window, cx| {
                     Tooltip::for_action(
-                        "Toggle Exact Match Mode",
+                        localization::text(cx, "keymap-toggle-exact"),
                         &ToggleExactKeystrokeMatching,
                         cx,
                     )
@@ -2001,7 +2014,7 @@ impl Render for KeymapEditor {
                                             let focus_handle = focus_handle.clone();
                                             move |_window, cx| {
                                                 Tooltip::for_action_in(
-                                                    "Search by Keystrokes",
+                                                    localization::text(cx, "keymap-search-keystrokes"),
                                                     &ToggleKeystrokeSearch,
                                                     &focus_handle,
                                                     cx,
@@ -2019,7 +2032,7 @@ impl Render for KeymapEditor {
                                         self.render_filter_dropdown(focus_handle, cx)
                                     )
                                     .child(
-                                        Button::new("edit-in-json", "Edit in JSON")
+                                        Button::new("edit-in-json", localization::text(cx, "keymap-edit-json"))
                                             .style(ButtonStyle::Subtle)
                                             .key_binding(
                                                 ui::KeyBinding::for_action_in(&flint_actions::OpenKeymapFile, &focus_handle, cx)
@@ -2033,7 +2046,7 @@ impl Render for KeymapEditor {
                                             })
                                     )
                                     .child(
-                                        Button::new("create", "Create Keybinding")
+                                        Button::new("create", localization::text(cx, "keymap-create-binding"))
                                             .style(ButtonStyle::Outlined)
                                             .key_binding(
                                                 ui::KeyBinding::for_action_in(&OpenCreateKeybindingModal, &focus_handle, cx)
@@ -2071,7 +2084,14 @@ impl Render for KeymapEditor {
                     .width_config(ColumnWidthConfig::redistributable(
                         self.current_widths.clone(),
                     ))
-                    .header(vec!["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
+                    .header(vec![
+                        SharedString::default(),
+                        localization::text(cx, "keymap-column-action"),
+                        localization::text(cx, "keymap-column-arguments"),
+                        localization::text(cx, "keymap-column-keystrokes"),
+                        localization::text(cx, "keymap-column-context"),
+                        localization::text(cx, "keymap-column-source"),
+                    ])
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
@@ -2267,21 +2287,21 @@ impl Render for KeymapEditor {
                                                 let overriding_binding = this.keybindings.get(conflict.index);
                                                 let context = overriding_binding.and_then(|binding| {
                                                     match conflict.override_source {
-                                                        KeybindSource::User  => Some("your keymap"),
-                                                        KeybindSource::Vim => Some("the vim keymap"),
-                                                        KeybindSource::Base => Some("your base keymap"),
+                                                        KeybindSource::User  => Some(localization::text(cx, "keymap-override-source-user")),
+                                                        KeybindSource::Vim => Some(localization::text(cx, "keymap-override-source-vim")),
+                                                        KeybindSource::Base => Some(localization::text(cx, "keymap-override-source-base")),
                                                         _ => {
                                                             log::error!("Unexpected override from the {} keymap", conflict.override_source.name());
                                                             None
                                                         }
-                                                    }.map(|source| format!("This keybinding is overridden by the '{}' binding from {}.", binding.action().humanized_name, source))
-                                                }).unwrap_or_else(|| "This binding is overridden.".to_string());
+                                                    }.map(|source| localization::tr!(cx, "keymap-overridden-by", action = binding.action().humanized_name.as_ref(), source = source.as_ref()))
+                                                }).unwrap_or_else(|| localization::text(cx, "keymap-overridden-unspecified"));
 
                                                 row.tooltip(Tooltip::text(context))
                                             },
                                         )
                                         .when(is_unbound_by_unbind, |row| {
-                                            row.tooltip(Tooltip::text("This action is unbound"))
+                                            row.tooltip(Tooltip::text(localization::text(cx, "keymap-unbound")))
                                         }),
                                 )
                                 .border_2()
@@ -2449,8 +2469,9 @@ impl KeybindingEditorModal {
             .new(|cx| KeystrokeInput::new(editing_keybind.keystrokes().map(Vec::from), window, cx));
 
         let context_editor: Entity<InputField> = cx.new(|cx| {
-            let input = InputField::new(window, cx, "Keybinding Context")
-                .label("Edit Context")
+            let placeholder = localization::text(cx, "keymap-context-placeholder");
+            let input = InputField::new(window, cx, &placeholder)
+                .label(localization::text(cx, "keymap-context-label"))
                 .label_size(LabelSize::Default);
 
             if let Some(context) = editing_keybind
@@ -2505,8 +2526,9 @@ impl KeybindingEditorModal {
                 .collect();
 
             let editor = cx.new(|cx| {
-                let input = InputField::new(window, cx, "Type an action name")
-                    .label("Action")
+                let placeholder = localization::text(cx, "keymap-action-placeholder");
+                let input = InputField::new(window, cx, &placeholder)
+                    .label(localization::text(cx, "keymap-action-label"))
                     .label_size(LabelSize::Default);
 
                 let editor_entity = input.editor();
@@ -2749,45 +2771,54 @@ impl KeybindingEditorModal {
                 self.creating.not().then_some(self.editing_keybind_idx),
             );
 
-        conflicting_indices.map(|KeybindConflict {
-            first_conflict_index,
-            remaining_conflict_amount,
-        }|
-        {
-            let conflicting_action_name = self
-                .keymap_editor
-                .read(cx)
-                .keybindings
-                .get(first_conflict_index)
-                .map(|keybind| keybind.action().name);
+        conflicting_indices
+            .map(
+                |KeybindConflict {
+                     first_conflict_index,
+                     remaining_conflict_amount,
+                 }| {
+                    let conflicting_action_name = self
+                        .keymap_editor
+                        .read(cx)
+                        .keybindings
+                        .get(first_conflict_index)
+                        .map(|keybind| keybind.action().name);
 
-            let warning_message = match conflicting_action_name {
-                Some(name) => {
-                     if remaining_conflict_amount > 0 {
-                        format!(
-                            "Your keybind would conflict with the \"{}\" action and {} other bindings",
-                            name, remaining_conflict_amount
-                        )
+                    let warning_message = match conflicting_action_name {
+                        Some(name) => {
+                            if remaining_conflict_amount > 0 {
+                                localization::tr!(
+                                    cx,
+                                    "keymap-conflict-with-action-and-others",
+                                    action = name,
+                                    count = remaining_conflict_amount
+                                )
+                            } else {
+                                localization::tr!(cx, "keymap-conflict-with-action", action = name)
+                            }
+                        }
+                        None => {
+                            log::info!(
+                                "Could not find action in keybindings with index {}",
+                                first_conflict_index
+                            );
+                            localization::text(cx, "keymap-conflict-with-others")
+                        }
+                    };
+
+                    let warning = InputError::warning(warning_message);
+                    if self
+                        .error
+                        .as_ref()
+                        .is_some_and(|old_error| *old_error == warning)
+                    {
+                        Ok(())
                     } else {
-                        format!("Your keybind would conflict with the \"{}\" action", name)
+                        Err(warning)
                     }
-                }
-                None => {
-                    log::info!(
-                        "Could not find action in keybindings with index {}",
-                        first_conflict_index
-                    );
-                    "Your keybind would conflict with other actions".to_string()
-                }
-            };
-
-            let warning = InputError::warning(warning_message);
-            if self.error.as_ref().is_some_and(|old_error| *old_error == warning) {
-                Ok(())
-           } else {
-                Err(warning)
-            }
-        }).unwrap_or(Ok(()))?;
+                },
+            )
+            .unwrap_or(Ok(()))?;
 
         let create = self.creating;
         let keyboard_mapper = cx.keyboard_mapper().clone();
@@ -2833,7 +2864,11 @@ impl KeybindingEditorModal {
                                 fallback: keymap.table_interaction_state.read(cx).scroll_offset(),
                             });
                             let status_toast = StatusToast::new(
-                                format!("Saved edits to the {} action.", humanized_action_name),
+                                localization::tr!(
+                                    cx,
+                                    "keymap-saved",
+                                    action = humanized_action_name.to_string()
+                                ),
                                 cx,
                                 move |this, _cx| {
                                     this.icon(
@@ -3043,7 +3078,10 @@ impl Render for KeybindingEditorModal {
                                     )
                                 })
                                 .when(self.creating, |this| {
-                                    this.child(Label::new("Create Keybinding"))
+                                    this.child(Label::new(localization::text(
+                                        cx,
+                                        "keymap-create-binding",
+                                    )))
                                 }),
                         ),
                     )
@@ -3060,24 +3098,18 @@ impl Render for KeybindingEditorModal {
                                 .child(
                                     v_flex()
                                         .gap_1()
-                                        .child(Label::new("Edit Keystroke"))
+                                        .child(Label::new(localization::text(
+                                            cx,
+                                            "keymap-edit-keystroke",
+                                        )))
                                         .child(self.keybind_editor.clone())
                                         .child(h_flex().gap_px().when(
                                             matching_bindings_count > 0,
                                             |this| {
-                                                let label = format!(
-                                                    "There {} {} {} with the same keystrokes.",
-                                                    if matching_bindings_count == 1 {
-                                                        "is"
-                                                    } else {
-                                                        "are"
-                                                    },
-                                                    matching_bindings_count,
-                                                    if matching_bindings_count == 1 {
-                                                        "binding"
-                                                    } else {
-                                                        "bindings"
-                                                    }
+                                                let label = localization::tr!(
+                                                    cx,
+                                                    "keymap-matching-count",
+                                                    count = matching_bindings_count
                                                 );
 
                                                 this.child(
@@ -3086,20 +3118,19 @@ impl Render for KeybindingEditorModal {
                                                         .color(Color::Muted),
                                                 )
                                                 .child(
-                                                    Button::new("show_matching", "View")
-                                                        .label_size(LabelSize::Small)
-                                                        .end_icon(
-                                                            Icon::new(IconName::ArrowUpRight)
-                                                                .size(IconSize::Small)
-                                                                .color(Color::Muted),
-                                                        )
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.show_matching_bindings(
-                                                                    window, cx,
-                                                                );
-                                                            },
-                                                        )),
+                                                    Button::new(
+                                                        "show_matching",
+                                                        localization::text(cx, "keymap-view"),
+                                                    )
+                                                    .label_size(LabelSize::Small)
+                                                    .end_icon(
+                                                        Icon::new(IconName::ArrowUpRight)
+                                                            .size(IconSize::Small)
+                                                            .color(Color::Muted),
+                                                    )
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.show_matching_bindings(window, cx);
+                                                    })),
                                                 )
                                             },
                                         )),
@@ -3108,7 +3139,10 @@ impl Render for KeybindingEditorModal {
                                     this.child(
                                         v_flex()
                                             .gap_1()
-                                            .child(Label::new("Edit Arguments"))
+                                            .child(Label::new(localization::text(
+                                                cx,
+                                                "keymap-edit-arguments",
+                                            )))
                                             .child(editor),
                                     )
                                 })
@@ -3127,14 +3161,15 @@ impl Render for KeybindingEditorModal {
                             h_flex()
                                 .gap_1()
                                 .child(
-                                    Button::new("cancel", "Cancel")
+                                    Button::new("cancel", localization::text(cx, "common-cancel"))
                                         .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                                 )
-                                .child(Button::new("save-btn", "Save").on_click(cx.listener(
-                                    |this, _event, _window, cx| {
-                                        this.save_or_display_error(cx);
-                                    },
-                                ))),
+                                .child(
+                                    Button::new("save-btn", localization::text(cx, "keymap-save"))
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.save_or_display_error(cx);
+                                        })),
+                                ),
                         ),
                     ),
             )

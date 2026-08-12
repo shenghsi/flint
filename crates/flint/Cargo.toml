@@ -28,10 +28,16 @@ test-support = [
     "repl/test-support",
     "title_bar/test-support",
 ]
+visual-tests = ["test-support", "gpui_platform/test-support"]
 
 [[bin]]
 name = "flint"
 path = "src/main.rs"
+
+[[bin]]
+name = "flint_visual_test_runner"
+path = "src/visual_test_runner.rs"
+required-features = ["visual-tests"]
 
 [dependencies]
 activity_indicator.workspace = true
@@ -94,6 +100,7 @@ language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 latex_render.workspace = true
 line_ending_selector.workspace = true
+localization.workspace = true
 log.workspace = true
 lsp_locations.workspace = true
 markdown.workspace = true

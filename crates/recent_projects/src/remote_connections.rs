@@ -8,7 +8,7 @@ use askpass::EncryptedPassword;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
+use gpui::{AppContext, AsyncApp, PromptButton, PromptLevel, WindowHandle};
 
 use project::trusted_worktrees;
 use remote::{
@@ -404,21 +404,29 @@ pub async fn open_remote_project(
                 log::error!("Failed to open project: {e:#}");
                 let response = window
                     .update(cx, |_, window, cx| {
+                        let title = match connection_options {
+                            RemoteConnectionOptions::Ssh(_) => {
+                                localization::text(cx, "recent-connect-ssh-failed")
+                            }
+                            RemoteConnectionOptions::Wsl(_) => {
+                                localization::text(cx, "recent-connect-wsl-failed")
+                            }
+                            RemoteConnectionOptions::Docker(_) => {
+                                localization::text(cx, "recent-connect-container-failed")
+                            }
+                            #[cfg(any(test, feature = "test-support"))]
+                            RemoteConnectionOptions::Mock(_) => {
+                                localization::text(cx, "recent-connect-mock-failed")
+                            }
+                        };
                         window.prompt(
                             PromptLevel::Critical,
-                            match connection_options {
-                                RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
-                                RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::Docker(_) => {
-                                    "Failed to connect to Dev Container"
-                                }
-                                #[cfg(any(test, feature = "test-support"))]
-                                RemoteConnectionOptions::Mock(_) => {
-                                    "Failed to connect to mock server"
-                                }
-                            },
+                            &title,
                             Some(&format!("{e:#}")),
-                            &["Retry", "Cancel"],
+                            &[
+                                PromptButton::new(localization::text(cx, "recent-retry")),
+                                PromptButton::cancel(localization::text(cx, "common-cancel")),
+                            ],
                             cx,
                         )
                     })?
@@ -465,21 +473,29 @@ pub async fn open_remote_project(
                 log::error!("Failed to open project: {e:#}");
                 let response = window
                     .update(cx, |_, window, cx| {
+                        let title = match connection_options {
+                            RemoteConnectionOptions::Ssh(_) => {
+                                localization::text(cx, "recent-connect-ssh-failed")
+                            }
+                            RemoteConnectionOptions::Wsl(_) => {
+                                localization::text(cx, "recent-connect-wsl-failed")
+                            }
+                            RemoteConnectionOptions::Docker(_) => {
+                                localization::text(cx, "recent-connect-container-failed")
+                            }
+                            #[cfg(any(test, feature = "test-support"))]
+                            RemoteConnectionOptions::Mock(_) => {
+                                localization::text(cx, "recent-connect-mock-failed")
+                            }
+                        };
                         window.prompt(
                             PromptLevel::Critical,
-                            match connection_options {
-                                RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
-                                RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::Docker(_) => {
-                                    "Failed to connect to Dev Container"
-                                }
-                                #[cfg(any(test, feature = "test-support"))]
-                                RemoteConnectionOptions::Mock(_) => {
-                                    "Failed to connect to mock server"
-                                }
-                            },
+                            &title,
                             Some(&format!("{e:#}")),
-                            &["Retry", "Cancel"],
+                            &[
+                                PromptButton::new(localization::text(cx, "recent-retry")),
+                                PromptButton::cancel(localization::text(cx, "common-cancel")),
+                            ],
                             cx,
                         )
                     })?

@@ -27,6 +27,23 @@ pub fn format_localized_timestamp(
     format_local_timestamp(timestamp_local, reference_local, format)
 }
 
+/// Formats a timestamp with the selected interface language while preserving
+/// the operating system time-cycle preference.
+pub fn format_localized_timestamp_for_language(
+    timestamp: OffsetDateTime,
+    reference: OffsetDateTime,
+    timezone: UtcOffset,
+    format: TimestampFormat,
+    language: localization::UiLanguage,
+) -> String {
+    format_local_timestamp_for_language(
+        timestamp.to_offset(timezone),
+        reference.to_offset(timezone),
+        format,
+        language,
+    )
+}
+
 /// Formats a timestamp, which respects the user's date and time preferences/custom format.
 pub fn format_local_timestamp(
     timestamp: OffsetDateTime,
@@ -39,6 +56,87 @@ pub fn format_local_timestamp(
         TimestampFormat::MediumAbsolute => format_absolute_timestamp_medium(timestamp, reference),
         TimestampFormat::Relative => format_relative_time(timestamp, reference)
             .unwrap_or_else(|| format_relative_date(timestamp, reference)),
+    }
+}
+
+/// Formats a local timestamp with the selected interface language.
+pub fn format_local_timestamp_for_language(
+    timestamp: OffsetDateTime,
+    reference: OffsetDateTime,
+    format: TimestampFormat,
+    language: localization::UiLanguage,
+) -> String {
+    if language != localization::UiLanguage::SimplifiedChinese {
+        return format_local_timestamp(timestamp, reference, format);
+    }
+
+    match format {
+        TimestampFormat::Absolute => format!(
+            "{} {}",
+            format_chinese_date(timestamp),
+            format_absolute_time(timestamp)
+        ),
+        TimestampFormat::EnhancedAbsolute => {
+            let date = if timestamp.date() == reference.date() {
+                "今天".to_string()
+            } else if reference.date().previous_day() == Some(timestamp.date()) {
+                "昨天".to_string()
+            } else {
+                format_chinese_date(timestamp)
+            };
+            format!("{date} {}", format_absolute_time(timestamp))
+        }
+        TimestampFormat::MediumAbsolute => format_chinese_date(timestamp),
+        TimestampFormat::Relative => format_relative_time_chinese(timestamp, reference)
+            .unwrap_or_else(|| format_relative_date_chinese(timestamp, reference)),
+    }
+}
+
+fn format_chinese_date(timestamp: OffsetDateTime) -> String {
+    format!(
+        "{}年{}月{}日",
+        timestamp.year(),
+        timestamp.month() as u8,
+        timestamp.day()
+    )
+}
+
+fn format_relative_time_chinese(
+    timestamp: OffsetDateTime,
+    reference: OffsetDateTime,
+) -> Option<String> {
+    let difference = reference - timestamp;
+    let minutes = difference.whole_minutes();
+    match minutes {
+        0 => Some("刚刚".to_string()),
+        1..=59 => Some(format!("{minutes} 分钟前")),
+        _ => match difference.whole_hours() {
+            hours @ 1..=23 => Some(format!("{hours} 小时前")),
+            _ => None,
+        },
+    }
+}
+
+fn format_relative_date_chinese(timestamp: OffsetDateTime, reference: OffsetDateTime) -> String {
+    let days = (reference.date() - timestamp.date()).whole_days();
+    match days {
+        0 => "今天".to_string(),
+        1 => "昨天".to_string(),
+        2..=6 => format!("{days} 天前"),
+        _ => {
+            let weeks = (reference.date() - timestamp.date()).whole_weeks();
+            match weeks {
+                1..=4 => format!("{weeks} 周前"),
+                _ => {
+                    let months = calculate_month_difference(timestamp, reference);
+                    match months {
+                        0..=1 => "1 个月前".to_string(),
+                        2..=11 => format!("{months} 个月前"),
+                        _ => format!("{} 年前", (months + 6) / 12),
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -322,29 +420,14 @@ fn format_compound_year_month(month_diff: usize) -> String {
 }
 
 /// Calculates the difference in months between two timestamps.
-/// The reference timestamp should always be greater than the timestamp.
+/// If `timestamp` is chronologically after `reference` (e.g. a future-dated
+/// or clock-skewed source), the difference is clamped to 0 rather than
+/// underflowing.
 fn calculate_month_difference(timestamp: OffsetDateTime, reference: OffsetDateTime) -> usize {
-    let timestamp_year = timestamp.year();
-    let reference_year = reference.year();
-    let timestamp_month: u8 = timestamp.month().into();
-    let reference_month: u8 = reference.month().into();
+    let timestamp_total_months = timestamp.year() as i64 * 12 + u8::from(timestamp.month()) as i64;
+    let reference_total_months = reference.year() as i64 * 12 + u8::from(reference.month()) as i64;
 
-    let month_diff = if reference_month >= timestamp_month {
-        reference_month as usize - timestamp_month as usize
-    } else {
-        12 - timestamp_month as usize + reference_month as usize
-    };
-
-    let year_diff = (reference_year - timestamp_year) as usize;
-    if year_diff == 0 {
-        reference_month as usize - timestamp_month as usize
-    } else if month_diff == 0 {
-        year_diff * 12
-    } else if timestamp_month > reference_month {
-        (year_diff - 1) * 12 + month_diff
-    } else {
-        year_diff * 12 + month_diff
-    }
+    (reference_total_months - timestamp_total_months).max(0) as usize
 }
 
 /// Formats a timestamp, which is either in 12-hour or 24-hour time format.
@@ -626,6 +709,32 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_simplified_chinese_dates_and_relative_times() {
+        let reference = create_offset_datetime(2026, 8, 11, 10, 30, 0);
+        let thirty_minutes_ago = create_offset_datetime(2026, 8, 11, 10, 0, 0);
+        let earlier_date = create_offset_datetime(2026, 8, 1, 10, 0, 0);
+
+        assert_eq!(
+            format_local_timestamp_for_language(
+                thirty_minutes_ago,
+                reference,
+                TimestampFormat::Relative,
+                localization::UiLanguage::SimplifiedChinese,
+            ),
+            "30 分钟前"
+        );
+        assert_eq!(
+            format_local_timestamp_for_language(
+                earlier_date,
+                reference,
+                TimestampFormat::MediumAbsolute,
+                localization::UiLanguage::SimplifiedChinese,
+            ),
+            "2026年8月1日"
+        );
+    }
 
     #[test]
     fn test_format_date() {

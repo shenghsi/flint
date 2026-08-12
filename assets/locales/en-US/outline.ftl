@@ -1,0 +1,17 @@
+outline-search-placeholder = Search buffer symbols…
+outline-open-terminal = Open in Terminal
+outline-unfold-directory = Unfold Directory
+outline-fold-directory = Fold Directory
+outline-copy-path = Copy Path
+outline-copy-relative-path = Copy Relative Path
+outline-lines = Lines { $start}-{ $end }
+outline-untitled = Untitled
+outline-unknown-buffer = Unknown buffer
+outline-no-query-matches = No matches for query
+outline-empty = No outlines available
+outline-toggle-panel-with = Toggle Panel With
+outline-unpin = Unpin Outline
+outline-pin = Pin Active Outline
+outline-clear-filter = Clear Filter
+outline-panel = Outline Panel
+outline-searching = Searching:

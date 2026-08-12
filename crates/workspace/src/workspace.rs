@@ -57,9 +57,10 @@ use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis, Bounds,
     Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds, WindowHandle,
-    WindowId, WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    PathPromptOptions, Point, PromptButton, PromptLevel, Render, ResizeEdge, Size, Stateful,
+    Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds,
+    WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
+    transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -1081,6 +1082,10 @@ impl AppState {
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+        }
+        if !cx.has_global::<localization::Localization>() {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
         }
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
@@ -3287,11 +3292,19 @@ impl Workspace {
                             &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
                             cx,
                         );
+                        let title = localization::text(cx, "workspace-save-changes-files");
+                        let save_all = localization::text(cx, "workspace-save-all");
+                        let discard_all = localization::text(cx, "workspace-discard-all");
+                        let cancel = localization::text(cx, "workspace-cancel");
                         window.prompt(
                             PromptLevel::Warning,
-                            "Do you want to save all changes in the following files?",
+                            &title,
                             Some(&detail),
-                            &["Save all", "Discard all", "Cancel"],
+                            &[
+                                PromptButton::ok(save_all),
+                                PromptButton::new(discard_all),
+                                PromptButton::cancel(cancel),
+                            ],
                             cx,
                         )
                     })?;
@@ -7204,12 +7217,18 @@ fn notify_if_database_failed(window: WindowHandle<MultiWorkspace>, cx: &mut Asyn
                         cx,
                         |cx| {
                             cx.new(|cx| {
-                                MessageNotification::new("Failed to load the database file.", cx)
-                                    .primary_message("File an Issue")
-                                    .primary_icon(IconName::Plus)
-                                    .primary_on_click(|window, cx| {
-                                        window.dispatch_action(Box::new(FileBugReport), cx)
-                                    })
+                                MessageNotification::new(
+                                    localization::text(cx, "workspace-database-load-failed"),
+                                    cx,
+                                )
+                                .primary_message(localization::text(
+                                    cx,
+                                    "workspace-file-bug-report",
+                                ))
+                                .primary_icon(IconName::Plus)
+                                .primary_on_click(|window, cx| {
+                                    window.dispatch_action(Box::new(FileBugReport), cx)
+                                })
                             })
                         },
                     );
@@ -8330,10 +8349,8 @@ pub fn open_paths(
 
             if all_metadatas.into_iter().all(|file| !file.is_dir) {
                 cx.update(|cx| {
-                    let windows = workspace_windows_for_location(
-                        &SerializedWorkspaceLocation::Local,
-                        cx,
-                    );
+                    let windows =
+                        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx);
                     let window = cx
                         .active_window()
                         .and_then(|window| window.downcast::<MultiWorkspace>())
@@ -8365,10 +8382,8 @@ pub fn open_paths(
 
             if use_existing_window {
                 let target_window = cx.update(|cx| {
-                    let windows = workspace_windows_for_location(
-                        &SerializedWorkspaceLocation::Local,
-                        cx,
-                    );
+                    let windows =
+                        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx);
                     let window = cx
                         .active_window()
                         .and_then(|window| window.downcast::<MultiWorkspace>())
@@ -8428,12 +8443,23 @@ pub fn open_paths(
                 });
             });
 
-            Ok(OpenResult { window: existing, workspace: target_workspace, opened_items: open_task })
+            Ok(OpenResult {
+                window: existing,
+                workspace: target_workspace,
+                opened_items: open_task,
+            })
         } else {
             let init = if open_in_dev_container {
-                Some(Box::new(|workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>| {
-                    workspace.set_open_in_dev_container(true);
-                }) as Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>)
+                Some(Box::new(
+                    |workspace: &mut Workspace,
+                     _window: &mut Window,
+                     _cx: &mut Context<Workspace>| {
+                        workspace.set_open_in_dev_container(true);
+                    },
+                )
+                    as Box<
+                        dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send,
+                    >)
             } else {
                 None
             };
@@ -8452,7 +8478,8 @@ pub fn open_paths(
                 .await;
 
             if let Ok(ref result) = result {
-                result.window
+                result
+                    .window
                     .update(cx, |_, window, _cx| {
                         window.activate_window();
                     })
@@ -8463,32 +8490,50 @@ pub fn open_paths(
         };
 
         #[cfg(target_os = "windows")]
-        if let Some(util::paths::WslPath{distro, path}) = wsl_path
+        if let Some(util::paths::WslPath { distro, path }) = wsl_path
             && let Ok(ref result) = result
         {
-            result.window
+            result
+                .window
                 .update(cx, move |multi_workspace, _window, cx| {
                     struct OpenInWsl;
                     let workspace = multi_workspace.workspace().clone();
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
-                            let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
-                            let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
-                            cx.new(move |cx| {
-                                MessageNotification::new(msg, cx)
-                                    .primary_message("Open in WSL")
-                                    .primary_icon(IconName::FolderOpen)
-                                    .primary_on_click(move |window, cx| {
-                                        window.dispatch_action(Box::new(remote::OpenWslPath {
-                                                distro: remote::WslConnectionOptions {
+                        workspace.show_notification(
+                            NotificationId::unique::<OpenInWsl>(),
+                            cx,
+                            move |cx| {
+                                let display_path =
+                                    util::markdown::MarkdownInlineCode(&path.to_string_lossy());
+                                let mut args = localization::FluentArgs::new();
+                                args.set("path", display_path.to_string());
+                                let msg = localization::text_with_args(
+                                    cx,
+                                    "workspace-wsl-filesystem-warning",
+                                    &args,
+                                );
+                                cx.new(move |cx| {
+                                    MessageNotification::new(msg, cx)
+                                        .primary_message(localization::text(
+                                            cx,
+                                            "workspace-open-in-wsl",
+                                        ))
+                                        .primary_icon(IconName::FolderOpen)
+                                        .primary_on_click(move |window, cx| {
+                                            window.dispatch_action(
+                                                Box::new(remote::OpenWslPath {
+                                                    distro: remote::WslConnectionOptions {
                                                         distro_name: distro.clone(),
-                                                    user: None,
-                                                },
-                                                paths: vec![path.clone().into()],
-                                            }), cx)
-                                    })
-                            })
-                        });
+                                                        user: None,
+                                                    },
+                                                    paths: vec![path.clone().into()],
+                                                }),
+                                                cx,
+                                            )
+                                        })
+                                })
+                            },
+                        );
                     });
                 })
                 .unwrap();
@@ -8754,7 +8799,14 @@ async fn open_remote_project_inner(
         for error in project_path_errors {
             if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                 if let Some(path) = error.error_tag("path") {
-                    workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
+                    workspace.show_error(
+                        &anyhow!(localization::tr!(
+                            cx,
+                            "workspace-project-path-does-not-exist",
+                            path = path.to_string(),
+                        )),
+                        cx,
+                    )
                 }
             } else {
                 workspace.show_error(&error, cx)
@@ -8808,9 +8860,12 @@ pub fn reload(cx: &mut App) {
             .update(cx, |_, window, cx| {
                 window.prompt(
                     PromptLevel::Info,
-                    "Are you sure you want to restart?",
+                    &localization::text(cx, "workspace-restart-confirm"),
                     None,
-                    &["Restart", "Cancel"],
+                    &[
+                        PromptButton::ok(localization::text(cx, "workspace-restart")),
+                        PromptButton::cancel(localization::text(cx, "common-cancel")),
+                    ],
                     cx,
                 )
             })
@@ -14413,6 +14468,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             cx.set_global(db::AppDatabase::test_new());
             theme_settings::init(theme::LoadThemes::JustBase, cx);
         });

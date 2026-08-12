@@ -7,8 +7,9 @@ use git::repository::{Branch, delete_branch_flag};
 use gpui::http_client::Url;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptButton,
+    PromptLevel, Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window,
+    actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::{Repository, RepositoryEvent};
@@ -740,7 +741,7 @@ impl Render for DeleteBranchTooltip {
             .unwrap_or(false);
         if force_delete {
             Tooltip::for_action_in(
-                "Force Delete Branch",
+                localization::text(cx, "git-force-delete-branch"),
                 &branch_picker::ForceDeleteBranch,
                 &self.focus_handle,
                 cx,
@@ -748,9 +749,9 @@ impl Render for DeleteBranchTooltip {
             .into_any_element()
         } else {
             Tooltip::with_meta_in(
-                "Delete Branch",
+                localization::text(cx, "git-delete-branch"),
                 Some(&branch_picker::DeleteBranch),
-                "Hold alt to force delete",
+                localization::text(cx, "git-hold-alt-force-delete"),
                 &self.focus_handle,
                 cx,
             )
@@ -977,7 +978,10 @@ impl BranchListDelegate {
                                 PromptLevel::Warning,
                                 &prompt_message,
                                 None,
-                                &["Force Delete", "Cancel"],
+                                &[
+                                    PromptButton::ok(localization::text(cx, "git-force-delete")),
+                                    PromptButton::cancel(localization::text(cx, "common-cancel")),
+                                ],
                                 cx,
                             )
                         })?;
@@ -1047,25 +1051,25 @@ impl BranchListDelegate {
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, cx: &mut App) -> Arc<str> {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 if self.is_select_only() {
-                    "Select branch…"
+                    localization::text(cx, "git-select-branch").to_string()
                 } else {
-                    "Switch branch…"
+                    localization::text(cx, "git-switch-branch-placeholder").to_string()
                 }
             }
-            PickerState::CreateRemote(_) => "Enter a name for this remote…",
+            PickerState::CreateRemote(_) => {
+                localization::text(cx, "git-enter-remote-name").to_string()
+            }
         }
         .into()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
         match self.state {
-            PickerState::CreateRemote(_) => {
-                Some(SharedString::new_static("Remote name can't be empty"))
-            }
+            PickerState::CreateRemote(_) => Some(localization::text(cx, "git-remote-name-empty")),
             _ => None,
         }
     }
@@ -1408,17 +1412,19 @@ impl PickerDelegate for BranchListDelegate {
                         .unwrap_or_else(|_| OffsetDateTime::now_utc());
                     let local_offset =
                         time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-                    let formatted_time = time_format::format_localized_timestamp(
+                    let formatted_time = time_format::format_localized_timestamp_for_language(
                         commit_time,
                         OffsetDateTime::now_utc(),
                         local_offset,
                         time_format::TimestampFormat::Relative,
+                        localization::language(cx),
                     );
-                    let absolute_time = time_format::format_localized_timestamp(
+                    let absolute_time = time_format::format_localized_timestamp_for_language(
                         commit_time,
                         OffsetDateTime::now_utc(),
                         local_offset,
                         time_format::TimestampFormat::EnhancedAbsolute,
+                        localization::language(cx),
                     );
                     let author = commit.author_name.clone();
                     (
@@ -1458,18 +1464,28 @@ impl PickerDelegate for BranchListDelegate {
         };
 
         let entry_title = match entry {
-            Entry::NewUrl { .. } => Label::new("Create Remote Repository")
-                .single_line()
-                .truncate()
-                .into_any_element(),
-            Entry::NewBranch { name } => Label::new(format!("Create Branch: \"{name}\"…"))
-                .single_line()
-                .truncate()
-                .into_any_element(),
-            Entry::NewRemoteName { name, .. } => Label::new(format!("Create Remote: \"{name}\""))
-                .single_line()
-                .truncate()
-                .into_any_element(),
+            Entry::NewUrl { .. } => {
+                Label::new(localization::text(cx, "git-create-remote-repository"))
+                    .single_line()
+                    .truncate()
+                    .into_any_element()
+            }
+            Entry::NewBranch { name } => Label::new(localization::tr!(
+                cx,
+                "git-create-branch-named",
+                name = name
+            ))
+            .single_line()
+            .truncate()
+            .into_any_element(),
+            Entry::NewRemoteName { name, .. } => Label::new(localization::tr!(
+                cx,
+                "git-create-remote-named",
+                name = name
+            ))
+            .single_line()
+            .truncate()
+            .into_any_element(),
             Entry::Branch { branch, positions } => {
                 HighlightedLabel::new(branch.name().to_string(), positions.clone())
                     .single_line()
@@ -1484,6 +1500,8 @@ impl PickerDelegate for BranchListDelegate {
             entry,
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. }
         );
+        let selected_branch_label = localization::text(cx, "git-selected-branch");
+        let current_branch_label = localization::text(cx, "git-current-branch");
 
         let deleted_branch_icon = |entry_ix: usize| {
             let picker = picker.clone();
@@ -1638,9 +1656,12 @@ impl PickerDelegate for BranchListDelegate {
                                             })
                                             .when(!has_commit, |this| {
                                                 this.child(
-                                                    Label::new("No commits found")
-                                                        .color(Color::Muted)
-                                                        .size(LabelSize::Small),
+                                                    Label::new(localization::text(
+                                                        cx,
+                                                        "git-no-commits",
+                                                    ))
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
                                                 )
                                             })
                                             .into_any_element()
@@ -1656,6 +1677,8 @@ impl PickerDelegate for BranchListDelegate {
                                     entry.as_branch().map(|b| b.name().to_string()),
                                     |this, branch_name| {
                                         let absolute_time = absolute_time.clone();
+                                        let selected_branch_label = selected_branch_label.clone();
+                                        let current_branch_label = current_branch_label.clone();
                                         this.tooltip({
                                             let is_head = is_head_branch;
                                             let is_checked = is_checked_branch;
@@ -1665,16 +1688,20 @@ impl PickerDelegate for BranchListDelegate {
                                                     .child(Label::new(branch_name.clone()))
                                                     .when(is_select_only && is_checked, |this| {
                                                         this.child(
-                                                            Label::new("Selected Branch")
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Muted),
+                                                            Label::new(
+                                                                selected_branch_label.clone(),
+                                                            )
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted),
                                                         )
                                                     })
                                                     .when(is_head, |this| {
                                                         this.child(
-                                                            Label::new("Current Branch")
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Muted),
+                                                            Label::new(
+                                                                current_branch_label.clone(),
+                                                            )
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted),
                                                         )
                                                     })
                                                     .when_some(
@@ -1765,7 +1792,7 @@ impl PickerDelegate for BranchListDelegate {
                             .is_some_and(|branch| branch.is_head),
                         |this| {
                             this.child(
-                                Button::new("delete-branch", "Delete")
+                                Button::new("delete-branch", localization::text(cx, "git-delete"))
                                     .key_binding(
                                         KeyBinding::for_action_in(
                                             &branch_picker::DeleteBranch,
@@ -1784,7 +1811,7 @@ impl PickerDelegate for BranchListDelegate {
                         },
                     )
                     .child(
-                        Button::new("switch_branch", "Switch")
+                        Button::new("switch_branch", localization::text(cx, "git-switch"))
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
@@ -1802,18 +1829,23 @@ impl PickerDelegate for BranchListDelegate {
                                     branch_from_default_button,
                                     |this, button| {
                                         this.child(button).child(
-                                            Button::new("create", "Create")
-                                                .key_binding(
-                                                    KeyBinding::for_action_in(
-                                                        &menu::Confirm,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                            Button::new(
+                                                "create",
+                                                localization::text(cx, "git-create"),
+                                            )
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Confirm,
+                                                    &focus_handle,
+                                                    cx,
                                                 )
-                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(
+                                                cx.listener(|this, _, window, cx| {
                                                     this.delegate.confirm(false, window, cx);
-                                                })),
+                                                }),
+                                            ),
                                         )
                                     },
                                 )
@@ -1878,7 +1910,7 @@ impl PickerDelegate for BranchListDelegate {
                             this.child(button)
                         })
                         .child(
-                            Button::new("create-new-branch", "Create")
+                            Button::new("create-new-branch", localization::text(cx, "git-create"))
                                 .key_binding(
                                     KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                         .map(|kb| kb.size(rems_from_px(12.))),
@@ -1894,15 +1926,18 @@ impl PickerDelegate for BranchListDelegate {
                 footer_container()
                     .justify_end()
                     .child(
-                        Button::new("confirm-create-remote", "Confirm")
-                            .key_binding(
-                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.delegate.confirm(false, window, cx);
-                            }))
-                            .disabled(self.last_query.is_empty()),
+                        Button::new(
+                            "confirm-create-remote",
+                            localization::text(cx, "git-confirm"),
+                        )
+                        .key_binding(
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.delegate.confirm(false, window, cx);
+                        }))
+                        .disabled(self.last_query.is_empty()),
                     )
                     .into_any_element(),
             ),
@@ -1931,6 +1966,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });

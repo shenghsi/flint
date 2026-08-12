@@ -26,6 +26,7 @@ futures.workspace = true
 gpui.workspace = true
 html5ever.workspace = true
 language.workspace = true
+localization.workspace = true
 latex_render = { path = "../latex_render" }
 linkify.workspace = true
 log.workspace = true

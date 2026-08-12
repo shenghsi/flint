@@ -163,14 +163,19 @@ impl Render for WorktreeFetchFailedToast {
                     .size(IconSize::Small)
                     .color(Color::Error),
             )
-            .child(Label::new(format!(
-                "git fetch failed for {}",
-                self.remote_branch_name
+            .child(Label::new(localization::tr!(
+                cx,
+                "git-worktree-fetch-failed",
+                branch = self.remote_branch_name.as_str(),
             )))
             .child(
                 Button::new(
                     "use-local-worktree-base",
-                    format!("Use local {}", self.remote_branch_name),
+                    localization::tr!(
+                        cx,
+                        "git-worktree-use-local",
+                        branch = self.remote_branch_name.as_str(),
+                    ),
                 )
                 .color(Color::Muted)
                 .on_click(cx.listener(move |_, _event, window, cx| {
@@ -196,18 +201,21 @@ impl Render for WorktreeFetchFailedToast {
                 })),
             )
             .child(
-                Button::new("view-worktree-fetch-log", "Show Error Logs")
-                    .color(Color::Muted)
-                    .on_click(cx.listener(move |_, _event, window, cx| {
-                        cx.emit(DismissEvent);
-                        let output = output.clone();
-                        let operation = operation.clone();
-                        workspace_for_log
-                            .update(cx, move |workspace, cx| {
-                                open_output(operation, workspace, &output, window, cx)
-                            })
-                            .ok();
-                    })),
+                Button::new(
+                    "view-worktree-fetch-log",
+                    localization::text(cx, "git-show-error-logs"),
+                )
+                .color(Color::Muted)
+                .on_click(cx.listener(move |_, _event, window, cx| {
+                    cx.emit(DismissEvent);
+                    let output = output.clone();
+                    let operation = operation.clone();
+                    workspace_for_log
+                        .update(cx, move |workspace, cx| {
+                            open_output(operation, workspace, &output, window, cx)
+                        })
+                        .ok();
+                })),
             )
             .child(
                 IconButton::new("dismiss-worktree-fetch-failed-toast", IconName::Close)
@@ -1303,6 +1311,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
             theme_settings::init(LoadThemes::JustBase, cx);
             AllLanguageSettings::register(cx);
             editor::init(cx);

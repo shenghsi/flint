@@ -9,6 +9,7 @@ use ui::IntoElement;
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
+    user_language_setting,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -118,9 +119,14 @@ fn developer_page(cx: &App) -> SettingsPage {
 }
 
 fn general_page(cx: &App) -> SettingsPage {
-    fn general_settings_section(_cx: &App) -> Vec<SettingsPageItem> {
-        vec![
-            SettingsPageItem::SectionHeader("General Settings"),
+    fn general_settings_section(cx: &App) -> Vec<SettingsPageItem> {
+        let mut items = vec![SettingsPageItem::SectionHeader("General Settings")];
+        if localization::simplified_chinese_ui_ready() {
+            items.push(SettingsPageItem::UserLanguageSetting(
+                user_language_setting(cx),
+            ));
+        }
+        items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "When Closing With No Tabs",
                 description: "What to do when using the 'close active item' action with no tabs.",
@@ -234,7 +240,8 @@ fn general_page(cx: &App) -> SettingsPage {
                 })),
                 files: USER,
             }),
-        ]
+        ]);
+        items
     }
     fn security_section() -> [SettingsPageItem; 2] {
         [
@@ -9246,7 +9253,11 @@ mod tests {
 
     #[gpui::test]
     fn test_security_section_uses_trust_all_worktrees_key(cx: &mut gpui::TestAppContext) {
-        let page = cx.update(|cx| general_page(cx));
+        let page = cx.update(|cx| {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
+            general_page(cx)
+        });
         let pages = [page];
         let setting_item = setting_item_by_title(&pages, "Trust All Projects By Default");
 
@@ -9254,6 +9265,41 @@ mod tests {
             setting_item.field.json_path(),
             Some("session.trust_all_worktrees")
         );
+    }
+
+    #[gpui::test]
+    fn general_page_shows_user_language_setting(cx: &mut gpui::TestAppContext) {
+        let page = cx.update(|cx| {
+            localization::init(localization::UiLanguage::English, cx)
+                .expect("test localization must load");
+            general_page(cx)
+        });
+
+        assert!(
+            page.items
+                .iter()
+                .any(|item| matches!(item, SettingsPageItem::UserLanguageSetting(_)))
+        );
+    }
+
+    #[gpui::test]
+    fn general_page_uses_chinese_language_setting_text(cx: &mut gpui::TestAppContext) {
+        let page = cx.update(|cx| {
+            localization::init(localization::UiLanguage::SimplifiedChinese, cx)
+                .expect("test localization must load");
+            general_page(cx)
+        });
+        let language_setting = page
+            .items
+            .iter()
+            .find_map(|item| match item {
+                SettingsPageItem::UserLanguageSetting(setting) => Some(setting),
+                _ => None,
+            })
+            .expect("language setting should exist");
+
+        assert_eq!(language_setting.title, "语言");
+        assert_eq!(language_setting.description, "选择 Flint 界面使用的语言。");
     }
 
     #[test]
