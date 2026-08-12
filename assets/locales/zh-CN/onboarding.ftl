@@ -2,6 +2,7 @@ onboarding-title = 欢迎使用 Flint
 onboarding-tab-title = 初始设置
 onboarding-tagline = 面向未来的代码编辑器
 onboarding-finish-setup = 完成设置
+onboarding-language = 界面语言
 onboarding-theme = 主题
 onboarding-theme-light = 浅色
 onboarding-theme-dark = 深色

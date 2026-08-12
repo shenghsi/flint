@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use fs::Fs;
-use gpui::{Action, App, IntoElement};
+use gpui::{Action, App, IntoElement, ReadGlobal};
 use project::project_settings::ProjectSettings;
-use settings::{BaseKeymap, Settings, update_settings_file};
+use settings::{
+    BaseKeymap, Settings, SettingsStore, UiLanguage, update_settings_file,
+    update_user_settings_file,
+};
 use theme::{Appearance, SystemAppearance, ThemeRegistry};
 use theme_settings::{ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings};
 use ui::{
@@ -24,6 +27,39 @@ const FAMILY_NAMES: [SharedString; 3] = [
     SharedString::new_static("Ayu"),
     SharedString::new_static("Gruvbox"),
 ];
+
+fn render_language_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
+    let current_language = SettingsStore::global(cx).ui_language();
+
+    h_flex()
+        .justify_between()
+        .child(Label::new(localization::text(cx, "onboarding-language")))
+        .child(
+            ToggleButtonGroup::single_row(
+                "onboarding-language-selection",
+                UiLanguage::ALL.map(|language| {
+                    ToggleButtonSimple::new(language.native_name(), move |_, _, cx| {
+                        if language != SettingsStore::global(cx).ui_language() {
+                            update_user_settings_file(
+                                <dyn Fs>::global(cx),
+                                cx,
+                                move |settings, _| settings.ui_language = Some(language),
+                            );
+                        }
+                    })
+                }),
+            )
+            .size(ToggleButtonGroupSize::Medium)
+            .tab_index(tab_index)
+            .selected_index(
+                UiLanguage::ALL
+                    .iter()
+                    .position(|language| *language == current_language)
+                    .unwrap_or_default(),
+            )
+            .style(ui::ToggleButtonGroupStyle::Outlined),
+        )
+}
 
 fn get_theme_family_themes(theme_name: &str) -> Option<(&'static str, &'static str)> {
     for i in 0..LIGHT_THEMES.len() {
@@ -437,6 +473,8 @@ pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
     v_flex()
         .id("basics-page")
         .gap_6()
+        .child(render_language_section(&mut tab_index, cx))
+        .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
         .child(render_theme_section(&mut tab_index, cx))
         .child(render_base_keymap_section(&mut tab_index, cx))
         .child(render_import_settings_section(&mut tab_index, cx))

@@ -2,6 +2,7 @@ onboarding-title = Welcome to Flint
 onboarding-tab-title = Onboarding
 onboarding-tagline = The editor for what's next
 onboarding-finish-setup = Finish Setup
+onboarding-language = Interface Language
 onboarding-theme = Theme
 onboarding-theme-light = Light
 onboarding-theme-dark = Dark
