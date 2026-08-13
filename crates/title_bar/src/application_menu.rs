@@ -45,21 +45,27 @@ struct MenuEntry {
 pub struct ApplicationMenu {
     entries: SmallVec<[MenuEntry; 8]>,
     pending_menu_open: Option<String>,
+    menus_generation: u64,
 }
 
 impl ApplicationMenu {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        let menus = cx.get_menus().unwrap_or_default();
         Self {
-            entries: menus
-                .into_iter()
-                .map(|menu| MenuEntry {
-                    menu,
-                    handle: PopoverMenuHandle::default(),
-                })
-                .collect(),
+            entries: Self::build_entries(cx),
             pending_menu_open: None,
+            menus_generation: localization::generation(cx),
         }
+    }
+
+    fn build_entries(cx: &mut Context<Self>) -> SmallVec<[MenuEntry; 8]> {
+        cx.get_menus()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|menu| MenuEntry {
+                menu,
+                handle: PopoverMenuHandle::default(),
+            })
+            .collect()
     }
 
     fn sanitize_menu_items(items: Vec<OwnedMenuItem>) -> Vec<OwnedMenuItem> {
@@ -278,6 +284,17 @@ pub(crate) fn show_menus(cx: &mut App) -> bool {
 
 impl Render for ApplicationMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Menu items (e.g. their labels) can change independently of this view, most notably
+        // when the UI language changes: `main.rs` recomputes and installs new localized menus
+        // via `cx.set_menus`, but doesn't know about (and can't directly refresh) this
+        // already-constructed view's cached `entries`. Re-fetch whenever the localization
+        // generation moves, since that's the only thing that currently invalidates menu content.
+        let current_generation = localization::generation(cx);
+        if current_generation != self.menus_generation {
+            self.menus_generation = current_generation;
+            self.entries = Self::build_entries(cx);
+        }
+
         let all_menus_shown = self.all_menus_shown(cx);
 
         if let Some(pending_menu_open) = self.pending_menu_open.take()
