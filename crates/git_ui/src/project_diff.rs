@@ -1,5 +1,5 @@
 use crate::{
-    branch_picker, conflict_view,
+    branch_picker, commit_picker, conflict_view,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
 };
@@ -69,13 +69,15 @@ actions!(
         CompareWithBranch,
         /// Compare working tree with a specific branch
         CompareWorkingTreeWithBranch,
+        /// Compare working tree with a commit, chosen from a commit picker
+        CompareWorkingTreeWithCommit,
     ]
 );
 
 /// Compare working tree with a specific commit
 #[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
 #[action(namespace = git)]
-pub struct CompareWorkingTreeWithCommit {
+pub struct CompareWorkingTreeWithSpecificCommit {
     pub sha: String,
 }
 
@@ -132,6 +134,7 @@ impl ProjectDiff {
         workspace.register_action(Self::compare_with_branch);
         workspace.register_action(Self::compare_working_tree_with_branch);
         workspace.register_action(Self::compare_working_tree_with_commit);
+        workspace.register_action(Self::compare_working_tree_with_specific_commit);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -228,7 +231,50 @@ impl ProjectDiff {
 
     fn compare_working_tree_with_commit(
         workspace: &mut Workspace,
-        action: &CompareWorkingTreeWithCommit,
+        _: &CompareWorkingTreeWithCommit,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        let Some(repository) = project.read(cx).active_repository(cx) else {
+            let workspace = cx.entity().downgrade();
+            window
+                .spawn(cx, async |_cx| {
+                    let result: Result<()> = Err(anyhow!("No active repository"));
+                    result
+                })
+                .detach_and_notify_err(workspace, window, cx);
+            return;
+        };
+
+        let on_select = Arc::new({
+            let repository = repository.clone();
+            let workspace = workspace.weak_handle();
+            move |sha: git::Oid, window: &mut Window, cx: &mut App| {
+                let base_ref: SharedString = sha.to_string().into();
+                workspace
+                    .update(cx, |workspace, cx| {
+                        Self::deploy_branch_diff_with_diff_base(
+                            workspace,
+                            project.clone(),
+                            repository.clone(),
+                            DiffBase::branch(base_ref),
+                            window,
+                            cx,
+                        );
+                    })
+                    .ok();
+            }
+        });
+
+        workspace.toggle_modal(window, cx, |window, cx| {
+            commit_picker::select_modal(repository, on_select, window, cx)
+        });
+    }
+
+    fn compare_working_tree_with_specific_commit(
+        workspace: &mut Workspace,
+        action: &CompareWorkingTreeWithSpecificCommit,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -4493,7 +4539,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_compare_working_tree_with_commit_uses_two_dot_diff_base(cx: &mut TestAppContext) {
+    async fn test_compare_working_tree_with_specific_commit_uses_two_dot_diff_base(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -4511,9 +4559,9 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         workspace.update_in(cx, |workspace, window, cx| {
-            ProjectDiff::compare_working_tree_with_commit(
+            ProjectDiff::compare_working_tree_with_specific_commit(
                 workspace,
-                &CompareWorkingTreeWithCommit {
+                &CompareWorkingTreeWithSpecificCommit {
                     sha: "deadbeef".into(),
                 },
                 window,
