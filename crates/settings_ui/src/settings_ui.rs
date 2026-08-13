@@ -1410,9 +1410,79 @@ fn user_language_setting(cx: &App) -> UserLanguageSettingItem {
 }
 
 fn settings_source_text(cx: &App, source: &str) -> SharedString {
+    if let Some(identifier) = settings_item_message_id(source) {
+        return localization::text(cx, identifier);
+    }
+
     let mut arguments = localization::FluentArgs::new();
     arguments.set("source", source);
     localization::text_with_args(cx, "settings-source", &arguments)
+}
+
+/// Maps setting item titles, descriptions, and section headers to their Fluent
+/// message identifiers. These can't be expressed as `settings-source` select
+/// variants because Fluent identifiers forbid spaces and punctuation, so each
+/// string gets its own message instead.
+fn settings_item_message_id(source: &str) -> Option<&'static str> {
+    Some(match source {
+        "General Settings" => "settings-general-section-general",
+        "Security" => "settings-general-section-security",
+        "Workspace Restoration" => "settings-general-section-workspace-restoration",
+        "Scoped Settings" => "settings-general-section-scoped-settings",
+        "Auto Update" => "settings-general-auto-update-title",
+        "When Closing With No Tabs" => "settings-general-when-closing-with-no-tabs-title",
+        "What to do when using the 'close active item' action with no tabs." => {
+            "settings-general-when-closing-with-no-tabs-description"
+        }
+        "On Last Window Closed" => "settings-general-on-last-window-closed-title",
+        "What to do when the last window is closed." => {
+            "settings-general-on-last-window-closed-description"
+        }
+        "Use System Path Prompts" => "settings-general-use-system-path-prompts-title",
+        "Use native OS dialogs for 'Open' and 'Save As'." => {
+            "settings-general-use-system-path-prompts-description"
+        }
+        "Use System Prompts" => "settings-general-use-system-prompts-title",
+        "Use native OS dialogs for confirmations." => {
+            "settings-general-use-system-prompts-description"
+        }
+        "Redact Private Values" => "settings-general-redact-private-values-title",
+        "Hide the values of variables in private files." => {
+            "settings-general-redact-private-values-description"
+        }
+        "Private Files" => "settings-general-private-files-title",
+        "Globs to match against file paths to determine if a file is private." => {
+            "settings-general-private-files-description"
+        }
+        "CLI Default Open Behavior" => "settings-general-cli-default-open-behavior-title",
+        "How `flint <path>` opens directories when no flag is specified." => {
+            "settings-general-cli-default-open-behavior-description"
+        }
+        "Trust All Projects By Default" => "settings-general-trust-all-projects-title",
+        "When opening Flint, avoid Restricted Mode by auto-trusting all projects, enabling use of all features without having to give permission to each new project." => {
+            "settings-general-trust-all-projects-description"
+        }
+        "Restore Unsaved Buffers" => "settings-general-restore-unsaved-buffers-title",
+        "Whether or not to restore unsaved buffers on restart." => {
+            "settings-general-restore-unsaved-buffers-description"
+        }
+        "Restore On Startup" => "settings-general-restore-on-startup-title",
+        "What to restore from the previous session when opening Flint." => {
+            "settings-general-restore-on-startup-description"
+        }
+        "Preview Channel" => "settings-general-preview-channel-title",
+        "Which settings should be activated only in Preview build of Flint." => {
+            "settings-general-preview-channel-description"
+        }
+        "Settings Profiles" => "settings-general-settings-profiles-title",
+        "Any number of settings profiles that are temporarily applied on top of your existing user settings." => {
+            "settings-general-settings-profiles-description"
+        }
+        "Whether or not to automatically check for updates." => {
+            "settings-general-auto-update-description"
+        }
+        _ => return None,
+    })
 }
 
 struct DynamicItem {

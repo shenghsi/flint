@@ -9302,6 +9302,44 @@ mod tests {
         assert_eq!(language_setting.description, "选择 Flint 界面使用的语言。");
     }
 
+    #[gpui::test]
+    fn general_page_settings_are_fully_translated_to_chinese(cx: &mut gpui::TestAppContext) {
+        let page = cx.update(|cx| {
+            localization::init(localization::UiLanguage::SimplifiedChinese, cx)
+                .expect("test localization must load");
+            general_page(cx)
+        });
+
+        cx.update(|cx| {
+            for item in page.items.iter() {
+                match item {
+                    SettingsPageItem::SectionHeader(header) => {
+                        assert_ne!(
+                            crate::settings_source_text(cx, header).as_ref(),
+                            *header,
+                            "section header {header:?} is not translated to Chinese"
+                        );
+                    }
+                    SettingsPageItem::SettingItem(setting_item) => {
+                        assert_ne!(
+                            crate::settings_source_text(cx, setting_item.title).as_ref(),
+                            setting_item.title,
+                            "setting title {:?} is not translated to Chinese",
+                            setting_item.title
+                        );
+                        assert_ne!(
+                            crate::settings_source_text(cx, setting_item.description).as_ref(),
+                            setting_item.description,
+                            "setting description {:?} is not translated to Chinese",
+                            setting_item.description
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
     #[test]
     fn agent_threads_settings_use_exact_json_paths() {
         let page = panels_page();
