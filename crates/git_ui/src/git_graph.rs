@@ -2,7 +2,7 @@ use crate::{
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
     git_status_icon,
-    project_diff::CompareWorkingTreeWithCommit,
+    project_diff::CompareWorkingTreeWithSpecificCommit,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
@@ -2440,7 +2440,7 @@ impl GitGraph {
                     None,
                     window.handler_for(&git_graph, move |_this, window, cx| {
                         window.dispatch_action(
-                            CompareWorkingTreeWithCommit {
+                            CompareWorkingTreeWithSpecificCommit {
                                 sha: sha.to_string(),
                             }
                             .boxed_clone(),
