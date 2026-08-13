@@ -179,7 +179,7 @@ function ZipFlintAndItsFriendsDebug {
         ".\$CargoOutDir\flint.pdb",
         ".\$CargoOutDir\cli.pdb",
         ".\$CargoOutDir\auto_update_helper.pdb",
-        ".\$CargoOutDir\flint-agent-control.pdb",
+        ".\$CargoOutDir\flint_agent_control.pdb",
         ".\$CargoOutDir\explorer_command_injector.pdb",
         ".\$CargoOutDir\remote_server.pdb"
     )
