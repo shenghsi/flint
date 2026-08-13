@@ -73,16 +73,17 @@ where
             .unwrap()];
 
         let context_menu = window.use_keyed_state(current_value_label, cx, |window, cx| {
-            ContextMenu::new(window, cx, move |mut menu, _, _| {
+            ContextMenu::new(window, cx, move |mut menu, _, cx| {
                 for (&value, &label) in std::iter::zip(self.variants, self.labels) {
                     let on_change = self.on_change.clone();
                     let current_value = self.current_value;
+                    let label = if self.should_do_title_case {
+                        label.to_title_case()
+                    } else {
+                        label.to_string()
+                    };
                     menu = menu.toggleable_entry(
-                        if self.should_do_title_case {
-                            label.to_title_case()
-                        } else {
-                            label.to_string()
-                        },
+                        crate::settings_source_text(cx, &label).to_string(),
                         value == current_value,
                         IconPosition::End,
                         None,
@@ -95,13 +96,15 @@ where
             })
         });
 
+        let current_value_label = if self.should_do_title_case {
+            current_value_label.to_title_case()
+        } else {
+            current_value_label.to_string()
+        };
+
         DropdownMenu::new(
             self.id,
-            if self.should_do_title_case {
-                current_value_label.to_title_case()
-            } else {
-                current_value_label.to_string()
-            },
+            crate::settings_source_text(cx, &current_value_label).to_string(),
             context_menu,
         )
         .disabled(self.disabled)
