@@ -1,5 +1,7 @@
 # Flint
 
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
 Flint is a terminal-first fork of [Zed](https://github.com/zed-industries/zed) built for developers who use tools such as Codex, Claude Code, Pi, and OpenCode from the command line.
 
 It keeps Zed's fast, GPU-accelerated editor, language support, Git tooling, and extension ecosystem while replacing the built-in AI product with a focused workspace for terminal-based coding agents.
@@ -31,7 +33,8 @@ Flint is for developers who want the project awareness and visual review tools o
 - **Configurable agent workflows:** Set commands, arguments, environment variables, working directories, visibility, panel location, and default resume options.
 - **Rich Markdown previews:** Render inline and display LaTeX equations through bundled MathJax when Node.js is available, plus expanded Mermaid diagram types and diagrams with YAML frontmatter.
 - **CSV table previews:** Open saved `.csv` files as tables with independently resizable columns and a pinned row-number column.
-- **Faster visual navigation and review:** Distinguish file types with theme-aware colors and agents with recognizable brand icons, then open project changes directly from the editor toolbar for review with Zed's Git and diff views.
+- **Localized interface:** Use Flint in English or Simplified Chinese, with language selection available during onboarding and in the settings.
+- **Faster visual navigation and review:** Distinguish file types with theme-aware colors and agents with recognizable brand icons, open project changes directly from the editor toolbar, and compare the working tree directly with a branch or a commit using Flint's Git and diff views.
 
 ![Agent Threads menu with Hand off to Codex and Hand off to Pi actions](assets/screenshots/handoff.png)
 
