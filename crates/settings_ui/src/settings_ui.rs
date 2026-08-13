@@ -1425,6 +1425,13 @@ fn settings_source_text(cx: &App, source: &str) -> SharedString {
 /// string gets its own message instead.
 fn settings_item_message_id(source: &str) -> Option<&'static str> {
     Some(match source {
+        "Languages & Tools" => "settings-page-languages-and-tools",
+        "Search & Files" => "settings-page-search-and-files",
+        "Window & Layout" => "settings-page-window-and-layout",
+        "Panels" => "settings-page-panels",
+        "Version Control" => "settings-page-version-control",
+        "Network" => "settings-page-network",
+        "Developer" => "settings-page-developer",
         "General Settings" => "settings-general-section-general",
         "Security" => "settings-general-section-security",
         "Workspace Restoration" => "settings-general-section-workspace-restoration",

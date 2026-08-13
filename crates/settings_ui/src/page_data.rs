@@ -9340,6 +9340,40 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn all_settings_page_titles_are_translated_to_chinese(cx: &mut gpui::TestAppContext) {
+        // Mirrors the `title` field of every `SettingsPage` built in this file. Kept as a
+        // literal list rather than calling `settings_data(cx)` because some pages (e.g.
+        // `panels_page`) require a full `workspace::AppState` test harness to construct.
+        const PAGE_TITLES: &[&str] = &[
+            "Developer",
+            "General",
+            "Appearance",
+            "Keymap",
+            "Editor",
+            "Languages & Tools",
+            "Search & Files",
+            "Window & Layout",
+            "Panels",
+            "Terminal",
+            "Version Control",
+            "Network",
+        ];
+
+        cx.update(|cx| {
+            localization::init(localization::UiLanguage::SimplifiedChinese, cx)
+                .expect("test localization must load");
+
+            for title in PAGE_TITLES {
+                assert_ne!(
+                    crate::settings_source_text(cx, title).as_ref(),
+                    *title,
+                    "settings page title {title:?} is not translated to Chinese"
+                );
+            }
+        });
+    }
+
     #[test]
     fn agent_threads_settings_use_exact_json_paths() {
         let page = panels_page();
