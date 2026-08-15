@@ -40,7 +40,7 @@ impl Reporter {
     pub fn check_and_report(
         &mut self,
         task_stats: &[gpui::ThreadTaskStatistics],
-        action_stats: &gpui::ActionStatistics,
+        action_stats: &[gpui::ThreadActionStatistics],
     ) -> ReportMade {
         let mut reported_task_hangs = false;
         reported_task_hangs |= self.report_hanging_foreground(&task_stats);
@@ -136,8 +136,14 @@ impl Reporter {
         report_made
     }
 
-    fn report_hanging_actions(&mut self, action_stats: &gpui::ActionStatistics) {
-        let hangs: Vec<_> = action_stats
+    fn report_hanging_actions(&mut self, action_stats: &[gpui::ThreadActionStatistics]) {
+        let foreground = self.foreground_thread;
+        let Some(foreground) = action_stats.iter().find(|t| t.thread_id == foreground) else {
+            return; // during startup the foreground may not yet have statistics
+        };
+
+        let hangs: Vec<_> = foreground
+            .statistics
             .longest_runtimes(true)
             .filter(|action| action.runtime() > self.report_longer_then)
             .filter(|action| !self.hold_report(PerfIssue::Action(action.name)))

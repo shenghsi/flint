@@ -1,5 +1,8 @@
 use std::{
+    cell::LazyCell,
     hint::cold_path,
+    sync::Arc,
+    thread::ThreadId,
     time::{Duration, Instant},
 };
 
@@ -165,25 +168,91 @@ impl ActionTiming {
     }
 }
 
+// Action dispatch only ever happens on a single thread at a time (the
+// foreground thread of whichever window is dispatching), but a process can
+// have many such threads over its lifetime - e.g. every `#[gpui::test]` runs
+// on its own OS thread, and Rust's test runner executes them concurrently by
+// default. A single process-wide static previously raced across those
+// threads, so statistics are now kept per-thread (mirroring `THREAD_TIMINGS`
+// / `GLOBAL_THREAD_TIMINGS` below) and `take_action_stats` reports one entry
+// per thread that has dispatched an action.
+#[doc(hidden)]
+pub struct GlobalActionStatistics {
+    pub thread_id: ThreadId,
+    pub statistics: std::sync::Weak<GuardedActionStatistics>,
+}
+
+#[doc(hidden)]
+pub type GuardedActionStatistics = spin::Mutex<PerThreadActionStatistics>;
+
+#[doc(hidden)]
+pub struct PerThreadActionStatistics {
+    pub thread_id: ThreadId,
+    pub statistics: ActionStatistics,
+}
+
+impl Drop for PerThreadActionStatistics {
+    fn drop(&mut self) {
+        let mut global = GLOBAL_ACTION_STATISTICS.lock();
+        if let Some(index) = global.iter().position(|g| g.thread_id == self.thread_id) {
+            global.swap_remove(index);
+        }
+    }
+}
+
+#[doc(hidden)]
+pub struct ThreadActionStatistics {
+    pub thread_id: ThreadId,
+    pub statistics: ActionStatistics,
+}
+
 // The profiler is careful to never block when the lock is held, therefore a
 // spinlock is optimal.
-static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
-    const { spin::Mutex::new(ActionStatistics::new()) };
+static GLOBAL_ACTION_STATISTICS: spin::Mutex<Vec<GlobalActionStatistics>> =
+    spin::Mutex::new(Vec::new());
+
+thread_local! {
+    static ACTION_STATISTICS: LazyCell<Arc<GuardedActionStatistics>> = LazyCell::new(|| {
+        let thread_id = std::thread::current().id();
+        let statistics = Arc::new(spin::Mutex::new(PerThreadActionStatistics {
+            thread_id,
+            statistics: ActionStatistics::new(),
+        }));
+
+        GLOBAL_ACTION_STATISTICS.lock().push(GlobalActionStatistics {
+            thread_id,
+            statistics: Arc::downgrade(&statistics),
+        });
+
+        statistics
+    });
+}
 
 #[doc(hidden)]
 pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {
     let now = Instant::now();
     let action = action.type_id();
     let action = cx.actions.try_resolve_action(&action).unwrap_or("un-named");
-    ACTION_STATISTICS.lock().update_running_action(action, now);
+    ACTION_STATISTICS.with(|stats| stats.lock().statistics.update_running_action(action, now));
 }
 
 #[doc(hidden)]
 pub(crate) fn save_action_timing() {
-    ACTION_STATISTICS.lock().save_action_timing();
+    ACTION_STATISTICS.with(|stats| stats.lock().statistics.save_action_timing());
 }
 
 #[doc(hidden)]
-pub fn take_action_stats() -> ActionStatistics {
-    ACTION_STATISTICS.lock().take()
+pub fn take_action_stats() -> Vec<ThreadActionStatistics> {
+    GLOBAL_ACTION_STATISTICS
+        .lock()
+        .iter()
+        .filter_map(|entry| {
+            let statistics = entry.statistics.upgrade()?;
+            let mut statistics = statistics.lock();
+            Some(ThreadActionStatistics {
+                thread_id: statistics.thread_id,
+                statistics: statistics.statistics.take(),
+            })
+        })
+        .collect()
 }
