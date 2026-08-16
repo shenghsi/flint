@@ -283,6 +283,12 @@ To cut a stable release, walk through these steps in order:
    version change. This applies whether the bump is to retry a release
    blocked by that fix, or the fix/feature simply happens to warrant a
    release afterward — ask either way rather than assuming.
+   For a PR that touches only `crates/flint/Cargo.toml`/`Cargo.lock` version
+   fields (no other diff), it's fine to merge once the fast checks
+   (`clippy`, `fmt`, `build-linux`) pass without waiting on the ~45 min
+   `tests` job — `release.yml` reruns the test suite against the tag itself
+   before building release assets, so blocking the merge on a second test run
+   buys no extra safety.
 3. Before tagging, confirm the local `main` matches its remote counterpart
    (`git fetch && git status`) — the tag must point at the commit that's
    actually merged upstream, not a stale local one.
