@@ -442,6 +442,13 @@ struct ThreadEntry {
     window: Option<WindowHandle<MultiWorkspace>>,
     remote_process: Option<RemoteAgentProcess>,
     egress: Option<AgentEgressLease>,
+    /// Set when the thread's bell fires (see `register`'s `bell_subscription`)
+    /// and cleared when the user focuses the thread (see `focus_thread`).
+    /// This is the only persisted attention state Flint has -- the bell
+    /// itself is a one-shot terminal event, not state, so without this flag
+    /// there is nothing left to read once the initial desktop notification
+    /// has been dismissed.
+    needs_attention: bool,
 }
 
 /// See `AgentThreadStore::live_terminal_worktree_roots`.
@@ -459,7 +466,7 @@ struct ThreadShutdown {
     workspace: WeakEntity<Workspace>,
 }
 
-fn notification_project_name(project_root: &Path) -> String {
+pub(crate) fn notification_project_name(project_root: &Path) -> String {
     let project_root = project_root.to_string_lossy();
     project_root
         .trim_end_matches(['/', '\\'])
@@ -640,6 +647,34 @@ impl AgentThreadStore {
             })
             .cloned()
             .collect()
+    }
+
+    /// Whether the live thread at `terminal_item_id` needs the user's
+    /// attention right now (its bell fired and it hasn't been focused
+    /// since). `false` for any id not currently tracked as live.
+    pub(crate) fn needs_attention(&self, terminal_item_id: EntityId) -> bool {
+        self.threads
+            .get(&terminal_item_id)
+            .is_some_and(|entry| entry.needs_attention)
+    }
+
+    /// Counts live threads that need attention, grouped by the worktree
+    /// they're tied to (`AgentThreadMetadata::tied_worktree_root`), for a
+    /// cross-project rollup. This intentionally skips the deleted-worktree
+    /// fallback `TieResolution::effective_tie` applies for the main
+    /// per-section list: the rollup is a coarse "does this project need
+    /// you" signal, not a precise membership filter, so grouping by the
+    /// recorded tie directly is enough.
+    pub(crate) fn attention_by_worktree_root(&self) -> HashMap<PathBuf, usize> {
+        let mut counts: HashMap<PathBuf, usize> = HashMap::default();
+        for entry in self.threads.values() {
+            if entry.needs_attention {
+                *counts
+                    .entry(entry.metadata.tied_worktree_root.clone())
+                    .or_insert(0) += 1;
+            }
+        }
+        counts
     }
 
     /// Live threads eligible for background session discovery: no
@@ -844,6 +879,15 @@ impl AgentThreadStore {
             })
         })?;
 
+        if let Some(entry) = self.threads.get_mut(&terminal_item_id)
+            && entry.needs_attention
+        {
+            entry.needs_attention = false;
+            let kind_id = entry.metadata.kind_id;
+            cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
+            cx.notify();
+        }
+
         Ok(())
     }
 
@@ -969,6 +1013,7 @@ impl AgentThreadStore {
                 window,
                 remote_process,
                 egress,
+                needs_attention: false,
             },
         );
 
@@ -983,13 +1028,18 @@ impl AgentThreadStore {
         // signal we have for "this agent thread needs attention" -- the
         // underlying `Terminal` (not `TerminalView`, which only re-emits
         // `Wakeup`/`UpdateTab` for a bell) is what actually re-emits it.
-        let bell_subscription = cx.subscribe(&terminal, move |_store, _terminal, event, cx| {
+        let bell_subscription = cx.subscribe(&terminal, move |store, _terminal, event, cx| {
             if !matches!(event, terminal::Event::Bell) {
                 return;
             }
             if !AgentThreadSettings::get_global(cx).notify_when_finished {
                 return;
             }
+            if let Some(entry) = store.threads.get_mut(&terminal_item_id) {
+                entry.needs_attention = true;
+            }
+            cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
+            cx.notify();
             let kind_label = agent_kind_registry()
                 .into_iter()
                 .find(|kind| kind.id == kind_id)

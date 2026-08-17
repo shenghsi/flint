@@ -34,6 +34,54 @@ use crate::{
     agent_kind_registry,
 };
 
+/// One other open project (a `MultiWorkspace` retained workspace) that has
+/// at least one thread needing attention.
+struct OtherProjectAttention {
+    workspace: Entity<Workspace>,
+    label: String,
+    count: usize,
+}
+
+/// The pure part of the attention rollup: given `attention_by_root` (see
+/// `AgentThreadStore::attention_by_worktree_root`), which of
+/// `multi_workspace`'s other retained workspaces -- excluding `workspace`
+/// itself -- have a flagged thread, and how many. Kept separate from
+/// `AgentThreadsPanel::render_attention_rollup` so it's testable without
+/// constructing a full panel entity for each workspace.
+fn other_projects_needing_attention(
+    workspace: &Entity<Workspace>,
+    multi_workspace: &Entity<MultiWorkspace>,
+    attention_by_root: &HashMap<PathBuf, usize>,
+    cx: &App,
+) -> Vec<OtherProjectAttention> {
+    let mut others = Vec::new();
+    for other_workspace in multi_workspace.read(cx).retained_workspaces() {
+        if other_workspace == workspace {
+            continue;
+        }
+        let roots: Vec<PathBuf> = other_workspace
+            .read(cx)
+            .root_paths(cx)
+            .iter()
+            .map(|path| path.to_path_buf())
+            .collect();
+        let count: usize = attention_by_root
+            .iter()
+            .filter(|(root, _)| roots.contains(root))
+            .map(|(_, count)| *count)
+            .sum();
+        let Some(first_root) = (count > 0).then(|| roots.first()).flatten() else {
+            continue;
+        };
+        others.push(OtherProjectAttention {
+            workspace: other_workspace.clone(),
+            label: store::notification_project_name(first_root),
+            count,
+        });
+    }
+    others
+}
+
 enum HistoricalState {
     Loading,
     Loaded(Arc<[HistoricalThread]>),
@@ -1213,6 +1261,88 @@ impl AgentThreadsPanel {
         cx.notify();
     }
 
+    /// A compact rollup of other open projects (other `MultiWorkspace`
+    /// retained workspaces, see `workspace::multi_workspace`) that have a
+    /// thread needing attention right now. Returns `None` when there's
+    /// nothing to show -- no other window/tab, or nothing flagged -- so the
+    /// common case adds no chrome to the panel.
+    fn render_attention_rollup(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
+        let attention_by_root = self.store.read(cx).attention_by_worktree_root();
+        let others =
+            other_projects_needing_attention(workspace, &multi_workspace, &attention_by_root, cx);
+        if others.is_empty() {
+            return None;
+        }
+
+        Some(
+            v_flex()
+                .id("agent-thread-attention-rollup")
+                .gap_1()
+                .mx_2()
+                .mt_1()
+                .mb_2()
+                .p_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().editor_background)
+                .children(others.into_iter().map(|other| {
+                    let target_workspace = other.workspace;
+                    let label = other.label;
+                    let count = other.count;
+                    let multi_workspace = multi_workspace.clone();
+                    let source_workspace = self.workspace.clone();
+                    h_flex()
+                        .id((
+                            "agent-thread-attention-rollup-item",
+                            target_workspace.entity_id().as_u64(),
+                        ))
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .py_0p5()
+                        .rounded_sm()
+                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .on_click(cx.listener(move |_this, _, window, cx| {
+                            multi_workspace.update(cx, |multi_workspace, cx| {
+                                multi_workspace.activate(
+                                    target_workspace.clone(),
+                                    Some(source_workspace.clone()),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }))
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(
+                                    Icon::new(IconName::Circle)
+                                        .size(IconSize::Indicator)
+                                        .color(Color::Warning),
+                                )
+                                .child(Label::new(label).size(LabelSize::Small).truncate()),
+                        )
+                        .child(
+                            Label::new(count.to_string())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .into_any_element()
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_section(
         &mut self,
         kind: &AgentKindDefinition,
@@ -1521,6 +1651,12 @@ impl AgentThreadsPanel {
         let terminal_item_id = metadata.terminal_item_id;
         let menu_metadata = metadata.clone();
         let is_active = active_terminal_item_id == Some(terminal_item_id);
+        let needs_attention = self.store.read(cx).needs_attention(terminal_item_id);
+        let status_color = if needs_attention {
+            Color::Warning
+        } else {
+            Color::Success
+        };
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
             .w_full()
@@ -1558,12 +1694,12 @@ impl AgentThreadsPanel {
             .child(
                 Icon::new(IconName::Circle)
                     .size(IconSize::Indicator)
-                    .color(Color::Success),
+                    .color(status_color),
             )
             .child(
                 Label::new(metadata.title)
                     .size(LabelSize::Small)
-                    .color(Color::Success)
+                    .color(status_color)
                     .truncate(),
             )
             .into_any_element()
@@ -1590,6 +1726,13 @@ impl AgentThreadsPanel {
         let is_live = live_terminal_item_id.is_some();
         let is_active =
             live_terminal_item_id.is_some() && live_terminal_item_id == active_terminal_item_id;
+        let needs_attention = live_terminal_item_id
+            .is_some_and(|terminal_item_id| self.store.read(cx).needs_attention(terminal_item_id));
+        let status_color = if needs_attention {
+            Color::Warning
+        } else {
+            Color::Success
+        };
         let resume_option_label = thread_resume_option_label(cx, kind, &thread.session_id);
         let resume_option_visual = thread_resume_option_visual(cx, kind, &thread.session_id);
         h_flex()
@@ -1675,7 +1818,7 @@ impl AgentThreadsPanel {
                             IconSize::Small
                         })
                         .color(if is_live {
-                            Color::Success
+                            status_color
                         } else {
                             Color::Muted
                         }),
@@ -1683,11 +1826,7 @@ impl AgentThreadsPanel {
                     .child(
                         Label::new(thread.title)
                             .size(LabelSize::Small)
-                            .color(if is_live {
-                                Color::Success
-                            } else {
-                                Color::Muted
-                            })
+                            .color(if is_live { status_color } else { Color::Muted })
                             .truncate(),
                     ),
             )
@@ -2050,6 +2189,7 @@ impl Render for AgentThreadsPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return div().size_full().into_any_element();
         };
+        let attention_rollup = self.render_attention_rollup(&workspace, window, cx);
         let project = workspace.read(cx).project().clone();
         let project_roots = project_worktree_roots(project.read(cx), cx);
 
@@ -2088,6 +2228,7 @@ impl Render for AgentThreadsPanel {
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().panel_background)
+            .children(attention_rollup)
             .child(
                 v_flex()
                     .id("agent-thread-sections")
@@ -3515,6 +3656,146 @@ mod tests {
         assert_eq!(
             notifications[0].1.as_deref(),
             Some("Codex 正在等待您 · 项目：notification-project")
+        );
+    }
+
+    #[gpui::test]
+    async fn bell_sets_needs_attention_until_the_thread_is_focused(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        assert!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .needs_attention(terminal_item_id)),
+            "bell should flag the thread as needing attention"
+        );
+        let attention_counts = cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .attention_by_worktree_root()
+        });
+        assert_eq!(attention_counts.len(), 1);
+        assert_eq!(attention_counts.get(&PathBuf::from(root)), Some(&1));
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                AgentThreadStore::global(cx).update(cx, |store, cx| {
+                    store.focus_thread(terminal_item_id, window, cx)
+                })
+            })
+            .expect("failed to focus thread")
+            .expect("focus_thread should succeed");
+
+        assert!(
+            !cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .needs_attention(terminal_item_id)),
+            "focusing the thread should clear the attention flag"
+        );
+        assert!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .attention_by_worktree_root()
+                .is_empty()),
+            "no thread should need attention once the only flagged one was focused"
+        );
+    }
+
+    #[gpui::test]
+    async fn attention_rollup_surfaces_other_open_projects_and_excludes_the_active_one(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let temporary_directory_a =
+            tempfile::tempdir().expect("failed to create temporary directory a");
+        let root_a = temporary_directory_a
+            .path()
+            .to_str()
+            .expect("root a should be valid UTF-8")
+            .to_string()
+            .leak();
+        let temporary_directory_b =
+            tempfile::tempdir().expect("failed to create temporary directory b");
+        let root_b = temporary_directory_b
+            .path()
+            .to_str()
+            .expect("root b should be valid UTF-8")
+            .to_string()
+            .leak();
+
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root_a)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+        assert!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .needs_attention(terminal_item_id)),
+            "bell should flag project a's thread before switching away"
+        );
+
+        // `cx.entity()` (available inside the closure via `Context<MultiWorkspace>`)
+        // captures the window's root view as a standalone handle, so the rest
+        // of the test can query it without re-entering `window_handle.update`
+        // and hitting GPUI's "already being updated" guard.
+        let (workspace_a, multi_workspace) = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                (multi_workspace.workspace().clone(), cx.entity())
+            })
+            .expect("failed to read workspace a and the multi-workspace");
+
+        let project_b = Project::test(FakeFs::new(cx.executor()), [Path::new(root_b)], cx).await;
+        let workspace_b = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b, window, cx)
+            })
+            .expect("failed to add second workspace");
+        cx.run_until_parked();
+
+        let attention_by_root = cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .attention_by_worktree_root()
+        });
+
+        let others_from_b = cx.update(|cx| {
+            other_projects_needing_attention(&workspace_b, &multi_workspace, &attention_by_root, cx)
+        });
+        assert_eq!(
+            others_from_b.len(),
+            1,
+            "workspace b should see exactly one other project needing attention"
+        );
+        assert_eq!(others_from_b[0].count, 1);
+        assert_eq!(others_from_b[0].workspace, workspace_a);
+
+        let others_from_a = cx.update(|cx| {
+            other_projects_needing_attention(&workspace_a, &multi_workspace, &attention_by_root, cx)
+        });
+        assert!(
+            others_from_a.is_empty(),
+            "workspace a's own project should not appear as an 'other' project"
         );
     }
 
