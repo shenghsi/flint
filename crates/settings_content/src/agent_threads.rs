@@ -39,6 +39,10 @@ pub struct AgentThreadSettingsContent {
     ///
     /// Default: left
     pub dock: Option<crate::DockSide>,
+    /// Whether the Agent Threads panel should open on startup.
+    ///
+    /// Default: true
+    pub starts_open: Option<bool>,
     /// Whether a local agent thread's own CLI process can ask Flint to
     /// re-tie itself to a different worktree or spawn a sibling thread.
     /// Local-only; has no effect on remote projects.
