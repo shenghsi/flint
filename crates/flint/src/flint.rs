@@ -4232,6 +4232,15 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
 
+        // Close the left dock so a panel that starts open by default (e.g.
+        // the Agent Threads panel) cannot occupy the fixed mouse position
+        // this test scrolls over.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.left_dock().update(cx, |dock, cx| {
+                dock.set_open(false, window, cx);
+            });
+        });
+
         cx.update(|window, cx| {
             window.draw(cx).clear();
         });
