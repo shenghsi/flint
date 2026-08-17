@@ -534,6 +534,7 @@ pub struct AgentThreadSettings {
     pub notify_when_finished: bool,
     pub reopen_sessions_on_startup: settings::AgentThreadReopenSessionsOnStartup,
     pub dock: settings::DockSide,
+    pub starts_open: bool,
     pub agent_control: bool,
 }
 
@@ -608,6 +609,7 @@ impl Settings for AgentThreadSettings {
             notify_when_finished: content.notify_when_finished.unwrap_or(true),
             reopen_sessions_on_startup: content.reopen_sessions_on_startup.unwrap_or_default(),
             dock: content.dock.unwrap_or(settings::DockSide::Left),
+            starts_open: content.starts_open.unwrap_or(true),
             agent_control: content.agent_control.unwrap_or(true),
         }
     }

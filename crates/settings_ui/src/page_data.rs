@@ -5090,7 +5090,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 15] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 16] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5215,6 +5215,28 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.agent_threads.as_ref()?.dock.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.agent_threads.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent Threads Panel Starts Open",
+                description: "Whether the Agent Threads panel should open on startup.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.starts_open"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .starts_open
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .starts_open = value;
                     },
                 }),
                 metadata: None,
@@ -10391,6 +10413,10 @@ mod tests {
                 "agent_threads.reopen_sessions_on_startup",
             ),
             ("Agent Threads Panel Dock", "agent_threads.dock"),
+            (
+                "Agent Threads Panel Starts Open",
+                "agent_threads.starts_open",
+            ),
             (
                 "Codex Initialization Command",
                 "agent_threads.codex.initialization_command",

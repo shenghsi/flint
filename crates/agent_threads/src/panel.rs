@@ -2017,6 +2017,10 @@ impl Panel for AgentThreadsPanel {
         Box::new(flint_actions::agent_threads::ToggleFocus)
     }
 
+    fn starts_open(&self, _: &Window, cx: &App) -> bool {
+        AgentThreadSettings::get_global(cx).starts_open
+    }
+
     fn activation_priority(&self) -> u32 {
         7
     }
