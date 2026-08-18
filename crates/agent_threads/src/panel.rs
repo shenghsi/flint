@@ -1421,7 +1421,7 @@ impl AgentThreadsPanel {
                                 .child(Label::new(label).size(LabelSize::Small).truncate())
                                 .when_some(host, |this, host| {
                                     this.child(
-                                        Label::new(format!("({host})"))
+                                        Label::new(format!("({})", host))
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
                                             .truncate(),
@@ -2613,7 +2613,13 @@ mod tests {
         terminal_item_id: gpui::EntityId,
         expected: Option<ThreadAttention>,
     ) {
-        for _ in 0..50 {
+        // Budgeted generously: unlike wait_for_live_count's "is the
+        // terminal registered yet" check, this waits on a full real
+        // pipeline -- PTY spawn, the echoed output landing, a Wakeup event,
+        // and then ATTENTION_WAKEUP_DEBOUNCE (300ms) before reclassifying --
+        // which can comfortably exceed a couple of seconds under a loaded,
+        // highly parallel CI test run.
+        for _ in 0..200 {
             cx.run_until_parked();
             let current = cx.update(|cx| {
                 AgentThreadStore::global(cx)
@@ -2623,7 +2629,7 @@ mod tests {
             if current == expected {
                 return;
             }
-            cx.executor().timer(Duration::from_millis(50)).await;
+            cx.executor().timer(Duration::from_millis(100)).await;
         }
     }
 
