@@ -130,10 +130,16 @@ fn localized_agent_message(cx: &App, identifier: &'static str, agent: &str) -> S
 
 struct SectionState {
     collapsed: bool,
-    /// Number of rows to show, overriding the default cap. `None` means
-    /// "show the default cap". Doubled by "Show more" and halved by "Show
-    /// less", rather than jumping straight to showing everything or
-    /// resetting straight back to the cap.
+    /// Number of *historical* rows to show, overriding
+    /// `HISTORICAL_DEFAULT_VISIBLE_COUNT`. Live rows for the kind always
+    /// render in full, regardless of this value -- see `render_section`'s
+    /// live/historical split. `None` means "show just the floor
+    /// (`HISTORICAL_DEFAULT_VISIBLE_COUNT`)". "Show more" jumps straight to
+    /// `AgentThreadSettings::max_visible_threads_per_agent` whenever fewer
+    /// than that are currently visible (not a plain double of the floor,
+    /// which would only add one row), then doubles on presses after that --
+    /// see `next_expanded_historical_count`. "Show less" halves back down,
+    /// bottoming out at the floor rather than at 0 or at the setting.
     visible_override: Option<usize>,
     historical: HistoricalState,
 }
@@ -148,13 +154,43 @@ impl Default for SectionState {
     }
 }
 
-/// Resolves how many rows should currently be visible, clamped between the
-/// default cap (or `total` if smaller) and `total`.
-fn resolve_visible_count(cap: usize, total: usize, visible_override: Option<usize>) -> usize {
-    let min_visible = cap.min(total);
+/// The always-visible floor for a section's *historical* rows -- live rows
+/// for the kind render in full regardless of this, see `render_section`.
+/// Small and fixed (not user-configurable): the point of splitting live
+/// from historical is that live threads never compete with history for a
+/// shared cap, so this only needs to be "don't hide history entirely by
+/// default," not a tunable count.
+const HISTORICAL_DEFAULT_VISIBLE_COUNT: usize = 1;
+
+/// Resolves how many historical rows should currently be visible, clamped
+/// between `HISTORICAL_DEFAULT_VISIBLE_COUNT` (or `total` if smaller) and
+/// `total`.
+fn resolve_historical_visible_count(total: usize, visible_override: Option<usize>) -> usize {
+    let floor = HISTORICAL_DEFAULT_VISIBLE_COUNT.min(total);
     visible_override
-        .map(|count| count.clamp(min_visible, total))
-        .unwrap_or(min_visible)
+        .map(|count| count.clamp(floor, total))
+        .unwrap_or(floor)
+}
+
+/// What "Show more" would reveal next: jumps straight to the
+/// settings-configured `default_cap` whenever fewer than that are currently
+/// visible (so the setting stays meaningful as "how many to reveal on
+/// demand," whether this is the very first press or a press after
+/// collapsing back below `default_cap`), doubling once at or past it.
+/// `.max(current + 1)` guards a `default_cap` configured at or below the
+/// floor from producing a "Show more" that doesn't actually show more.
+fn next_expanded_historical_count(
+    default_cap: usize,
+    total: usize,
+    visible_override: Option<usize>,
+) -> usize {
+    let current = resolve_historical_visible_count(total, visible_override);
+    let next = if current < default_cap {
+        default_cap.max(current + 1)
+    } else {
+        current.saturating_mul(2)
+    };
+    next.min(total)
 }
 
 /// Truncates `rows` to `visible_count`.
@@ -1123,21 +1159,32 @@ impl AgentThreadsPanel {
         }
     }
 
-    /// Doubles the number of visible rows in the section, up to `total`.
-    fn expand_section_visible_count(&mut self, kind_id: &'static str, cap: usize, total: usize) {
+    /// Reveals more historical rows in the section: see
+    /// `next_expanded_historical_count` for exactly what "more" resolves to.
+    fn expand_section_visible_count(
+        &mut self,
+        kind_id: &'static str,
+        default_cap: usize,
+        total: usize,
+    ) {
         if let Some(section) = self.sections.get_mut(kind_id) {
-            let current = resolve_visible_count(cap, total, section.visible_override);
-            let next = current.saturating_mul(2).min(total);
-            section.visible_override = Some(next);
+            section.visible_override = Some(next_expanded_historical_count(
+                default_cap,
+                total,
+                section.visible_override,
+            ));
         }
     }
 
-    /// Halves the number of visible rows in the section, down to `cap`.
-    fn collapse_section_visible_count(&mut self, kind_id: &'static str, cap: usize) {
+    /// Halves the number of visible historical rows in the section, down to
+    /// `HISTORICAL_DEFAULT_VISIBLE_COUNT`.
+    fn collapse_section_visible_count(&mut self, kind_id: &'static str) {
         if let Some(section) = self.sections.get_mut(kind_id) {
-            let current = section.visible_override.unwrap_or(cap);
+            let current = section
+                .visible_override
+                .unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
             let next = current / 2;
-            section.visible_override = (next > cap).then_some(next);
+            section.visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
         }
     }
 
@@ -1428,10 +1475,22 @@ impl AgentThreadsPanel {
         );
         let cap = AgentThreadSettings::get_global(cx).max_visible_threads_per_agent;
         let total = rows.len();
-        let visible_count = resolve_visible_count(cap, total, visible_override);
-        let can_show_more = visible_count < total;
-        let can_show_less = visible_count > cap.min(total);
-        let rows = apply_visible_cap(rows, visible_count);
+        // Live rows always render in full, never competing with history for
+        // a shared cap -- see `HISTORICAL_DEFAULT_VISIBLE_COUNT`'s doc
+        // comment. `partition` preserves `merge_threads`'s recency order
+        // within each group.
+        let (live_rows, historical_rows): (Vec<_>, Vec<_>) =
+            rows.into_iter().partition(AgentThreadRow::is_live);
+        let historical_total = historical_rows.len();
+        let historical_visible_count =
+            resolve_historical_visible_count(historical_total, visible_override);
+        let can_show_more = historical_visible_count < historical_total;
+        let can_show_less =
+            historical_visible_count > HISTORICAL_DEFAULT_VISIBLE_COUNT.min(historical_total);
+        let rows: Vec<AgentThreadRow> = live_rows
+            .into_iter()
+            .chain(apply_visible_cap(historical_rows, historical_visible_count))
+            .collect();
         let new_thread_launch_option_label = new_thread_launch_option_label(cx, kind);
         let new_thread_launch_option_visual = new_thread_launch_option_visual(cx, kind);
         let agent_route = self.workspace.upgrade().and_then(|workspace| {
@@ -1598,7 +1657,9 @@ impl AgentThreadsPanel {
                 if can_show_more || can_show_less {
                     let mut controls = h_flex().gap_1();
                     if can_show_more {
-                        let more_count = visible_count.saturating_mul(2).min(total) - visible_count;
+                        let more_count =
+                            next_expanded_historical_count(cap, historical_total, visible_override)
+                                - historical_visible_count;
                         controls = controls.child(
                             Button::new(
                                 SharedString::from(format!("agent-thread-show-more-{kind_id}")),
@@ -1616,7 +1677,11 @@ impl AgentThreadsPanel {
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    this.expand_section_visible_count(kind_id, cap, total);
+                                    this.expand_section_visible_count(
+                                        kind_id,
+                                        cap,
+                                        historical_total,
+                                    );
                                     cx.notify();
                                 },
                             )),
@@ -1632,7 +1697,7 @@ impl AgentThreadsPanel {
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    this.collapse_section_visible_count(kind_id, cap);
+                                    this.collapse_section_visible_count(kind_id);
                                     cx.notify();
                                 },
                             )),
@@ -3423,42 +3488,124 @@ mod tests {
     }
 
     #[test]
-    fn expand_and_collapse_section_visible_count_double_and_halve() {
-        let cap = 5;
+    fn expand_and_collapse_historical_visible_count_jumps_then_doubles_then_halves() {
+        let default_cap = 5;
         let total = 20;
-        let mut section = SectionState::default();
+        let mut visible_override: Option<usize> = None;
 
-        section.visible_override = Some(
-            resolve_visible_count(cap, total, section.visible_override)
-                .saturating_mul(2)
-                .min(total),
+        assert_eq!(
+            resolve_historical_visible_count(total, visible_override),
+            HISTORICAL_DEFAULT_VISIBLE_COUNT,
+            "with no override, only the floor should be visible"
         );
-        assert_eq!(section.visible_override, Some(10));
 
-        section.visible_override = Some(
-            resolve_visible_count(cap, total, section.visible_override)
-                .saturating_mul(2)
-                .min(total),
-        );
-        assert_eq!(section.visible_override, Some(20));
+        // First "Show more" jumps straight to default_cap -- not a plain
+        // double of the floor, which would only reveal one more row.
+        visible_override = Some(next_expanded_historical_count(
+            default_cap,
+            total,
+            visible_override,
+        ));
+        assert_eq!(visible_override, Some(5));
 
-        // Already showing everything: doubling again is a no-op.
-        section.visible_override = Some(
-            resolve_visible_count(cap, total, section.visible_override)
-                .saturating_mul(2)
-                .min(total),
-        );
-        assert_eq!(section.visible_override, Some(20));
+        // Every press after that doubles.
+        visible_override = Some(next_expanded_historical_count(
+            default_cap,
+            total,
+            visible_override,
+        ));
+        assert_eq!(visible_override, Some(10));
 
-        let current = section.visible_override.unwrap_or(cap);
+        visible_override = Some(next_expanded_historical_count(
+            default_cap,
+            total,
+            visible_override,
+        ));
+        assert_eq!(visible_override, Some(20));
+
+        // Already showing everything: expanding again is a no-op.
+        visible_override = Some(next_expanded_historical_count(
+            default_cap,
+            total,
+            visible_override,
+        ));
+        assert_eq!(visible_override, Some(20));
+
+        // "Show less" halves back down, bottoming out at the floor (as
+        // `None`, not as `default_cap` and not as 0).
+        let current = visible_override.unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
         let next = current / 2;
-        section.visible_override = (next > cap).then_some(next);
-        assert_eq!(section.visible_override, Some(10));
+        visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
+        assert_eq!(visible_override, Some(10));
 
-        let current = section.visible_override.unwrap_or(cap);
+        let current = visible_override.unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
         let next = current / 2;
-        section.visible_override = (next > cap).then_some(next);
-        assert_eq!(section.visible_override, None);
+        visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
+        assert_eq!(visible_override, Some(5));
+
+        let current = visible_override.unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
+        let next = current / 2;
+        visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
+        assert_eq!(visible_override, Some(2));
+
+        let current = visible_override.unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
+        let next = current / 2;
+        visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
+        assert_eq!(visible_override, None);
+    }
+
+    #[test]
+    fn live_rows_always_show_in_full_while_historical_defaults_to_the_floor() {
+        // Mirrors what `render_section` computes: merge, split by
+        // liveness, cap only the historical half. Uses `merge_threads`
+        // directly with synthetic metadata (store.rs's own test helpers use
+        // the same `EntityId::from(id)` construction) rather than driving a
+        // real panel render, since only the row-selection math is under
+        // test here -- `render_row`'s output is unchanged.
+        let live_metadata = AgentThreadMetadata {
+            terminal_item_id: gpui::EntityId::from(1),
+            kind_id: "codex",
+            title: SharedString::from("live"),
+            project_root: PathBuf::from("/root"),
+            tied_worktree_root: PathBuf::from("/root"),
+            tied_repo_main_root: None,
+            // Later than every historical row's activity below, so
+            // `merge_threads`'s fresh-live suppression (see its own doc
+            // comment) doesn't hide them.
+            launched_at: std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100),
+            resumed_session_id: None,
+        };
+        let historical_threads: Vec<HistoricalThread> = (0..3)
+            .map(|index| HistoricalThread {
+                session_id: SharedString::from(format!("session-{index}")),
+                title: SharedString::from(format!("session {index}")),
+                project_root: PathBuf::from("/root"),
+                last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+            })
+            .collect();
+
+        let rows = merge_threads(vec![live_metadata], historical_threads);
+        assert_eq!(rows.len(), 4, "1 live + 3 historical rows total");
+
+        let (live_rows, historical_rows): (Vec<_>, Vec<_>) =
+            rows.into_iter().partition(AgentThreadRow::is_live);
+        assert_eq!(live_rows.len(), 1);
+        assert_eq!(historical_rows.len(), 3);
+
+        let historical_visible_count =
+            resolve_historical_visible_count(historical_rows.len(), None);
+        assert_eq!(
+            historical_visible_count, 1,
+            "historical rows should default to the floor, not the old combined cap of 5"
+        );
+
+        let displayed_historical = apply_visible_cap(historical_rows, historical_visible_count);
+        assert_eq!(displayed_historical.len(), 1);
+        // The live row is never subject to this cap at all -- it's excluded
+        // from the partition that `historical_visible_count` was computed
+        // over, so it's unconditionally part of what gets displayed
+        // alongside `displayed_historical`.
+        assert_eq!(live_rows.len() + displayed_historical.len(), 2);
     }
 
     #[gpui::test]
@@ -3493,7 +3640,10 @@ mod tests {
             (section.collapsed, section.visible_override)
         });
         assert!(collapsed_after);
-        assert_eq!(visible_override_after, Some(10));
+        // First expand jumps straight to the configured default_cap (5),
+        // not a plain double of the floor (which would only reveal one
+        // more row) -- see next_expanded_historical_count.
+        assert_eq!(visible_override_after, Some(5));
 
         panel.update(cx, |panel, _| {
             panel.expand_section_visible_count("codex", 5, 20);
@@ -3501,23 +3651,24 @@ mod tests {
         let visible_override_after_second_expand = panel.update(cx, |panel, _| {
             panel.sections.get("codex").unwrap().visible_override
         });
-        assert_eq!(visible_override_after_second_expand, Some(20));
+        assert_eq!(visible_override_after_second_expand, Some(10));
 
         panel.update(cx, |panel, _| {
-            panel.collapse_section_visible_count("codex", 5);
+            panel.collapse_section_visible_count("codex");
         });
         let visible_override_after_collapse = panel.update(cx, |panel, _| {
             panel.sections.get("codex").unwrap().visible_override
         });
-        assert_eq!(visible_override_after_collapse, Some(10));
+        assert_eq!(visible_override_after_collapse, Some(5));
 
         panel.update(cx, |panel, _| {
-            panel.collapse_section_visible_count("codex", 5);
+            panel.collapse_section_visible_count("codex");
         });
         let visible_override_after_second_collapse = panel.update(cx, |panel, _| {
             panel.sections.get("codex").unwrap().visible_override
         });
-        assert_eq!(visible_override_after_second_collapse, None);
+        // 5 halves to 2, which is still above the floor (1).
+        assert_eq!(visible_override_after_second_collapse, Some(2));
 
         panel.update(cx, |panel, _| {
             panel.expand_section_visible_count("codex", 5, 20);
@@ -3526,7 +3677,9 @@ mod tests {
         let visible_override_before_reset = panel.update(cx, |panel, _| {
             panel.sections.get("codex").unwrap().visible_override
         });
-        assert_eq!(visible_override_before_reset, Some(20));
+        // From 2: first expand here jumps to default_cap (5) again since
+        // 2 < 5, then the second expand doubles 5 -> 10.
+        assert_eq!(visible_override_before_reset, Some(10));
 
         panel.update(cx, |panel, _| {
             panel.reset_section_visible_count("codex");

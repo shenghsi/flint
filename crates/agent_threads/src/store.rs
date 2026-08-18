@@ -85,6 +85,20 @@ impl AgentThreadRow {
             AgentThreadRow::FreshLive(metadata) => metadata.launched_at,
         }
     }
+
+    /// Whether this row has a live terminal backing it right now -- either
+    /// a fresh thread, or a historical one that's been resumed and is still
+    /// running. Used to split a section's rows into an always-shown live
+    /// group and a capped historical group (see `panel.rs`'s `render_section`).
+    pub fn is_live(&self) -> bool {
+        match self {
+            AgentThreadRow::Historical {
+                live_terminal_item_id,
+                ..
+            } => live_terminal_item_id.is_some(),
+            AgentThreadRow::FreshLive(_) => true,
+        }
+    }
 }
 
 /// Merges a kind's live and historical threads for one project into a
