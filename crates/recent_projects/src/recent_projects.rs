@@ -1425,8 +1425,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                     })
                     .unzip();
 
+                let prefix = project_group_host_prefix(key);
+
                 let highlighted_match = HighlightedMatchWithPaths {
-                    prefix: None,
+                    prefix,
                     match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
                     paths: path_highlights,
                     active: is_active,
@@ -2024,6 +2026,13 @@ impl PickerDelegate for RecentProjectsDelegate {
 fn icon_for_project_group(key: &ProjectGroupKey) -> IconName {
     let host = key.host();
     icon_for_remote_connection(host.as_ref())
+}
+
+/// The `(host)` label shown after a "This Window" row's match label, same
+/// place a `RecentProject` row already shows one for a remote workspace
+/// location. `None` for a local project group.
+fn project_group_host_prefix(key: &ProjectGroupKey) -> Option<SharedString> {
+    key.host().map(|options| options.display_name().into())
 }
 
 pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
@@ -2765,6 +2774,32 @@ mod tests {
         assert_eq!(
             icon_for_project_group(&delegate.window_project_groups[1]),
             IconName::Server
+        );
+    }
+
+    #[gpui::test]
+    fn this_window_project_rows_show_the_host_name_for_remote_groups_only(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let delegate = RecentProjectsDelegate::new(
+            WeakEntity::new_invalid(),
+            false,
+            cx.update(|cx| cx.focus_handle()),
+            Vec::new(),
+            vec![project_group(0), remote_project_group(1)],
+            ProjectPickerStyle::Modal,
+        );
+
+        assert_eq!(
+            project_group_host_prefix(&delegate.window_project_groups[0]),
+            None,
+            "a local project group's row should show no host prefix"
+        );
+        assert_eq!(
+            project_group_host_prefix(&delegate.window_project_groups[1]),
+            Some("mock-1".into()),
+            "a remote project group's row should show its host as a prefix, \
+             same as a RecentProject row already does"
         );
     }
 

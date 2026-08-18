@@ -27,12 +27,94 @@ use crate::history::{self, HistoryParseCache, project_worktree_roots};
 use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
 use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
-    TieResolution, merge_threads,
+    ProjectAttentionStatus, ProjectLiveSummary, ThreadAttention, TieResolution, merge_threads,
 };
 use crate::{
     AgentKindDefinition, AgentThreadSettings, HistoricalThread, RemoteAgentRoutingSettings,
     agent_kind_registry,
 };
+
+/// The row/rollup color for a live thread's attention state: unflagged
+/// (still working, or the classifier hasn't run) stays the pre-existing
+/// green; a `Blocked` thread (or one the classifier couldn't read) gets the
+/// more urgent amber; a thread the classifier is confident just finished
+/// gets a calmer, less alarming color since nothing is actually pending.
+fn status_color_for_attention(attention: Option<ThreadAttention>) -> Color {
+    match attention {
+        None => Color::Success,
+        Some(ThreadAttention::Blocked) => Color::Warning,
+        Some(ThreadAttention::Idle) => Color::Info,
+    }
+}
+
+/// One other open project (a `MultiWorkspace` retained workspace) that has
+/// at least one live thread, for the cross-project rollup.
+struct OtherProjectActivity {
+    workspace: Entity<Workspace>,
+    label: String,
+    /// The remote host's display name (`RemoteConnectionOptions::display_name`),
+    /// same source the title bar and the recent-projects picker's "This
+    /// Window" rows already use. `None` for a local project.
+    host: Option<SharedString>,
+    status: ProjectAttentionStatus,
+    live_thread_count: usize,
+}
+
+/// The pure part of the cross-project rollup: given `live_summaries` (see
+/// `AgentThreadStore::live_summary_by_worktree_root`), which of
+/// `multi_workspace`'s other retained workspaces -- excluding `workspace`
+/// itself -- have live agent activity, and whether any of it is blocked.
+/// A workspace can own more than one worktree root, so its threads can be
+/// split across several summary entries; those are combined into one
+/// project-level entry, with `Blocked` winning over `Working` the same way
+/// `live_summary_by_worktree_root` combines threads within a single root.
+/// Kept separate from `AgentThreadsPanel::render_attention_rollup` so it's
+/// testable without constructing a full panel entity for each workspace.
+fn other_projects_with_live_activity(
+    workspace: &Entity<Workspace>,
+    multi_workspace: &Entity<MultiWorkspace>,
+    live_summaries: &HashMap<PathBuf, ProjectLiveSummary>,
+    cx: &App,
+) -> Vec<OtherProjectActivity> {
+    let mut others = Vec::new();
+    for other_workspace in multi_workspace.read(cx).retained_workspaces() {
+        if other_workspace == workspace {
+            continue;
+        }
+        let roots: Vec<PathBuf> = other_workspace
+            .read(cx)
+            .root_paths(cx)
+            .iter()
+            .map(|path| path.to_path_buf())
+            .collect();
+        let mut status = ProjectAttentionStatus::Working;
+        let mut live_thread_count = 0;
+        for root in &roots {
+            let Some(summary) = live_summaries.get(root) else {
+                continue;
+            };
+            live_thread_count += summary.live_thread_count;
+            status = status.max(summary.status);
+        }
+        let Some(first_root) = (live_thread_count > 0).then(|| roots.first()).flatten() else {
+            continue;
+        };
+        let host = other_workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .remote_connection_options(cx)
+            .map(|options| options.display_name().into());
+        others.push(OtherProjectActivity {
+            workspace: other_workspace.clone(),
+            label: store::notification_project_name(first_root),
+            host,
+            status,
+            live_thread_count,
+        });
+    }
+    others
+}
 
 enum HistoricalState {
     Loading,
@@ -48,10 +130,16 @@ fn localized_agent_message(cx: &App, identifier: &'static str, agent: &str) -> S
 
 struct SectionState {
     collapsed: bool,
-    /// Number of rows to show, overriding the default cap. `None` means
-    /// "show the default cap". Doubled by "Show more" and halved by "Show
-    /// less", rather than jumping straight to showing everything or
-    /// resetting straight back to the cap.
+    /// Number of *historical* rows to show, overriding
+    /// `HISTORICAL_DEFAULT_VISIBLE_COUNT`. Live rows for the kind always
+    /// render in full, regardless of this value -- see `render_section`'s
+    /// live/historical split. `None` means "show just the floor
+    /// (`HISTORICAL_DEFAULT_VISIBLE_COUNT`)". "Show more" jumps straight to
+    /// `AgentThreadSettings::max_visible_threads_per_agent` whenever fewer
+    /// than that are currently visible (not a plain double of the floor,
+    /// which would only add one row), then doubles on presses after that --
+    /// see `next_expanded_historical_count`. "Show less" halves back down,
+    /// bottoming out at the floor rather than at 0 or at the setting.
     visible_override: Option<usize>,
     historical: HistoricalState,
 }
@@ -66,13 +154,43 @@ impl Default for SectionState {
     }
 }
 
-/// Resolves how many rows should currently be visible, clamped between the
-/// default cap (or `total` if smaller) and `total`.
-fn resolve_visible_count(cap: usize, total: usize, visible_override: Option<usize>) -> usize {
-    let min_visible = cap.min(total);
+/// The always-visible floor for a section's *historical* rows -- live rows
+/// for the kind render in full regardless of this, see `render_section`.
+/// Small and fixed (not user-configurable): the point of splitting live
+/// from historical is that live threads never compete with history for a
+/// shared cap, so this only needs to be "don't hide history entirely by
+/// default," not a tunable count.
+const HISTORICAL_DEFAULT_VISIBLE_COUNT: usize = 1;
+
+/// Resolves how many historical rows should currently be visible, clamped
+/// between `HISTORICAL_DEFAULT_VISIBLE_COUNT` (or `total` if smaller) and
+/// `total`.
+fn resolve_historical_visible_count(total: usize, visible_override: Option<usize>) -> usize {
+    let floor = HISTORICAL_DEFAULT_VISIBLE_COUNT.min(total);
     visible_override
-        .map(|count| count.clamp(min_visible, total))
-        .unwrap_or(min_visible)
+        .map(|count| count.clamp(floor, total))
+        .unwrap_or(floor)
+}
+
+/// What "Show more" would reveal next: jumps straight to the
+/// settings-configured `default_cap` whenever fewer than that are currently
+/// visible (so the setting stays meaningful as "how many to reveal on
+/// demand," whether this is the very first press or a press after
+/// collapsing back below `default_cap`), doubling once at or past it.
+/// `.max(current + 1)` guards a `default_cap` configured at or below the
+/// floor from producing a "Show more" that doesn't actually show more.
+fn next_expanded_historical_count(
+    default_cap: usize,
+    total: usize,
+    visible_override: Option<usize>,
+) -> usize {
+    let current = resolve_historical_visible_count(total, visible_override);
+    let next = if current < default_cap {
+        default_cap.max(current + 1)
+    } else {
+        current.saturating_mul(2)
+    };
+    next.min(total)
 }
 
 /// Truncates `rows` to `visible_count`.
@@ -1041,21 +1159,32 @@ impl AgentThreadsPanel {
         }
     }
 
-    /// Doubles the number of visible rows in the section, up to `total`.
-    fn expand_section_visible_count(&mut self, kind_id: &'static str, cap: usize, total: usize) {
+    /// Reveals more historical rows in the section: see
+    /// `next_expanded_historical_count` for exactly what "more" resolves to.
+    fn expand_section_visible_count(
+        &mut self,
+        kind_id: &'static str,
+        default_cap: usize,
+        total: usize,
+    ) {
         if let Some(section) = self.sections.get_mut(kind_id) {
-            let current = resolve_visible_count(cap, total, section.visible_override);
-            let next = current.saturating_mul(2).min(total);
-            section.visible_override = Some(next);
+            section.visible_override = Some(next_expanded_historical_count(
+                default_cap,
+                total,
+                section.visible_override,
+            ));
         }
     }
 
-    /// Halves the number of visible rows in the section, down to `cap`.
-    fn collapse_section_visible_count(&mut self, kind_id: &'static str, cap: usize) {
+    /// Halves the number of visible historical rows in the section, down to
+    /// `HISTORICAL_DEFAULT_VISIBLE_COUNT`.
+    fn collapse_section_visible_count(&mut self, kind_id: &'static str) {
         if let Some(section) = self.sections.get_mut(kind_id) {
-            let current = section.visible_override.unwrap_or(cap);
+            let current = section
+                .visible_override
+                .unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
             let next = current / 2;
-            section.visible_override = (next > cap).then_some(next);
+            section.visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
         }
     }
 
@@ -1213,6 +1342,103 @@ impl AgentThreadsPanel {
         cx.notify();
     }
 
+    /// A compact rollup of other open projects (other `MultiWorkspace`
+    /// retained workspaces, see `workspace::multi_workspace`) that have live
+    /// agent activity right now, colored by whether any of it is blocked.
+    /// Returns `None` when there's nothing to show -- no other window/tab,
+    /// or no live threads anywhere else -- so the common case adds no
+    /// chrome to the panel.
+    fn render_attention_rollup(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
+        let live_summaries = self.store.read(cx).live_summary_by_worktree_root();
+        let others =
+            other_projects_with_live_activity(workspace, &multi_workspace, &live_summaries, cx);
+        if others.is_empty() {
+            return None;
+        }
+
+        Some(
+            v_flex()
+                .id("agent-thread-attention-rollup")
+                .gap_1()
+                .mx_2()
+                .mt_1()
+                .mb_2()
+                .p_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().editor_background)
+                .children(others.into_iter().map(|other| {
+                    let target_workspace = other.workspace;
+                    let label = other.label;
+                    let host = other.host;
+                    let live_thread_count = other.live_thread_count;
+                    let status_color = match other.status {
+                        ProjectAttentionStatus::Blocked => Color::Warning,
+                        ProjectAttentionStatus::Idle => Color::Info,
+                        ProjectAttentionStatus::Working => Color::Success,
+                    };
+                    let multi_workspace = multi_workspace.clone();
+                    let source_workspace = self.workspace.clone();
+                    h_flex()
+                        .id((
+                            "agent-thread-attention-rollup-item",
+                            target_workspace.entity_id().as_u64(),
+                        ))
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .py_0p5()
+                        .rounded_sm()
+                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .on_click(cx.listener(move |_this, _, window, cx| {
+                            multi_workspace.update(cx, |multi_workspace, cx| {
+                                multi_workspace.activate(
+                                    target_workspace.clone(),
+                                    Some(source_workspace.clone()),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }))
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(
+                                    Icon::new(IconName::Circle)
+                                        .size(IconSize::Indicator)
+                                        .color(status_color),
+                                )
+                                .child(Label::new(label).size(LabelSize::Small).truncate())
+                                .when_some(host, |this, host| {
+                                    this.child(
+                                        Label::new(format!("({})", host))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate(),
+                                    )
+                                }),
+                        )
+                        .child(
+                            Label::new(live_thread_count.to_string())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .into_any_element()
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_section(
         &mut self,
         kind: &AgentKindDefinition,
@@ -1249,10 +1475,22 @@ impl AgentThreadsPanel {
         );
         let cap = AgentThreadSettings::get_global(cx).max_visible_threads_per_agent;
         let total = rows.len();
-        let visible_count = resolve_visible_count(cap, total, visible_override);
-        let can_show_more = visible_count < total;
-        let can_show_less = visible_count > cap.min(total);
-        let rows = apply_visible_cap(rows, visible_count);
+        // Live rows always render in full, never competing with history for
+        // a shared cap -- see `HISTORICAL_DEFAULT_VISIBLE_COUNT`'s doc
+        // comment. `partition` preserves `merge_threads`'s recency order
+        // within each group.
+        let (live_rows, historical_rows): (Vec<_>, Vec<_>) =
+            rows.into_iter().partition(AgentThreadRow::is_live);
+        let historical_total = historical_rows.len();
+        let historical_visible_count =
+            resolve_historical_visible_count(historical_total, visible_override);
+        let can_show_more = historical_visible_count < historical_total;
+        let can_show_less =
+            historical_visible_count > HISTORICAL_DEFAULT_VISIBLE_COUNT.min(historical_total);
+        let rows: Vec<AgentThreadRow> = live_rows
+            .into_iter()
+            .chain(apply_visible_cap(historical_rows, historical_visible_count))
+            .collect();
         let new_thread_launch_option_label = new_thread_launch_option_label(cx, kind);
         let new_thread_launch_option_visual = new_thread_launch_option_visual(cx, kind);
         let agent_route = self.workspace.upgrade().and_then(|workspace| {
@@ -1419,7 +1657,9 @@ impl AgentThreadsPanel {
                 if can_show_more || can_show_less {
                     let mut controls = h_flex().gap_1();
                     if can_show_more {
-                        let more_count = visible_count.saturating_mul(2).min(total) - visible_count;
+                        let more_count =
+                            next_expanded_historical_count(cap, historical_total, visible_override)
+                                - historical_visible_count;
                         controls = controls.child(
                             Button::new(
                                 SharedString::from(format!("agent-thread-show-more-{kind_id}")),
@@ -1437,7 +1677,11 @@ impl AgentThreadsPanel {
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    this.expand_section_visible_count(kind_id, cap, total);
+                                    this.expand_section_visible_count(
+                                        kind_id,
+                                        cap,
+                                        historical_total,
+                                    );
                                     cx.notify();
                                 },
                             )),
@@ -1453,7 +1697,7 @@ impl AgentThreadsPanel {
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    this.collapse_section_visible_count(kind_id, cap);
+                                    this.collapse_section_visible_count(kind_id);
                                     cx.notify();
                                 },
                             )),
@@ -1521,6 +1765,8 @@ impl AgentThreadsPanel {
         let terminal_item_id = metadata.terminal_item_id;
         let menu_metadata = metadata.clone();
         let is_active = active_terminal_item_id == Some(terminal_item_id);
+        let status_color =
+            status_color_for_attention(self.store.read(cx).thread_attention(terminal_item_id));
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
             .w_full()
@@ -1558,12 +1804,12 @@ impl AgentThreadsPanel {
             .child(
                 Icon::new(IconName::Circle)
                     .size(IconSize::Indicator)
-                    .color(Color::Success),
+                    .color(status_color),
             )
             .child(
                 Label::new(metadata.title)
                     .size(LabelSize::Small)
-                    .color(Color::Success)
+                    .color(status_color)
                     .truncate(),
             )
             .into_any_element()
@@ -1590,6 +1836,10 @@ impl AgentThreadsPanel {
         let is_live = live_terminal_item_id.is_some();
         let is_active =
             live_terminal_item_id.is_some() && live_terminal_item_id == active_terminal_item_id;
+        let status_color =
+            status_color_for_attention(live_terminal_item_id.and_then(|terminal_item_id| {
+                self.store.read(cx).thread_attention(terminal_item_id)
+            }));
         let resume_option_label = thread_resume_option_label(cx, kind, &thread.session_id);
         let resume_option_visual = thread_resume_option_visual(cx, kind, &thread.session_id);
         h_flex()
@@ -1675,7 +1925,7 @@ impl AgentThreadsPanel {
                             IconSize::Small
                         })
                         .color(if is_live {
-                            Color::Success
+                            status_color
                         } else {
                             Color::Muted
                         }),
@@ -1683,11 +1933,7 @@ impl AgentThreadsPanel {
                     .child(
                         Label::new(thread.title)
                             .size(LabelSize::Small)
-                            .color(if is_live {
-                                Color::Success
-                            } else {
-                                Color::Muted
-                            })
+                            .color(if is_live { status_color } else { Color::Muted })
                             .truncate(),
                     ),
             )
@@ -2054,6 +2300,7 @@ impl Render for AgentThreadsPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return div().size_full().into_any_element();
         };
+        let attention_rollup = self.render_attention_rollup(&workspace, window, cx);
         let project = workspace.read(cx).project().clone();
         let project_roots = project_worktree_roots(project.read(cx), cx);
 
@@ -2092,6 +2339,7 @@ impl Render for AgentThreadsPanel {
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().panel_background)
+            .children(attention_rollup)
             .child(
                 v_flex()
                     .id("agent-thread-sections")
@@ -2305,6 +2553,88 @@ mod tests {
                 command.default_launch_option = option;
             });
         });
+    }
+
+    fn pi_kind() -> AgentKindDefinition {
+        agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == "pi")
+            .expect("pi should be registered")
+    }
+
+    fn launch_pi_thread(window_handle: &WindowHandle<MultiWorkspace>, cx: &mut TestAppContext) {
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    crate::launch_new_thread_with_default(workspace, &pi_kind(), window, cx);
+                });
+            })
+            .expect("failed to launch pi thread");
+    }
+
+    fn live_pi_threads(cx: &mut TestAppContext, project_root: &str) -> Vec<AgentThreadMetadata> {
+        cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .live_threads_for_project(
+                    "pi",
+                    &[PathBuf::from(project_root)],
+                    &TieResolution::not_ready(),
+                )
+        })
+    }
+
+    /// Overrides `kind_id`'s launch command to `echo text`, so its terminal
+    /// shows exactly `text` (including any embedded newlines) once the
+    /// process runs, instead of the generic per-kind label
+    /// `configure_echo_threads` sets up.
+    fn set_kind_echo_text(
+        cx: &mut TestAppContext,
+        kind_id: &'static str,
+        root_path: &str,
+        text: &str,
+    ) {
+        let command = echo_command(text, root_path);
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                let content = settings.agent_threads.get_or_insert_default();
+                match kind_id {
+                    "codex" => content.codex = Some(command.clone()),
+                    "claude" => content.claude = Some(command.clone()),
+                    "pi" => content.pi = Some(command.clone()),
+                    "opencode" => content.opencode = Some(command.clone()),
+                    _ => panic!("unknown kind_id {kind_id}"),
+                };
+            });
+        });
+    }
+
+    // See `wait_for_live_count` for why this polls with real timer ticks
+    // rather than a single `run_until_parked()` -- `reclassify_attention`'s
+    // Wakeup path is additionally debounced by `ATTENTION_WAKEUP_DEBOUNCE`.
+    async fn wait_for_thread_attention(
+        cx: &mut TestAppContext,
+        terminal_item_id: gpui::EntityId,
+        expected: Option<ThreadAttention>,
+    ) {
+        // Budgeted generously: unlike wait_for_live_count's "is the
+        // terminal registered yet" check, this waits on a full real
+        // pipeline -- PTY spawn, the echoed output landing, a Wakeup event,
+        // and then ATTENTION_WAKEUP_DEBOUNCE (300ms) before reclassifying --
+        // which can comfortably exceed a couple of seconds under a loaded,
+        // highly parallel CI test run.
+        for _ in 0..200 {
+            cx.run_until_parked();
+            let current = cx.update(|cx| {
+                AgentThreadStore::global(cx)
+                    .read(cx)
+                    .thread_attention(terminal_item_id)
+            });
+            if current == expected {
+                return;
+            }
+            cx.executor().timer(Duration::from_millis(100)).await;
+        }
     }
 
     fn set_agent_hidden(cx: &mut TestAppContext, kind_id: &'static str, hidden: bool) {
@@ -3168,42 +3498,124 @@ mod tests {
     }
 
     #[test]
-    fn expand_and_collapse_section_visible_count_double_and_halve() {
-        let cap = 5;
+    fn expand_and_collapse_historical_visible_count_jumps_then_doubles_then_halves() {
+        let default_cap = 5;
         let total = 20;
-        let mut section = SectionState::default();
+        let mut visible_override: Option<usize> = None;
 
-        section.visible_override = Some(
-            resolve_visible_count(cap, total, section.visible_override)
-                .saturating_mul(2)
-                .min(total),
+        assert_eq!(
+            resolve_historical_visible_count(total, visible_override),
+            HISTORICAL_DEFAULT_VISIBLE_COUNT,
+            "with no override, only the floor should be visible"
         );
-        assert_eq!(section.visible_override, Some(10));
 
-        section.visible_override = Some(
-            resolve_visible_count(cap, total, section.visible_override)
-                .saturating_mul(2)
-                .min(total),
-        );
-        assert_eq!(section.visible_override, Some(20));
+        // First "Show more" jumps straight to default_cap -- not a plain
+        // double of the floor, which would only reveal one more row.
+        visible_override = Some(next_expanded_historical_count(
+            default_cap,
+            total,
+            visible_override,
+        ));
+        assert_eq!(visible_override, Some(5));
 
-        // Already showing everything: doubling again is a no-op.
-        section.visible_override = Some(
-            resolve_visible_count(cap, total, section.visible_override)
-                .saturating_mul(2)
-                .min(total),
-        );
-        assert_eq!(section.visible_override, Some(20));
+        // Every press after that doubles.
+        visible_override = Some(next_expanded_historical_count(
+            default_cap,
+            total,
+            visible_override,
+        ));
+        assert_eq!(visible_override, Some(10));
 
-        let current = section.visible_override.unwrap_or(cap);
+        visible_override = Some(next_expanded_historical_count(
+            default_cap,
+            total,
+            visible_override,
+        ));
+        assert_eq!(visible_override, Some(20));
+
+        // Already showing everything: expanding again is a no-op.
+        visible_override = Some(next_expanded_historical_count(
+            default_cap,
+            total,
+            visible_override,
+        ));
+        assert_eq!(visible_override, Some(20));
+
+        // "Show less" halves back down, bottoming out at the floor (as
+        // `None`, not as `default_cap` and not as 0).
+        let current = visible_override.unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
         let next = current / 2;
-        section.visible_override = (next > cap).then_some(next);
-        assert_eq!(section.visible_override, Some(10));
+        visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
+        assert_eq!(visible_override, Some(10));
 
-        let current = section.visible_override.unwrap_or(cap);
+        let current = visible_override.unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
         let next = current / 2;
-        section.visible_override = (next > cap).then_some(next);
-        assert_eq!(section.visible_override, None);
+        visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
+        assert_eq!(visible_override, Some(5));
+
+        let current = visible_override.unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
+        let next = current / 2;
+        visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
+        assert_eq!(visible_override, Some(2));
+
+        let current = visible_override.unwrap_or(HISTORICAL_DEFAULT_VISIBLE_COUNT);
+        let next = current / 2;
+        visible_override = (next > HISTORICAL_DEFAULT_VISIBLE_COUNT).then_some(next);
+        assert_eq!(visible_override, None);
+    }
+
+    #[test]
+    fn live_rows_always_show_in_full_while_historical_defaults_to_the_floor() {
+        // Mirrors what `render_section` computes: merge, split by
+        // liveness, cap only the historical half. Uses `merge_threads`
+        // directly with synthetic metadata (store.rs's own test helpers use
+        // the same `EntityId::from(id)` construction) rather than driving a
+        // real panel render, since only the row-selection math is under
+        // test here -- `render_row`'s output is unchanged.
+        let live_metadata = AgentThreadMetadata {
+            terminal_item_id: gpui::EntityId::from(1),
+            kind_id: "codex",
+            title: SharedString::from("live"),
+            project_root: PathBuf::from("/root"),
+            tied_worktree_root: PathBuf::from("/root"),
+            tied_repo_main_root: None,
+            // Later than every historical row's activity below, so
+            // `merge_threads`'s fresh-live suppression (see its own doc
+            // comment) doesn't hide them.
+            launched_at: std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100),
+            resumed_session_id: None,
+        };
+        let historical_threads: Vec<HistoricalThread> = (0..3)
+            .map(|index| HistoricalThread {
+                session_id: SharedString::from(format!("session-{index}")),
+                title: SharedString::from(format!("session {index}")),
+                project_root: PathBuf::from("/root"),
+                last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+            })
+            .collect();
+
+        let rows = merge_threads(vec![live_metadata], historical_threads);
+        assert_eq!(rows.len(), 4, "1 live + 3 historical rows total");
+
+        let (live_rows, historical_rows): (Vec<_>, Vec<_>) =
+            rows.into_iter().partition(AgentThreadRow::is_live);
+        assert_eq!(live_rows.len(), 1);
+        assert_eq!(historical_rows.len(), 3);
+
+        let historical_visible_count =
+            resolve_historical_visible_count(historical_rows.len(), None);
+        assert_eq!(
+            historical_visible_count, 1,
+            "historical rows should default to the floor, not the old combined cap of 5"
+        );
+
+        let displayed_historical = apply_visible_cap(historical_rows, historical_visible_count);
+        assert_eq!(displayed_historical.len(), 1);
+        // The live row is never subject to this cap at all -- it's excluded
+        // from the partition that `historical_visible_count` was computed
+        // over, so it's unconditionally part of what gets displayed
+        // alongside `displayed_historical`.
+        assert_eq!(live_rows.len() + displayed_historical.len(), 2);
     }
 
     #[gpui::test]
@@ -3238,7 +3650,10 @@ mod tests {
             (section.collapsed, section.visible_override)
         });
         assert!(collapsed_after);
-        assert_eq!(visible_override_after, Some(10));
+        // First expand jumps straight to the configured default_cap (5),
+        // not a plain double of the floor (which would only reveal one
+        // more row) -- see next_expanded_historical_count.
+        assert_eq!(visible_override_after, Some(5));
 
         panel.update(cx, |panel, _| {
             panel.expand_section_visible_count("codex", 5, 20);
@@ -3246,23 +3661,24 @@ mod tests {
         let visible_override_after_second_expand = panel.update(cx, |panel, _| {
             panel.sections.get("codex").unwrap().visible_override
         });
-        assert_eq!(visible_override_after_second_expand, Some(20));
+        assert_eq!(visible_override_after_second_expand, Some(10));
 
         panel.update(cx, |panel, _| {
-            panel.collapse_section_visible_count("codex", 5);
+            panel.collapse_section_visible_count("codex");
         });
         let visible_override_after_collapse = panel.update(cx, |panel, _| {
             panel.sections.get("codex").unwrap().visible_override
         });
-        assert_eq!(visible_override_after_collapse, Some(10));
+        assert_eq!(visible_override_after_collapse, Some(5));
 
         panel.update(cx, |panel, _| {
-            panel.collapse_section_visible_count("codex", 5);
+            panel.collapse_section_visible_count("codex");
         });
         let visible_override_after_second_collapse = panel.update(cx, |panel, _| {
             panel.sections.get("codex").unwrap().visible_override
         });
-        assert_eq!(visible_override_after_second_collapse, None);
+        // 5 halves to 2, which is still above the floor (1).
+        assert_eq!(visible_override_after_second_collapse, Some(2));
 
         panel.update(cx, |panel, _| {
             panel.expand_section_visible_count("codex", 5, 20);
@@ -3271,7 +3687,9 @@ mod tests {
         let visible_override_before_reset = panel.update(cx, |panel, _| {
             panel.sections.get("codex").unwrap().visible_override
         });
-        assert_eq!(visible_override_before_reset, Some(20));
+        // From 2: first expand here jumps to default_cap (5) again since
+        // 2 < 5, then the second expand doubles 5 -> 10.
+        assert_eq!(visible_override_before_reset, Some(10));
 
         panel.update(cx, |panel, _| {
             panel.reset_section_visible_count("codex");
@@ -3520,6 +3938,374 @@ mod tests {
             notifications[0].1.as_deref(),
             Some("Codex 正在等待您 · 项目：notification-project")
         );
+    }
+
+    #[gpui::test]
+    async fn bell_sets_needs_attention_until_the_thread_is_focused(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+
+        assert!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id))
+                .is_some(),
+            "bell should flag the thread as needing attention"
+        );
+        let live_summaries = cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .live_summary_by_worktree_root()
+        });
+        assert_eq!(live_summaries.len(), 1);
+        let summary = live_summaries
+            .get(&PathBuf::from(root))
+            .expect("root should have a live summary");
+        assert_eq!(summary.status, ProjectAttentionStatus::Blocked);
+        assert_eq!(summary.live_thread_count, 1);
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                AgentThreadStore::global(cx).update(cx, |store, cx| {
+                    store.focus_thread(terminal_item_id, window, cx)
+                })
+            })
+            .expect("failed to focus thread")
+            .expect("focus_thread should succeed");
+
+        assert!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id))
+                .is_none(),
+            "focusing the thread should clear the attention flag"
+        );
+        let live_summaries = cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .live_summary_by_worktree_root()
+        });
+        let summary = live_summaries
+            .get(&PathBuf::from(root))
+            .expect("root should still have a live summary -- the thread is still live");
+        assert_eq!(summary.status, ProjectAttentionStatus::Working);
+        assert_eq!(summary.live_thread_count, 1);
+    }
+
+    #[gpui::test]
+    async fn bell_classifies_idle_from_the_terminals_osc_title_through_the_full_pipeline(
+        cx: &mut TestAppContext,
+    ) {
+        // Unlike `bell_sets_needs_attention_until_the_thread_is_focused`
+        // (plain echo output, unclassifiable, falls back to Blocked), this
+        // drives store.rs's real bell handler -- snapshotting the live
+        // terminal's content and OSC title and running them through
+        // `attention_detection::classify` -- rather than asserting against
+        // the classifier module directly, to prove the wiring, not just the
+        // rules (attention_detection's own tests already cover the rules).
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        // Codex's `osc_title_idle` rule: a non-empty OSC title that isn't
+        // "Action Required" classifies as Idle. Setting the field directly
+        // is equivalent to the CLI having sent that OSC title sequence --
+        // `TerminalBackendEvent::Title` handling just assigns this same
+        // field (terminal.rs's `process_event`).
+        terminal.update(cx, |terminal, cx| {
+            terminal.breadcrumb_text = "codex: my-project".to_string();
+            cx.emit(terminal::Event::Bell);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Idle),
+            "a non-blocked OSC title should classify the bell as Idle, not the generic Blocked fallback"
+        );
+    }
+
+    #[gpui::test]
+    async fn pi_thread_reaches_blocked_via_wakeup_without_ever_ringing_a_bell(
+        cx: &mut TestAppContext,
+    ) {
+        // Pi never rings the terminal bell (confirmed by reading its actual
+        // installed source -- see attention_manifests/pi.toml's doc
+        // comment), so this is the only path that can ever flag a Pi
+        // thread: real terminal content, reclassified off `Wakeup`, no bell
+        // involved anywhere in this test.
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_kind_echo_text(cx, "pi", root, "Project trust\nSaved decision: none");
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_pi_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
+        wait_for_thread_attention(cx, terminal_item_id, Some(ThreadAttention::Blocked)).await;
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Blocked),
+            "a Pi thread showing its Project trust prompt should be classified Blocked \
+             purely from Wakeup-triggered terminal content, since it has no bell to react to"
+        );
+    }
+
+    #[gpui::test]
+    async fn wakeups_unclassifiable_content_leaves_attention_unchanged(cx: &mut TestAppContext) {
+        // Contrasts with bell_sets_needs_attention_until_the_thread_is_focused,
+        // where the same "unclassifiable" situation on a Bell-triggered
+        // reclassification falls back to Blocked. Wakeup fires far more
+        // often (every new line of ordinary output), so it must NOT flag
+        // unremarkable content the way a deliberate bell does -- otherwise
+        // every agent's normal streaming output would flap the indicator.
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_kind_echo_text(cx, "pi", root, "some ordinary output matching no Pi rule");
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_pi_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
+        // There's nothing to "wait to become" here -- give the debounced
+        // Wakeup path the same window it gets in the positive test, then
+        // assert the negative.
+        cx.executor().timer(Duration::from_millis(500)).await;
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            None,
+            "unclassifiable content reached via Wakeup (not Bell) should not flag the thread"
+        );
+    }
+
+    #[gpui::test]
+    async fn reclassifying_to_working_silently_clears_an_existing_blocked_flag(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.breadcrumb_text = "Action Required".to_string();
+            cx.emit(terminal::Event::Bell);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Blocked),
+            "codex's osc_title_blocked rule should flag the thread first"
+        );
+
+        let notifications_before = cx.shown_notifications().len();
+
+        // A busy-spinner OSC title classifies as Working (codex's
+        // osc_title_working rule). Reached via a plain Wakeup, not a Bell,
+        // matching how this would happen for real -- the CLI updates its
+        // title as it resumes, Flint doesn't get another bell for that.
+        terminal.update(cx, |terminal, cx| {
+            terminal.breadcrumb_text = "⠙ codex".to_string();
+            cx.emit(terminal::Event::Wakeup);
+        });
+        wait_for_thread_attention(cx, terminal_item_id, None).await;
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            None,
+            "reclassifying to Working should clear the thread's attention state"
+        );
+        assert_eq!(
+            cx.shown_notifications().len(),
+            notifications_before,
+            "clearing back to Working should not itself fire a notification"
+        );
+    }
+
+    #[gpui::test]
+    async fn attention_rollup_surfaces_other_open_projects_and_excludes_the_active_one(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let temporary_directory_a =
+            tempfile::tempdir().expect("failed to create temporary directory a");
+        let root_a = temporary_directory_a
+            .path()
+            .to_str()
+            .expect("root a should be valid UTF-8")
+            .to_string()
+            .leak();
+        let temporary_directory_b =
+            tempfile::tempdir().expect("failed to create temporary directory b");
+        let root_b = temporary_directory_b
+            .path()
+            .to_str()
+            .expect("root b should be valid UTF-8")
+            .to_string()
+            .leak();
+
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root_a)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
+        cx.run_until_parked();
+        assert!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id))
+                .is_some(),
+            "bell should flag project a's thread before switching away"
+        );
+
+        // `cx.entity()` (available inside the closure via `Context<MultiWorkspace>`)
+        // captures the window's root view as a standalone handle, so the rest
+        // of the test can query it without re-entering `window_handle.update`
+        // and hitting GPUI's "already being updated" guard.
+        let (workspace_a, multi_workspace) = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                (multi_workspace.workspace().clone(), cx.entity())
+            })
+            .expect("failed to read workspace a and the multi-workspace");
+
+        let project_b = Project::test(FakeFs::new(cx.executor()), [Path::new(root_b)], cx).await;
+        let workspace_b = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b, window, cx)
+            })
+            .expect("failed to add second workspace");
+        cx.run_until_parked();
+
+        let live_summaries = cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .live_summary_by_worktree_root()
+        });
+
+        let others_from_b = cx.update(|cx| {
+            other_projects_with_live_activity(&workspace_b, &multi_workspace, &live_summaries, cx)
+        });
+        assert_eq!(
+            others_from_b.len(),
+            1,
+            "workspace b should see exactly one other project with live activity"
+        );
+        assert_eq!(others_from_b[0].status, ProjectAttentionStatus::Blocked);
+        assert_eq!(others_from_b[0].live_thread_count, 1);
+        assert_eq!(others_from_b[0].workspace, workspace_a);
+
+        let others_from_a = cx.update(|cx| {
+            other_projects_with_live_activity(&workspace_a, &multi_workspace, &live_summaries, cx)
+        });
+        assert!(
+            others_from_a.is_empty(),
+            "workspace a's own project should not appear as an 'other' project"
+        );
+    }
+
+    #[gpui::test]
+    async fn attention_rollup_shows_working_not_blocked_when_nothing_needs_attention(
+        cx: &mut TestAppContext,
+    ) {
+        // `live_summaries` is handcrafted rather than produced by a real
+        // bell, since this test's only job is to verify
+        // `other_projects_with_live_activity`'s status coloring for a
+        // project with live threads that are all unflagged -- the bell
+        // machinery itself is already covered by the tests above.
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        let temporary_directory_b =
+            tempfile::tempdir().expect("failed to create temporary directory b");
+        let root_b = temporary_directory_b
+            .path()
+            .to_str()
+            .expect("root b should be valid UTF-8");
+
+        let window_handle = init_workspace(cx, root_a).await;
+        let (workspace_a, multi_workspace) = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                (multi_workspace.workspace().clone(), cx.entity())
+            })
+            .expect("failed to read workspace a and the multi-workspace");
+
+        let project_b = Project::test(FakeFs::new(cx.executor()), [Path::new(root_b)], cx).await;
+        let workspace_b = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b, window, cx)
+            })
+            .expect("failed to add second workspace");
+        cx.run_until_parked();
+
+        let mut live_summaries = collections::HashMap::default();
+        live_summaries.insert(
+            PathBuf::from(root_a),
+            ProjectLiveSummary {
+                status: ProjectAttentionStatus::Working,
+                live_thread_count: 2,
+            },
+        );
+
+        let others_from_b = cx.update(|cx| {
+            other_projects_with_live_activity(&workspace_b, &multi_workspace, &live_summaries, cx)
+        });
+        assert_eq!(others_from_b.len(), 1);
+        assert_eq!(others_from_b[0].status, ProjectAttentionStatus::Working);
+        assert_eq!(others_from_b[0].live_thread_count, 2);
+        assert_eq!(others_from_b[0].workspace, workspace_a);
     }
 
     #[gpui::test]

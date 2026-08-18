@@ -209,6 +209,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "proto",
+ "regex",
  "release_channel",
  "remote",
  "rpc",

@@ -85,6 +85,20 @@ impl AgentThreadRow {
             AgentThreadRow::FreshLive(metadata) => metadata.launched_at,
         }
     }
+
+    /// Whether this row has a live terminal backing it right now -- either
+    /// a fresh thread, or a historical one that's been resumed and is still
+    /// running. Used to split a section's rows into an always-shown live
+    /// group and a capped historical group (see `panel.rs`'s `render_section`).
+    pub fn is_live(&self) -> bool {
+        match self {
+            AgentThreadRow::Historical {
+                live_terminal_item_id,
+                ..
+            } => live_terminal_item_id.is_some(),
+            AgentThreadRow::FreshLive(_) => true,
+        }
+    }
 }
 
 /// Merges a kind's live and historical threads for one project into a
@@ -442,6 +456,80 @@ struct ThreadEntry {
     window: Option<WindowHandle<MultiWorkspace>>,
     remote_process: Option<RemoteAgentProcess>,
     egress: Option<AgentEgressLease>,
+    /// The thread's current classified attention state, or `None` while
+    /// it's just working normally. Set and cleared by
+    /// `reclassify_attention`, which `register`'s `attention_subscription`
+    /// calls on two different `terminal::Event`s -- `Bell` (immediately;
+    /// Claude/Codex/OpenCode ring it as a deliberate "look at me" signal)
+    /// and `Wakeup` (debounced; fires on any new PTY output, which is what
+    /// gives Pi and every other agent kind attention detection despite
+    /// never ringing a bell -- see `attention_detection`'s module doc for
+    /// why this mirrors herdr's own poll-and-diff trigger). Also cleared by
+    /// `focus_thread`, independent of what the classifier would currently
+    /// say, since focusing means the user has now seen it.
+    attention: Option<ThreadAttention>,
+    /// Debounces `Wakeup`-triggered reclassification: each `Wakeup` replaces
+    /// this with a new delayed task, so only the last one in a burst of
+    /// output actually reclassifies, `ATTENTION_WAKEUP_DEBOUNCE` after
+    /// output settles. Replacing (rather than accumulating) is what makes
+    /// this a debounce and not just a delay -- dropping the previous task
+    /// cancels it (see the crate's `CLAUDE.md` "Concurrency" section).
+    pending_wakeup_reclassify: Option<Task<()>>,
+}
+
+/// A live thread's current classified attention state (see
+/// `ThreadEntry::attention`), from `attention_detection::classify` run
+/// against its terminal at the moment of the triggering event.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ThreadAttention {
+    /// Blocked on a permission/question prompt.
+    Blocked,
+    /// The agent finished its turn; nothing is pending.
+    Idle,
+}
+
+/// How long to wait after the last `Wakeup` before reclassifying, so a burst
+/// of streamed output settles into one classification instead of many.
+/// Loosely mirrors herdr's ~300ms poll tick (`pane.rs`'s `TICK_IDENTIFIED`)
+/// without literally polling: Flint only reclassifies when GPUI's own
+/// (already a few ms debounced) `Wakeup` event says new output arrived, not
+/// on a fixed timer regardless of activity.
+const ATTENTION_WAKEUP_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Which `terminal::Event` caused a call to `AgentThreadStore::reclassify_attention`.
+/// Only affects what an inconclusive classification
+/// (`attention_detection::AttentionState::Unknown`) means: see the variants'
+/// doc comments.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AttentionTrigger {
+    /// Claude/Codex/OpenCode ring the bell as a deliberate "look at me"
+    /// signal, so an inconclusive classification still falls back to
+    /// `ThreadAttention::Blocked` here -- preserves the flag-every-bell
+    /// behavior these three agents already had before this classifier
+    /// existed.
+    Bell,
+    /// Fires far more often, on any new PTY output; an inconclusive
+    /// classification here is unremarkable mid-turn output, not a signal,
+    /// so it leaves the thread's attention state exactly as it was.
+    Wakeup,
+}
+
+/// Aggregate live-thread status for one worktree, for the cross-project
+/// rollup in `AgentThreadsPanel`. Combining multiple threads' status for one
+/// worktree prefers the most urgent: `Blocked` wins over `Idle`, which wins
+/// over `Working`, since the rollup exists to answer "does this project need
+/// me", and a project with anything blocked (or, failing that, anything
+/// finished) does more than one that's merely still working.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+pub(crate) enum ProjectAttentionStatus {
+    Working,
+    Idle,
+    Blocked,
+}
+
+pub(crate) struct ProjectLiveSummary {
+    pub(crate) status: ProjectAttentionStatus,
+    pub(crate) live_thread_count: usize,
 }
 
 /// See `AgentThreadStore::live_terminal_worktree_roots`.
@@ -459,7 +547,7 @@ struct ThreadShutdown {
     workspace: WeakEntity<Workspace>,
 }
 
-fn notification_project_name(project_root: &Path) -> String {
+pub(crate) fn notification_project_name(project_root: &Path) -> String {
     let project_root = project_root.to_string_lossy();
     project_root
         .trim_end_matches(['/', '\\'])
@@ -640,6 +728,41 @@ impl AgentThreadStore {
             })
             .cloned()
             .collect()
+    }
+
+    /// Why the live thread at `terminal_item_id` needs the user's attention
+    /// right now, if it does (its bell fired and it hasn't been focused
+    /// since). `None` for any id not currently tracked as live, or one that
+    /// hasn't been flagged.
+    pub(crate) fn thread_attention(&self, terminal_item_id: EntityId) -> Option<ThreadAttention> {
+        self.threads.get(&terminal_item_id)?.attention
+    }
+
+    /// Live threads' worktree roots, summarized for a cross-project rollup:
+    /// how many live threads each is tied to, and whether any of them needs
+    /// attention. This intentionally skips the deleted-worktree fallback
+    /// `TieResolution::effective_tie` applies for the main per-section list
+    /// -- the rollup is a coarse "what's happening in my other projects"
+    /// signal, not a precise membership filter, so grouping by the recorded
+    /// tie directly is enough.
+    pub(crate) fn live_summary_by_worktree_root(&self) -> HashMap<PathBuf, ProjectLiveSummary> {
+        let mut summaries: HashMap<PathBuf, ProjectLiveSummary> = HashMap::default();
+        for entry in self.threads.values() {
+            let summary = summaries
+                .entry(entry.metadata.tied_worktree_root.clone())
+                .or_insert(ProjectLiveSummary {
+                    status: ProjectAttentionStatus::Working,
+                    live_thread_count: 0,
+                });
+            summary.live_thread_count += 1;
+            let thread_status = match entry.attention {
+                Some(ThreadAttention::Blocked) => ProjectAttentionStatus::Blocked,
+                Some(ThreadAttention::Idle) => ProjectAttentionStatus::Idle,
+                None => ProjectAttentionStatus::Working,
+            };
+            summary.status = summary.status.max(thread_status);
+        }
+        summaries
     }
 
     /// Live threads eligible for background session discovery: no
@@ -844,6 +967,15 @@ impl AgentThreadStore {
             })
         })?;
 
+        if let Some(entry) = self.threads.get_mut(&terminal_item_id)
+            && entry.attention.is_some()
+        {
+            entry.attention = None;
+            let kind_id = entry.metadata.kind_id;
+            cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
+            cx.notify();
+        }
+
         Ok(())
     }
 
@@ -947,18 +1079,16 @@ impl AgentThreadStore {
     ) {
         let terminal_item_id = terminal_view.entity_id();
         let terminal = terminal_view.read(cx).terminal().clone();
-        let project_name = notification_project_name(&project_root);
         let metadata = AgentThreadMetadata {
             terminal_item_id,
             kind_id,
-            title: title.clone(),
+            title,
             project_root,
             tied_worktree_root: tied_worktree.root,
             tied_repo_main_root: tied_worktree.repo_main_root,
             launched_at,
             resumed_session_id,
         };
-        let attention_window = window;
         self.threads.insert(
             terminal_item_id,
             ThreadEntry {
@@ -969,6 +1099,8 @@ impl AgentThreadStore {
                 window,
                 remote_process,
                 egress,
+                attention: None,
+                pending_wakeup_reclassify: None,
             },
         );
 
@@ -978,43 +1110,130 @@ impl AgentThreadStore {
                     shutdown.detach_and_log_err(cx);
                 }
             });
-        // Claude Code and Codex CLI both ring the terminal bell when a turn
-        // finishes or a permission prompt needs an answer, so it's the
-        // signal we have for "this agent thread needs attention" -- the
-        // underlying `Terminal` (not `TerminalView`, which only re-emits
-        // `Wakeup`/`UpdateTab` for a bell) is what actually re-emits it.
-        let bell_subscription = cx.subscribe(&terminal, move |_store, _terminal, event, cx| {
-            if !matches!(event, terminal::Event::Bell) {
-                return;
-            }
-            if !AgentThreadSettings::get_global(cx).notify_when_finished {
-                return;
-            }
-            let kind_label = agent_kind_registry()
-                .into_iter()
-                .find(|kind| kind.id == kind_id)
-                .map(|kind| kind.label.to_string())
-                .unwrap_or_else(|| kind_id.to_string());
-            if let Some(window_handle) = attention_window.as_ref() {
-                window_handle
-                    .update(cx, |_, window, _| window.request_attention())
-                    .log_err();
-            }
-            cx.show_desktop_notification(
-                &title,
-                Some(&localization::tr!(
-                    cx,
-                    "agent-threads-waiting-notification",
-                    agent = kind_label,
-                    project = project_name.clone(),
-                )),
-            );
-        });
+        // See `attention_detection`'s module doc for why this listens for
+        // both `Bell` (Claude/Codex/OpenCode's deliberate signal) and
+        // `Wakeup` (any new PTY output -- what gives every agent kind,
+        // including ones that never ring a bell, attention detection).
+        let attention_subscription = cx.subscribe(
+            &terminal,
+            move |store, _terminal_entity, event, cx| match event {
+                terminal::Event::Bell => {
+                    store.reclassify_attention(terminal_item_id, AttentionTrigger::Bell, cx);
+                }
+                terminal::Event::Wakeup => {
+                    store.schedule_wakeup_reclassify(terminal_item_id, cx);
+                }
+                _ => {}
+            },
+        );
         self.subscriptions.insert(
             terminal_item_id,
-            vec![release_subscription, bell_subscription],
+            vec![release_subscription, attention_subscription],
         );
         cx.emit(AgentThreadStoreEvent::ThreadOpened { kind_id });
+    }
+
+    /// Replaces `terminal_item_id`'s pending debounce task with a new one,
+    /// so a burst of `Wakeup`s collapses into a single reclassification
+    /// `ATTENTION_WAKEUP_DEBOUNCE` after output settles (see
+    /// `ThreadEntry::pending_wakeup_reclassify`'s doc comment for why
+    /// replacing rather than accumulating is what makes this a debounce).
+    fn schedule_wakeup_reclassify(&mut self, terminal_item_id: EntityId, cx: &mut Context<Self>) {
+        let Some(entry) = self.threads.get_mut(&terminal_item_id) else {
+            return;
+        };
+        entry.pending_wakeup_reclassify = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(ATTENTION_WAKEUP_DEBOUNCE)
+                .await;
+            this.update(cx, |store, cx| {
+                store.reclassify_attention(terminal_item_id, AttentionTrigger::Wakeup, cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// Snapshots `terminal_item_id`'s terminal, classifies it (see
+    /// `attention_detection`), and applies the result to its
+    /// `ThreadEntry::attention`. A desktop notification and window-attention
+    /// request fire only on a genuine transition *into* `Blocked` or `Idle`
+    /// -- staying at the same value (e.g. repeated `Wakeup`s while a
+    /// permission prompt is still on screen) or clearing back to `None`
+    /// (the agent resumed working) stay silent. See `AttentionTrigger`'s doc
+    /// comment for how `trigger` changes what an inconclusive result means.
+    fn reclassify_attention(
+        &mut self,
+        terminal_item_id: EntityId,
+        trigger: AttentionTrigger,
+        cx: &mut Context<Self>,
+    ) {
+        if !AgentThreadSettings::get_global(cx).notify_when_finished {
+            return;
+        }
+        let Some(entry) = self.threads.get(&terminal_item_id) else {
+            return;
+        };
+        let kind_id = entry.metadata.kind_id;
+        let terminal = entry.terminal.clone();
+        let terminal = terminal.read(cx);
+        let screen_tail = terminal
+            .last_n_non_empty_lines(crate::attention_detection::SCREEN_TAIL_LINE_COUNT)
+            .join("\n");
+        let osc_title = terminal.breadcrumb_text.clone();
+        let detected = crate::attention_detection::classify(
+            kind_id,
+            crate::attention_detection::DetectionInput {
+                screen_tail: &screen_tail,
+                osc_title: &osc_title,
+            },
+        );
+
+        let next_attention = match detected {
+            crate::attention_detection::AttentionState::Working => None,
+            crate::attention_detection::AttentionState::Blocked => Some(ThreadAttention::Blocked),
+            crate::attention_detection::AttentionState::Idle => Some(ThreadAttention::Idle),
+            crate::attention_detection::AttentionState::Unknown => match trigger {
+                AttentionTrigger::Bell => Some(ThreadAttention::Blocked),
+                AttentionTrigger::Wakeup => return,
+            },
+        };
+
+        let Some(entry) = self.threads.get_mut(&terminal_item_id) else {
+            return;
+        };
+        let previous_attention = entry.attention;
+        if next_attention == previous_attention {
+            return;
+        }
+        entry.attention = next_attention;
+        let title = entry.metadata.title.clone();
+        let project_name = notification_project_name(&entry.metadata.project_root);
+        let window = entry.window;
+        cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
+        cx.notify();
+
+        if next_attention.is_none() {
+            return;
+        }
+        let kind_label = agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == kind_id)
+            .map(|kind| kind.label.to_string())
+            .unwrap_or_else(|| kind_id.to_string());
+        if let Some(window_handle) = window.as_ref() {
+            window_handle
+                .update(cx, |_, window, _| window.request_attention())
+                .log_err();
+        }
+        cx.show_desktop_notification(
+            &title,
+            Some(&localization::tr!(
+                cx,
+                "agent-threads-waiting-notification",
+                agent = kind_label,
+                project = project_name,
+            )),
+        );
     }
 
     fn begin_shutdown(
@@ -2867,6 +3086,22 @@ mod tests {
 
     fn at(seconds: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+    }
+
+    #[test]
+    fn project_attention_status_combines_to_the_most_urgent() {
+        assert_eq!(
+            ProjectAttentionStatus::Working.max(ProjectAttentionStatus::Idle),
+            ProjectAttentionStatus::Idle
+        );
+        assert_eq!(
+            ProjectAttentionStatus::Idle.max(ProjectAttentionStatus::Blocked),
+            ProjectAttentionStatus::Blocked
+        );
+        assert_eq!(
+            ProjectAttentionStatus::Blocked.max(ProjectAttentionStatus::Working),
+            ProjectAttentionStatus::Blocked
+        );
     }
 
     #[gpui::test]
