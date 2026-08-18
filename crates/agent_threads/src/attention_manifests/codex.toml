@@ -16,6 +16,21 @@ region = "osc_title"
 contains = ["Action Required"]
 
 [[rules]]
+id = "osc_title_working"
+state = "working"
+priority = 1050
+region = "osc_title"
+regex = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)']
+
+[[rules]]
+id = "screen_working_fallback"
+state = "working"
+priority = 500
+region = "bottom_non_empty_lines(3)"
+line_regex = ['^[•◦]\s+Working \([^)]*esc to interrupt\)(?: · .*)?$']
+not = [{ contains = ["■ Conversation interrupted"] }]
+
+[[rules]]
 id = "live_strong_blocker"
 state = "blocked"
 priority = 900
@@ -46,5 +61,6 @@ priority = 100
 region = "osc_title"
 regex = ['\S']
 not = [
+  { regex = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)'] },
   { contains = ["Action Required"] },
 ]

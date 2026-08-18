@@ -2486,6 +2486,82 @@ mod tests {
         });
     }
 
+    fn pi_kind() -> AgentKindDefinition {
+        agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == "pi")
+            .expect("pi should be registered")
+    }
+
+    fn launch_pi_thread(window_handle: &WindowHandle<MultiWorkspace>, cx: &mut TestAppContext) {
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    crate::launch_new_thread_with_default(workspace, &pi_kind(), window, cx);
+                });
+            })
+            .expect("failed to launch pi thread");
+    }
+
+    fn live_pi_threads(cx: &mut TestAppContext, project_root: &str) -> Vec<AgentThreadMetadata> {
+        cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .live_threads_for_project(
+                    "pi",
+                    &[PathBuf::from(project_root)],
+                    &TieResolution::not_ready(),
+                )
+        })
+    }
+
+    /// Overrides `kind_id`'s launch command to `echo text`, so its terminal
+    /// shows exactly `text` (including any embedded newlines) once the
+    /// process runs, instead of the generic per-kind label
+    /// `configure_echo_threads` sets up.
+    fn set_kind_echo_text(
+        cx: &mut TestAppContext,
+        kind_id: &'static str,
+        root_path: &str,
+        text: &str,
+    ) {
+        let command = echo_command(text, root_path);
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                let content = settings.agent_threads.get_or_insert_default();
+                match kind_id {
+                    "codex" => content.codex = Some(command.clone()),
+                    "claude" => content.claude = Some(command.clone()),
+                    "pi" => content.pi = Some(command.clone()),
+                    "opencode" => content.opencode = Some(command.clone()),
+                    _ => panic!("unknown kind_id {kind_id}"),
+                };
+            });
+        });
+    }
+
+    // See `wait_for_live_count` for why this polls with real timer ticks
+    // rather than a single `run_until_parked()` -- `reclassify_attention`'s
+    // Wakeup path is additionally debounced by `ATTENTION_WAKEUP_DEBOUNCE`.
+    async fn wait_for_thread_attention(
+        cx: &mut TestAppContext,
+        terminal_item_id: gpui::EntityId,
+        expected: Option<ThreadAttention>,
+    ) {
+        for _ in 0..50 {
+            cx.run_until_parked();
+            let current = cx.update(|cx| {
+                AgentThreadStore::global(cx)
+                    .read(cx)
+                    .thread_attention(terminal_item_id)
+            });
+            if current == expected {
+                return;
+            }
+            cx.executor().timer(Duration::from_millis(50)).await;
+        }
+    }
+
     fn set_agent_hidden(cx: &mut TestAppContext, kind_id: &'static str, hidden: bool) {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
@@ -3805,6 +3881,128 @@ mod tests {
                 .thread_attention(terminal_item_id)),
             Some(ThreadAttention::Idle),
             "a non-blocked OSC title should classify the bell as Idle, not the generic Blocked fallback"
+        );
+    }
+
+    #[gpui::test]
+    async fn pi_thread_reaches_blocked_via_wakeup_without_ever_ringing_a_bell(
+        cx: &mut TestAppContext,
+    ) {
+        // Pi never rings the terminal bell (confirmed by reading its actual
+        // installed source -- see attention_manifests/pi.toml's doc
+        // comment), so this is the only path that can ever flag a Pi
+        // thread: real terminal content, reclassified off `Wakeup`, no bell
+        // involved anywhere in this test.
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_kind_echo_text(cx, "pi", root, "Project trust\nSaved decision: none");
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_pi_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
+        wait_for_thread_attention(cx, terminal_item_id, Some(ThreadAttention::Blocked)).await;
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Blocked),
+            "a Pi thread showing its Project trust prompt should be classified Blocked \
+             purely from Wakeup-triggered terminal content, since it has no bell to react to"
+        );
+    }
+
+    #[gpui::test]
+    async fn wakeups_unclassifiable_content_leaves_attention_unchanged(cx: &mut TestAppContext) {
+        // Contrasts with bell_sets_needs_attention_until_the_thread_is_focused,
+        // where the same "unclassifiable" situation on a Bell-triggered
+        // reclassification falls back to Blocked. Wakeup fires far more
+        // often (every new line of ordinary output), so it must NOT flag
+        // unremarkable content the way a deliberate bell does -- otherwise
+        // every agent's normal streaming output would flap the indicator.
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        set_kind_echo_text(cx, "pi", root, "some ordinary output matching no Pi rule");
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_pi_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
+        // There's nothing to "wait to become" here -- give the debounced
+        // Wakeup path the same window it gets in the positive test, then
+        // assert the negative.
+        cx.executor().timer(Duration::from_millis(500)).await;
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            None,
+            "unclassifiable content reached via Wakeup (not Bell) should not flag the thread"
+        );
+    }
+
+    #[gpui::test]
+    async fn reclassifying_to_working_silently_clears_an_existing_blocked_flag(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.breadcrumb_text = "Action Required".to_string();
+            cx.emit(terminal::Event::Bell);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Blocked),
+            "codex's osc_title_blocked rule should flag the thread first"
+        );
+
+        let notifications_before = cx.shown_notifications().len();
+
+        // A busy-spinner OSC title classifies as Working (codex's
+        // osc_title_working rule). Reached via a plain Wakeup, not a Bell,
+        // matching how this would happen for real -- the CLI updates its
+        // title as it resumes, Flint doesn't get another bell for that.
+        terminal.update(cx, |terminal, cx| {
+            terminal.breadcrumb_text = "⠙ codex".to_string();
+            cx.emit(terminal::Event::Wakeup);
+        });
+        wait_for_thread_attention(cx, terminal_item_id, None).await;
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            None,
+            "reclassifying to Working should clear the thread's attention state"
+        );
+        assert_eq!(
+            cx.shown_notifications().len(),
+            notifications_before,
+            "clearing back to Working should not itself fire a notification"
         );
     }
 

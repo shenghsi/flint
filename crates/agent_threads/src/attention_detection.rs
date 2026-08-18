@@ -1,17 +1,23 @@
-//! Best-effort classification of what a terminal-bell attention signal
-//! means, ported from herdr's manifest-based rule engine
+//! Best-effort classification of what's currently happening in a live agent
+//! thread's terminal, ported from herdr's manifest-based rule engine
 //! (https://github.com/herdrdev/herdr, `src/detect/manifest.rs` +
-//! `src/detect/manifests/*.toml`). Herdr continuously polls a pane's screen
-//! and debounces transitions between idle/working/blocked; Flint has no
-//! such loop, so this classifies once, at the moment a thread's bell fires,
-//! from a bounded snapshot of its terminal tail plus its OSC window title
-//! (`Terminal::breadcrumb_text`). See `attention_manifests/*.toml` for
-//! which rules were kept from each upstream agent manifest and why.
+//! `src/detect/manifests/*.toml`). Herdr drives this from a ~300ms
+//! poll-and-diff loop over every pane (`pane.rs`'s `detection_content_seq`),
+//! re-scanning only when new PTY output actually arrived since the last
+//! scan. `store.rs` mirrors that trigger shape using `terminal::Event`:
+//! `Wakeup` (fires whenever new output arrives, already debounced a few ms
+//! by `Terminal::subscribe`) is further debounced there and reclassifies on
+//! settling, while `Bell` reclassifies immediately, since Claude/Codex/
+//! OpenCode use it as a deliberate "look at me" signal.
 //!
 //! A miss here (`AttentionState::Unknown`, or no bundled manifest for the
-//! agent kind at all) is expected and safe: the caller in `store.rs` falls
-//! back to the same generic "needs attention" treatment every bell got
-//! before this classifier existed, rather than guessing.
+//! agent kind at all) is expected: not every screen matches a known
+//! pattern, and Pi in particular has no manifest richer than a `Working`
+//! rule and one blocked prompt (see `attention_manifests/pi.toml`) --
+//! herdr's own manifest for it is just as thin. How a miss is handled is
+//! `store.rs`'s call, not this module's: it differs by which
+//! `terminal::Event` triggered the classification (see its
+//! `reclassify_attention`).
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -20,14 +26,20 @@ use regex::Regex;
 use serde::Deserialize;
 
 /// How many trailing non-empty screen lines to classify against. Bounds the
-/// snapshot `store.rs` takes at bell time (`Terminal::last_n_non_empty_lines`)
-/// -- generous enough for every region below except `top_non_empty_lines`,
+/// snapshot `store.rs` takes (`Terminal::last_n_non_empty_lines`) --
+/// generous enough for every region below except `top_non_empty_lines`,
 /// which needs the true top of the scrollback and isn't supported (see the
 /// manifest files' doc comments).
 pub(crate) const SCREEN_TAIL_LINE_COUNT: usize = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttentionState {
+    /// Agent is actively working; PTY liveness alone can't tell this apart
+    /// from "idle at a prompt with no more output coming," which is why
+    /// this is a real classifiable state here (unlike Flint's original,
+    /// bell-only design, where "working" only ever meant "the bell hasn't
+    /// rung yet").
+    Working,
     /// Agent finished, prompt visible, nothing pending.
     Idle,
     /// No rule in the agent's manifest matched, or the agent has no
@@ -74,6 +86,7 @@ const BUNDLED_MANIFESTS: &[(&str, &str)] = &[
         "opencode",
         include_str!("attention_manifests/opencode.toml"),
     ),
+    ("pi", include_str!("attention_manifests/pi.toml")),
 ];
 
 fn manifests() -> &'static HashMap<&'static str, CompiledManifest> {
@@ -170,6 +183,7 @@ struct RawGate {
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum RawState {
+    Working,
     Idle,
     Blocked,
 }
@@ -177,6 +191,7 @@ enum RawState {
 impl From<RawState> for AttentionState {
     fn from(value: RawState) -> Self {
         match value {
+            RawState::Working => AttentionState::Working,
             RawState::Idle => AttentionState::Idle,
             RawState::Blocked => AttentionState::Blocked,
         }
@@ -532,13 +547,75 @@ mod tests {
     }
 
     #[test]
-    fn pi_has_no_bundled_manifest_so_everything_is_unknown() {
+    fn pi_unmatched_output_is_unknown() {
         assert_eq!(
-            classify_screen(
-                "pi",
-                "anything, since pi has no blocked/idle rules upstream"
-            ),
+            classify_screen("pi", "some ordinary output that matches no Pi rule"),
             AttentionState::Unknown
+        );
+    }
+
+    #[test]
+    fn pi_working_literal_is_working() {
+        assert_eq!(classify_screen("pi", "Working..."), AttentionState::Working);
+    }
+
+    #[test]
+    fn pi_project_trust_prompt_is_blocked() {
+        let screen =
+            "Project trust\n/tmp/some-project\n\nSaved decision: none\nCurrent session: untrusted";
+        assert_eq!(classify_screen("pi", screen), AttentionState::Blocked);
+    }
+
+    #[test]
+    fn pi_project_trust_requires_both_signals() {
+        // Guards against "Project trust" alone (e.g. mentioned in passing
+        // help text) being mistaken for the actual prompt.
+        assert_eq!(
+            classify_screen("pi", "Project trust is configured per directory."),
+            AttentionState::Unknown
+        );
+    }
+
+    #[test]
+    fn claude_busy_spinner_osc_title_is_working() {
+        let state = classify(
+            "claude",
+            DetectionInput {
+                screen_tail: "",
+                osc_title: "⠋ Thinking",
+            },
+        );
+        assert_eq!(state, AttentionState::Working);
+    }
+
+    #[test]
+    fn codex_screen_working_fallback_is_working() {
+        let screen = "• Working (12s · esc to interrupt)";
+        assert_eq!(classify_screen("codex", screen), AttentionState::Working);
+    }
+
+    #[test]
+    fn codex_osc_title_busy_spinner_beats_idle_fallback() {
+        // Regression guard for restoring codex's osc_title_idle `not` clause
+        // to also exclude the spinner (dropped when Working wasn't ported
+        // yet, restored alongside osc_title_working): a busy OSC title must
+        // not be misread as idle just because it's non-empty and isn't
+        // "Action Required".
+        let state = classify(
+            "codex",
+            DetectionInput {
+                screen_tail: "",
+                osc_title: "⠙ codex",
+            },
+        );
+        assert_eq!(state, AttentionState::Working);
+    }
+
+    #[test]
+    fn opencode_interrupt_hint_is_working() {
+        assert_eq!(
+            classify_screen("opencode", "Press esc to interrupt"),
+            AttentionState::Working
         );
     }
 

@@ -1,0 +1,32 @@
+# Pi has no herdr manifest to port from (herdrdev/herdr's own pi.toml has
+# only a `working` rule, ported below as `working_literal` -- herdr's own
+# detection for Pi is exactly this thin). `project_trust_prompt` is not
+# from herdr: it's built from reading Pi's actual installed source
+# (@earendil-works/pi-coding-agent, dist/modes/interactive/components/
+# trust-selector.js), since Pi ships no interactive per-tool-call
+# permission prompt the way Claude Code and Codex do -- searching its
+# bundled source (and pi-tui, its terminal library) turned up no such UI at
+# all. The one genuine blocking gate found is TrustSelectorComponent's
+# one-time "Project trust" prompt, which renders the literal header text
+# "Project trust" and a "Saved decision: ..." line matched below.
+#
+# Unlike Claude/Codex/OpenCode, Pi's CLI never writes a bare BEL --
+# confirmed by grepping pi-coding-agent's and pi-tui's entire bundled
+# source for any standalone terminal-bell write (every `\x07` found there
+# is an OSC string terminator, never a bell used as an alert). So a Pi
+# thread is only ever classified from store.rs's `Wakeup`-triggered path,
+# never from a bell.
+
+[[rules]]
+id = "working_literal"
+state = "working"
+priority = 100
+region = "whole_recent"
+contains = ["Working..."]
+
+[[rules]]
+id = "project_trust_prompt"
+state = "blocked"
+priority = 300
+region = "whole_recent"
+contains = ["project trust", "saved decision"]
