@@ -7,9 +7,9 @@ use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton, MouseDownEvent, ParentElement,
-    Pixels, Point, PromptButton, PromptLevel, Render, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, anchored, deferred, div,
+    EventEmitter, FocusHandle, Focusable, FontWeight, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptButton, PromptLevel, Render, SharedString, Styled,
+    Subscription, Task, WeakEntity, Window, anchored, deferred, div,
 };
 use settings::{DockSide, Settings, SettingsStore};
 use ui::{
@@ -27,29 +27,36 @@ use crate::history::{self, HistoryParseCache, project_worktree_roots};
 use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
 use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
-    ProjectAttentionStatus, ProjectLiveSummary, ThreadAttention, TieResolution, merge_threads,
+    ProjectAttentionStatus, ProjectLiveSummary, ThreadDisplayStatus, TieResolution, merge_threads,
 };
 use crate::{
     AgentKindDefinition, AgentThreadSettings, HistoricalThread, RemoteAgentRoutingSettings,
     agent_kind_registry,
 };
 
-/// The row/rollup color for a live thread's attention state: unflagged
-/// (still working, or the classifier hasn't run) stays the pre-existing
-/// green; a `Blocked` thread (or one the classifier couldn't read) gets the
-/// more urgent amber; a thread the classifier is confident just finished
-/// gets a calmer, less alarming color since nothing is actually pending.
-fn status_color_for_attention(attention: Option<ThreadAttention>) -> Color {
-    match attention {
-        None => Color::Success,
-        Some(ThreadAttention::Blocked) => Color::Warning,
-        Some(ThreadAttention::Idle) => Color::Info,
+/// The row color for a live thread's display status. Four visually distinct
+/// colors, chosen so no two are easy to mistake for each other (unlike the
+/// previous green/blue pairing): actively working stays the pre-existing
+/// green; blocked (still needs the user to unblock it, even after they've
+/// looked) gets the most alarming color since it's the one actually stopping
+/// progress; finished-and-unchecked gets a middling, still-eye-catching
+/// color since it's worth a look but isn't blocking anything; finished-and-
+/// already-checked gets a calm, muted color since there's nothing left to
+/// do.
+fn status_color_for_display_status(status: Option<ThreadDisplayStatus>) -> Color {
+    match status {
+        None | Some(ThreadDisplayStatus::Busy) => Color::Success,
+        Some(ThreadDisplayStatus::Blocked) => Color::Error,
+        Some(ThreadDisplayStatus::Finished) => Color::Warning,
+        Some(ThreadDisplayStatus::Idle) => Color::Muted,
     }
 }
 
-/// One other open project (a `MultiWorkspace` retained workspace) that has
-/// at least one live thread, for the cross-project rollup.
-struct OtherProjectActivity {
+/// One project's row in the cross-project rollup -- either an other open
+/// project with live agent activity, or (see `current_project_activity`)
+/// the project the rollup itself is being rendered in, shown for "you are
+/// here" orientation.
+struct ProjectRollupRow {
     workspace: Entity<Workspace>,
     label: String,
     /// The remote host's display name (`RemoteConnectionOptions::display_name`),
@@ -58,16 +65,42 @@ struct OtherProjectActivity {
     host: Option<SharedString>,
     status: ProjectAttentionStatus,
     live_thread_count: usize,
+    /// The specific live thread that most needs the user's attention across
+    /// all of this project's worktree roots, so a click can jump straight
+    /// to it -- see `ProjectLiveSummary::most_urgent_terminal_item_id`.
+    attention_terminal_item_id: Option<gpui::EntityId>,
+}
+
+/// Combines a project's live-thread summaries across all of its worktree
+/// roots into one status/count/most-urgent-thread triple: the most urgent
+/// status wins, the same way `live_summary_by_worktree_root` combines
+/// threads within a single root. Shared by `other_projects_with_live_activity`
+/// and `current_project_activity` so the two rollup row kinds can't drift
+/// out of sync on how they aggregate multi-root projects.
+fn aggregate_live_activity(
+    roots: &[PathBuf],
+    live_summaries: &HashMap<PathBuf, ProjectLiveSummary>,
+) -> (ProjectAttentionStatus, usize, Option<gpui::EntityId>) {
+    let mut status = ProjectAttentionStatus::Working;
+    let mut live_thread_count = 0;
+    let mut attention_terminal_item_id = None;
+    for root in roots {
+        let Some(summary) = live_summaries.get(root) else {
+            continue;
+        };
+        live_thread_count += summary.live_thread_count;
+        if summary.status >= status {
+            status = summary.status;
+            attention_terminal_item_id = summary.most_urgent_terminal_item_id;
+        }
+    }
+    (status, live_thread_count, attention_terminal_item_id)
 }
 
 /// The pure part of the cross-project rollup: given `live_summaries` (see
 /// `AgentThreadStore::live_summary_by_worktree_root`), which of
 /// `multi_workspace`'s other retained workspaces -- excluding `workspace`
 /// itself -- have live agent activity, and whether any of it is blocked.
-/// A workspace can own more than one worktree root, so its threads can be
-/// split across several summary entries; those are combined into one
-/// project-level entry, with `Blocked` winning over `Working` the same way
-/// `live_summary_by_worktree_root` combines threads within a single root.
 /// Kept separate from `AgentThreadsPanel::render_attention_rollup` so it's
 /// testable without constructing a full panel entity for each workspace.
 fn other_projects_with_live_activity(
@@ -75,7 +108,7 @@ fn other_projects_with_live_activity(
     multi_workspace: &Entity<MultiWorkspace>,
     live_summaries: &HashMap<PathBuf, ProjectLiveSummary>,
     cx: &App,
-) -> Vec<OtherProjectActivity> {
+) -> Vec<ProjectRollupRow> {
     let mut others = Vec::new();
     for other_workspace in multi_workspace.read(cx).retained_workspaces() {
         if other_workspace == workspace {
@@ -87,15 +120,8 @@ fn other_projects_with_live_activity(
             .iter()
             .map(|path| path.to_path_buf())
             .collect();
-        let mut status = ProjectAttentionStatus::Working;
-        let mut live_thread_count = 0;
-        for root in &roots {
-            let Some(summary) = live_summaries.get(root) else {
-                continue;
-            };
-            live_thread_count += summary.live_thread_count;
-            status = status.max(summary.status);
-        }
+        let (status, live_thread_count, attention_terminal_item_id) =
+            aggregate_live_activity(&roots, live_summaries);
         let Some(first_root) = (live_thread_count > 0).then(|| roots.first()).flatten() else {
             continue;
         };
@@ -105,15 +131,58 @@ fn other_projects_with_live_activity(
             .read(cx)
             .remote_connection_options(cx)
             .map(|options| options.display_name().into());
-        others.push(OtherProjectActivity {
+        others.push(ProjectRollupRow {
             workspace: other_workspace.clone(),
             label: store::notification_project_name(first_root),
             host,
             status,
             live_thread_count,
+            attention_terminal_item_id,
         });
     }
     others
+}
+
+/// The current project's own row for the cross-project rollup, so the
+/// rollup answers not just "what needs me elsewhere" but "where am I right
+/// now": a rollup holding exactly one other project used to read as
+/// ambiguous about which of the two projects on screen was the current
+/// one, since only the "other" project ever got a row. Unlike
+/// `other_projects_with_live_activity`'s rows, this one is included
+/// regardless of whether the current project has any live activity of its
+/// own -- it exists for orientation, not to flag something needing
+/// attention.
+fn current_project_activity(
+    workspace: &Entity<Workspace>,
+    live_summaries: &HashMap<PathBuf, ProjectLiveSummary>,
+    cx: &App,
+) -> ProjectRollupRow {
+    let roots: Vec<PathBuf> = workspace
+        .read(cx)
+        .root_paths(cx)
+        .iter()
+        .map(|path| path.to_path_buf())
+        .collect();
+    let (status, live_thread_count, attention_terminal_item_id) =
+        aggregate_live_activity(&roots, live_summaries);
+    let label = roots
+        .first()
+        .map(|root| store::notification_project_name(root))
+        .unwrap_or_default();
+    let host = workspace
+        .read(cx)
+        .project()
+        .read(cx)
+        .remote_connection_options(cx)
+        .map(|options| options.display_name().into());
+    ProjectRollupRow {
+        workspace: workspace.clone(),
+        label,
+        host,
+        status,
+        live_thread_count,
+        attention_terminal_item_id,
+    }
 }
 
 enum HistoricalState {
@@ -1342,12 +1411,15 @@ impl AgentThreadsPanel {
         cx.notify();
     }
 
-    /// A compact rollup of other open projects (other `MultiWorkspace`
-    /// retained workspaces, see `workspace::multi_workspace`) that have live
-    /// agent activity right now, colored by whether any of it is blocked.
-    /// Returns `None` when there's nothing to show -- no other window/tab,
-    /// or no live threads anywhere else -- so the common case adds no
-    /// chrome to the panel.
+    /// A compact rollup of open projects for the current `MultiWorkspace`
+    /// window (see `workspace::multi_workspace`): the current project's own
+    /// row first, highlighted for orientation, followed by any other
+    /// project with live agent activity right now, colored by whether any
+    /// of it is blocked. The current-project row always renders (even with
+    /// no other project open, or none of them doing anything), so there's
+    /// always an unambiguous answer to "which project am I in" -- only
+    /// `window` not having a `MultiWorkspace` root at all (unexpected
+    /// outside tests) suppresses the rollup entirely.
     fn render_attention_rollup(
         &mut self,
         workspace: &Entity<Workspace>,
@@ -1358,9 +1430,7 @@ impl AgentThreadsPanel {
         let live_summaries = self.store.read(cx).live_summary_by_worktree_root();
         let others =
             other_projects_with_live_activity(workspace, &multi_workspace, &live_summaries, cx);
-        if others.is_empty() {
-            return None;
-        }
+        let current = current_project_activity(workspace, &live_summaries, cx);
 
         Some(
             v_flex()
@@ -1374,69 +1444,116 @@ impl AgentThreadsPanel {
                 .border_1()
                 .border_color(cx.theme().colors().border)
                 .bg(cx.theme().colors().editor_background)
-                .children(others.into_iter().map(|other| {
-                    let target_workspace = other.workspace;
-                    let label = other.label;
-                    let host = other.host;
-                    let live_thread_count = other.live_thread_count;
-                    let status_color = match other.status {
-                        ProjectAttentionStatus::Blocked => Color::Warning,
-                        ProjectAttentionStatus::Idle => Color::Info,
-                        ProjectAttentionStatus::Working => Color::Success,
-                    };
-                    let multi_workspace = multi_workspace.clone();
-                    let source_workspace = self.workspace.clone();
-                    h_flex()
-                        .id((
-                            "agent-thread-attention-rollup-item",
-                            target_workspace.entity_id().as_u64(),
-                        ))
-                        .w_full()
-                        .justify_between()
-                        .items_center()
-                        .gap_2()
-                        .px_1()
-                        .py_0p5()
-                        .rounded_sm()
-                        .hover(|style| style.bg(cx.theme().colors().element_hover))
-                        .on_click(cx.listener(move |_this, _, window, cx| {
-                            multi_workspace.update(cx, |multi_workspace, cx| {
-                                multi_workspace.activate(
-                                    target_workspace.clone(),
-                                    Some(source_workspace.clone()),
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }))
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .items_center()
-                                .child(
-                                    Icon::new(IconName::Circle)
-                                        .size(IconSize::Indicator)
-                                        .color(status_color),
-                                )
-                                .child(Label::new(label).size(LabelSize::Small).truncate())
-                                .when_some(host, |this, host| {
-                                    this.child(
-                                        Label::new(format!("({})", host))
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .truncate(),
-                                    )
-                                }),
-                        )
-                        .child(
-                            Label::new(live_thread_count.to_string())
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .into_any_element()
-                }))
+                .child(self.render_rollup_row(current, true, &multi_workspace, cx))
+                .children(
+                    others
+                        .into_iter()
+                        .map(|other| self.render_rollup_row(other, false, &multi_workspace, cx)),
+                )
                 .into_any_element(),
         )
+    }
+
+    /// One row of `render_attention_rollup`, for either the current project
+    /// (`is_current`, highlighted and inert -- there's nothing to switch
+    /// to) or another open project (clickable: switches to it and, if one
+    /// of its threads needs attention, focuses that thread too).
+    fn render_rollup_row(
+        &self,
+        row: ProjectRollupRow,
+        is_current: bool,
+        multi_workspace: &Entity<MultiWorkspace>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let target_workspace = row.workspace;
+        let label = row.label;
+        let host = row.host;
+        let live_thread_count = row.live_thread_count;
+        let attention_terminal_item_id = row.attention_terminal_item_id;
+        let status_color = match row.status {
+            ProjectAttentionStatus::Blocked => Color::Error,
+            ProjectAttentionStatus::Finished => Color::Warning,
+            ProjectAttentionStatus::Idle => Color::Muted,
+            ProjectAttentionStatus::Working => Color::Success,
+        };
+        let element_id = (
+            if is_current {
+                "agent-thread-attention-rollup-current"
+            } else {
+                "agent-thread-attention-rollup-item"
+            },
+            target_workspace.entity_id().as_u64(),
+        );
+        let content = h_flex()
+            .id(element_id)
+            .w_full()
+            .justify_between()
+            .items_center()
+            .gap_2()
+            .px_1()
+            .py_0p5()
+            .rounded_sm()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(
+                        Icon::new(IconName::Circle)
+                            .size(IconSize::Indicator)
+                            .color(status_color),
+                    )
+                    .child(
+                        Label::new(label)
+                            .size(LabelSize::Small)
+                            .truncate()
+                            .when(is_current, |label| label.weight(FontWeight::SEMIBOLD)),
+                    )
+                    .when(is_current, |this| {
+                        this.child(
+                            Label::new(localization::text(cx, "agent-threads-current-project"))
+                                .size(LabelSize::Small)
+                                .color(Color::Accent),
+                        )
+                    })
+                    .when_some(host, |this, host| {
+                        this.child(
+                            Label::new(format!("({})", host))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate(),
+                        )
+                    }),
+            )
+            .child(
+                Label::new(live_thread_count.to_string())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
+
+        if is_current {
+            content
+                .bg(cx.theme().colors().element_selected)
+                .into_any_element()
+        } else {
+            let multi_workspace = multi_workspace.clone();
+            let source_workspace = self.workspace.clone();
+            content
+                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    multi_workspace.update(cx, |multi_workspace, cx| {
+                        multi_workspace.activate(
+                            target_workspace.clone(),
+                            Some(source_workspace.clone()),
+                            window,
+                            cx,
+                        );
+                    });
+                    if let Some(terminal_item_id) = attention_terminal_item_id {
+                        this.focus_live_thread(terminal_item_id, window, cx);
+                    }
+                }))
+                .into_any_element()
+        }
     }
 
     fn render_section(
@@ -1765,8 +1882,9 @@ impl AgentThreadsPanel {
         let terminal_item_id = metadata.terminal_item_id;
         let menu_metadata = metadata.clone();
         let is_active = active_terminal_item_id == Some(terminal_item_id);
-        let status_color =
-            status_color_for_attention(self.store.read(cx).thread_attention(terminal_item_id));
+        let status_color = status_color_for_display_status(
+            self.store.read(cx).thread_display_status(terminal_item_id),
+        );
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
             .w_full()
@@ -1837,8 +1955,8 @@ impl AgentThreadsPanel {
         let is_active =
             live_terminal_item_id.is_some() && live_terminal_item_id == active_terminal_item_id;
         let status_color =
-            status_color_for_attention(live_terminal_item_id.and_then(|terminal_item_id| {
-                self.store.read(cx).thread_attention(terminal_item_id)
+            status_color_for_display_status(live_terminal_item_id.and_then(|terminal_item_id| {
+                self.store.read(cx).thread_display_status(terminal_item_id)
             }));
         let resume_option_label = thread_resume_option_label(cx, kind, &thread.session_id);
         let resume_option_visual = thread_resume_option_visual(cx, kind, &thread.session_id);
@@ -2364,7 +2482,8 @@ impl Render for AgentThreadsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, WindowHandle};
+    use crate::store::ThreadAttention;
+    use gpui::{TestAppContext, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
     use settings::{AgentThreadCommandContent, AgentThreadSettingsContent, SettingsStore};
@@ -3941,7 +4060,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn bell_sets_needs_attention_until_the_thread_is_focused(cx: &mut TestAppContext) {
+    async fn bell_sets_needs_attention_and_blocked_survives_focus(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
@@ -3985,12 +4104,13 @@ mod tests {
             .expect("failed to focus thread")
             .expect("focus_thread should succeed");
 
-        assert!(
+        assert_eq!(
             cx.update(|cx| AgentThreadStore::global(cx)
                 .read(cx)
-                .thread_attention(terminal_item_id))
-                .is_none(),
-            "focusing the thread should clear the attention flag"
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Blocked),
+            "focusing a blocked thread should not clear it -- it's still blocked until the \
+             user actually unblocks it, not merely until they look at it"
         );
         let live_summaries = cx.update(|cx| {
             AgentThreadStore::global(cx)
@@ -4000,7 +4120,75 @@ mod tests {
         let summary = live_summaries
             .get(&PathBuf::from(root))
             .expect("root should still have a live summary -- the thread is still live");
-        assert_eq!(summary.status, ProjectAttentionStatus::Working);
+        assert_eq!(summary.status, ProjectAttentionStatus::Blocked);
+        assert_eq!(summary.live_thread_count, 1);
+    }
+
+    #[gpui::test]
+    async fn focusing_a_finished_thread_marks_it_seen_without_clearing_idle(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        // Codex's `osc_title_idle` rule: a non-empty OSC title that isn't
+        // "Action Required" classifies as Idle.
+        terminal.update(cx, |terminal, cx| {
+            terminal.breadcrumb_text = "codex: my-project".to_string();
+            cx.emit(terminal::Event::Bell);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_display_status(terminal_item_id)),
+            Some(ThreadDisplayStatus::Finished),
+            "a thread that just finished and hasn't been looked at should display as Finished"
+        );
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                AgentThreadStore::global(cx).update(cx, |store, cx| {
+                    store.focus_thread(terminal_item_id, window, cx)
+                })
+            })
+            .expect("failed to focus thread")
+            .expect("focus_thread should succeed");
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Idle),
+            "the raw classification stays Idle -- the thread did finish"
+        );
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_display_status(terminal_item_id)),
+            Some(ThreadDisplayStatus::Idle),
+            "focusing a finished thread should mark it seen, so it displays as the calmer \
+             checked-Idle state rather than Finished"
+        );
+        let live_summaries = cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .live_summary_by_worktree_root()
+        });
+        let summary = live_summaries
+            .get(&PathBuf::from(root))
+            .expect("root should still have a live summary -- the thread is still live");
+        assert_eq!(summary.status, ProjectAttentionStatus::Idle);
         assert_eq!(summary.live_thread_count, 1);
     }
 
@@ -4246,6 +4434,12 @@ mod tests {
         assert_eq!(others_from_b[0].status, ProjectAttentionStatus::Blocked);
         assert_eq!(others_from_b[0].live_thread_count, 1);
         assert_eq!(others_from_b[0].workspace, workspace_a);
+        assert_eq!(
+            others_from_b[0].attention_terminal_item_id,
+            Some(terminal_item_id),
+            "the rollup entry should carry the specific blocked thread to jump to, \
+             not just the project it belongs to"
+        );
 
         let others_from_a = cx.update(|cx| {
             other_projects_with_live_activity(&workspace_a, &multi_workspace, &live_summaries, cx)
@@ -4254,6 +4448,30 @@ mod tests {
             others_from_a.is_empty(),
             "workspace a's own project should not appear as an 'other' project"
         );
+
+        // `current_project_activity` is the complement of the above: it
+        // should reflect each workspace's own live activity (not the other
+        // workspace's), so the rollup can show "you are here" alongside
+        // the other-project rows this test already covers.
+        let current_for_a =
+            cx.update(|cx| current_project_activity(&workspace_a, &live_summaries, cx));
+        assert_eq!(current_for_a.status, ProjectAttentionStatus::Blocked);
+        assert_eq!(current_for_a.live_thread_count, 1);
+        assert_eq!(
+            current_for_a.attention_terminal_item_id,
+            Some(terminal_item_id)
+        );
+        assert_eq!(current_for_a.workspace, workspace_a);
+
+        let current_for_b =
+            cx.update(|cx| current_project_activity(&workspace_b, &live_summaries, cx));
+        assert_eq!(
+            current_for_b.status,
+            ProjectAttentionStatus::Working,
+            "workspace b has no live threads of its own"
+        );
+        assert_eq!(current_for_b.live_thread_count, 0);
+        assert_eq!(current_for_b.attention_terminal_item_id, None);
     }
 
     #[gpui::test]
@@ -4296,6 +4514,7 @@ mod tests {
             ProjectLiveSummary {
                 status: ProjectAttentionStatus::Working,
                 live_thread_count: 2,
+                most_urgent_terminal_item_id: None,
             },
         );
 
@@ -4306,6 +4525,49 @@ mod tests {
         assert_eq!(others_from_b[0].status, ProjectAttentionStatus::Working);
         assert_eq!(others_from_b[0].live_thread_count, 2);
         assert_eq!(others_from_b[0].workspace, workspace_a);
+    }
+
+    #[gpui::test]
+    async fn attention_rollup_shows_the_current_project_even_with_no_other_activity(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        let window_handle = init_workspace(cx, root).await;
+
+        let (workspace, panel) = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let panel = multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                });
+                (multi_workspace.workspace().clone(), panel)
+            })
+            .expect("failed to create panel");
+        cx.run_until_parked();
+
+        // `render_attention_rollup` reads the window's `MultiWorkspace` root
+        // view itself, so it can't be called from inside a
+        // `window_handle.update` closure -- that closure already holds the
+        // same root view mutably borrowed. `VisualTestContext` gives a
+        // `Window` without going through the root view's own borrow,
+        // matching how a real render pass (not nested inside a
+        // `MultiWorkspace::update`) actually calls this method.
+        let mut visual_cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let rollup_is_some = visual_cx.update(|window, cx| {
+            panel.update(cx, |panel, cx| {
+                panel
+                    .render_attention_rollup(&workspace, window, cx)
+                    .is_some()
+            })
+        });
+
+        assert!(
+            rollup_is_some,
+            "the rollup should always show the current project's own row, even with no \
+             other open project and no live activity anywhere -- otherwise there's nothing \
+             on screen telling the user which project they're in"
+        );
     }
 
     #[gpui::test]
@@ -4393,10 +4655,19 @@ mod tests {
         let terminal_views = terminal_views(&window_handle, cx);
         assert_eq!(terminal_views.len(), 1);
         let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        let terminal_item_id = terminal_views[0].entity_id();
         terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
         cx.run_until_parked();
 
         assert!(cx.shown_notifications().is_empty());
         assert_eq!(cx.window_attention_request_count(window_handle.into()), 0);
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_display_status(terminal_item_id)),
+            Some(ThreadDisplayStatus::Blocked),
+            "disabling the desktop notification should not disable attention tracking -- \
+             the panel's status dot should still reflect the thread's real state"
+        );
     }
 }
