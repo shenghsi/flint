@@ -292,9 +292,19 @@ fn build_sessions(
         .collect()
 }
 
+/// `ai-title` is Claude's own generated title for the conversation --
+/// `CLAUDE_METADATA_TYPES` already recognizes the record but only to keep it
+/// out of a handoff transcript as noise. It's a better "what is this thread
+/// about" signal than the first user message (which can be a one-word reply
+/// to a resumed session, or otherwise not summarize the ask), so it takes
+/// priority here, the same way Codex's `session_index.jsonl` `thread_name`
+/// and Pi's `session_info.name` outrank their own first-message fallbacks.
+/// A session can regenerate its title, so the last one seen wins, matching
+/// Pi's "last valid `session_info.name`" convention.
 fn parse_project_summary(content: &str, default_session_id: String) -> Option<StoredSummary> {
     let mut session_id = default_session_id;
-    let mut title = None;
+    let mut ai_title = None;
+    let mut first_user_message_title = None;
     let mut last_activity_at = UNIX_EPOCH;
     let mut working_directories: Vec<String> = Vec::new();
 
@@ -319,14 +329,20 @@ fn parse_project_summary(content: &str, default_session_id: String) -> Option<St
         }) {
             last_activity_at = last_activity_at.max(timestamp);
         }
-        if title.is_none() && record.is_meta != Some(true) {
+        if record.kind.as_deref() == Some("ai-title") {
+            if let Some(title) = record.title.as_deref().and_then(normalize_title) {
+                ai_title = Some(title);
+            }
+        }
+        if first_user_message_title.is_none() && record.is_meta != Some(true) {
             if let Some(message) = record.message {
                 if message.role.as_deref() == Some("user") {
-                    title = message_content_title(&message.content);
+                    first_user_message_title = message_content_title(&message.content);
                 }
             }
         }
     }
+    let title = ai_title.or(first_user_message_title);
 
     let (last_activity_secs, last_activity_nanos) = last_activity_at
         .duration_since(UNIX_EPOCH)
@@ -584,6 +600,8 @@ struct HistoryRecord {
 
 #[derive(Deserialize)]
 struct ProjectHistoryLine {
+    #[serde(rename = "type")]
+    kind: Option<String>,
     #[serde(rename = "sessionId")]
     session_id: Option<String>,
     cwd: Option<String>,
@@ -591,6 +609,10 @@ struct ProjectHistoryLine {
     #[serde(rename = "isMeta")]
     is_meta: Option<bool>,
     message: Option<ProjectHistoryMessage>,
+    /// Only present on an `ai-title` record -- Claude's own generated title
+    /// for the conversation. See `parse_project_summary`'s doc comment for
+    /// why it outranks the first-user-message fallback.
+    title: Option<String>,
 }
 
 #[derive(Deserialize)]

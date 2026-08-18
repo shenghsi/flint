@@ -85,15 +85,21 @@ impl HistoryProvider for CodexHistoryProvider {
             let Some(summary) = &entry.summary else {
                 continue;
             };
+            // `history.jsonl` is Codex's global, cross-session input log with
+            // no structure tying a line to a particular conversational turn,
+            // so it's a weaker "what is this thread about" signal than this
+            // session's own rollout transcript (`fallback_title`, its first
+            // user message) -- try that first and only fall back to
+            // `history.jsonl` if the rollout had no readable user message.
             let resolved_title = session_index
                 .as_ref()
                 .and_then(|source| source.titles.get(&summary.id).cloned())
+                .or_else(|| summary.fallback_title.clone())
                 .or_else(|| {
                     history
                         .as_ref()
                         .and_then(|source| source.titles.get(&summary.id).cloned())
                 })
-                .or_else(|| summary.fallback_title.clone())
                 .unwrap_or_else(|| DEFAULT_TITLE.to_string());
             sessions.push(IndexedSession {
                 session_id: summary.id.clone(),
@@ -368,8 +374,11 @@ fn parse_session_index_titles(content: &str) -> BTreeMap<String, String> {
     titles
 }
 
+/// Keeps the earliest entry per session -- the opening ask -- rather than the
+/// latest, which is often a short follow-up like "yes" or "continue" and
+/// says nothing about what the thread's work is about.
 fn parse_history_titles(content: &str) -> BTreeMap<String, String> {
-    let mut latest: BTreeMap<String, (u64, String)> = BTreeMap::new();
+    let mut earliest: BTreeMap<String, (u64, String)> = BTreeMap::new();
     for line in content.lines() {
         let Ok(entry) = serde_json::from_str::<HistoryEntry>(line) else {
             continue;
@@ -377,14 +386,14 @@ fn parse_history_titles(content: &str) -> BTreeMap<String, String> {
         let Some(title) = normalize_title(entry.text) else {
             continue;
         };
-        let existing_is_newer = latest
+        let existing_is_earlier = earliest
             .get(&entry.session_id)
-            .is_some_and(|(timestamp, _)| *timestamp > entry.ts);
-        if !existing_is_newer {
-            latest.insert(entry.session_id, (entry.ts, title));
+            .is_some_and(|(timestamp, _)| *timestamp <= entry.ts);
+        if !existing_is_earlier {
+            earliest.insert(entry.session_id, (entry.ts, title));
         }
     }
-    latest
+    earliest
         .into_iter()
         .map(|(session_id, (_, title))| (session_id, title))
         .collect()

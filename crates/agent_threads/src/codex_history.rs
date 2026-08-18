@@ -74,10 +74,15 @@ impl AgentHistoryProvider for CodexHistoryProvider {
         rollout_files.sort_unstable_by(|left, right| right.cmp(left));
         rollout_files.truncate(MAX_ROLLOUT_FILES_SCANNED);
 
-        let mut titles = load_session_titles(host).await;
-        for (session_id, title) in load_history_titles(host).await {
-            titles.entry(session_id).or_insert(title);
-        }
+        let session_titles = load_session_titles(host).await;
+        // Lowest-priority fallback, tried only when both `session_titles`
+        // (Codex's own generated name) and the session's own rollout
+        // transcript (`summary.title`, read below) come up empty. Unlike
+        // those two, `history.jsonl` is a cross-session input log with no
+        // structure tying a line to a particular conversational turn, so
+        // it's a weaker signal for "what is this thread about" than the
+        // session's own first message.
+        let history_titles = load_history_titles(host).await;
 
         let mut threads = Vec::new();
         for file_path in rollout_files {
@@ -91,10 +96,11 @@ impl AgentHistoryProvider for CodexHistoryProvider {
             {
                 continue;
             }
-            let title = titles
+            let title = session_titles
                 .get(&summary.id)
                 .cloned()
                 .or(summary.title)
+                .or_else(|| history_titles.get(&summary.id).cloned())
                 .unwrap_or_else(|| "Codex session".to_string());
             threads.push(HistoricalThread {
                 session_id: SharedString::from(summary.id),
@@ -210,13 +216,20 @@ async fn load_session_titles(host: &AgentHistoryHost) -> HashMap<String, String>
     titles.as_ref().clone()
 }
 
+/// `history.jsonl` is Codex's global, cross-session input log, so it holds
+/// many lines per `session_id` as a conversation goes on. Keeping the
+/// earliest one -- the session's opening ask -- matches the "first message"
+/// title convention `claude_history` and `pi_history` already use; keeping
+/// the latest instead would show whatever the user most recently typed
+/// (often a short follow-up like "yes" or "continue"), not what the thread's
+/// work is about.
 async fn load_history_titles(host: &AgentHistoryHost) -> HashMap<String, String> {
     let Ok(history_path) = host.join(&host.base_dir, "history.jsonl") else {
         return HashMap::default();
     };
     let Ok(titles) = host
         .parse_file(&history_path, |content| {
-            let mut latest_titles: HashMap<String, (u64, String)> = HashMap::default();
+            let mut earliest_titles: HashMap<String, (u64, String)> = HashMap::default();
             for line in content.lines() {
                 let Ok(entry) = serde_json::from_str::<HistoryEntry>(line) else {
                     continue;
@@ -224,14 +237,14 @@ async fn load_history_titles(host: &AgentHistoryHost) -> HashMap<String, String>
                 let Some(title) = normalize_title(entry.text) else {
                     continue;
                 };
-                let existing_is_newer = latest_titles
+                let existing_is_earlier = earliest_titles
                     .get(&entry.session_id)
-                    .is_some_and(|(timestamp, _)| *timestamp > entry.ts);
-                if !existing_is_newer {
-                    latest_titles.insert(entry.session_id, (entry.ts, title));
+                    .is_some_and(|(timestamp, _)| *timestamp <= entry.ts);
+                if !existing_is_earlier {
+                    earliest_titles.insert(entry.session_id, (entry.ts, title));
                 }
             }
-            latest_titles
+            earliest_titles
                 .into_iter()
                 .map(|(session_id, (_, title))| (session_id, title))
                 .collect::<HashMap<_, _>>()
@@ -421,6 +434,61 @@ mod tests {
                 "Implement agent threads panel",
                 200,
             )),
+        )
+        .await;
+
+        let threads = CodexHistoryProvider
+            .scan(&host, &[PathBuf::from("/root")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].title.as_ref(), "Implement agent threads panel");
+    }
+
+    #[gpui::test]
+    async fn scan_falls_back_to_earliest_history_title_not_latest(cx: &mut TestAppContext) {
+        let rollout = session_meta_line("session-a", "/root", "2026-06-18T20:23:14.000Z");
+        let history = [
+            history_line("session-a", "yes go ahead", 500),
+            history_line("session-a", "Implement agent threads panel", 200),
+        ]
+        .join("\n");
+        let host = host_with_fixture(
+            cx,
+            &[(
+                "2026/06/18/rollout-2026-06-18T20-23-14-session-a.jsonl",
+                rollout,
+            )],
+            None,
+            Some(&history),
+        )
+        .await;
+
+        let threads = CodexHistoryProvider
+            .scan(&host, &[PathBuf::from("/root")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].title.as_ref(), "Implement agent threads panel");
+    }
+
+    #[gpui::test]
+    async fn scan_prefers_rollout_user_message_over_history_title(cx: &mut TestAppContext) {
+        let rollout = [
+            session_meta_line("session-a", "/root", "2026-06-18T20:23:14.000Z"),
+            user_message_line("Implement agent threads panel"),
+        ]
+        .join("\n");
+        let host = host_with_fixture(
+            cx,
+            &[(
+                "2026/06/18/rollout-2026-06-18T20-23-14-session-a.jsonl",
+                rollout,
+            )],
+            None,
+            Some(&history_line("session-a", "yes go ahead", 200)),
         )
         .await;
 

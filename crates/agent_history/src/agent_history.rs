@@ -906,6 +906,65 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn codex_title_prefers_rollout_user_message_over_history_jsonl(cx: &mut TestAppContext) {
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(
+            "/home/user/.codex/sessions/2026/07/24/rollout-2026-07-24T10-00-00-aaa.jsonl",
+            &rollout(
+                &session_meta("aaa", "/work/project", "2026-07-24T10:00:00.000Z"),
+                &user_message("Implement agent threads panel"),
+            ),
+            identity(1, 10),
+        );
+        source.insert(
+            "/home/user/.codex/history.jsonl",
+            &serde_json::json!({"session_id": "aaa", "text": "yes go ahead", "ts": 200})
+                .to_string(),
+            identity(1, 10),
+        );
+
+        let service = service(cx);
+        let host = host(source);
+        let snapshot = service
+            .refresh(HistoryKind::Codex, &host, &[PathBuf::from("/work/project")])
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].title, "Implement agent threads panel");
+    }
+
+    #[gpui::test]
+    async fn codex_title_falls_back_to_earliest_history_jsonl_entry_not_latest(
+        cx: &mut TestAppContext,
+    ) {
+        let source = Arc::new(InMemoryHistoryFs::new());
+        source.insert(
+            "/home/user/.codex/sessions/2026/07/24/rollout-2026-07-24T10-00-00-aaa.jsonl",
+            &session_meta("aaa", "/work/project", "2026-07-24T10:00:00.000Z"),
+            identity(1, 10),
+        );
+        let history = [
+            serde_json::json!({"session_id": "aaa", "text": "yes go ahead", "ts": 500})
+                .to_string(),
+            serde_json::json!({"session_id": "aaa", "text": "Implement agent threads panel", "ts": 200})
+                .to_string(),
+        ]
+        .join("\n");
+        source.insert("/home/user/.codex/history.jsonl", &history, identity(1, 10));
+
+        let service = service(cx);
+        let host = host(source);
+        let snapshot = service
+            .refresh(HistoryKind::Codex, &host, &[PathBuf::from("/work/project")])
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].title, "Implement agent threads panel");
+    }
+
+    #[gpui::test]
     async fn incremental_refresh_reuses_unchanged_files(cx: &mut TestAppContext) {
         let source = Arc::new(InMemoryHistoryFs::new());
         source.insert(
@@ -1050,6 +1109,39 @@ mod tests {
         assert_eq!(snapshot.entries.len(), 1, "session deduped to one entry");
         assert_eq!(snapshot.entries[0].session_id, "s1");
         assert_eq!(snapshot.entries[0].title, "project title");
+    }
+
+    #[gpui::test]
+    async fn claude_prefers_ai_title_over_first_user_message(cx: &mut TestAppContext) {
+        let source = Arc::new(InMemoryHistoryFs::new());
+        let ai_title_line = serde_json::json!({
+            "type": "ai-title",
+            "title": "Fix flaky release script",
+        });
+        source.insert(
+            "/home/user/.claude/projects/-work-proj/s1.jsonl",
+            &format!(
+                "{}\n{}\n",
+                claude_project_line(
+                    "s1",
+                    "/work/proj",
+                    "yes go ahead",
+                    "2026-07-24T10:00:00.000Z"
+                ),
+                ai_title_line,
+            ),
+            identity(1, 50),
+        );
+
+        let service = service(cx);
+        let host = host_at(source, "/home/user/.claude");
+        let snapshot = service
+            .refresh(HistoryKind::Claude, &host, &[PathBuf::from("/work/proj")])
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].title, "Fix flaky release script");
     }
 
     #[gpui::test]
