@@ -447,18 +447,51 @@ struct ThreadEntry {
     /// This is the only persisted attention state Flint has -- the bell
     /// itself is a one-shot terminal event, not state, so without this flag
     /// there is nothing left to read once the initial desktop notification
-    /// has been dismissed.
-    needs_attention: bool,
+    /// has been dismissed. `None` means the bell hasn't fired since the
+    /// thread was last focused (or ever). `Some` distinguishes *why* it
+    /// fired via a best-effort screen-content classification (see
+    /// `attention_detection`) -- taken once, at bell time, since that's the
+    /// only moment `register`'s `bell_subscription` has a terminal snapshot
+    /// to classify. `attention_detection::AttentionState::Unknown` (no rule
+    /// matched, or the agent kind has no bundled manifest) maps to
+    /// `Some(ThreadAttention::Blocked)` rather than `None`, preserving the
+    /// pre-classifier behavior of flagging every bell -- an unclassifiable
+    /// bell is still a bell, not nothing.
+    attention: Option<ThreadAttention>,
+}
+
+/// Why a live thread's bell flagged it, from a one-shot classification of
+/// its terminal at the moment the bell fired (see `ThreadEntry::attention`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ThreadAttention {
+    /// Blocked on a permission/question prompt, or unclassifiable (see
+    /// `ThreadEntry::attention`'s doc comment for why unclassifiable
+    /// defaults here rather than to `Idle`).
+    Blocked,
+    /// The agent finished its turn; nothing is pending.
+    Idle,
+}
+
+impl From<crate::attention_detection::AttentionState> for ThreadAttention {
+    fn from(state: crate::attention_detection::AttentionState) -> Self {
+        match state {
+            crate::attention_detection::AttentionState::Idle => ThreadAttention::Idle,
+            crate::attention_detection::AttentionState::Blocked
+            | crate::attention_detection::AttentionState::Unknown => ThreadAttention::Blocked,
+        }
+    }
 }
 
 /// Aggregate live-thread status for one worktree, for the cross-project
-/// rollup in `AgentThreadsPanel`. `Blocked` wins over `Working` when a
-/// worktree has a mix of flagged and unflagged live threads, since the
-/// rollup exists to answer "does this project need me", and a project with
-/// anything blocked does.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// rollup in `AgentThreadsPanel`. Combining multiple threads' status for one
+/// worktree prefers the most urgent: `Blocked` wins over `Idle`, which wins
+/// over `Working`, since the rollup exists to answer "does this project need
+/// me", and a project with anything blocked (or, failing that, anything
+/// finished) does more than one that's merely still working.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub(crate) enum ProjectAttentionStatus {
     Working,
+    Idle,
     Blocked,
 }
 
@@ -665,13 +698,12 @@ impl AgentThreadStore {
             .collect()
     }
 
-    /// Whether the live thread at `terminal_item_id` needs the user's
-    /// attention right now (its bell fired and it hasn't been focused
-    /// since). `false` for any id not currently tracked as live.
-    pub(crate) fn needs_attention(&self, terminal_item_id: EntityId) -> bool {
-        self.threads
-            .get(&terminal_item_id)
-            .is_some_and(|entry| entry.needs_attention)
+    /// Why the live thread at `terminal_item_id` needs the user's attention
+    /// right now, if it does (its bell fired and it hasn't been focused
+    /// since). `None` for any id not currently tracked as live, or one that
+    /// hasn't been flagged.
+    pub(crate) fn thread_attention(&self, terminal_item_id: EntityId) -> Option<ThreadAttention> {
+        self.threads.get(&terminal_item_id)?.attention
     }
 
     /// Live threads' worktree roots, summarized for a cross-project rollup:
@@ -691,9 +723,12 @@ impl AgentThreadStore {
                     live_thread_count: 0,
                 });
             summary.live_thread_count += 1;
-            if entry.needs_attention {
-                summary.status = ProjectAttentionStatus::Blocked;
-            }
+            let thread_status = match entry.attention {
+                Some(ThreadAttention::Blocked) => ProjectAttentionStatus::Blocked,
+                Some(ThreadAttention::Idle) => ProjectAttentionStatus::Idle,
+                None => ProjectAttentionStatus::Working,
+            };
+            summary.status = summary.status.max(thread_status);
         }
         summaries
     }
@@ -901,9 +936,9 @@ impl AgentThreadStore {
         })?;
 
         if let Some(entry) = self.threads.get_mut(&terminal_item_id)
-            && entry.needs_attention
+            && entry.attention.is_some()
         {
-            entry.needs_attention = false;
+            entry.attention = None;
             let kind_id = entry.metadata.kind_id;
             cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
             cx.notify();
@@ -1034,7 +1069,7 @@ impl AgentThreadStore {
                 window,
                 remote_process,
                 egress,
-                needs_attention: false,
+                attention: None,
             },
         );
 
@@ -1049,38 +1084,55 @@ impl AgentThreadStore {
         // signal we have for "this agent thread needs attention" -- the
         // underlying `Terminal` (not `TerminalView`, which only re-emits
         // `Wakeup`/`UpdateTab` for a bell) is what actually re-emits it.
-        let bell_subscription = cx.subscribe(&terminal, move |store, _terminal, event, cx| {
-            if !matches!(event, terminal::Event::Bell) {
-                return;
-            }
-            if !AgentThreadSettings::get_global(cx).notify_when_finished {
-                return;
-            }
-            if let Some(entry) = store.threads.get_mut(&terminal_item_id) {
-                entry.needs_attention = true;
-            }
-            cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
-            cx.notify();
-            let kind_label = agent_kind_registry()
-                .into_iter()
-                .find(|kind| kind.id == kind_id)
-                .map(|kind| kind.label.to_string())
-                .unwrap_or_else(|| kind_id.to_string());
-            if let Some(window_handle) = attention_window.as_ref() {
-                window_handle
-                    .update(cx, |_, window, _| window.request_attention())
-                    .log_err();
-            }
-            cx.show_desktop_notification(
-                &title,
-                Some(&localization::tr!(
-                    cx,
-                    "agent-threads-waiting-notification",
-                    agent = kind_label,
-                    project = project_name.clone(),
-                )),
-            );
-        });
+        let bell_subscription =
+            cx.subscribe(&terminal, move |store, terminal_entity, event, cx| {
+                if !matches!(event, terminal::Event::Bell) {
+                    return;
+                }
+                if !AgentThreadSettings::get_global(cx).notify_when_finished {
+                    return;
+                }
+                if let Some(entry) = store.threads.get_mut(&terminal_item_id) {
+                    // Best-effort: classifies what the bell means from the
+                    // terminal's content at this exact moment, since that's the
+                    // only signal available and the bell itself carries none.
+                    // See `attention_detection`'s module doc for what "best
+                    // effort" covers and its fallback when it can't tell.
+                    let terminal_entity = terminal_entity.read(cx);
+                    let screen_tail = terminal_entity
+                        .last_n_non_empty_lines(crate::attention_detection::SCREEN_TAIL_LINE_COUNT)
+                        .join("\n");
+                    let detected = crate::attention_detection::classify(
+                        kind_id,
+                        crate::attention_detection::DetectionInput {
+                            screen_tail: &screen_tail,
+                            osc_title: &terminal_entity.breadcrumb_text,
+                        },
+                    );
+                    entry.attention = Some(detected.into());
+                }
+                cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
+                cx.notify();
+                let kind_label = agent_kind_registry()
+                    .into_iter()
+                    .find(|kind| kind.id == kind_id)
+                    .map(|kind| kind.label.to_string())
+                    .unwrap_or_else(|| kind_id.to_string());
+                if let Some(window_handle) = attention_window.as_ref() {
+                    window_handle
+                        .update(cx, |_, window, _| window.request_attention())
+                        .log_err();
+                }
+                cx.show_desktop_notification(
+                    &title,
+                    Some(&localization::tr!(
+                        cx,
+                        "agent-threads-waiting-notification",
+                        agent = kind_label,
+                        project = project_name.clone(),
+                    )),
+                );
+            });
         self.subscriptions.insert(
             terminal_item_id,
             vec![release_subscription, bell_subscription],
@@ -2938,6 +2990,46 @@ mod tests {
 
     fn at(seconds: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+    }
+
+    #[test]
+    fn thread_attention_maps_detected_idle_and_blocked_directly() {
+        assert_eq!(
+            ThreadAttention::from(crate::attention_detection::AttentionState::Idle),
+            ThreadAttention::Idle
+        );
+        assert_eq!(
+            ThreadAttention::from(crate::attention_detection::AttentionState::Blocked),
+            ThreadAttention::Blocked
+        );
+    }
+
+    #[test]
+    fn thread_attention_maps_unclassifiable_detection_to_blocked() {
+        // An unclassifiable bell (no manifest rule matched, or the agent
+        // kind has no bundled manifest) keeps every bell's pre-classifier
+        // behavior of flagging the thread, rather than silently downgrading
+        // an attention signal we couldn't actually read.
+        assert_eq!(
+            ThreadAttention::from(crate::attention_detection::AttentionState::Unknown),
+            ThreadAttention::Blocked
+        );
+    }
+
+    #[test]
+    fn project_attention_status_combines_to_the_most_urgent() {
+        assert_eq!(
+            ProjectAttentionStatus::Working.max(ProjectAttentionStatus::Idle),
+            ProjectAttentionStatus::Idle
+        );
+        assert_eq!(
+            ProjectAttentionStatus::Idle.max(ProjectAttentionStatus::Blocked),
+            ProjectAttentionStatus::Blocked
+        );
+        assert_eq!(
+            ProjectAttentionStatus::Blocked.max(ProjectAttentionStatus::Working),
+            ProjectAttentionStatus::Blocked
+        );
     }
 
     #[gpui::test]

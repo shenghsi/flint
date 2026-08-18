@@ -1,0 +1,17 @@
+# Ported from herdrdev/herdr (https://github.com/herdrdev/herdr,
+# src/detect/manifests/opencode.toml). See claude.toml in this directory for
+# what "trimmed" means and why. Herdr's own opencode.toml has no `idle`
+# rule (only `blocked` and `working`), so Flint can't classify an OpenCode
+# bell as "finished" via screen content -- it falls back to the same
+# pre-existing generic "needs attention" treatment idle detection would
+# otherwise refine, same as before this classifier existed.
+
+[[rules]]
+id = "permission_required"
+state = "blocked"
+priority = 300
+region = "whole_recent"
+any = [
+  { contains = ["△ Permission required"] },
+  { contains = ["esc dismiss"], any = [{ contains = ["enter confirm"] }, { contains = ["enter submit"] }, { contains = ["enter toggle"] }], all = [{ any = [{ contains = ["↑↓ select"] }, { contains = ["⇆ tab"] }] }] },
+]
