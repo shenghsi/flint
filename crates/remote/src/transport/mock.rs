@@ -169,9 +169,7 @@ impl MockConnection {
                 cx,
                 "mock-server",
                 false,
-                // Mirror the real server, which advertises this capability in
-                // server.rs, so capability-gated behavior is testable.
-                vec![crate::AGENT_THREAD_HISTORY_INDEX_CAPABILITY.to_string()],
+                Vec::new(),
             )
         });
 

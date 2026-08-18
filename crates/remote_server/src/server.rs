@@ -460,7 +460,7 @@ fn start_server(
         cx,
         "server",
         is_wsl_interop,
-        vec![remote::AGENT_THREAD_HISTORY_INDEX_CAPABILITY.to_string()],
+        Vec::new(),
     )
 }
 
