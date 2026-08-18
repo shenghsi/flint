@@ -27,23 +27,28 @@ use crate::history::{self, HistoryParseCache, project_worktree_roots};
 use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
 use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
-    ProjectAttentionStatus, ProjectLiveSummary, ThreadAttention, TieResolution, merge_threads,
+    ProjectAttentionStatus, ProjectLiveSummary, ThreadDisplayStatus, TieResolution, merge_threads,
 };
 use crate::{
     AgentKindDefinition, AgentThreadSettings, HistoricalThread, RemoteAgentRoutingSettings,
     agent_kind_registry,
 };
 
-/// The row/rollup color for a live thread's attention state: unflagged
-/// (still working, or the classifier hasn't run) stays the pre-existing
-/// green; a `Blocked` thread (or one the classifier couldn't read) gets the
-/// more urgent amber; a thread the classifier is confident just finished
-/// gets a calmer, less alarming color since nothing is actually pending.
-fn status_color_for_attention(attention: Option<ThreadAttention>) -> Color {
-    match attention {
-        None => Color::Success,
-        Some(ThreadAttention::Blocked) => Color::Warning,
-        Some(ThreadAttention::Idle) => Color::Info,
+/// The row color for a live thread's display status. Four visually distinct
+/// colors, chosen so no two are easy to mistake for each other (unlike the
+/// previous green/blue pairing): actively working stays the pre-existing
+/// green; blocked (still needs the user to unblock it, even after they've
+/// looked) gets the most alarming color since it's the one actually stopping
+/// progress; finished-and-unchecked gets a middling, still-eye-catching
+/// color since it's worth a look but isn't blocking anything; finished-and-
+/// already-checked gets a calm, muted color since there's nothing left to
+/// do.
+fn status_color_for_display_status(status: Option<ThreadDisplayStatus>) -> Color {
+    match status {
+        None | Some(ThreadDisplayStatus::Busy) => Color::Success,
+        Some(ThreadDisplayStatus::Blocked) => Color::Error,
+        Some(ThreadDisplayStatus::Finished) => Color::Warning,
+        Some(ThreadDisplayStatus::Idle) => Color::Muted,
     }
 }
 
@@ -58,6 +63,10 @@ struct OtherProjectActivity {
     host: Option<SharedString>,
     status: ProjectAttentionStatus,
     live_thread_count: usize,
+    /// The specific live thread that most needs the user's attention across
+    /// all of this project's worktree roots, so a click can jump straight
+    /// to it -- see `ProjectLiveSummary::most_urgent_terminal_item_id`.
+    attention_terminal_item_id: Option<gpui::EntityId>,
 }
 
 /// The pure part of the cross-project rollup: given `live_summaries` (see
@@ -89,12 +98,16 @@ fn other_projects_with_live_activity(
             .collect();
         let mut status = ProjectAttentionStatus::Working;
         let mut live_thread_count = 0;
+        let mut attention_terminal_item_id = None;
         for root in &roots {
             let Some(summary) = live_summaries.get(root) else {
                 continue;
             };
             live_thread_count += summary.live_thread_count;
-            status = status.max(summary.status);
+            if summary.status >= status {
+                status = summary.status;
+                attention_terminal_item_id = summary.most_urgent_terminal_item_id;
+            }
         }
         let Some(first_root) = (live_thread_count > 0).then(|| roots.first()).flatten() else {
             continue;
@@ -111,6 +124,7 @@ fn other_projects_with_live_activity(
             host,
             status,
             live_thread_count,
+            attention_terminal_item_id,
         });
     }
     others
@@ -1379,9 +1393,11 @@ impl AgentThreadsPanel {
                     let label = other.label;
                     let host = other.host;
                     let live_thread_count = other.live_thread_count;
+                    let attention_terminal_item_id = other.attention_terminal_item_id;
                     let status_color = match other.status {
-                        ProjectAttentionStatus::Blocked => Color::Warning,
-                        ProjectAttentionStatus::Idle => Color::Info,
+                        ProjectAttentionStatus::Blocked => Color::Error,
+                        ProjectAttentionStatus::Finished => Color::Warning,
+                        ProjectAttentionStatus::Idle => Color::Muted,
                         ProjectAttentionStatus::Working => Color::Success,
                     };
                     let multi_workspace = multi_workspace.clone();
@@ -1399,7 +1415,7 @@ impl AgentThreadsPanel {
                         .py_0p5()
                         .rounded_sm()
                         .hover(|style| style.bg(cx.theme().colors().element_hover))
-                        .on_click(cx.listener(move |_this, _, window, cx| {
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             multi_workspace.update(cx, |multi_workspace, cx| {
                                 multi_workspace.activate(
                                     target_workspace.clone(),
@@ -1408,6 +1424,9 @@ impl AgentThreadsPanel {
                                     cx,
                                 );
                             });
+                            if let Some(terminal_item_id) = attention_terminal_item_id {
+                                this.focus_live_thread(terminal_item_id, window, cx);
+                            }
                         }))
                         .child(
                             h_flex()
@@ -1765,8 +1784,9 @@ impl AgentThreadsPanel {
         let terminal_item_id = metadata.terminal_item_id;
         let menu_metadata = metadata.clone();
         let is_active = active_terminal_item_id == Some(terminal_item_id);
-        let status_color =
-            status_color_for_attention(self.store.read(cx).thread_attention(terminal_item_id));
+        let status_color = status_color_for_display_status(
+            self.store.read(cx).thread_display_status(terminal_item_id),
+        );
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
             .w_full()
@@ -1837,8 +1857,8 @@ impl AgentThreadsPanel {
         let is_active =
             live_terminal_item_id.is_some() && live_terminal_item_id == active_terminal_item_id;
         let status_color =
-            status_color_for_attention(live_terminal_item_id.and_then(|terminal_item_id| {
-                self.store.read(cx).thread_attention(terminal_item_id)
+            status_color_for_display_status(live_terminal_item_id.and_then(|terminal_item_id| {
+                self.store.read(cx).thread_display_status(terminal_item_id)
             }));
         let resume_option_label = thread_resume_option_label(cx, kind, &thread.session_id);
         let resume_option_visual = thread_resume_option_visual(cx, kind, &thread.session_id);
@@ -2364,6 +2384,7 @@ impl Render for AgentThreadsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::ThreadAttention;
     use gpui::{TestAppContext, WindowHandle};
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
@@ -3941,7 +3962,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn bell_sets_needs_attention_until_the_thread_is_focused(cx: &mut TestAppContext) {
+    async fn bell_sets_needs_attention_and_blocked_survives_focus(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
@@ -3985,12 +4006,13 @@ mod tests {
             .expect("failed to focus thread")
             .expect("focus_thread should succeed");
 
-        assert!(
+        assert_eq!(
             cx.update(|cx| AgentThreadStore::global(cx)
                 .read(cx)
-                .thread_attention(terminal_item_id))
-                .is_none(),
-            "focusing the thread should clear the attention flag"
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Blocked),
+            "focusing a blocked thread should not clear it -- it's still blocked until the \
+             user actually unblocks it, not merely until they look at it"
         );
         let live_summaries = cx.update(|cx| {
             AgentThreadStore::global(cx)
@@ -4000,7 +4022,75 @@ mod tests {
         let summary = live_summaries
             .get(&PathBuf::from(root))
             .expect("root should still have a live summary -- the thread is still live");
-        assert_eq!(summary.status, ProjectAttentionStatus::Working);
+        assert_eq!(summary.status, ProjectAttentionStatus::Blocked);
+        assert_eq!(summary.live_thread_count, 1);
+    }
+
+    #[gpui::test]
+    async fn focusing_a_finished_thread_marks_it_seen_without_clearing_idle(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root, 5);
+        let window_handle = init_workspace(cx, root).await;
+
+        launch_codex_thread(&window_handle, cx);
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+
+        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        // Codex's `osc_title_idle` rule: a non-empty OSC title that isn't
+        // "Action Required" classifies as Idle.
+        terminal.update(cx, |terminal, cx| {
+            terminal.breadcrumb_text = "codex: my-project".to_string();
+            cx.emit(terminal::Event::Bell);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_display_status(terminal_item_id)),
+            Some(ThreadDisplayStatus::Finished),
+            "a thread that just finished and hasn't been looked at should display as Finished"
+        );
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                AgentThreadStore::global(cx).update(cx, |store, cx| {
+                    store.focus_thread(terminal_item_id, window, cx)
+                })
+            })
+            .expect("failed to focus thread")
+            .expect("focus_thread should succeed");
+
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Idle),
+            "the raw classification stays Idle -- the thread did finish"
+        );
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_display_status(terminal_item_id)),
+            Some(ThreadDisplayStatus::Idle),
+            "focusing a finished thread should mark it seen, so it displays as the calmer \
+             checked-Idle state rather than Finished"
+        );
+        let live_summaries = cx.update(|cx| {
+            AgentThreadStore::global(cx)
+                .read(cx)
+                .live_summary_by_worktree_root()
+        });
+        let summary = live_summaries
+            .get(&PathBuf::from(root))
+            .expect("root should still have a live summary -- the thread is still live");
+        assert_eq!(summary.status, ProjectAttentionStatus::Idle);
         assert_eq!(summary.live_thread_count, 1);
     }
 
@@ -4246,6 +4336,12 @@ mod tests {
         assert_eq!(others_from_b[0].status, ProjectAttentionStatus::Blocked);
         assert_eq!(others_from_b[0].live_thread_count, 1);
         assert_eq!(others_from_b[0].workspace, workspace_a);
+        assert_eq!(
+            others_from_b[0].attention_terminal_item_id,
+            Some(terminal_item_id),
+            "the rollup entry should carry the specific blocked thread to jump to, \
+             not just the project it belongs to"
+        );
 
         let others_from_a = cx.update(|cx| {
             other_projects_with_live_activity(&workspace_a, &multi_workspace, &live_summaries, cx)
@@ -4296,6 +4392,7 @@ mod tests {
             ProjectLiveSummary {
                 status: ProjectAttentionStatus::Working,
                 live_thread_count: 2,
+                most_urgent_terminal_item_id: None,
             },
         );
 
@@ -4393,10 +4490,19 @@ mod tests {
         let terminal_views = terminal_views(&window_handle, cx);
         assert_eq!(terminal_views.len(), 1);
         let terminal = terminal_views[0].read_with(cx, |view, _| view.terminal().clone());
+        let terminal_item_id = terminal_views[0].entity_id();
         terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
         cx.run_until_parked();
 
         assert!(cx.shown_notifications().is_empty());
         assert_eq!(cx.window_attention_request_count(window_handle.into()), 0);
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
+                .read(cx)
+                .thread_display_status(terminal_item_id)),
+            Some(ThreadDisplayStatus::Blocked),
+            "disabling the desktop notification should not disable attention tracking -- \
+             the panel's status dot should still reflect the thread's real state"
+        );
     }
 }

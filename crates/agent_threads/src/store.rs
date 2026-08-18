@@ -457,17 +457,32 @@ struct ThreadEntry {
     remote_process: Option<RemoteAgentProcess>,
     egress: Option<AgentEgressLease>,
     /// The thread's current classified attention state, or `None` while
-    /// it's just working normally. Set and cleared by
-    /// `reclassify_attention`, which `register`'s `attention_subscription`
-    /// calls on two different `terminal::Event`s -- `Bell` (immediately;
-    /// Claude/Codex/OpenCode ring it as a deliberate "look at me" signal)
-    /// and `Wakeup` (debounced; fires on any new PTY output, which is what
-    /// gives Pi and every other agent kind attention detection despite
-    /// never ringing a bell -- see `attention_detection`'s module doc for
-    /// why this mirrors herdr's own poll-and-diff trigger). Also cleared by
-    /// `focus_thread`, independent of what the classifier would currently
-    /// say, since focusing means the user has now seen it.
+    /// it's just working normally. Set by `reclassify_attention`, which
+    /// `register`'s `attention_subscription` calls on two different
+    /// `terminal::Event`s -- `Bell` (immediately; Claude/Codex/OpenCode ring
+    /// it as a deliberate "look at me" signal) and `Wakeup` (debounced;
+    /// fires on any new PTY output, which is what gives Pi and every other
+    /// agent kind attention detection despite never ringing a bell -- see
+    /// `attention_detection`'s module doc for why this mirrors herdr's own
+    /// poll-and-diff trigger).
+    ///
+    /// Unlike before, `focus_thread` no longer clears this: a `Blocked`
+    /// thread is still blocked after the user glances at it, and an `Idle`
+    /// (finished) thread stays classified as finished so the distinction
+    /// from a thread that never ran survives -- see `finished_seen` for how
+    /// "finished but already looked at" is tracked instead.
     attention: Option<ThreadAttention>,
+    /// Whether the user has already seen the current `Some(ThreadAttention::Idle)`
+    /// classification, i.e. focused this thread since it last finished.
+    /// Reset to `false` every time `reclassify_attention` transitions
+    /// `attention` into `Idle` (a fresh completion), and flipped to `true`
+    /// by `focus_thread`. Meaningless while `attention` isn't `Idle` --
+    /// nothing reads it in that case, and nothing needs to reset it either,
+    /// since the next `Idle` transition always sets it explicitly. This is
+    /// what lets the panel tell "finished, not checked yet" apart from
+    /// "finished, already checked" instead of collapsing both into the same
+    /// state the way a plain `Option<ThreadAttention>` would.
+    finished_seen: bool,
     /// Debounces `Wakeup`-triggered reclassification: each `Wakeup` replaces
     /// this with a new delayed task, so only the last one in a burst of
     /// output actually reclassifies, `ATTENTION_WAKEUP_DEBOUNCE` after
@@ -485,6 +500,23 @@ pub(crate) enum ThreadAttention {
     /// Blocked on a permission/question prompt.
     Blocked,
     /// The agent finished its turn; nothing is pending.
+    Idle,
+}
+
+/// A thread's status as the panel should render it: `ThreadAttention` plus
+/// the `ThreadEntry::finished_seen` bit that splits `Idle` into "just
+/// finished, not looked at yet" and "finished, and the user already looked".
+/// See `AgentThreadStore::thread_display_status`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ThreadDisplayStatus {
+    /// The agent is actively working (or the classifier has no signal yet).
+    Busy,
+    /// Blocked on a permission/question prompt; still needs the user to
+    /// unblock it, even after they've looked at it.
+    Blocked,
+    /// The agent finished and the user hasn't looked at this thread since.
+    Finished,
+    /// The agent finished and the user has already looked at this thread.
     Idle,
 }
 
@@ -516,20 +548,33 @@ enum AttentionTrigger {
 
 /// Aggregate live-thread status for one worktree, for the cross-project
 /// rollup in `AgentThreadsPanel`. Combining multiple threads' status for one
-/// worktree prefers the most urgent: `Blocked` wins over `Idle`, which wins
-/// over `Working`, since the rollup exists to answer "does this project need
-/// me", and a project with anything blocked (or, failing that, anything
-/// finished) does more than one that's merely still working.
+/// worktree prefers the most urgent, in declaration order below (`Ord` is
+/// derived, so `max()` picks the last-declared variant present): `Blocked`
+/// wins over `Finished`, which wins over `Idle`, which wins over `Working`,
+/// since the rollup exists to answer "does this project need me", and a
+/// project with anything blocked (or, failing that, anything finished and
+/// unchecked) does more than one that's merely working or fully caught up.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub(crate) enum ProjectAttentionStatus {
     Working,
+    /// Every thread that finished in this project has already been looked
+    /// at (`ThreadEntry::finished_seen`); nothing here needs the user.
     Idle,
+    /// At least one thread finished and the user hasn't looked at it yet.
+    Finished,
     Blocked,
 }
 
 pub(crate) struct ProjectLiveSummary {
     pub(crate) status: ProjectAttentionStatus,
     pub(crate) live_thread_count: usize,
+    /// The live thread whose own status equals `status` -- i.e. the specific
+    /// thread that most needs the user's attention in this worktree root, so
+    /// a caller (the cross-project rollup) can jump straight to it instead
+    /// of just switching projects and leaving the user to find it. Ties are
+    /// broken by whichever thread launched most recently. `None` only when
+    /// `live_thread_count` is 0.
+    pub(crate) most_urgent_terminal_item_id: Option<EntityId>,
 }
 
 /// See `AgentThreadStore::live_terminal_worktree_roots`.
@@ -731,11 +776,32 @@ impl AgentThreadStore {
     }
 
     /// Why the live thread at `terminal_item_id` needs the user's attention
-    /// right now, if it does (its bell fired and it hasn't been focused
-    /// since). `None` for any id not currently tracked as live, or one that
-    /// hasn't been flagged.
+    /// right now, if it does (its bell fired, or it finished). `None` for
+    /// any id not currently tracked as live, or one that hasn't been
+    /// flagged. This is the raw classifier state, kept only for tests that
+    /// need to assert on it directly -- see `thread_display_status` for the
+    /// "has the user already looked at this" distinction the panel actually
+    /// renders.
+    #[cfg(test)]
     pub(crate) fn thread_attention(&self, terminal_item_id: EntityId) -> Option<ThreadAttention> {
         self.threads.get(&terminal_item_id)?.attention
+    }
+
+    /// The live thread at `terminal_item_id`'s status as the panel should
+    /// render it -- `thread_attention` plus whether the user has already
+    /// looked at an `Idle` (finished) thread. `None` for any id not
+    /// currently tracked as live.
+    pub(crate) fn thread_display_status(
+        &self,
+        terminal_item_id: EntityId,
+    ) -> Option<ThreadDisplayStatus> {
+        let entry = self.threads.get(&terminal_item_id)?;
+        Some(match entry.attention {
+            None => ThreadDisplayStatus::Busy,
+            Some(ThreadAttention::Blocked) => ThreadDisplayStatus::Blocked,
+            Some(ThreadAttention::Idle) if entry.finished_seen => ThreadDisplayStatus::Idle,
+            Some(ThreadAttention::Idle) => ThreadDisplayStatus::Finished,
+        })
     }
 
     /// Live threads' worktree roots, summarized for a cross-project rollup:
@@ -747,20 +813,35 @@ impl AgentThreadStore {
     /// tie directly is enough.
     pub(crate) fn live_summary_by_worktree_root(&self) -> HashMap<PathBuf, ProjectLiveSummary> {
         let mut summaries: HashMap<PathBuf, ProjectLiveSummary> = HashMap::default();
+        // Tracked alongside `summaries` rather than on `ProjectLiveSummary`
+        // itself, since it's only needed to break urgency ties while
+        // building the map, not by any caller.
+        let mut most_urgent_launched_at: HashMap<PathBuf, SystemTime> = HashMap::default();
         for entry in self.threads.values() {
-            let summary = summaries
-                .entry(entry.metadata.tied_worktree_root.clone())
-                .or_insert(ProjectLiveSummary {
-                    status: ProjectAttentionStatus::Working,
-                    live_thread_count: 0,
-                });
+            let root = entry.metadata.tied_worktree_root.clone();
+            let summary = summaries.entry(root.clone()).or_insert(ProjectLiveSummary {
+                status: ProjectAttentionStatus::Working,
+                live_thread_count: 0,
+                most_urgent_terminal_item_id: None,
+            });
             summary.live_thread_count += 1;
             let thread_status = match entry.attention {
                 Some(ThreadAttention::Blocked) => ProjectAttentionStatus::Blocked,
-                Some(ThreadAttention::Idle) => ProjectAttentionStatus::Idle,
+                Some(ThreadAttention::Idle) if entry.finished_seen => ProjectAttentionStatus::Idle,
+                Some(ThreadAttention::Idle) => ProjectAttentionStatus::Finished,
                 None => ProjectAttentionStatus::Working,
             };
-            summary.status = summary.status.max(thread_status);
+            let launched_at = entry.metadata.launched_at;
+            let is_more_urgent = thread_status > summary.status;
+            let is_tied_but_more_recent = thread_status == summary.status
+                && most_urgent_launched_at
+                    .get(&root)
+                    .is_none_or(|current| launched_at > *current);
+            if is_more_urgent || is_tied_but_more_recent {
+                summary.status = thread_status;
+                summary.most_urgent_terminal_item_id = Some(entry.metadata.terminal_item_id);
+                most_urgent_launched_at.insert(root, launched_at);
+            }
         }
         summaries
     }
@@ -967,10 +1048,15 @@ impl AgentThreadStore {
             })
         })?;
 
+        // Only an `Idle` (finished) thread's attention is dismissed by
+        // looking at it -- a `Blocked` thread still needs the user to
+        // actually unblock it, so it stays `Blocked` until it reclassifies
+        // away on its own.
         if let Some(entry) = self.threads.get_mut(&terminal_item_id)
-            && entry.attention.is_some()
+            && entry.attention == Some(ThreadAttention::Idle)
+            && !entry.finished_seen
         {
-            entry.attention = None;
+            entry.finished_seen = true;
             let kind_id = entry.metadata.kind_id;
             cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
             cx.notify();
@@ -1100,6 +1186,7 @@ impl AgentThreadStore {
                 remote_process,
                 egress,
                 attention: None,
+                finished_seen: true,
                 pending_wakeup_reclassify: None,
             },
         );
@@ -1155,21 +1242,22 @@ impl AgentThreadStore {
 
     /// Snapshots `terminal_item_id`'s terminal, classifies it (see
     /// `attention_detection`), and applies the result to its
-    /// `ThreadEntry::attention`. A desktop notification and window-attention
-    /// request fire only on a genuine transition *into* `Blocked` or `Idle`
-    /// -- staying at the same value (e.g. repeated `Wakeup`s while a
-    /// permission prompt is still on screen) or clearing back to `None`
-    /// (the agent resumed working) stay silent. See `AttentionTrigger`'s doc
-    /// comment for how `trigger` changes what an inconclusive result means.
+    /// `ThreadEntry::attention`. This always runs -- the panel's status dot
+    /// reflects the thread's real state regardless of settings. Only the
+    /// desktop notification and window-attention request are gated by
+    /// `notify_when_finished` (it's documented as controlling the
+    /// notification specifically, not attention tracking), and even then
+    /// fire only on a genuine transition *into* `Blocked` or `Idle` --
+    /// staying at the same value (e.g. repeated `Wakeup`s while a permission
+    /// prompt is still on screen) or clearing back to `None` (the agent
+    /// resumed working) stay silent. See `AttentionTrigger`'s doc comment
+    /// for how `trigger` changes what an inconclusive result means.
     fn reclassify_attention(
         &mut self,
         terminal_item_id: EntityId,
         trigger: AttentionTrigger,
         cx: &mut Context<Self>,
     ) {
-        if !AgentThreadSettings::get_global(cx).notify_when_finished {
-            return;
-        }
         let Some(entry) = self.threads.get(&terminal_item_id) else {
             return;
         };
@@ -1206,13 +1294,17 @@ impl AgentThreadStore {
             return;
         }
         entry.attention = next_attention;
+        if next_attention == Some(ThreadAttention::Idle) {
+            // A fresh completion -- see `ThreadEntry::finished_seen`.
+            entry.finished_seen = false;
+        }
         let title = entry.metadata.title.clone();
         let project_name = notification_project_name(&entry.metadata.project_root);
         let window = entry.window;
         cx.emit(AgentThreadStoreEvent::ThreadUpdated { kind_id });
         cx.notify();
 
-        if next_attention.is_none() {
+        if next_attention.is_none() || !AgentThreadSettings::get_global(cx).notify_when_finished {
             return;
         }
         let kind_label = agent_kind_registry()

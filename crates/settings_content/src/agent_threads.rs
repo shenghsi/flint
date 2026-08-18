@@ -27,7 +27,9 @@ pub struct AgentThreadSettingsContent {
     pub show_plan_usage: Option<bool>,
     /// Whether to show a desktop notification when an agent thread finishes
     /// a turn or needs input, detected via the terminal bell that Claude
-    /// Code and Codex CLI ring in those cases.
+    /// Code and Codex CLI ring in those cases. Only controls the desktop
+    /// notification -- the Agent Threads panel's own status indicators keep
+    /// tracking each thread's state either way.
     ///
     /// Default: true
     pub notify_when_finished: Option<bool>,
