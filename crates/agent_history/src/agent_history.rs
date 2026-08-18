@@ -1112,6 +1112,39 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn claude_prefers_ai_title_over_first_user_message(cx: &mut TestAppContext) {
+        let source = Arc::new(InMemoryHistoryFs::new());
+        let ai_title_line = serde_json::json!({
+            "type": "ai-title",
+            "title": "Fix flaky release script",
+        });
+        source.insert(
+            "/home/user/.claude/projects/-work-proj/s1.jsonl",
+            &format!(
+                "{}\n{}\n",
+                claude_project_line(
+                    "s1",
+                    "/work/proj",
+                    "yes go ahead",
+                    "2026-07-24T10:00:00.000Z"
+                ),
+                ai_title_line,
+            ),
+            identity(1, 50),
+        );
+
+        let service = service(cx);
+        let host = host_at(source, "/home/user/.claude");
+        let snapshot = service
+            .refresh(HistoryKind::Claude, &host, &[PathBuf::from("/work/proj")])
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].title, "Fix flaky release script");
+    }
+
+    #[gpui::test]
     async fn claude_secondary_cwd_does_not_surface_under_nonorigin_root(cx: &mut TestAppContext) {
         let source = Arc::new(InMemoryHistoryFs::new());
         // A session that started in /work/proj and later cd'd into /work/other,

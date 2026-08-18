@@ -33,6 +33,8 @@ struct HistoryRecord {
 
 #[derive(Deserialize)]
 struct ProjectHistoryLine {
+    #[serde(rename = "type")]
+    kind: Option<String>,
     #[serde(rename = "sessionId")]
     session_id: Option<String>,
     cwd: Option<String>,
@@ -40,6 +42,10 @@ struct ProjectHistoryLine {
     #[serde(rename = "isMeta")]
     is_meta: Option<bool>,
     message: Option<ProjectHistoryMessage>,
+    /// Only present on an `ai-title` record -- Claude's own generated title
+    /// for the conversation. See `read_project_history_file`'s doc comment
+    /// for why it outranks the first-user-message fallback.
+    title: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -189,6 +195,13 @@ async fn list_jsonl_files(host: &AgentHistoryHost, dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
+/// `ai-title` is Claude's own generated title for the conversation -- a
+/// better "what is this thread about" signal than the first user message
+/// (which can be a one-word reply in a resumed session), so it takes
+/// priority here, the same way Codex's `session_index.jsonl` `thread_name`
+/// and Pi's `session_info.name` outrank their own first-message fallbacks. A
+/// session can regenerate its title, so the last one seen wins, matching
+/// Pi's "last valid `session_info.name`" convention.
 async fn read_project_history_file(
     host: &AgentHistoryHost,
     file_path: &Path,
@@ -198,7 +211,8 @@ async fn read_project_history_file(
     let summary = host
         .parse_file_persistent(file_path, move |content| {
             let mut session_id = default_session_id;
-            let mut title = None;
+            let mut ai_title = None;
+            let mut first_user_message_title = None;
             let mut last_activity_at = UNIX_EPOCH;
             let mut working_directories = Vec::new();
 
@@ -225,10 +239,15 @@ async fn read_project_history_file(
                 }) {
                     last_activity_at = last_activity_at.max(timestamp);
                 }
-                if title.is_none() && record.is_meta != Some(true) {
+                if record.kind.as_deref() == Some("ai-title") {
+                    if let Some(title) = record.title.as_deref().and_then(normalize_title) {
+                        ai_title = Some(title);
+                    }
+                }
+                if first_user_message_title.is_none() && record.is_meta != Some(true) {
                     if let Some(message) = record.message {
                         if message.role.as_deref() == Some("user") {
-                            title = message_content_title(&message.content);
+                            first_user_message_title = message_content_title(&message.content);
                         }
                     }
                 }
@@ -236,7 +255,7 @@ async fn read_project_history_file(
 
             ProjectHistorySummary {
                 session_id,
-                title,
+                title: ai_title.or(first_user_message_title),
                 last_activity_at,
                 working_directories,
             }
@@ -505,6 +524,34 @@ mod tests {
                     + Duration::from_millis(timestamp.timestamp_millis() as u64))
                 .unwrap()
         );
+    }
+
+    #[gpui::test]
+    async fn scan_prefers_ai_title_over_first_user_message(cx: &mut TestAppContext) {
+        let ai_title_line = serde_json::json!({
+            "type": "ai-title",
+            "title": "Fix flaky release script",
+        })
+        .to_string();
+        let content = [
+            project_history_line(
+                "session-a",
+                "/root",
+                "yes go ahead",
+                "2026-06-18T20:23:14.000Z",
+            ),
+            ai_title_line,
+        ]
+        .join("\n");
+        let host = host_with_project_history(cx, "/root", "session-a", &content).await;
+
+        let threads = ClaudeHistoryProvider
+            .scan(&host, &[PathBuf::from("/root")])
+            .await
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].title.as_ref(), "Fix flaky release script");
     }
 
     #[gpui::test]
