@@ -62,3 +62,4 @@ agent-threads-handoff-session-pending = { $agent } 尚未记录此线程的会�
 agent-threads-handoff-no-resumable-session = 此线程尚无可恢复的会话 ID。
 agent-threads-handoff-not-enough-conversation = 还没有足够的对话可供移交。
 agent-threads-handoff-unsupported-history = 所选智能体不支持移交历史记录。
+agent-threads-current-project = 当前
