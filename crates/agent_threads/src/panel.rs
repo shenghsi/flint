@@ -27,7 +27,7 @@ use crate::history::{self, HistoryParseCache, project_worktree_roots};
 use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
 use crate::store::{
     self, AgentThreadMetadata, AgentThreadRow, AgentThreadStore, AgentThreadStoreEvent,
-    TieResolution, merge_threads,
+    ProjectAttentionStatus, ProjectLiveSummary, TieResolution, merge_threads,
 };
 use crate::{
     AgentKindDefinition, AgentThreadSettings, HistoricalThread, RemoteAgentRoutingSettings,
@@ -35,25 +35,30 @@ use crate::{
 };
 
 /// One other open project (a `MultiWorkspace` retained workspace) that has
-/// at least one thread needing attention.
-struct OtherProjectAttention {
+/// at least one live thread, for the cross-project rollup.
+struct OtherProjectActivity {
     workspace: Entity<Workspace>,
     label: String,
-    count: usize,
+    status: ProjectAttentionStatus,
+    live_thread_count: usize,
 }
 
-/// The pure part of the attention rollup: given `attention_by_root` (see
-/// `AgentThreadStore::attention_by_worktree_root`), which of
+/// The pure part of the cross-project rollup: given `live_summaries` (see
+/// `AgentThreadStore::live_summary_by_worktree_root`), which of
 /// `multi_workspace`'s other retained workspaces -- excluding `workspace`
-/// itself -- have a flagged thread, and how many. Kept separate from
-/// `AgentThreadsPanel::render_attention_rollup` so it's testable without
-/// constructing a full panel entity for each workspace.
-fn other_projects_needing_attention(
+/// itself -- have live agent activity, and whether any of it is blocked.
+/// A workspace can own more than one worktree root, so its threads can be
+/// split across several summary entries; those are combined into one
+/// project-level entry, with `Blocked` winning over `Working` the same way
+/// `live_summary_by_worktree_root` combines threads within a single root.
+/// Kept separate from `AgentThreadsPanel::render_attention_rollup` so it's
+/// testable without constructing a full panel entity for each workspace.
+fn other_projects_with_live_activity(
     workspace: &Entity<Workspace>,
     multi_workspace: &Entity<MultiWorkspace>,
-    attention_by_root: &HashMap<PathBuf, usize>,
+    live_summaries: &HashMap<PathBuf, ProjectLiveSummary>,
     cx: &App,
-) -> Vec<OtherProjectAttention> {
+) -> Vec<OtherProjectActivity> {
     let mut others = Vec::new();
     for other_workspace in multi_workspace.read(cx).retained_workspaces() {
         if other_workspace == workspace {
@@ -65,18 +70,25 @@ fn other_projects_needing_attention(
             .iter()
             .map(|path| path.to_path_buf())
             .collect();
-        let count: usize = attention_by_root
-            .iter()
-            .filter(|(root, _)| roots.contains(root))
-            .map(|(_, count)| *count)
-            .sum();
-        let Some(first_root) = (count > 0).then(|| roots.first()).flatten() else {
+        let mut status = ProjectAttentionStatus::Working;
+        let mut live_thread_count = 0;
+        for root in &roots {
+            let Some(summary) = live_summaries.get(root) else {
+                continue;
+            };
+            live_thread_count += summary.live_thread_count;
+            if summary.status == ProjectAttentionStatus::Blocked {
+                status = ProjectAttentionStatus::Blocked;
+            }
+        }
+        let Some(first_root) = (live_thread_count > 0).then(|| roots.first()).flatten() else {
             continue;
         };
-        others.push(OtherProjectAttention {
+        others.push(OtherProjectActivity {
             workspace: other_workspace.clone(),
             label: store::notification_project_name(first_root),
-            count,
+            status,
+            live_thread_count,
         });
     }
     others
@@ -1262,10 +1274,11 @@ impl AgentThreadsPanel {
     }
 
     /// A compact rollup of other open projects (other `MultiWorkspace`
-    /// retained workspaces, see `workspace::multi_workspace`) that have a
-    /// thread needing attention right now. Returns `None` when there's
-    /// nothing to show -- no other window/tab, or nothing flagged -- so the
-    /// common case adds no chrome to the panel.
+    /// retained workspaces, see `workspace::multi_workspace`) that have live
+    /// agent activity right now, colored by whether any of it is blocked.
+    /// Returns `None` when there's nothing to show -- no other window/tab,
+    /// or no live threads anywhere else -- so the common case adds no
+    /// chrome to the panel.
     fn render_attention_rollup(
         &mut self,
         workspace: &Entity<Workspace>,
@@ -1273,9 +1286,9 @@ impl AgentThreadsPanel {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
-        let attention_by_root = self.store.read(cx).attention_by_worktree_root();
+        let live_summaries = self.store.read(cx).live_summary_by_worktree_root();
         let others =
-            other_projects_needing_attention(workspace, &multi_workspace, &attention_by_root, cx);
+            other_projects_with_live_activity(workspace, &multi_workspace, &live_summaries, cx);
         if others.is_empty() {
             return None;
         }
@@ -1295,7 +1308,11 @@ impl AgentThreadsPanel {
                 .children(others.into_iter().map(|other| {
                     let target_workspace = other.workspace;
                     let label = other.label;
-                    let count = other.count;
+                    let live_thread_count = other.live_thread_count;
+                    let status_color = match other.status {
+                        ProjectAttentionStatus::Blocked => Color::Warning,
+                        ProjectAttentionStatus::Working => Color::Success,
+                    };
                     let multi_workspace = multi_workspace.clone();
                     let source_workspace = self.workspace.clone();
                     h_flex()
@@ -1328,12 +1345,12 @@ impl AgentThreadsPanel {
                                 .child(
                                     Icon::new(IconName::Circle)
                                         .size(IconSize::Indicator)
-                                        .color(Color::Warning),
+                                        .color(status_color),
                                 )
                                 .child(Label::new(label).size(LabelSize::Small).truncate()),
                         )
                         .child(
-                            Label::new(count.to_string())
+                            Label::new(live_thread_count.to_string())
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
@@ -3682,13 +3699,17 @@ mod tests {
                 .needs_attention(terminal_item_id)),
             "bell should flag the thread as needing attention"
         );
-        let attention_counts = cx.update(|cx| {
+        let live_summaries = cx.update(|cx| {
             AgentThreadStore::global(cx)
                 .read(cx)
-                .attention_by_worktree_root()
+                .live_summary_by_worktree_root()
         });
-        assert_eq!(attention_counts.len(), 1);
-        assert_eq!(attention_counts.get(&PathBuf::from(root)), Some(&1));
+        assert_eq!(live_summaries.len(), 1);
+        let summary = live_summaries
+            .get(&PathBuf::from(root))
+            .expect("root should have a live summary");
+        assert_eq!(summary.status, ProjectAttentionStatus::Blocked);
+        assert_eq!(summary.live_thread_count, 1);
 
         window_handle
             .update(cx, |_, window, cx| {
@@ -3705,13 +3726,16 @@ mod tests {
                 .needs_attention(terminal_item_id)),
             "focusing the thread should clear the attention flag"
         );
-        assert!(
-            cx.update(|cx| AgentThreadStore::global(cx)
+        let live_summaries = cx.update(|cx| {
+            AgentThreadStore::global(cx)
                 .read(cx)
-                .attention_by_worktree_root()
-                .is_empty()),
-            "no thread should need attention once the only flagged one was focused"
-        );
+                .live_summary_by_worktree_root()
+        });
+        let summary = live_summaries
+            .get(&PathBuf::from(root))
+            .expect("root should still have a live summary -- the thread is still live");
+        assert_eq!(summary.status, ProjectAttentionStatus::Working);
+        assert_eq!(summary.live_thread_count, 1);
     }
 
     #[gpui::test]
@@ -3773,30 +3797,83 @@ mod tests {
             .expect("failed to add second workspace");
         cx.run_until_parked();
 
-        let attention_by_root = cx.update(|cx| {
+        let live_summaries = cx.update(|cx| {
             AgentThreadStore::global(cx)
                 .read(cx)
-                .attention_by_worktree_root()
+                .live_summary_by_worktree_root()
         });
 
         let others_from_b = cx.update(|cx| {
-            other_projects_needing_attention(&workspace_b, &multi_workspace, &attention_by_root, cx)
+            other_projects_with_live_activity(&workspace_b, &multi_workspace, &live_summaries, cx)
         });
         assert_eq!(
             others_from_b.len(),
             1,
-            "workspace b should see exactly one other project needing attention"
+            "workspace b should see exactly one other project with live activity"
         );
-        assert_eq!(others_from_b[0].count, 1);
+        assert_eq!(others_from_b[0].status, ProjectAttentionStatus::Blocked);
+        assert_eq!(others_from_b[0].live_thread_count, 1);
         assert_eq!(others_from_b[0].workspace, workspace_a);
 
         let others_from_a = cx.update(|cx| {
-            other_projects_needing_attention(&workspace_a, &multi_workspace, &attention_by_root, cx)
+            other_projects_with_live_activity(&workspace_a, &multi_workspace, &live_summaries, cx)
         });
         assert!(
             others_from_a.is_empty(),
             "workspace a's own project should not appear as an 'other' project"
         );
+    }
+
+    #[gpui::test]
+    async fn attention_rollup_shows_working_not_blocked_when_nothing_needs_attention(
+        cx: &mut TestAppContext,
+    ) {
+        // `live_summaries` is handcrafted rather than produced by a real
+        // bell, since this test's only job is to verify
+        // `other_projects_with_live_activity`'s status coloring for a
+        // project with live threads that are all unflagged -- the bell
+        // machinery itself is already covered by the tests above.
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        let temporary_directory_b =
+            tempfile::tempdir().expect("failed to create temporary directory b");
+        let root_b = temporary_directory_b
+            .path()
+            .to_str()
+            .expect("root b should be valid UTF-8");
+
+        let window_handle = init_workspace(cx, root_a).await;
+        let (workspace_a, multi_workspace) = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                (multi_workspace.workspace().clone(), cx.entity())
+            })
+            .expect("failed to read workspace a and the multi-workspace");
+
+        let project_b = Project::test(FakeFs::new(cx.executor()), [Path::new(root_b)], cx).await;
+        let workspace_b = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b, window, cx)
+            })
+            .expect("failed to add second workspace");
+        cx.run_until_parked();
+
+        let mut live_summaries = collections::HashMap::default();
+        live_summaries.insert(
+            PathBuf::from(root_a),
+            ProjectLiveSummary {
+                status: ProjectAttentionStatus::Working,
+                live_thread_count: 2,
+            },
+        );
+
+        let others_from_b = cx.update(|cx| {
+            other_projects_with_live_activity(&workspace_b, &multi_workspace, &live_summaries, cx)
+        });
+        assert_eq!(others_from_b.len(), 1);
+        assert_eq!(others_from_b[0].status, ProjectAttentionStatus::Working);
+        assert_eq!(others_from_b[0].live_thread_count, 2);
+        assert_eq!(others_from_b[0].workspace, workspace_a);
     }
 
     #[gpui::test]

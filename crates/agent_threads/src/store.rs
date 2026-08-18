@@ -451,6 +451,22 @@ struct ThreadEntry {
     needs_attention: bool,
 }
 
+/// Aggregate live-thread status for one worktree, for the cross-project
+/// rollup in `AgentThreadsPanel`. `Blocked` wins over `Working` when a
+/// worktree has a mix of flagged and unflagged live threads, since the
+/// rollup exists to answer "does this project need me", and a project with
+/// anything blocked does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ProjectAttentionStatus {
+    Working,
+    Blocked,
+}
+
+pub(crate) struct ProjectLiveSummary {
+    pub(crate) status: ProjectAttentionStatus,
+    pub(crate) live_thread_count: usize,
+}
+
 /// See `AgentThreadStore::live_terminal_worktree_roots`.
 #[cfg(any(unix, windows))]
 pub(crate) struct LiveTerminalWorktree {
@@ -658,23 +674,28 @@ impl AgentThreadStore {
             .is_some_and(|entry| entry.needs_attention)
     }
 
-    /// Counts live threads that need attention, grouped by the worktree
-    /// they're tied to (`AgentThreadMetadata::tied_worktree_root`), for a
-    /// cross-project rollup. This intentionally skips the deleted-worktree
-    /// fallback `TieResolution::effective_tie` applies for the main
-    /// per-section list: the rollup is a coarse "does this project need
-    /// you" signal, not a precise membership filter, so grouping by the
-    /// recorded tie directly is enough.
-    pub(crate) fn attention_by_worktree_root(&self) -> HashMap<PathBuf, usize> {
-        let mut counts: HashMap<PathBuf, usize> = HashMap::default();
+    /// Live threads' worktree roots, summarized for a cross-project rollup:
+    /// how many live threads each is tied to, and whether any of them needs
+    /// attention. This intentionally skips the deleted-worktree fallback
+    /// `TieResolution::effective_tie` applies for the main per-section list
+    /// -- the rollup is a coarse "what's happening in my other projects"
+    /// signal, not a precise membership filter, so grouping by the recorded
+    /// tie directly is enough.
+    pub(crate) fn live_summary_by_worktree_root(&self) -> HashMap<PathBuf, ProjectLiveSummary> {
+        let mut summaries: HashMap<PathBuf, ProjectLiveSummary> = HashMap::default();
         for entry in self.threads.values() {
+            let summary = summaries
+                .entry(entry.metadata.tied_worktree_root.clone())
+                .or_insert(ProjectLiveSummary {
+                    status: ProjectAttentionStatus::Working,
+                    live_thread_count: 0,
+                });
+            summary.live_thread_count += 1;
             if entry.needs_attention {
-                *counts
-                    .entry(entry.metadata.tied_worktree_root.clone())
-                    .or_insert(0) += 1;
+                summary.status = ProjectAttentionStatus::Blocked;
             }
         }
-        counts
+        summaries
     }
 
     /// Live threads eligible for background session discovery: no
