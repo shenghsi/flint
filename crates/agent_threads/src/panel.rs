@@ -2704,10 +2704,16 @@ mod tests {
         // Budgeted generously: unlike wait_for_live_count's "is the
         // terminal registered yet" check, this waits on a full real
         // pipeline -- PTY spawn, the echoed output landing, a Wakeup event,
-        // and then ATTENTION_WAKEUP_DEBOUNCE (300ms) before reclassifying --
-        // which can comfortably exceed a couple of seconds under a loaded,
-        // highly parallel CI test run.
-        for _ in 0..200 {
+        // and then ATTENTION_WAKEUP_DEBOUNCE (300ms) before reclassifying.
+        // The previous budget (200 * 100ms = 20s nominal) was still too
+        // tight: CI observed this loop exhausting its 200 iterations after
+        // ~40s of real wall time (each iteration's `run_until_parked()` and
+        // real timer tick costing more than its nominal 100ms under a
+        // loaded, highly parallel CI run), so this counts iterations rather
+        // than wall time and needs a bigger iteration budget, not just a
+        // longer per-iteration sleep. `.config/nextest.toml` raises this
+        // test's slow-timeout to match.
+        for _ in 0..500 {
             cx.run_until_parked();
             let current = cx.update(|cx| {
                 AgentThreadStore::global(cx)
