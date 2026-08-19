@@ -4228,14 +4228,34 @@ mod tests {
         let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
         wait_for_thread_attention(cx, terminal_item_id, Some(ThreadAttention::Blocked)).await;
 
-        assert_eq!(
-            cx.update(|cx| AgentThreadStore::global(cx)
+        let final_attention = cx.update(|cx| {
+            AgentThreadStore::global(cx)
                 .read(cx)
-                .thread_attention(terminal_item_id)),
-            Some(ThreadAttention::Blocked),
-            "a Pi thread showing its Project trust prompt should be classified Blocked \
-             purely from Wakeup-triggered terminal content, since it has no bell to react to"
-        );
+                .thread_attention(terminal_item_id)
+        });
+        // On a mismatch, dump what the terminal actually received -- CI has
+        // seen this assertion fail (attention staying `None`) even after
+        // waiting the helper's full real-time budget, while this passes
+        // reliably (and fast) locally, so the next CI failure should show
+        // whether the echoed prompt text ever landed in the terminal at all
+        // rather than requiring another guess-and-wait cycle.
+        if final_attention != Some(ThreadAttention::Blocked) {
+            let terminal = terminal_views(&window_handle, cx)[0]
+                .read_with(cx, |view, _| view.terminal().clone());
+            let (screen_tail, osc_title) = terminal.read_with(cx, |terminal, _| {
+                (
+                    terminal
+                        .last_n_non_empty_lines(crate::attention_detection::SCREEN_TAIL_LINE_COUNT),
+                    terminal.breadcrumb_text.clone(),
+                )
+            });
+            panic!(
+                "a Pi thread showing its Project trust prompt should be classified Blocked \
+                 purely from Wakeup-triggered terminal content, since it has no bell to react to \
+                 -- actual attention: {final_attention:?}, osc_title: {osc_title:?}, \
+                 screen_tail: {screen_tail:?}"
+            );
+        }
     }
 
     #[gpui::test]
