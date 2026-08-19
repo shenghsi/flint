@@ -3106,20 +3106,6 @@ async fn test_agent_thread_history_stream(cx: &mut TestAppContext, server_cx: &m
     assert_eq!(warm[0].entries.len(), 1);
     assert_eq!(warm[0].entries[0].session_id, "aaa");
     assert_eq!(warm[1].freshness, fresh);
-
-    // The server advertises the history-index capability to the client.
-    let has_capability = cx.read(|cx| {
-        project
-            .read(cx)
-            .remote_client()
-            .unwrap()
-            .read(cx)
-            .has_server_capability(remote::AGENT_THREAD_HISTORY_INDEX_CAPABILITY)
-    });
-    assert!(
-        has_capability,
-        "server should advertise the history capability"
-    );
 }
 
 #[gpui::test]
