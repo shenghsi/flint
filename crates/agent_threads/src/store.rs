@@ -1530,6 +1530,7 @@ pub fn launch_credential_command(
             command,
             None,
             required_route,
+            None,
             window,
             cx,
         );
@@ -1569,6 +1570,7 @@ pub fn launch_credential_command(
                         command,
                         None,
                         Some(RequiredAgentRoute(settings::RemoteAgentRoute::Tunneled)),
+                        None,
                         window,
                         cx,
                     )
@@ -1701,7 +1703,8 @@ pub fn resume_thread(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let Some(task) = resume_thread_task(workspace, kind, thread, extra_args, window, cx) else {
+    let Some(task) = resume_thread_task(workspace, kind, thread, extra_args, None, window, cx)
+    else {
         return;
     };
     cx.spawn_in(window, async move |workspace, cx| {
@@ -1718,6 +1721,7 @@ fn resume_thread_task(
     kind: &AgentKindDefinition,
     thread: &HistoricalThread,
     extra_args: &[String],
+    restored_tie: Option<TiedWorktree>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Option<Task<Result<ResumeThreadOutcome>>> {
@@ -1734,6 +1738,7 @@ fn resume_thread_task(
             command,
             Some(thread.session_id.clone()),
             required_route,
+            restored_tie,
             window,
             cx,
         );
@@ -1773,6 +1778,7 @@ fn resume_thread_task(
                     command,
                     Some(thread.session_id.clone()),
                     Some(RequiredAgentRoute(settings::RemoteAgentRoute::Tunneled)),
+                    restored_tie,
                     window,
                     cx,
                 ))
@@ -2204,6 +2210,7 @@ fn launch_managed_thread_for_route(
                         launch.command,
                         launch.session_id,
                         required_route,
+                        None,
                         window,
                         cx,
                     )
@@ -2280,6 +2287,7 @@ fn spawn_thread_task(
         command,
         resumed_session_id,
         None,
+        None,
         window,
         cx,
     )
@@ -2292,6 +2300,7 @@ fn spawn_thread_task_for_route(
     mut command: AgentLaunchCommand,
     resumed_session_id: Option<SharedString>,
     required_route: Option<RequiredAgentRoute>,
+    tied_worktree: Option<TiedWorktree>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<Result<()>> {
@@ -2326,6 +2335,7 @@ fn spawn_thread_task_for_route(
             resumed_session_id,
             remote_connection,
             None,
+            tied_worktree,
             window,
             cx,
         );
@@ -2374,6 +2384,7 @@ fn spawn_thread_task_for_route(
                 resumed_session_id,
                 Some(process_connection),
                 Some(egress),
+                tied_worktree,
                 window,
                 cx,
             ))
@@ -2423,10 +2434,23 @@ fn apply_self_update_policy(command: &mut AgentLaunchCommand, kind: &AgentKindDe
 /// worktree set there is no longer any current state from which to
 /// rediscover which repository it used to belong to -- see the design doc's
 /// "Deleted worktrees fall back to the main worktree" section.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TiedWorktree {
     pub root: PathBuf,
     pub repo_main_root: Option<PathBuf>,
+}
+
+fn select_tied_worktree(
+    restored_tie: Option<TiedWorktree>,
+    workspace_tie: Option<TiedWorktree>,
+    working_directory: &Path,
+) -> TiedWorktree {
+    restored_tie
+        .or(workspace_tie)
+        .unwrap_or_else(|| TiedWorktree {
+            root: working_directory.to_path_buf(),
+            repo_main_root: None,
+        })
 }
 
 /// Resolves the worktree a newly-launched thread should be tied to: prefer
@@ -2750,6 +2774,7 @@ fn spawn_thread_task_inner(
     resumed_session_id: Option<SharedString>,
     remote_connection: Option<Arc<dyn remote::RemoteConnection>>,
     egress: Option<AgentEgressLease>,
+    tied_worktree: Option<TiedWorktree>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<Result<()>> {
@@ -2762,10 +2787,8 @@ fn spawn_thread_task_inner(
             "agent thread working directory is unavailable"
         )));
     };
-    let tied_worktree = resolve_tied_worktree(workspace, cx).unwrap_or_else(|| TiedWorktree {
-        root: cwd.clone(),
-        repo_main_root: None,
-    });
+    let tied_worktree =
+        select_tied_worktree(tied_worktree, resolve_tied_worktree(workspace, cx), &cwd);
     let kind_id = kind.id;
     let kind_icon = kind.icon;
     let title = summary.clone();
@@ -2992,6 +3015,14 @@ pub fn restore_threads_for_workspace(
             continue;
         }
 
+        let restored_tie = read_tie_override(cx, kind.id, &record.session_id).or_else(|| {
+            record.tied_worktree_root.clone().map(|root| TiedWorktree {
+                repo_main_root: workspace.project().read_with(cx, |project, cx| {
+                    repo_main_root_for_worktree(project, &root, cx)
+                }),
+                root,
+            })
+        });
         let thread = HistoricalThread {
             session_id: SharedString::from(record.session_id),
             title: SharedString::from(record.title),
@@ -2999,15 +3030,23 @@ pub fn restore_threads_for_workspace(
             last_activity_at: system_time_from_millis(record.last_activity_at),
         };
         let extra_args = resolve_thread_launch_args(cx, &kind, &thread.session_id);
-        restores.push((kind, thread, extra_args));
+        restores.push((kind, thread, extra_args, restored_tie));
     }
 
     cx.spawn_in(window, async move |workspace, cx| {
-        run_thread_restores_sequentially(restores, |(kind, thread, extra_args)| {
+        run_thread_restores_sequentially(restores, |(kind, thread, extra_args, restored_tie)| {
             let kind_id = kind.id;
             let session_id = thread.session_id.to_string();
             let task = workspace.update_in(cx, |workspace, window, cx| {
-                resume_thread_task(workspace, &kind, &thread, &extra_args, window, cx)
+                resume_thread_task(
+                    workspace,
+                    &kind,
+                    &thread,
+                    &extra_args,
+                    restored_tie,
+                    window,
+                    cx,
+                )
             });
             async move {
                 let result = async {
@@ -3094,18 +3133,10 @@ fn snapshot_records_for_workspace(
 /// existed -- never by comparing `own_project_roots` against `project_root`,
 /// which is a launch cwd, not necessarily a worktree root.
 ///
-/// Once a record is selected here, the actual resume launches into *this*
-/// restoring workspace via the normal `spawn_thread_task_inner` path, which
-/// re-derives `tied_worktree_root` fresh via `resolve_tied_worktree` rather
-/// than being handed the record's tie directly -- deliberately not plumbed
-/// through as an explicit override. For the common single-root-workspace
-/// case (this filter already guarantees the workspace's own root matches
-/// the tie) the two always agree, so this is not a behavior gap in the
-/// case that matters; a multi-root workspace whose `active_repository`
-/// picks a different one of its own roots than the specific one that was
-/// tied is the only case where they could diverge, left as a known,
-/// narrow gap rather than threading an override through the whole launch
-/// pipeline for it.
+/// Once a record is selected here, automatic restore passes its saved tie
+/// through the resume path. The restoring workspace's active repository can
+/// differ from that tie during startup, so deriving it again would move the
+/// thread to another worktree.
 fn records_to_restore_for_workspace(
     workspace_id: WorkspaceId,
     own_project_roots: &[PathBuf],
@@ -4184,5 +4215,41 @@ mod tests {
             different_workspace_with_matching_root.is_empty(),
             "a legacy record must not restore into a different workspace even if its root matches project_root"
         );
+    }
+
+    #[test]
+    fn automatic_restore_keeps_the_saved_worktree_tie() {
+        let restored_tie = TiedWorktree {
+            root: PathBuf::from("/repo-linked"),
+            repo_main_root: Some(PathBuf::from("/repo-main")),
+        };
+        let workspace_tie = TiedWorktree {
+            root: PathBuf::from("/repo-main"),
+            repo_main_root: Some(PathBuf::from("/repo-main")),
+        };
+
+        let selected = select_tied_worktree(
+            Some(restored_tie.clone()),
+            Some(workspace_tie),
+            Path::new("/repo-main"),
+        );
+
+        assert_eq!(selected, restored_tie);
+    }
+
+    #[test]
+    fn new_thread_uses_the_workspace_tie() {
+        let workspace_tie = TiedWorktree {
+            root: PathBuf::from("/repo-main"),
+            repo_main_root: Some(PathBuf::from("/repo-main")),
+        };
+
+        let selected = select_tied_worktree(
+            None,
+            Some(workspace_tie.clone()),
+            Path::new("/different-working-directory"),
+        );
+
+        assert_eq!(selected, workspace_tie);
     }
 }
