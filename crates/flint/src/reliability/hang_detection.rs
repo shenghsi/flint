@@ -74,7 +74,10 @@ pub(crate) fn start(cx: &mut App) {
 fn start_hang_detection(report_longer_then: Duration) {
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
-    let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
+    // Re-report a hanging location at most this often, so that a location that
+    // keeps hanging stays visible instead of being silenced after its first hit.
+    let forget_after = Duration::from_mins(5);
+    let mut log = logging::Reporter::new(forget_after, report_longer_then, foreground_thread);
 
     // an OS thread to insulate detection and reporting from hangs on the fore
     // or background.
