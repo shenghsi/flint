@@ -575,6 +575,9 @@ pub(crate) struct ProjectLiveSummary {
     /// broken by whichever thread launched most recently. `None` only when
     /// `live_thread_count` is 0.
     pub(crate) most_urgent_terminal_item_id: Option<EntityId>,
+    /// Preserves the tie-break when callers combine several Worktrees into
+    /// one Project summary.
+    pub(crate) most_urgent_launched_at: Option<SystemTime>,
 }
 
 /// See `AgentThreadStore::live_terminal_worktree_roots`.
@@ -813,16 +816,13 @@ impl AgentThreadStore {
     /// tie directly is enough.
     pub(crate) fn live_summary_by_worktree_root(&self) -> HashMap<PathBuf, ProjectLiveSummary> {
         let mut summaries: HashMap<PathBuf, ProjectLiveSummary> = HashMap::default();
-        // Tracked alongside `summaries` rather than on `ProjectLiveSummary`
-        // itself, since it's only needed to break urgency ties while
-        // building the map, not by any caller.
-        let mut most_urgent_launched_at: HashMap<PathBuf, SystemTime> = HashMap::default();
         for entry in self.threads.values() {
             let root = entry.metadata.tied_worktree_root.clone();
             let summary = summaries.entry(root.clone()).or_insert(ProjectLiveSummary {
                 status: ProjectAttentionStatus::Working,
                 live_thread_count: 0,
                 most_urgent_terminal_item_id: None,
+                most_urgent_launched_at: None,
             });
             summary.live_thread_count += 1;
             let thread_status = match entry.attention {
@@ -834,13 +834,13 @@ impl AgentThreadStore {
             let launched_at = entry.metadata.launched_at;
             let is_more_urgent = thread_status > summary.status;
             let is_tied_but_more_recent = thread_status == summary.status
-                && most_urgent_launched_at
-                    .get(&root)
-                    .is_none_or(|current| launched_at > *current);
+                && summary
+                    .most_urgent_launched_at
+                    .is_none_or(|current| launched_at > current);
             if is_more_urgent || is_tied_but_more_recent {
                 summary.status = thread_status;
                 summary.most_urgent_terminal_item_id = Some(entry.metadata.terminal_item_id);
-                most_urgent_launched_at.insert(root, launched_at);
+                summary.most_urgent_launched_at = Some(launched_at);
             }
         }
         summaries

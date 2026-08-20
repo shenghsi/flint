@@ -84,14 +84,21 @@ fn aggregate_live_activity(
     let mut status = ProjectAttentionStatus::Working;
     let mut live_thread_count = 0;
     let mut attention_terminal_item_id = None;
+    let mut attention_launched_at = None;
     for root in roots {
         let Some(summary) = live_summaries.get(root) else {
             continue;
         };
         live_thread_count += summary.live_thread_count;
-        if summary.status >= status {
+        let is_more_urgent = summary.status > status;
+        let is_tied_but_more_recent = summary.status == status
+            && summary.most_urgent_launched_at.is_some_and(|launched_at| {
+                attention_launched_at.is_none_or(|current| launched_at > current)
+            });
+        if is_more_urgent || is_tied_but_more_recent {
             status = summary.status;
             attention_terminal_item_id = summary.most_urgent_terminal_item_id;
+            attention_launched_at = summary.most_urgent_launched_at;
         }
     }
     (status, live_thread_count, attention_terminal_item_id)
@@ -4465,6 +4472,42 @@ mod tests {
         assert_eq!(current_for_b.attention_terminal_item_id, None);
     }
 
+    #[test]
+    fn working_threads_use_launch_time_across_worktrees() {
+        let older_root = PathBuf::from("/project/older");
+        let newer_root = PathBuf::from("/project/newer");
+        let older_terminal_item_id = gpui::EntityId::from(1);
+        let newer_terminal_item_id = gpui::EntityId::from(2);
+        let mut live_summaries = HashMap::default();
+        live_summaries.insert(
+            older_root.clone(),
+            ProjectLiveSummary {
+                status: ProjectAttentionStatus::Working,
+                live_thread_count: 1,
+                most_urgent_terminal_item_id: Some(older_terminal_item_id),
+                most_urgent_launched_at: Some(
+                    std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+                ),
+            },
+        );
+        live_summaries.insert(
+            newer_root.clone(),
+            ProjectLiveSummary {
+                status: ProjectAttentionStatus::Working,
+                live_thread_count: 1,
+                most_urgent_terminal_item_id: Some(newer_terminal_item_id),
+                most_urgent_launched_at: Some(
+                    std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(2),
+                ),
+            },
+        );
+
+        let (_, _, terminal_item_id) =
+            aggregate_live_activity(&[newer_root, older_root], &live_summaries);
+
+        assert_eq!(terminal_item_id, Some(newer_terminal_item_id));
+    }
+
     #[gpui::test]
     async fn attention_rollup_shows_working_not_blocked_when_nothing_needs_attention(
         cx: &mut TestAppContext,
@@ -4506,6 +4549,7 @@ mod tests {
                 status: ProjectAttentionStatus::Working,
                 live_thread_count: 2,
                 most_urgent_terminal_item_id: None,
+                most_urgent_launched_at: None,
             },
         );
 
