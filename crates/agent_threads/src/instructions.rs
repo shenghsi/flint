@@ -1,4 +1,4 @@
-//! Nudges the user to add Flint's "Worktree creation" instructions to a
+//! Nudges the user to add Flint's feature branch and worktree instructions to a
 //! CLI's own global instructions file (e.g. `~/.codex/AGENTS.md`,
 //! `~/.claude/CLAUDE.md`). Without that section, an agent has no way to
 //! discover the `flint-agent-control` command at all, so agent-initiated
@@ -24,11 +24,22 @@ use crate::WindowsInstructionShell;
 /// just checks for `DETECTION_MARKER` (a substring of this), so a file a
 /// user (or an earlier Flint version) already has this in is recognized
 /// as-is -- no separate sentinel comment needed.
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 const WORKTREE_INSTRUCTIONS_BLOCK: &str = "\
-## Worktree creation
+## Feature branches and worktrees
 
-Run this after creating a git worktree:
+For every repository change, use a feature branch. Do not commit directly to
+`main`.
+
+Use the current worktree when it is clean, available, and not in use by another
+task. Create or switch to a feature branch in that worktree.
+
+Create a new git worktree only when a separate directory is useful or required.
+Examples include concurrent tasks, unrelated changes in the current worktree,
+agent handoff, or an explicit user request. A new worktree must also use a
+feature branch.
+
+After creating a git worktree, run:
 
     find ~/Library/Application\\ Support/Flint ~/.local/share/flint -maxdepth 1 -name \"agent-control-*-executable.json\" -exec cat {} \\; 2>/dev/null
 
@@ -36,18 +47,31 @@ If it prints JSON with an \"executable\" field, run:
 
     \"<executable>\" retie-thread --worktree <path>
 
-using that value and the new worktree's full path. This moves the thread to
-the new worktree in Flint's Agent Threads panel. No output means Flint is
-not installed or running. A \"not recognized\" report means this terminal
-just is not a Flint-tracked one, even if Flint is running elsewhere. Skip
-this section either way.
+Use that value and the full path of the new worktree. This moves the thread to
+the new worktree in Flint's Agent Threads panel. No output means Flint is not
+installed or running. A \"not recognized\" report means this terminal is not a
+Flint-tracked terminal. In both cases, continue without retieing the thread.
+
+The main decision rule is: use a feature branch for change ownership; use a
+worktree for directory isolation.
 ";
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 const POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK: &str = "\
-## Worktree creation
+## Feature branches and worktrees
 
-Run this in PowerShell after creating a git worktree:
+For every repository change, use a feature branch. Do not commit directly to
+`main`.
+
+Use the current worktree when it is clean, available, and not in use by another
+task. Create or switch to a feature branch in that worktree.
+
+Create a new git worktree only when a separate directory is useful or required.
+Examples include concurrent tasks, unrelated changes in the current worktree,
+agent handoff, or an explicit user request. A new worktree must also use a
+feature branch.
+
+After creating a git worktree, run this in PowerShell:
 
     $sessionId = (Get-Process -Id $PID).SessionId
     $marker = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Flint') -Filter \"agent-control-*-$sessionId-executable.json\" -File | Select-Object -First 1
@@ -57,11 +81,14 @@ If `$control` contains an executable path, run:
 
     & $control retie-thread --worktree \"<path>\"
 
-using the new worktree's full path. This moves the thread to the new
-worktree in Flint's Agent Threads panel. No marker means Flint is not
-installed or running in this Windows sign-in session. A \"not recognized\"
-report means this terminal is not a Flint-tracked one. Skip this section
-either way.
+Use the full path of the new worktree. This moves the thread to the new worktree
+in Flint's Agent Threads panel. No marker means Flint is not installed or
+running in this Windows sign-in session. A \"not recognized\" report means this
+terminal is not a Flint-tracked terminal. In both cases, continue without
+retieing the thread.
+
+The main decision rule is: use a feature branch for change ownership; use a
+worktree for directory isolation.
 ";
 
 const DETECTION_MARKER: &str = "retie-thread --worktree";
@@ -293,6 +320,50 @@ mod tests {
     }
 
     #[test]
+    fn all_platform_blocks_explain_when_to_use_a_feature_branch_and_worktree() {
+        for block in [
+            WORKTREE_INSTRUCTIONS_BLOCK,
+            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK,
+        ] {
+            assert!(block.contains("For every repository change, use a feature branch."));
+            assert!(block.contains("Do not commit directly to\n`main`."));
+            assert!(block.contains(
+                "Use the current worktree when it is clean, available, and not in use by another\n\
+                 task."
+            ));
+            assert!(block.contains(
+                "Create a new git worktree only when a separate directory is useful or required."
+            ));
+            assert!(block.contains(
+                "use a feature branch for change ownership; use a\n\
+                 worktree for directory isolation."
+            ));
+        }
+    }
+
+    #[test]
+    fn all_platform_blocks_include_the_platform_specific_retie_command() {
+        assert!(
+            WORKTREE_INSTRUCTIONS_BLOCK
+                .contains("find ~/Library/Application\\ Support/Flint ~/.local/share/flint")
+        );
+        assert!(
+            WORKTREE_INSTRUCTIONS_BLOCK.contains("\"<executable>\" retie-thread --worktree <path>")
+        );
+        assert!(
+            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK.contains("(Get-Process -Id $PID).SessionId")
+        );
+        assert!(
+            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK
+                .contains("agent-control-*-$sessionId-executable.json")
+        );
+        assert!(
+            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK
+                .contains("& $control retie-thread --worktree \"<path>\"")
+        );
+    }
+
+    #[test]
     fn global_instructions_path_is_none_for_an_unknown_convention() {
         assert!(global_instructions_path("not-a-real-kind").is_none());
     }
@@ -314,22 +385,6 @@ mod tests {
         assert_eq!(
             global_instructions_path("pi"),
             Some(paths::home_dir().join(".pi/agent/AGENTS.md"))
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn powershell_block_is_session_scoped_and_invokes_the_discovered_helper() {
-        assert!(
-            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK.contains("(Get-Process -Id $PID).SessionId")
-        );
-        assert!(
-            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK
-                .contains("agent-control-*-$sessionId-executable.json")
-        );
-        assert!(
-            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK
-                .contains("& $control retie-thread --worktree \"<path>\"")
         );
     }
 
