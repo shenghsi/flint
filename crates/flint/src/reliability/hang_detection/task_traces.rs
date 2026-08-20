@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::thread::ThreadId;
 
 use anyhow::Context;
-use gpui::{SerializedThreadTaskTimings, TasksIncluded, profiler};
+use gpui::{SerializedThreadTaskTimings, TasksIncluded};
 use util::ResultExt;
 
 use crate::STARTUP_TIME;
@@ -33,19 +33,18 @@ pub fn save_any(main_thread_id: ThreadId) -> Option<PathBuf> {
         return None;
     };
 
-    if profiler::trace_enabled() {
-        None
-    } else {
-        cleanup_old_hang_traces();
-        let trace_path = paths::hang_traces_dir().join(&format!(
-            "hang-{}.miniprof.json",
-            chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
-        ));
-        std::fs::write(&trace_path, timings)
-            .with_context(|| format!("writing hang trace to {}", trace_path.display()))
-            .map(|()| trace_path)
-            .log_err()
-    }
+    // The trace is written whether or not tracing is enabled. With tracing on it
+    // also carries each thread's recent task history; with tracing off it still
+    // names the task that was running when the hang was sampled, which is the
+    // part that identifies the hang.
+    let trace_path = paths::hang_traces_dir().join(&format!(
+        "hang-{}.miniprof.json",
+        chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
+    ));
+    std::fs::write(&trace_path, timings)
+        .with_context(|| format!("writing hang trace to {}", trace_path.display()))
+        .map(|()| trace_path)
+        .log_err()
 }
 
 pub fn cleanup_old_hang_traces() {
