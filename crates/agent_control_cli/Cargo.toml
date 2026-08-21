@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [[bin]]
-name = "flint-agent-control"
+name = "flintctl"
 path = "src/agent_control_cli.rs"
 doctest = false
 

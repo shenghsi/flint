@@ -62,11 +62,12 @@ use crate::alacritty::{
     AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch, PtySender, RegexSearches,
     append_text_to_term, apply_config, clear_saved_screen, content_text, display_offset,
     display_only_term_config, find_from_terminal_point, full_content_range, last_non_empty_lines,
-    make_content, new_term, open_pty, pty_options, pty_term_config, resize, screen_lines,
-    scroll_display, scroll_to_point, search_matches, selection_text, set_default_cursor_style,
-    set_selection as set_term_selection, spawn_event_loop, toggle_vi_mode as toggle_term_vi_mode,
-    total_lines, update_selection as update_term_selection, update_selection_to_vi_cursor,
-    update_vi_cursor_for_scroll, vi_goto_point, vi_motion,
+    last_physical_lines, make_content, new_term, open_pty, pty_options, pty_term_config, resize,
+    screen_lines, scroll_display, scroll_to_point, search_matches, selection_text,
+    set_default_cursor_style, set_selection as set_term_selection, spawn_event_loop,
+    toggle_vi_mode as toggle_term_vi_mode, total_lines, update_selection as update_term_selection,
+    update_selection_to_vi_cursor, update_vi_cursor_for_scroll, vi_goto_point, vi_motion,
+    visible_physical_lines,
 };
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
@@ -476,6 +477,19 @@ pub struct Content {
     pub last_hovered_word: Option<HoveredWord>,
     pub scrolled_to_top: bool,
     pub scrolled_to_bottom: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlSnapshotSource {
+    Visible,
+    Recent,
+    RecentUnwrapped,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlSnapshot {
+    pub text: String,
+    pub alternate_screen: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -2480,6 +2494,27 @@ impl Terminal {
         }
     }
 
+    pub fn is_remote(&self) -> bool {
+        self.is_remote_terminal
+    }
+
+    pub fn has_exited(&self) -> bool {
+        self.child_exited.is_some()
+    }
+
+    pub fn control_snapshot(&self, source: ControlSnapshotSource, lines: usize) -> ControlSnapshot {
+        let terminal = self.term.lock_unfair();
+        let lines = match source {
+            ControlSnapshotSource::Visible => visible_physical_lines(&terminal, lines),
+            ControlSnapshotSource::Recent => last_physical_lines(&terminal, lines),
+            ControlSnapshotSource::RecentUnwrapped => last_non_empty_lines(&terminal, lines),
+        };
+        ControlSnapshot {
+            text: lines.join("\n"),
+            alternate_screen: self.last_content.mode.contains(Modes::ALT_SCREEN),
+        }
+    }
+
     pub fn shell_kind(&self) -> ShellKind {
         match self.template.shell {
             Shell::System => ShellKind::new("", self.path_style.is_windows()),
@@ -3881,6 +3916,43 @@ mod tests {
 
         let clipboard_text = cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
         assert_eq!(clipboard_text.as_deref(), Some("original"));
+    }
+
+    #[gpui::test]
+    async fn control_snapshots_distinguish_physical_and_unwrapped_lines(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only_with_bounds(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+                TerminalBounds::new(
+                    px(20.0),
+                    px(10.0),
+                    bounds(point(px(0.0), px(0.0)), size(px(50.0), px(40.0))),
+                ),
+            )
+            .subscribe(cx)
+        });
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"abcdefghij", cx);
+        });
+        cx.run_until_parked();
+
+        let (recent, unwrapped, visible) = terminal.read_with(cx, |terminal, _cx| {
+            (
+                terminal.control_snapshot(ControlSnapshotSource::Recent, 2),
+                terminal.control_snapshot(ControlSnapshotSource::RecentUnwrapped, 2),
+                terminal.control_snapshot(ControlSnapshotSource::Visible, 1),
+            )
+        });
+
+        assert_eq!(recent.text, "abcde\nfghij");
+        assert_eq!(unwrapped.text, "abcdefghij");
+        assert_eq!(visible.text, "fghij");
+        assert!(!recent.alternate_screen);
     }
 
     #[gpui::test]

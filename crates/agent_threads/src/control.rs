@@ -1,6 +1,6 @@
 //! The local-only server backing agent-initiated worktree
 //! control: a thread's own CLI process (Codex, Claude Code, etc.) invokes
-//! the `flint-agent-control` binary (`agent_control_cli`), which sends one
+//! the `flintctl` binary (`agent_control_cli`), which sends one
 //! JSON request over the platform transport per invocation.
 //!
 //! Caller identity is established by asking the kernel who actually
@@ -21,16 +21,21 @@ use std::sync::Arc;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(test)]
+use agent_control_protocol::ControlResult;
 use agent_control_protocol::{
-    ControlRequest, ControlResponse, ControlSuccess, CreateThreadRequest, CreateThreadWorktree,
-    RetieThreadRequest,
+    ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, ControlSuccess,
+    CreateThreadRequest, CreateThreadWorktree, FRAME_LENGTH_BYTES, MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES, PROTOCOL_VERSION, RetieThreadRequest, StatusResult, TerminalControlId,
+    TerminalOutputMatcher, TerminalReadRequest, TerminalRunRequest, TerminalSendKeyRequest,
+    TerminalSendTextRequest, TerminalSnapshot, TerminalWaitOutputRequest, frame_payload,
 };
 #[cfg(unix)]
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 #[cfg(unix)]
 use gpui::Task;
-use gpui::{App, AsyncApp, Entity, EntityId};
+use gpui::{App, AsyncApp, Entity, EntityId, Keystroke};
 #[cfg(unix)]
 use net::async_net::{UnixListener, UnixStream};
 use settings::Settings as _;
@@ -61,28 +66,19 @@ pub(crate) fn init(cx: &mut App) {
     let store = AgentThreadStore::global(cx);
     let socket_path = agent_control_protocol::socket_path();
     let executable_location_path = agent_control_protocol::executable_location_path();
+    write_executable_location(&executable_location_path);
     let owns_socket = Arc::new(AtomicBool::new(false));
     let task = cx.spawn({
         let socket_path = socket_path.clone();
-        let executable_location_path = executable_location_path.clone();
         let owns_socket = owns_socket.clone();
         async move |cx| {
-            if let Err(error) = run_server(
-                socket_path,
-                executable_location_path,
-                owns_socket,
-                store,
-                cx,
-            )
-            .await
-            {
+            if let Err(error) = run_server(socket_path, owns_socket, store, cx).await {
                 log::error!("agent_threads: agent control server did not start: {error:#}");
             }
         }
     });
     cx.on_app_quit(move |_cx| {
         let socket_path = socket_path.clone();
-        let executable_location_path = executable_location_path.clone();
         let owns_socket = owns_socket.clone();
         async move {
             // Only remove these if this instance actually bound the socket --
@@ -90,7 +86,6 @@ pub(crate) fn init(cx: &mut App) {
             // itself must never unlink files it doesn't own.
             if owns_socket.load(Ordering::Acquire) {
                 std::fs::remove_file(&socket_path).ok();
-                std::fs::remove_file(&executable_location_path).ok();
             }
         }
     })
@@ -107,7 +102,6 @@ pub(crate) fn init(cx: &mut App) {
 #[cfg(unix)]
 async fn run_server(
     socket_path: PathBuf,
-    executable_location_path: PathBuf,
     owns_socket: Arc<AtomicBool>,
     store: Entity<AgentThreadStore>,
     cx: &mut AsyncApp,
@@ -146,8 +140,6 @@ async fn run_server(
         .with_context(|| format!("failed to set permissions on {socket_path:?}"))?;
     owns_socket.store(true, Ordering::Release);
 
-    write_executable_location(&executable_location_path);
-
     loop {
         let (stream, _) = listener
             .accept()
@@ -163,18 +155,18 @@ async fn run_server(
     }
 }
 
-/// Records where this Flint instance's own `flint-agent-control` executable
+/// Records where this Flint instance's own `flintctl` executable
 /// lives, so an agent's CLI process can discover what command to run in the
 /// first place. Best-effort: if the executable can't be resolved (e.g. a
 /// dev build with no bundled binary alongside it), the server still starts
 /// -- an explicit platform endpoint override or a PATH-installed binary can
 /// still reach it, just not via this file.
 pub(crate) fn write_executable_location(executable_location_path: &std::path::Path) -> bool {
-    let executable = match util::get_flint_agent_control_path() {
+    let executable = match util::get_flintctl_path() {
         Ok(executable) => executable,
         Err(error) => {
             log::warn!(
-                "agent_threads: could not resolve flint-agent-control's own path, so agents \
+                "agent_threads: could not resolve flintctl's own path, so agents \
                  won't be able to discover it via the marker file: {error:#}"
             );
             return false;
@@ -216,12 +208,12 @@ pub(crate) fn write_executable_location_for(
 }
 
 #[cfg(unix)]
-fn replace_marker(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn replace_marker(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
     std::fs::rename(from, to)
 }
 
 #[cfg(windows)]
-fn replace_marker(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn replace_marker(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt as _;
     use windows::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MoveFileExW};
     use windows::core::PCWSTR;
@@ -253,27 +245,58 @@ async fn handle_connection(
     store: Entity<AgentThreadStore>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let mut request_bytes = Vec::new();
+    let mut length_bytes = [0; FRAME_LENGTH_BYTES];
     stream
-        .read_to_end(&mut request_bytes)
+        .read_exact(&mut length_bytes)
         .await
-        .context("failed to read request")?;
+        .context("failed to read request length")?;
+    let request_length = u32::from_be_bytes(length_bytes) as usize;
+    if request_length > MAX_REQUEST_BYTES {
+        anyhow::bail!("request exceeds the {MAX_REQUEST_BYTES}-byte protocol limit");
+    }
+    let mut request_bytes = vec![0; request_length];
+    stream
+        .read_exact(&mut request_bytes)
+        .await
+        .context("failed to read request payload")?;
 
     let response = match serde_json::from_slice::<ControlRequest>(&request_bytes) {
         Ok(request) => match get_peer_pid(&stream) {
-            Ok(peer_pid) => dispatch(peer_pid, &request, &store, cx).await,
+            Ok(peer_pid) => {
+                let mut disconnect_stream = stream.clone();
+                smol::future::race(dispatch(peer_pid, &request, &store, cx), async move {
+                    let mut byte = [0];
+                    match disconnect_stream.read(&mut byte).await {
+                        Ok(0) => ControlResponse::error(
+                            ControlErrorCode::CallerNotRecognized,
+                            "control client disconnected",
+                        ),
+                        Ok(_) => ControlResponse::error(
+                            ControlErrorCode::InvalidRequest,
+                            "connection contains data after its request frame",
+                        ),
+                        Err(error) => error_response(format_args!(
+                            "failed to observe control client: {error}"
+                        )),
+                    }
+                })
+                .await
+            }
             Err(error) => error_response(format_args!(
                 "could not determine caller identity: {error:#}"
             )),
         },
-        Err(error) => ControlResponse::Error {
-            message: format!("malformed request: {error}"),
-        },
+        Err(error) => ControlResponse::error(
+            ControlErrorCode::InvalidRequest,
+            format!("malformed request: {error}"),
+        ),
     };
 
     let response_bytes = serde_json::to_vec(&response).context("failed to encode response")?;
+    let response_frame =
+        frame_payload(&response_bytes, MAX_RESPONSE_BYTES).context("failed to frame response")?;
     stream
-        .write_all(&response_bytes)
+        .write_all(&response_frame)
         .await
         .context("failed to write response")?;
     stream.flush().await.context("failed to flush response")?;
@@ -590,25 +613,449 @@ pub(crate) async fn dispatch(
     store: &Entity<AgentThreadStore>,
     cx: &mut AsyncApp,
 ) -> ControlResponse {
-    let agent_control_enabled =
-        cx.update(|cx| crate::AgentThreadSettings::get_global(cx).agent_control);
-    if !agent_control_enabled {
-        return error_response("agent_threads.agent_control is disabled");
+    if request.protocol.major != PROTOCOL_VERSION.major {
+        return ControlResponse::error(
+            ControlErrorCode::UnsupportedProtocol,
+            format!(
+                "unsupported protocol major {}; server supports {}",
+                request.protocol.major, PROTOCOL_VERSION.major
+            ),
+        );
     }
-
+    if matches!(request.command, ControlCommand::Status) {
+        let (flint_version, release_channel) = cx.update(|cx| {
+            (
+                release_channel::AppVersion::global(cx).to_string(),
+                release_channel::ReleaseChannel::try_global(cx)
+                    .unwrap_or(*release_channel::RELEASE_CHANNEL)
+                    .dev_name()
+                    .to_string(),
+            )
+        });
+        return ControlResponse::ok(ControlSuccess::Status(StatusResult {
+            flint_version,
+            protocol_version: PROTOCOL_VERSION,
+            release_channel,
+            capabilities: command_capabilities(),
+        }));
+    }
     let (tracked_pids, tracked_worktrees) = store.read_with(cx, |store, cx| {
         (
             store.live_terminal_pids(cx),
             store.live_terminal_worktree_roots(),
         )
     });
-    let terminal_item_id = match resolve_caller_thread(peer_pid, &tracked_pids, &tracked_worktrees)
-    {
-        Some(terminal_item_id) => terminal_item_id,
-        None => return ControlResponse::NotReady,
+    let records = cx.update(crate::terminal_control::records);
+    let caller_record = resolve_terminal_caller(peer_pid, &records).or_else(|| {
+        let terminal_item_id = resolve_caller_thread(peer_pid, &tracked_pids, &tracked_worktrees)?;
+        records.iter().find(|record| {
+            record
+                .view
+                .upgrade()
+                .is_some_and(|view| view.entity_id() == terminal_item_id)
+        })
+    });
+
+    if matches!(
+        request.command,
+        ControlCommand::TerminalCurrent
+            | ControlCommand::TerminalList(_)
+            | ControlCommand::TerminalRead(_)
+            | ControlCommand::TerminalSendText(_)
+            | ControlCommand::TerminalSendKey(_)
+            | ControlCommand::TerminalRun(_)
+            | ControlCommand::TerminalWaitOutput(_)
+    ) {
+        let Some(caller_record) = caller_record else {
+            return ControlResponse::not_ready();
+        };
+        return dispatch_terminal(caller_record, &records, request, cx).await;
+    }
+
+    let agent_control_enabled =
+        cx.update(|cx| crate::AgentThreadSettings::get_global(cx).agent_control);
+    if !agent_control_enabled {
+        return error_response("agent_threads.agent_control is disabled");
+    }
+    let Some(caller_record) = caller_record else {
+        return ControlResponse::not_ready();
+    };
+    let Some(terminal_item_id) = caller_record
+        .view
+        .upgrade()
+        .filter(|view| view.read_with(cx, |view, _cx| view.is_agent_thread()))
+        .map(|view| view.entity_id())
+    else {
+        return ControlResponse::error(
+            ControlErrorCode::CallerNotAgentThread,
+            "caller is not an Agent Thread terminal",
+        );
     };
 
     dispatch_for_caller(terminal_item_id, request, store, cx).await
+}
+
+fn resolve_terminal_caller(
+    peer_pid: u32,
+    records: &[crate::terminal_control::TerminalControlRecord],
+) -> Option<&crate::terminal_control::TerminalControlRecord> {
+    let refresh = sysinfo::ProcessRefreshKind::nothing()
+        .with_exe(sysinfo::UpdateKind::Always)
+        .with_cwd(sysinfo::UpdateKind::Always);
+    let mut system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(refresh),
+    );
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, refresh);
+    let tracked = records
+        .iter()
+        .filter_map(|record| {
+            record
+                .view
+                .upgrade()
+                .map(|view| (record.root_process_id, view.entity_id()))
+        })
+        .collect::<HashMap<_, _>>();
+    let view_id = walk_ancestry_for_match(peer_pid, &system, &tracked)?;
+    records.iter().find(|record| {
+        record
+            .view
+            .upgrade()
+            .is_some_and(|view| view.entity_id() == view_id)
+    })
+}
+
+async fn dispatch_terminal(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    records: &[crate::terminal_control::TerminalControlRecord],
+    request: &ControlRequest,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    match &request.command {
+        ControlCommand::TerminalCurrent => cx.update(|cx| {
+            crate::terminal_control::metadata(caller, cx)
+                .map(|metadata| ControlResponse::ok(ControlSuccess::TerminalCurrent(metadata)))
+                .unwrap_or_else(|| terminal_not_found(&caller.id))
+        }),
+        ControlCommand::TerminalList(options) => cx.update(|cx| {
+            let caller_workspace = crate::terminal_control::workspace_id(caller, cx);
+            let terminals = records
+                .iter()
+                .filter(|record| options.all || record.id != caller.id)
+                .filter(|record| {
+                    crate::terminal_control::workspace_id(record, cx) == caller_workspace
+                })
+                .filter_map(|record| crate::terminal_control::metadata(record, cx))
+                .collect();
+            ControlResponse::ok(ControlSuccess::TerminalList(terminals))
+        }),
+        ControlCommand::TerminalRead(read) => terminal_read(caller, records, read, cx),
+        ControlCommand::TerminalSendText(input) => terminal_send_text(caller, records, input, cx),
+        ControlCommand::TerminalSendKey(input) => terminal_send_keys(caller, records, input, cx),
+        ControlCommand::TerminalRun(input) => terminal_run(caller, records, input, cx),
+        ControlCommand::TerminalWaitOutput(wait) => {
+            terminal_wait_output(caller, records, wait, cx).await
+        }
+        _ => ControlResponse::error(
+            ControlErrorCode::InvalidRequest,
+            "terminal control command is not implemented",
+        ),
+    }
+}
+
+fn terminal_read(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    records: &[crate::terminal_control::TerminalControlRecord],
+    request: &TerminalReadRequest,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    if request.lines > agent_control_protocol::MAX_READ_LINES {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidRequest,
+            format!(
+                "line count exceeds {}",
+                agent_control_protocol::MAX_READ_LINES
+            ),
+        );
+    }
+    let Some(record) = records
+        .iter()
+        .find(|record| record.id == request.terminal_id)
+    else {
+        return terminal_not_found(&request.terminal_id);
+    };
+    let outside_workspace = cx.update(|cx| {
+        crate::terminal_control::workspace_id(record, cx)
+            != crate::terminal_control::workspace_id(caller, cx)
+    });
+    if outside_workspace {
+        return ControlResponse::error(
+            ControlErrorCode::TerminalOutsideWorkspace,
+            "terminal belongs to another workspace",
+        );
+    }
+    cx.update(|cx| {
+        let Some(terminal) = record.terminal.upgrade() else {
+            return terminal_not_found(&request.terminal_id);
+        };
+        let Some(metadata) = crate::terminal_control::metadata(record, cx) else {
+            return terminal_not_found(&request.terminal_id);
+        };
+        let snapshot = terminal
+            .read(cx)
+            .control_snapshot(terminal_snapshot_source(request.source), request.lines);
+        let (text, truncated) = bounded_terminal_text(snapshot.text);
+        ControlResponse::ok(ControlSuccess::TerminalRead(TerminalSnapshot {
+            terminal: metadata,
+            source: request.source,
+            text,
+            alternate_screen: snapshot.alternate_screen,
+            truncated,
+        }))
+    })
+}
+
+fn terminal_not_found(id: &TerminalControlId) -> ControlResponse {
+    ControlResponse::error(
+        ControlErrorCode::TerminalNotFound,
+        format!("terminal {} was not found", id.0),
+    )
+}
+
+fn bounded_terminal_text(mut text: String) -> (String, bool) {
+    const RESPONSE_METADATA_ALLOWANCE: usize = 4096;
+    let maximum = MAX_RESPONSE_BYTES.saturating_sub(RESPONSE_METADATA_ALLOWANCE);
+    if text.len() <= maximum {
+        return (text, false);
+    }
+    let mut end = maximum;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    (text, true)
+}
+
+fn terminal_snapshot_source(
+    source: agent_control_protocol::TerminalReadSource,
+) -> terminal::ControlSnapshotSource {
+    match source {
+        agent_control_protocol::TerminalReadSource::Visible => {
+            terminal::ControlSnapshotSource::Visible
+        }
+        agent_control_protocol::TerminalReadSource::Recent => {
+            terminal::ControlSnapshotSource::Recent
+        }
+        agent_control_protocol::TerminalReadSource::RecentUnwrapped => {
+            terminal::ControlSnapshotSource::RecentUnwrapped
+        }
+    }
+}
+
+fn accessible_terminal<'a>(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    records: &'a [crate::terminal_control::TerminalControlRecord],
+    id: &TerminalControlId,
+    cx: &mut AsyncApp,
+) -> Result<&'a crate::terminal_control::TerminalControlRecord, Box<ControlResponse>> {
+    let record = records
+        .iter()
+        .find(|record| &record.id == id)
+        .ok_or_else(|| Box::new(terminal_not_found(id)))?;
+    let outside_workspace = cx.update(|cx| {
+        crate::terminal_control::workspace_id(record, cx)
+            != crate::terminal_control::workspace_id(caller, cx)
+    });
+    if outside_workspace {
+        return Err(Box::new(ControlResponse::error(
+            ControlErrorCode::TerminalOutsideWorkspace,
+            "terminal belongs to another workspace",
+        )));
+    }
+    Ok(record)
+}
+
+fn terminal_send_text(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    records: &[crate::terminal_control::TerminalControlRecord],
+    request: &TerminalSendTextRequest,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    if request.text.contains('\0') {
+        return ControlResponse::error(ControlErrorCode::InvalidRequest, "text contains NUL");
+    }
+    let record = match accessible_terminal(caller, records, &request.terminal_id, cx) {
+        Ok(record) => record,
+        Err(response) => return *response,
+    };
+    cx.update(|cx| {
+        let Some(terminal) = record.terminal.upgrade() else {
+            return terminal_not_found(&request.terminal_id);
+        };
+        if terminal.read(cx).has_exited() {
+            return ControlResponse::error(
+                ControlErrorCode::TerminalExited,
+                "terminal process has exited",
+            );
+        }
+        terminal.update(cx, |terminal, _cx| {
+            terminal.input(request.text.clone().into_bytes());
+        });
+        ControlResponse::ok(ControlSuccess::TerminalInputAccepted)
+    })
+}
+
+fn terminal_send_keys(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    records: &[crate::terminal_control::TerminalControlRecord],
+    request: &TerminalSendKeyRequest,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    let keys = match request
+        .keys
+        .iter()
+        .map(|key| {
+            if !agent_control_protocol::is_supported_terminal_key(key) {
+                anyhow::bail!("unsupported terminal key {key:?}");
+            }
+            Keystroke::parse(key).map_err(anyhow::Error::from)
+        })
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(keys) => keys,
+        Err(error) => {
+            return ControlResponse::error(ControlErrorCode::InvalidKey, error.to_string());
+        }
+    };
+    let record = match accessible_terminal(caller, records, &request.terminal_id, cx) {
+        Ok(record) => record,
+        Err(response) => return *response,
+    };
+    cx.update(|cx| {
+        let Some(terminal) = record.terminal.upgrade() else {
+            return terminal_not_found(&request.terminal_id);
+        };
+        if terminal.read(cx).has_exited() {
+            return ControlResponse::error(
+                ControlErrorCode::TerminalExited,
+                "terminal process has exited",
+            );
+        }
+        let option_as_meta =
+            terminal::terminal_settings::TerminalSettings::get_global(cx).option_as_meta;
+        terminal.update(cx, |terminal, _cx| {
+            for key in &keys {
+                terminal.try_keystroke(key, option_as_meta);
+            }
+        });
+        ControlResponse::ok(ControlSuccess::TerminalInputAccepted)
+    })
+}
+
+fn terminal_run(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    records: &[crate::terminal_control::TerminalControlRecord],
+    request: &TerminalRunRequest,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    if request.command.contains('\0') {
+        return ControlResponse::error(ControlErrorCode::InvalidRequest, "command contains NUL");
+    }
+    let record = match accessible_terminal(caller, records, &request.terminal_id, cx) {
+        Ok(record) => record,
+        Err(response) => return *response,
+    };
+    cx.update(|cx| {
+        let Some(terminal) = record.terminal.upgrade() else {
+            return terminal_not_found(&request.terminal_id);
+        };
+        if terminal.read(cx).has_exited() {
+            return ControlResponse::error(
+                ControlErrorCode::TerminalExited,
+                "terminal process has exited",
+            );
+        }
+        let mut bytes = request.command.as_bytes().to_vec();
+        bytes.push(b'\r');
+        terminal.update(cx, |terminal, _cx| terminal.input(bytes));
+        ControlResponse::ok(ControlSuccess::TerminalInputAccepted)
+    })
+}
+
+async fn terminal_wait_output(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    records: &[crate::terminal_control::TerminalControlRecord],
+    request: &TerminalWaitOutputRequest,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    let matcher: Box<dyn Fn(&str) -> bool> = match &request.matcher {
+        TerminalOutputMatcher::Literal(pattern) => {
+            let pattern = pattern.clone();
+            Box::new(move |text| text.contains(&pattern))
+        }
+        TerminalOutputMatcher::Regex(pattern) => match regex::Regex::new(pattern) {
+            Ok(regex) => Box::new(move |text| regex.is_match(text)),
+            Err(error) => {
+                return ControlResponse::error(ControlErrorCode::InvalidPattern, error.to_string());
+            }
+        },
+    };
+    let record = match accessible_terminal(caller, records, &request.terminal_id, cx) {
+        Ok(record) => record.clone(),
+        Err(response) => return *response,
+    };
+    let generation = record.generation;
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_millis(request.timeout_millis))
+        .unwrap_or_else(std::time::Instant::now);
+    let Some((output_events, _subscription)) =
+        cx.update(|cx| crate::terminal_control::observe_output(&record, cx))
+    else {
+        return terminal_not_found(&request.terminal_id);
+    };
+    loop {
+        let snapshot = cx.update(|cx| {
+            if record.generation != generation {
+                return None;
+            }
+            let terminal = record.terminal.upgrade()?;
+            let metadata = crate::terminal_control::metadata(&record, cx)?;
+            let terminal_snapshot = terminal
+                .read(cx)
+                .control_snapshot(terminal_snapshot_source(request.source), request.lines);
+            let (text, truncated) = bounded_terminal_text(terminal_snapshot.text);
+            Some(TerminalSnapshot {
+                terminal: metadata,
+                source: request.source,
+                text,
+                alternate_screen: terminal_snapshot.alternate_screen,
+                truncated,
+            })
+        });
+        let Some(snapshot) = snapshot else {
+            return terminal_not_found(&request.terminal_id);
+        };
+        if matcher(&snapshot.text) {
+            return ControlResponse::ok(ControlSuccess::TerminalWaitOutput(snapshot));
+        }
+        if std::time::Instant::now() >= deadline {
+            return ControlResponse::error(
+                ControlErrorCode::Timeout,
+                "terminal output did not match before the timeout",
+            );
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let output_event = async { output_events.recv().await.is_ok() };
+        let timeout = async {
+            cx.background_executor().timer(remaining).await;
+            false
+        };
+        if !smol::future::race(output_event, timeout).await {
+            return ControlResponse::error(
+                ControlErrorCode::Timeout,
+                "terminal output did not match before the timeout",
+            );
+        }
+    }
 }
 
 /// The authorization-independent core: everything past "which thread is
@@ -621,20 +1068,40 @@ async fn dispatch_for_caller(
     store: &Entity<AgentThreadStore>,
     cx: &mut AsyncApp,
 ) -> ControlResponse {
-    match request {
-        ControlRequest::RetieThread(request) => {
+    match &request.command {
+        ControlCommand::ThreadRetie(request) => {
             handle_retie_thread(terminal_item_id, request, cx).await
         }
-        ControlRequest::CreateThread(request) => {
+        ControlCommand::ThreadCreate(request) => {
             handle_create_thread(terminal_item_id, request, store, cx).await
         }
+        _ => ControlResponse::error(
+            ControlErrorCode::InvalidRequest,
+            "terminal control command is not implemented",
+        ),
     }
 }
 
 pub(crate) fn error_response(error: impl std::fmt::Display) -> ControlResponse {
-    ControlResponse::Error {
-        message: error.to_string(),
-    }
+    ControlResponse::error(ControlErrorCode::Internal, error.to_string())
+}
+
+fn command_capabilities() -> Vec<String> {
+    [
+        "status",
+        "thread-retie",
+        "thread-create",
+        "terminal-current",
+        "terminal-list",
+        "terminal-read",
+        "terminal-send-text",
+        "terminal-send-key",
+        "terminal-run",
+        "terminal-wait-output",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 async fn handle_retie_thread(
@@ -671,7 +1138,7 @@ async fn handle_retie_thread(
     .await
     {
         Ok((tie, _persistence)) => {
-            ControlResponse::Ok(ControlSuccess::Retied { worktree: tie.root })
+            ControlResponse::ok(ControlSuccess::Retied { worktree: tie.root })
         }
         Err(error) => error_response(error),
     }
@@ -769,7 +1236,7 @@ fn launch_seeded_and_respond(
         .into_iter()
         .next()
     {
-        Some(worktree) => ControlResponse::Ok(ControlSuccess::ThreadCreated { worktree }),
+        Some(worktree) => ControlResponse::ok(ControlSuccess::ThreadCreated { worktree }),
         None => error_response("could not resolve the new thread's worktree"),
     }
 }
@@ -1040,6 +1507,32 @@ mod tests {
         if cfg!(windows) { "cmd" } else { "sleep" }
     }
 
+    #[test]
+    fn terminal_text_truncation_keeps_utf8_valid() {
+        let text = "界".repeat(MAX_RESPONSE_BYTES);
+        let (text, truncated) = bounded_terminal_text(text);
+        assert!(truncated);
+        assert!(text.len() <= MAX_RESPONSE_BYTES);
+        assert!(text.chars().all(|character| character == '界'));
+    }
+
+    #[test]
+    fn executable_marker_replaces_an_older_flintctl_path() {
+        let directory = tempfile::tempdir().expect("create marker directory");
+        let marker = directory
+            .path()
+            .join("agent-control-stable-executable.json");
+        std::fs::write(&marker, r#"{"executable":"/old/flintctl"}"#).expect("write old marker");
+        let current = PathBuf::from("/current/Flint.app/Contents/MacOS/flintctl");
+
+        assert!(write_executable_location_for(&marker, current.clone()));
+
+        let location: agent_control_protocol::AgentControlLocation =
+            serde_json::from_slice(&std::fs::read(&marker).expect("read current marker"))
+                .expect("decode current marker");
+        assert_eq!(location.executable, current);
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_path_containment_handles_case_and_mixed_separators() {
@@ -1238,12 +1731,12 @@ mod tests {
     async fn dispatch_for_caller_rejects_a_nonexistent_retie_directory(cx: &mut TestAppContext) {
         let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let request = ControlRequest::RetieThread(RetieThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadRetie(RetieThreadRequest {
             worktree: PathBuf::from("/definitely/does/not/exist/anywhere"),
-        });
+        }));
         let mut async_cx = cx.to_async();
         let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
-        assert!(matches!(response, ControlResponse::Error { .. }));
+        assert!(matches!(response.result, ControlResult::Error(_)));
     }
 
     #[gpui::test]
@@ -1253,13 +1746,13 @@ mod tests {
         std::fs::create_dir_all(&root_b).expect("failed to create the retie target directory");
 
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let request = ControlRequest::RetieThread(RetieThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadRetie(RetieThreadRequest {
             worktree: root_b.clone(),
-        });
+        }));
         let mut async_cx = cx.to_async();
         let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
-        match response {
-            ControlResponse::Ok(ControlSuccess::Retied { worktree }) => {
+        match response.result {
+            ControlResult::Ok(ControlSuccess::Retied { worktree }) => {
                 assert_eq!(worktree, root_b);
             }
             other => panic!("expected a successful retie, got {other:?}"),
@@ -1269,34 +1762,116 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn terminal_current_list_read_and_immediate_wait_use_the_registered_terminal(
+        cx: &mut TestAppContext,
+    ) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .expect("spawned terminal must be registered");
+        let mut async_cx = cx.to_async();
+
+        let current = dispatch_terminal(
+            caller,
+            &records,
+            &ControlRequest::current(ControlCommand::TerminalCurrent),
+            &mut async_cx,
+        )
+        .await;
+        let id = match current.result {
+            ControlResult::Ok(ControlSuccess::TerminalCurrent(metadata)) => metadata.id,
+            other => panic!("expected terminal current result, got {other:?}"),
+        };
+
+        let list = dispatch_terminal(
+            caller,
+            &records,
+            &ControlRequest::current(ControlCommand::TerminalList(
+                agent_control_protocol::TerminalListRequest { all: true },
+            )),
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            list.result,
+            ControlResult::Ok(ControlSuccess::TerminalList(ref terminals))
+                if terminals.iter().any(|terminal| terminal.id == id)
+        ));
+
+        let read = dispatch_terminal(
+            caller,
+            &records,
+            &ControlRequest::current(ControlCommand::TerminalRead(TerminalReadRequest {
+                terminal_id: id.clone(),
+                source: agent_control_protocol::TerminalReadSource::Recent,
+                lines: 120,
+            })),
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            read.result,
+            ControlResult::Ok(ControlSuccess::TerminalRead(_))
+        ));
+
+        let wait = dispatch_terminal(
+            caller,
+            &records,
+            &ControlRequest::current(ControlCommand::TerminalWaitOutput(
+                TerminalWaitOutputRequest {
+                    terminal_id: id,
+                    source: agent_control_protocol::TerminalReadSource::Recent,
+                    lines: 120,
+                    matcher: TerminalOutputMatcher::Literal("codex".to_string()),
+                    timeout_millis: 1_000,
+                },
+            )),
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            wait.result,
+            ControlResult::Ok(ControlSuccess::TerminalWaitOutput(_))
+        ));
+    }
+
+    #[gpui::test]
     async fn dispatch_for_caller_rejects_an_unknown_agent(cx: &mut TestAppContext) {
         let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let request = ControlRequest::CreateThread(CreateThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::Current,
             name: None,
             agent: "not-a-real-agent".to_string(),
             prompt: "do the thing".to_string(),
-        });
+        }));
         let mut async_cx = cx.to_async();
         let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
-        assert!(matches!(response, ControlResponse::Error { .. }));
+        assert!(matches!(response.result, ControlResult::Error(_)));
     }
 
     #[gpui::test]
     async fn dispatch_for_caller_seeds_a_new_sibling_thread(cx: &mut TestAppContext) {
         let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let request = ControlRequest::CreateThread(CreateThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::Current,
             name: None,
             agent: "codex".to_string(),
             prompt: "do the thing".to_string(),
-        });
+        }));
         let mut async_cx = cx.to_async();
         let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
-        match response {
-            ControlResponse::Ok(ControlSuccess::ThreadCreated { worktree }) => {
+        match response.result {
+            ControlResult::Ok(ControlSuccess::ThreadCreated { worktree }) => {
                 assert_eq!(worktree, PathBuf::from(SPAWNING_TEST_ROOT.as_str()));
             }
             other => panic!("expected a successful create-thread, got {other:?}"),
@@ -1308,23 +1883,23 @@ mod tests {
     async fn dispatch_reports_not_ready_when_no_thread_is_tracked(cx: &mut TestAppContext) {
         init_test(cx);
         let store = cx.update(|cx| AgentThreadStore::global(cx));
-        let request = ControlRequest::RetieThread(RetieThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadRetie(RetieThreadRequest {
             worktree: std::env::temp_dir(),
-        });
+        }));
         let mut async_cx = cx.to_async();
         // No thread has ever been spawned in this test, so no PID is
         // tracked and any peer -- including this very test process -- gets
         // NotReady rather than being matched to something it isn't.
         let response = dispatch(std::process::id(), &request, &store, &mut async_cx).await;
-        assert!(matches!(response, ControlResponse::NotReady));
+        assert!(matches!(response.result, ControlResult::NotReady));
     }
 
     /// The one real end-to-end test: talks to `run_server`/`handle_connection`
     /// over an actual Unix socket (a temp path, never the real
     /// `paths::data_dir()` one `control::init` binds), covering the wire
     /// framing the `dispatch_for_caller`-level tests above don't touch --
-    /// JSON encode on the client, `read_to_end`-until-EOF plus decode on the
-    /// server, real peer-credential retrieval, and the response written
+    /// JSON encode and length framing on the client, decode on the server,
+    /// real peer-credential retrieval, and the response written
     /// back. The connecting process here is the test binary itself, which
     /// (correctly) can never resolve to the live thread's own tracked PID --
     /// that thread's terminal process is a *child* of this test binary, not
@@ -1339,7 +1914,6 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().expect("failed to create a temp dir for the socket");
         let socket_path = temp_dir.path().join("agent-control-test.sock");
-        let executable_location_path = temp_dir.path().join("agent-control-test-executable.json");
         let owns_socket = Arc::new(AtomicBool::new(false));
 
         let server_cx = cx.to_async();
@@ -1347,15 +1921,7 @@ mod tests {
             let socket_path = socket_path.clone();
             let owns_socket = owns_socket.clone();
             async move |cx| {
-                run_server(
-                    socket_path,
-                    executable_location_path,
-                    owns_socket,
-                    store,
-                    cx,
-                )
-                .await
-                .ok();
+                run_server(socket_path, owns_socket, store, cx).await.ok();
             }
         });
 
@@ -1376,26 +1942,29 @@ mod tests {
         let mut stream = UnixStream::connect(&socket_path)
             .await
             .expect("failed to connect to the test socket");
-        let request = ControlRequest::RetieThread(RetieThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadRetie(RetieThreadRequest {
             worktree: std::env::temp_dir(),
-        });
+        }));
         let payload = serde_json::to_vec(&request).expect("failed to encode request");
+        let frame = frame_payload(&payload, MAX_REQUEST_BYTES).expect("failed to frame request");
         stream
-            .write_all(&payload)
+            .write_all(&frame)
             .await
             .expect("failed to write request");
+        let mut response_length = [0; FRAME_LENGTH_BYTES];
         stream
-            .shutdown(std::net::Shutdown::Write)
-            .expect("failed to shut down the write half");
-        let mut response_bytes = Vec::new();
-        stream
-            .read_to_end(&mut response_bytes)
+            .read_exact(&mut response_length)
             .await
-            .expect("failed to read response");
+            .expect("failed to read response length");
+        let mut response_bytes = vec![0; u32::from_be_bytes(response_length) as usize];
+        stream
+            .read_exact(&mut response_bytes)
+            .await
+            .expect("failed to read response payload");
         let response: ControlResponse =
             serde_json::from_slice(&response_bytes).expect("failed to decode response");
         assert!(
-            matches!(response, ControlResponse::NotReady),
+            matches!(response.result, ControlResult::NotReady),
             "this test process is a child, not an ancestor, of the tracked terminal's process, \
              so it can never resolve -- got {response:?}"
         );

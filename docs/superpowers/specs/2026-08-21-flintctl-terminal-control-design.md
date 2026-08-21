@@ -85,7 +85,7 @@ agent-state detection, event-subscription API, plugin API, or session restore.
 Those features depend on Herdr owning a persistent terminal server and need
 separate Flint designs.
 
-## Command name and compatibility
+## Command name and instruction upgrades
 
 The installed executable becomes `flintctl`. Command names use noun-first
 groups so that later additions do not create another flat list:
@@ -95,26 +95,16 @@ flint-agent-control retie-thread ...  -> flintctl thread retie ...
 flint-agent-control create-thread ... -> flintctl thread create ...
 ```
 
-The application bundle and Linux packages keep a `flint-agent-control`
-compatibility executable for two stable releases. It accepts the two old
-commands, prints one deprecation message to standard error, and sends the same
-protocol requests as `flintctl`. Scripts that request `--json` still get only
-JSON on standard output. `flintctl` itself also accepts the old flat
-`retie-thread` and `create-thread` forms during the same compatibility period.
-This is necessary because Agent Thread instruction files already stored on
-disk can contain the old command form while executable discovery now resolves
-to `flintctl`.
+The application bundle and packages contain only `flintctl`. The command does
+not accept the old flat forms, and the server does not decode the old request
+names.
 
-The executable-location marker keeps its current file name during the
-compatibility period, but its JSON `executable` value points to `flintctl`.
-Existing instructions can therefore find the marker and run their old command
-against the new executable without failure. New instruction blocks use the
-noun-first form from the first release. After the compatibility period, a
-separate cleanup change can rename the marker, remove both old command aliases,
-and remove the old executable. The cleanup must first provide an explicit
-rewrite path for stored instruction blocks that still contain
-`retie-thread --worktree`; the current `already_has_instructions` append-only
-check cannot perform that migration.
+The executable-location marker keeps its current release-channel-scoped file
+name, but every Flint launch rewrites its JSON value to the running version's
+`flintctl`. The same launch synchronizes a versioned Flint-managed block in
+each supported installed agent's global instruction file. This replaces exact
+known old blocks, removes their flat commands, and preserves all user content
+outside the managed block.
 
 The Rust crates can keep their current names during the first change. Renaming
 the crates does not change user behavior and would make the functional diff
@@ -308,10 +298,8 @@ completes only when the client disconnects. A disconnect cancels the wait and
 its observation task. Windows uses the same message-length rule over its named
 pipe.
 
-During compatibility, the server also accepts the legacy EOF-framed request
-for the two old thread commands. Legacy framing cannot request a long-lived
-terminal wait. Framing detection and request-size checks happen before JSON
-decoding.
+The server accepts only the current length-prefixed framing. Framing detection
+and request-size checks happen before JSON decoding.
 
 The result includes the final bounded snapshot so a caller does not need an
 immediate second request.
@@ -341,9 +329,8 @@ are additive, and clients ignore fields they do not understand. A lightweight
 version, release channel, and supported command capabilities. This lets an
 agent check support before it depends on a new operation.
 
-During compatibility, decode the existing `retie-thread` and `create-thread`
-request names as aliases for the new thread variants. Responses use specific
-success types for thread and terminal operations. Expected failures return
+Decode only the current noun-first thread request names. Responses use
+specific success types for thread and terminal operations. Expected failures return
 machine-readable error codes plus a message, for example:
 
 ```text
@@ -411,19 +398,18 @@ Build and package `flintctl` beside the current helper location on every
 supported platform. Update Agent Thread instructions to discover the executable
 through the existing marker. Do not require `flintctl` to be in `PATH`.
 
-The compatibility executable can be a small wrapper or a second binary target
-that shares the same client library. It must not locate and start Flint. If no
-matching control endpoint exists, it reports that Flint is not running or that
-the release channel does not match.
+`flintctl` does not locate and start Flint. If no matching control endpoint
+exists, it reports that Flint is not running or that the release channel does
+not match.
 
 Release-channel scoping remains part of the endpoint and marker names. A Stable
 client must not connect to a Nightly or development Flint process by accident.
 
 ## Verification
 
-Protocol tests cover serialization, old request aliases, response limits, and
-all error codes. CLI tests cover the new command hierarchy, human output, JSON
-output, and compatibility commands.
+Protocol tests cover serialization, rejection of old request names, response
+limits, and all error codes. CLI tests cover the current command hierarchy,
+human output, JSON output, and rejection of old flat commands.
 
 Server tests cover:
 
@@ -441,9 +427,10 @@ Server tests cover:
 - unchanged `thread retie` and `thread create` behavior;
 - local, Direct remote, and Tunneled remote route boundaries.
 
-Package tests verify that `flintctl` and the compatibility executable are in
-the macOS application bundle and Linux and Windows packages. Instruction tests
-verify that newly started Agent Threads receive the `flintctl` discovery text.
+Package tests verify that `flintctl` is in the macOS application bundle and
+Linux and Windows packages and that `flint-agent-control` is absent.
+Instruction tests verify that every new Flint launch installs the current
+`flintctl` discovery text.
 
 ## Non-goals
 
@@ -466,17 +453,14 @@ boundary implicitly.
 ## Implementation order
 
 1. Add the `flintctl` command hierarchy, protocol version and status result,
-   old flat-command aliases, new Agent Thread instructions, packaging, and the
-   compatibility executable without changing server behavior.
+   launch-time Agent Thread instruction synchronization, and packaging. Remove
+   the old executable and reject old flat commands and request names.
 2. Add `TerminalControlRegistry`, terminal lifecycle registration, caller
    resolution, and `terminal current` and `terminal list`.
 3. Add bounded terminal reads and their alternate-screen metadata.
 4. Add validated text and key input plus `terminal run`.
-5. Add length-prefixed framing and cancellable `terminal wait-output`, while
-   retaining legacy framing for old thread commands.
-6. After the compatibility period, migrate stored instruction blocks and then
-   remove the old flat-command aliases, compatibility executable, and old
-   marker name.
+5. Add current-only length-prefixed framing and cancellable
+   `terminal wait-output`.
 
 Each stage keeps the current thread commands working and can be tested before
 the next stage changes the control surface.

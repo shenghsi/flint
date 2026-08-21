@@ -1,4 +1,4 @@
-//! Wire types shared between `agent_control_cli` (the `flint-agent-control`
+//! Wire types shared between `agent_control_cli` (the `flintctl`
 //! binary an agent's own CLI process invokes) and `agent_threads::control`
 //! (the local control server inside Flint that handles the request). Kept
 //! dependency-free of GPUI/terminal so the CLI binary stays small.
@@ -10,6 +10,122 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+pub const DEFAULT_READ_LINES: usize = 120;
+pub const MAX_READ_LINES: usize = 10_000;
+pub const FRAME_LENGTH_BYTES: usize = 4;
+pub const SUPPORTED_TERMINAL_KEY_NAMES: &[&str] = &[
+    "enter",
+    "escape",
+    "tab",
+    "backspace",
+    "delete",
+    "insert",
+    "home",
+    "end",
+    "pageup",
+    "pagedown",
+    "up",
+    "down",
+    "left",
+    "right",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+];
+
+pub fn is_supported_terminal_key(value: &str) -> bool {
+    let mut parts = value.split('-').peekable();
+    while let Some(part) = parts.peek().copied() {
+        if matches!(part, "ctrl" | "alt" | "shift" | "cmd") {
+            parts.next();
+        } else {
+            break;
+        }
+    }
+    let Some(key) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    key.chars().count() == 1 || SUPPORTED_TERMINAL_KEY_NAMES.contains(&key)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameError {
+    MissingLength,
+    TooLarge { length: usize, maximum: usize },
+    LengthMismatch { declared: usize, actual: usize },
+}
+
+impl std::fmt::Display for FrameError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingLength => write!(formatter, "frame has no length prefix"),
+            Self::TooLarge { length, maximum } => {
+                write!(formatter, "frame length {length} exceeds maximum {maximum}")
+            }
+            Self::LengthMismatch { declared, actual } => write!(
+                formatter,
+                "frame declares {declared} bytes but contains {actual} bytes"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for FrameError {}
+
+pub fn frame_payload(payload: &[u8], maximum: usize) -> Result<Vec<u8>, FrameError> {
+    if payload.len() > maximum || payload.len() > u32::MAX as usize {
+        return Err(FrameError::TooLarge {
+            length: payload.len(),
+            maximum,
+        });
+    }
+    let mut frame = Vec::with_capacity(FRAME_LENGTH_BYTES + payload.len());
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(payload);
+    Ok(frame)
+}
+
+pub fn decode_frame(frame: &[u8], maximum: usize) -> Result<&[u8], FrameError> {
+    let length_bytes: [u8; FRAME_LENGTH_BYTES] = frame
+        .get(..FRAME_LENGTH_BYTES)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(FrameError::MissingLength)?;
+    let declared = u32::from_be_bytes(length_bytes) as usize;
+    if declared > maximum {
+        return Err(FrameError::TooLarge {
+            length: declared,
+            maximum,
+        });
+    }
+    let payload = &frame[FRAME_LENGTH_BYTES..];
+    if payload.len() != declared {
+        return Err(FrameError::LengthMismatch {
+            declared,
+            actual: payload.len(),
+        });
+    }
+    Ok(payload)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtocolVersion {
+    pub major: u16,
+    pub minor: u16,
+}
+
+pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor: 0 };
 
 /// `stable` | `dev` | `nightly` | `preview`. A local re-derivation of
 /// `release_channel::RELEASE_CHANNEL_NAME`'s own logic, not a dependency on
@@ -44,12 +160,11 @@ pub fn socket_path() -> PathBuf {
 }
 
 /// Path to the marker file at which Flint records where its own
-/// `flint-agent-control` executable lives, so an agent's own CLI process can
+/// `flintctl` executable lives, so an agent's own CLI process can
 /// discover what command to run in the first place. One location per
-/// release channel; written once when Flint's control server starts (see
-/// `agent_threads::control::init`) and removed on quit -- not per-thread,
-/// since the executable's location is the same for every thread in one
-/// Flint session.
+/// release channel; rewritten on each Flint launch so it always refers to the
+/// current installed version. It is not per-thread because the executable's
+/// location is the same for every thread in one Flint session.
 #[cfg(unix)]
 pub fn executable_location_path() -> PathBuf {
     paths::data_dir().join(format!(
@@ -130,10 +245,34 @@ pub struct AgentControlLocation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlRequest {
+    pub protocol: ProtocolVersion,
+    #[serde(flatten)]
+    pub command: ControlCommand,
+}
+
+impl ControlRequest {
+    pub fn current(command: ControlCommand) -> Self {
+        Self {
+            protocol: PROTOCOL_VERSION,
+            command,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "kebab-case")]
-pub enum ControlRequest {
-    RetieThread(RetieThreadRequest),
-    CreateThread(CreateThreadRequest),
+pub enum ControlCommand {
+    ThreadRetie(RetieThreadRequest),
+    ThreadCreate(CreateThreadRequest),
+    Status,
+    TerminalCurrent,
+    TerminalList(TerminalListRequest),
+    TerminalRead(TerminalReadRequest),
+    TerminalSendText(TerminalSendTextRequest),
+    TerminalSendKey(TerminalSendKeyRequest),
+    TerminalRun(TerminalRunRequest),
+    TerminalWaitOutput(TerminalWaitOutputRequest),
 }
 
 /// Re-tie the calling thread to a different worktree. `worktree` is only
@@ -166,6 +305,75 @@ pub struct CreateThreadRequest {
     pub prompt: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TerminalControlId(pub String);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalListRequest {
+    #[serde(default)]
+    pub all: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalReadSource {
+    Visible,
+    #[default]
+    Recent,
+    RecentUnwrapped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalReadRequest {
+    pub terminal_id: TerminalControlId,
+    #[serde(default)]
+    pub source: TerminalReadSource,
+    #[serde(default = "default_read_lines")]
+    pub lines: usize,
+}
+
+fn default_read_lines() -> usize {
+    DEFAULT_READ_LINES
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalSendTextRequest {
+    pub terminal_id: TerminalControlId,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalSendKeyRequest {
+    pub terminal_id: TerminalControlId,
+    pub keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalRunRequest {
+    pub terminal_id: TerminalControlId,
+    #[serde(rename = "text")]
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "match-kind", content = "pattern", rename_all = "kebab-case")]
+pub enum TerminalOutputMatcher {
+    Literal(String),
+    Regex(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalWaitOutputRequest {
+    pub terminal_id: TerminalControlId,
+    #[serde(default)]
+    pub source: TerminalReadSource,
+    #[serde(default = "default_read_lines")]
+    pub lines: usize,
+    pub matcher: TerminalOutputMatcher,
+    pub timeout_millis: u64,
+}
+
 /// The connecting process could not yet be matched to a registered thread --
 /// either because it hasn't finished registering (the terminal spawned very
 /// recently and `AgentThreadStore::register` hasn't run yet), or because it
@@ -175,18 +383,106 @@ pub struct CreateThreadRequest {
 /// with bounded backoff, and a request that's never going to match simply
 /// exhausts its retries and reports failure like any other unauthorized call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "kebab-case")]
-pub enum ControlResponse {
-    Ok(ControlSuccess),
-    NotReady,
-    Error { message: String },
+pub struct ControlResponse {
+    pub protocol: ProtocolVersion,
+    #[serde(flatten)]
+    pub result: ControlResult,
+}
+
+impl ControlResponse {
+    pub fn ok(success: ControlSuccess) -> Self {
+        Self {
+            protocol: PROTOCOL_VERSION,
+            result: ControlResult::Ok(success),
+        }
+    }
+
+    pub fn not_ready() -> Self {
+        Self {
+            protocol: PROTOCOL_VERSION,
+            result: ControlResult::NotReady,
+        }
+    }
+
+    pub fn error(code: ControlErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            protocol: PROTOCOL_VERSION,
+            result: ControlResult::Error(ControlError {
+                code,
+                message: message.into(),
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "status", content = "result", rename_all = "kebab-case")]
+pub enum ControlResult {
+    Ok(ControlSuccess),
+    NotReady,
+    Error(ControlError),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlError {
+    pub code: ControlErrorCode,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ControlErrorCode {
+    CallerNotRecognized,
+    CallerNotAgentThread,
+    TerminalNotFound,
+    TerminalOutsideWorkspace,
+    TerminalExited,
+    InvalidKey,
+    InvalidPattern,
+    InvalidRequest,
+    Timeout,
+    ResponseTooLarge,
+    UnsupportedProtocol,
+    Internal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
 pub enum ControlSuccess {
     Retied { worktree: PathBuf },
     ThreadCreated { worktree: PathBuf },
+    Status(StatusResult),
+    TerminalCurrent(TerminalMetadata),
+    TerminalList(Vec<TerminalMetadata>),
+    TerminalRead(TerminalSnapshot),
+    TerminalInputAccepted,
+    TerminalWaitOutput(TerminalSnapshot),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusResult {
+    pub flint_version: String,
+    pub protocol_version: ProtocolVersion,
+    pub release_channel: String,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalMetadata {
+    pub id: TerminalControlId,
+    pub title: String,
+    pub working_directory: Option<PathBuf>,
+    pub is_agent_thread: bool,
+    pub has_exited: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalSnapshot {
+    pub terminal: TerminalMetadata,
+    pub source: TerminalReadSource,
+    pub text: String,
+    pub alternate_screen: bool,
+    pub truncated: bool,
 }
 
 #[cfg(test)]
@@ -194,9 +490,96 @@ mod tests {
     use super::*;
 
     #[test]
+    fn current_frame_round_trips_and_eof_json_is_rejected() {
+        let payload = br#"{"command":"status"}"#;
+        let frame = frame_payload(payload, MAX_REQUEST_BYTES).expect("frame payload");
+        assert_eq!(
+            decode_frame(&frame, MAX_REQUEST_BYTES),
+            Ok(payload.as_slice())
+        );
+        assert_eq!(
+            decode_frame(payload, MAX_REQUEST_BYTES),
+            Err(FrameError::TooLarge {
+                length: u32::from_be_bytes(*b"{\"co") as usize,
+                maximum: MAX_REQUEST_BYTES,
+            })
+        );
+    }
+
+    #[test]
+    fn frame_rejects_mismatched_and_oversized_lengths() {
+        assert!(matches!(
+            decode_frame(&[0, 0, 0, 2, b'a'], MAX_REQUEST_BYTES),
+            Err(FrameError::LengthMismatch { .. })
+        ));
+        assert!(matches!(
+            decode_frame(&[0, 0, 0, 5], 4),
+            Err(FrameError::TooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn terminal_key_validation_accepts_documented_keys_and_modifiers() {
+        for key in ["enter", "escape", "ctrl-c", "alt-left", "shift-f12"] {
+            assert!(is_supported_terminal_key(key), "{key}");
+        }
+        for key in ["", "ctrl-", "not-a-key", "ctrl-not-a-key"] {
+            assert!(!is_supported_terminal_key(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn current_request_includes_protocol_version_and_grouped_command_name() {
+        let request = ControlRequest::current(ControlCommand::ThreadRetie(RetieThreadRequest {
+            worktree: PathBuf::from("/repo/worktrees/feature"),
+        }));
+
+        let json = serde_json::to_value(&request).expect("serialize");
+
+        assert_eq!(json["protocol"]["major"], PROTOCOL_VERSION.major);
+        assert_eq!(json["protocol"]["minor"], PROTOCOL_VERSION.minor);
+        assert_eq!(json["command"], "thread-retie");
+    }
+
+    #[test]
+    fn old_request_names_are_rejected() {
+        for command in ["retie-thread", "create-thread"] {
+            let json = format!(
+                r#"{{"protocol":{{"major":1,"minor":0}},"command":"{command}","worktree":"/repo"}}"#
+            );
+            assert!(serde_json::from_str::<ControlRequest>(&json).is_err());
+        }
+    }
+
+    #[test]
+    fn response_ignores_unknown_minor_version_fields() {
+        let json = r#"{
+            "protocol":{"major":1,"minor":1},
+            "status":"ok",
+            "result":{
+                "kind":"status",
+                "data":{
+                    "flint_version":"1.2.3",
+                    "protocol_version":{"major":1,"minor":1},
+                    "release_channel":"stable",
+                    "capabilities":["terminal-read"],
+                    "future_field":true
+                }
+            },
+            "future_field":true
+        }"#;
+
+        let response = serde_json::from_str::<ControlResponse>(json).expect("deserialize");
+        assert!(matches!(
+            response.result,
+            ControlResult::Ok(ControlSuccess::Status(_))
+        ));
+    }
+
+    #[test]
     fn agent_control_location_round_trips_through_json() {
         let location = AgentControlLocation {
-            executable: PathBuf::from("/Applications/Flint.app/Contents/MacOS/flint-agent-control"),
+            executable: PathBuf::from("/Applications/Flint.app/Contents/MacOS/flintctl"),
         };
         let json = serde_json::to_string(&location).expect("serialize");
         let decoded: AgentControlLocation = serde_json::from_str(&json).expect("deserialize");
@@ -205,53 +588,75 @@ mod tests {
 
     #[test]
     fn retie_thread_request_round_trips_through_json() {
-        let request = ControlRequest::RetieThread(RetieThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadRetie(RetieThreadRequest {
             worktree: PathBuf::from("/repo/worktrees/feature"),
-        });
+        }));
         let json = serde_json::to_string(&request).expect("serialize");
         let decoded: ControlRequest = serde_json::from_str(&json).expect("deserialize");
-        match decoded {
-            ControlRequest::RetieThread(request) => {
+        match decoded.command {
+            ControlCommand::ThreadRetie(request) => {
                 assert_eq!(request.worktree, PathBuf::from("/repo/worktrees/feature"));
             }
-            other => panic!("expected RetieThread, got {other:?}"),
+            other => panic!("expected ThreadRetie, got {other:?}"),
         }
     }
 
     #[test]
     fn create_thread_request_round_trips_through_json() {
-        let request = ControlRequest::CreateThread(CreateThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::New,
             name: Some("feature-x".to_string()),
             agent: "codex".to_string(),
             prompt: "implement the thing".to_string(),
-        });
+        }));
         let json = serde_json::to_string(&request).expect("serialize");
         let decoded: ControlRequest = serde_json::from_str(&json).expect("deserialize");
-        match decoded {
-            ControlRequest::CreateThread(request) => {
+        match decoded.command {
+            ControlCommand::ThreadCreate(request) => {
                 assert_eq!(request.worktree, CreateThreadWorktree::New);
                 assert_eq!(request.name.as_deref(), Some("feature-x"));
                 assert_eq!(request.agent, "codex");
                 assert_eq!(request.prompt, "implement the thing");
             }
-            other => panic!("expected CreateThread, got {other:?}"),
+            other => panic!("expected ThreadCreate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_run_request_round_trips_without_conflicting_command_fields() {
+        let request = ControlRequest::current(ControlCommand::TerminalRun(TerminalRunRequest {
+            terminal_id: TerminalControlId("terminal-1".to_string()),
+            command: "flintctl --help".to_string(),
+        }));
+
+        let json = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(json["command"], "terminal-run");
+        assert_eq!(json["text"], "flintctl --help");
+
+        let decoded: ControlRequest = serde_json::from_value(json).expect("deserialize");
+        match decoded.command {
+            ControlCommand::TerminalRun(request) => {
+                assert_eq!(
+                    request.terminal_id,
+                    TerminalControlId("terminal-1".to_string())
+                );
+                assert_eq!(request.command, "flintctl --help");
+            }
+            other => panic!("expected TerminalRun, got {other:?}"),
         }
     }
 
     #[test]
     fn responses_round_trip_through_json() {
         for response in [
-            ControlResponse::Ok(ControlSuccess::Retied {
+            ControlResponse::ok(ControlSuccess::Retied {
                 worktree: PathBuf::from("/repo/worktrees/feature"),
             }),
-            ControlResponse::Ok(ControlSuccess::ThreadCreated {
+            ControlResponse::ok(ControlSuccess::ThreadCreated {
                 worktree: PathBuf::from("/repo/worktrees/feature"),
             }),
-            ControlResponse::NotReady,
-            ControlResponse::Error {
-                message: "unrecognized caller".to_string(),
-            },
+            ControlResponse::not_ready(),
+            ControlResponse::error(ControlErrorCode::CallerNotRecognized, "unrecognized caller"),
         ] {
             let json = serde_json::to_string(&response).expect("serialize");
             let _decoded: ControlResponse = serde_json::from_str(&json).expect("deserialize");

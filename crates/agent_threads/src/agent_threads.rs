@@ -21,6 +21,8 @@ mod pi_history;
 mod plan_usage;
 mod remote_process;
 mod store;
+#[cfg(any(unix, windows))]
+mod terminal_control;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -638,6 +640,8 @@ pub fn init(cx: &mut App) {
     AgentThreadSettings::register(cx);
     RemoteAgentRoutingSettings::register(cx);
     store::init(cx);
+    #[cfg(any(unix, windows))]
+    terminal_control::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(new_codex_thread);
@@ -657,7 +661,14 @@ pub fn init(cx: &mut App) {
 /// No-op on unsupported platforms, where the control server doesn't exist.
 pub fn init_control_server(cx: &mut App) {
     #[cfg(any(unix, windows))]
-    control::init(cx);
+    {
+        let instruction_sync_errors = Arc::new(instructions::synchronize_worktree_instructions());
+        cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
+            instructions::show_sync_errors(&instruction_sync_errors, workspace, cx);
+        })
+        .detach();
+        control::init(cx);
+    }
     #[cfg(not(any(unix, windows)))]
     let _ = cx;
 }

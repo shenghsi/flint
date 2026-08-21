@@ -139,7 +139,7 @@ function BuildFlintAndItsFriends {
     Copy-Item -Path ".\$CargoOutDir\flint.exe" -Destination "$innoDir\Flint.exe" -Force
     Copy-Item -Path ".\$CargoOutDir\cli.exe" -Destination "$innoDir\cli.exe" -Force
     Copy-Item -Path ".\$CargoOutDir\auto_update_helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
-    Copy-Item -Path ".\$CargoOutDir\flint-agent-control.exe" -Destination "$innoDir\flint-agent-control.exe" -Force
+    Copy-Item -Path ".\$CargoOutDir\flintctl.exe" -Destination "$innoDir\flintctl.exe" -Force
     # Build explorer_command_injector.dll
     switch ($channel) {
         "stable" {
@@ -179,7 +179,7 @@ function ZipFlintAndItsFriendsDebug {
         ".\$CargoOutDir\flint.pdb",
         ".\$CargoOutDir\cli.pdb",
         ".\$CargoOutDir\auto_update_helper.pdb",
-        ".\$CargoOutDir\flint_agent_control.pdb",
+        ".\$CargoOutDir\flintctl.pdb",
         ".\$CargoOutDir\explorer_command_injector.pdb",
         ".\$CargoOutDir\remote_server.pdb"
     )
@@ -215,7 +215,7 @@ function SignFlintAndItsFriends {
         return
     }
 
-    $files = "$innoDir\Flint.exe,$innoDir\cli.exe,$innoDir\auto_update_helper.exe,$innoDir\flint-agent-control.exe,$innoDir\flint_explorer_command_injector.dll,$innoDir\flint_explorer_command_injector.appx"
+    $files = "$innoDir\Flint.exe,$innoDir\cli.exe,$innoDir\auto_update_helper.exe,$innoDir\flintctl.exe,$innoDir\flint_explorer_command_injector.dll,$innoDir\flint_explorer_command_injector.appx"
     & "$innoDir\sign.ps1" $files
 }
 
