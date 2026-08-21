@@ -14,12 +14,14 @@ Flint terminal inspect and operate another terminal in the same workspace.
 The first version has these user-visible command groups:
 
 ```text
+flintctl status [--json]
+
 flintctl thread retie --worktree <path>
 flintctl thread create --worktree <current|new> --agent <agent> --prompt <prompt>
 
 flintctl terminal current
 flintctl terminal list
-flintctl terminal read <terminal-id> [--source visible|recent] [--lines <count>]
+flintctl terminal read <terminal-id> [--source visible|recent|recent-unwrapped] [--lines <count>]
 flintctl terminal send-text <terminal-id> <text>
 flintctl terminal send-key <terminal-id> <key>...
 flintctl terminal run <terminal-id> <command>
@@ -55,6 +57,33 @@ Flint already has the terminal primitives that the new commands need:
 
 The missing parts are an identity for each live terminal, a registry that can
 resolve the calling terminal, and protocol operations for terminal access.
+
+## Ideas adapted from Herdr
+
+This design borrows selected control-surface ideas from the
+[Herdr documentation](https://herdr.dev/docs/). Herdr is a persistent terminal
+multiplexer, while Flint is an editor that owns terminal entities for the life
+of the application. The shared ideas do not make the process models equal.
+
+The adapted ideas are:
+
+- Make the CLI the normal automation surface. Keep the socket protocol as an
+  implementation interface until Flint has a reason to support third-party
+  protocol clients.
+- Keep terminal identity separate from visual pane and layout identity.
+- Provide explicit `current`, `list`, `read`, validated-key input, command
+  input, and output-wait operations.
+- Provide `visible`, `recent`, and `recent-unwrapped` read sources.
+- Search existing output before an event-driven wait begins.
+- Pin the resolved target for the life of a wait so a replacement terminal
+  cannot satisfy it.
+- Return typed success results and machine-readable error codes.
+- Version the protocol and require clients to ignore unknown response fields.
+
+The first version does not copy Herdr's workspace, tab, and pane management,
+agent-state detection, event-subscription API, plugin API, or session restore.
+Those features depend on Herdr owning a persistent terminal server and need
+separate Flint designs.
 
 ## Command name and compatibility
 
@@ -187,6 +216,9 @@ Return a bounded plain-text snapshot. The supported sources are:
 
 - `visible`: the current visible terminal grid.
 - `recent`: the current grid plus available primary-screen scrollback.
+- `recent-unwrapped`: the same available history with soft-wrapped display
+  rows joined into logical lines. This source is useful for logs and command
+  output that the terminal width wrapped.
 
 `recent` is the default. `--lines` defaults to 120 and has a configured hard
 maximum. The response also reports whether the terminal is on the alternate
@@ -232,7 +264,9 @@ caller is responsible for selecting an appropriate target.
 Wait until a literal string or Rust regular expression appears in the selected
 read snapshot. Search once before subscribing so output that already exists can
 match. Then observe terminal content changes until the pattern matches, the
-target exits, the target is released, or the timeout expires.
+target exits, the target is released, or the timeout expires. Pin the resolved
+terminal entity and its registry generation when the wait starts. A terminal
+that later replaces the item in the same pane or tab cannot satisfy the wait.
 
 The default read source is `recent`. A timeout is required at the protocol
 layer; the CLI supplies a conservative default when the user omits it. Cancel
@@ -258,6 +292,13 @@ terminal-send-key
 terminal-run
 terminal-wait-output
 ```
+
+Add a protocol version to every request and response. The server rejects a
+client whose required major version is not supported. Minor-version additions
+are additive, and clients ignore fields they do not understand. A lightweight
+`flintctl status --json` command reports the running Flint version, protocol
+version, release channel, and supported command capabilities. This lets an
+agent check support before it depends on a new operation.
 
 During compatibility, decode the existing `retie-thread` and `create-thread`
 request names as aliases for the new thread variants. Responses use specific
@@ -337,12 +378,13 @@ Server tests cover:
 - caller resolution from ordinary terminals and Agent Thread terminals;
 - denial for an external process and for a target in another workspace;
 - registration, release, move, and non-reuse of terminal IDs;
-- visible and recent reads, line limits, UTF-8 truncation, and alternate-screen
-  reporting;
+- visible, recent, and recent-unwrapped reads, line limits, UTF-8 truncation,
+  and alternate-screen reporting;
+- `recent-unwrapped` reconstruction across soft-wrapped rows;
 - text input, validated keys, atomic run input, exited terminals, and
   display-only terminals;
 - immediate and delayed output matches, invalid regular expressions, timeout,
-  target release, and client cancellation;
+  pinned-target replacement, target release, and client cancellation;
 - Unix socket permissions and Windows peer-process verification;
 - unchanged `thread retie` and `thread create` behavior;
 - local, Direct remote, and Tunneled remote route boundaries.
@@ -370,8 +412,9 @@ boundary implicitly.
 
 ## Implementation order
 
-1. Add the `flintctl` command hierarchy, protocol aliases, packaging, and the
-   compatibility executable without changing server behavior.
+1. Add the `flintctl` command hierarchy, protocol version and status result,
+   protocol aliases, packaging, and the compatibility executable without
+   changing server behavior.
 2. Add `TerminalControlRegistry`, terminal lifecycle registration, caller
    resolution, and `terminal current` and `terminal list`.
 3. Add bounded terminal reads and their alternate-screen metadata.
