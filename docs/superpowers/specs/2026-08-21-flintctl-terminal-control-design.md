@@ -99,14 +99,22 @@ The application bundle and Linux packages keep a `flint-agent-control`
 compatibility executable for two stable releases. It accepts the two old
 commands, prints one deprecation message to standard error, and sends the same
 protocol requests as `flintctl`. Scripts that request `--json` still get only
-JSON on standard output.
+JSON on standard output. `flintctl` itself also accepts the old flat
+`retie-thread` and `create-thread` forms during the same compatibility period.
+This is necessary because Agent Thread instruction files already stored on
+disk can contain the old command form while executable discovery now resolves
+to `flintctl`.
 
 The executable-location marker keeps its current file name during the
 compatibility period, but its JSON `executable` value points to `flintctl`.
-This avoids an atomic migration problem: existing instructions can find the
-marker, while new Agent Threads immediately use the new executable. After the
-compatibility period, a separate cleanup change can rename the marker and
-remove the old executable.
+Existing instructions can therefore find the marker and run their old command
+against the new executable without failure. New instruction blocks use the
+noun-first form from the first release. After the compatibility period, a
+separate cleanup change can rename the marker, remove both old command aliases,
+and remove the old executable. The cleanup must first provide an explicit
+rewrite path for stored instruction blocks that still contain
+`retie-thread --worktree`; the current `already_has_instructions` append-only
+check cannot perform that migration.
 
 The Rust crates can keep their current names during the first change. Renaming
 the crates does not change user behavior and would make the functional diff
@@ -138,6 +146,7 @@ Terminal entity
 TerminalView entity
 Workspace entity
 root PTY process ID
+last known working directory
 creation sequence
 ```
 
@@ -159,11 +168,24 @@ Terminal commands must also work from an ordinary Flint terminal. Therefore,
 the server cannot use only the Agent Thread store to resolve callers.
 
 For every request, the server gets the peer process ID from the operating
-system and walks up to the existing bounded ancestry depth. It matches that
-ancestry against the root PTY process IDs in `TerminalControlRegistry`. The
-first matching live terminal is the calling terminal. Thread commands then do
-one additional lookup to require that this terminal is a registered Agent
-Thread.
+system and walks up to the existing bounded ancestry depth. It first matches
+that ancestry against the root PTY process IDs in `TerminalControlRegistry`.
+This is the strong signal and resolves an ordinary shell command directly.
+
+If ancestry does not match, use the existing Agent Thread cwd and agent-kind
+fallback first. This supports CLIs such as Codex that delegate tool commands to
+an `app-server` process outside the terminal process tree. Map the resolved
+Agent Thread item back to its registered terminal ID.
+
+For an ordinary terminal that is not a registered Agent Thread, do not use cwd
+as identity. Any unrelated local process can select the same directory, so a
+unique cwd match would weaken the rule that only a process in a Flint terminal
+can control terminals. Ordinary terminal callers must have a matching PTY
+process in their ancestry. A coding agent that uses an unrelated command daemon
+must be a registered Agent Thread to use the existing constrained cwd and
+agent-kind fallback. This is an explicit first-version capability limit.
+Thread commands then do one additional lookup to require that the resolved
+terminal is a registered Agent Thread.
 
 The first version uses this access policy:
 
@@ -200,6 +222,11 @@ The JSON result includes:
   "has_exited": false
 }
 ```
+
+`working_directory` is a nullable string. It is `null` when
+`Terminal::working_directory()` returns `None`, including before a local shell
+reports its directory. Remote PTY terminals are outside the first version, but
+their directory must also remain nullable if they become controllable later.
 
 ### `terminal list`
 
@@ -269,8 +296,22 @@ terminal entity and its registry generation when the wait starts. A terminal
 that later replaces the item in the same pane or tab cannot satisfy the wait.
 
 The default read source is `recent`. A timeout is required at the protocol
-layer; the CLI supplies a conservative default when the user omits it. Cancel
-the server task when the client disconnects.
+layer; the CLI supplies a conservative default when the user omits it.
+
+Long-lived waits require a transport change. The current Unix connection reads
+one request to EOF, which requires the client to close its write half. After
+that EOF, the server cannot use another read to distinguish a connected client
+from a disconnected client. New-protocol clients therefore send a bounded,
+length-prefixed request and keep the connection open. While a wait is pending,
+`handle_connection` races the terminal observation against a read that
+completes only when the client disconnects. A disconnect cancels the wait and
+its observation task. Windows uses the same message-length rule over its named
+pipe.
+
+During compatibility, the server also accepts the legacy EOF-framed request
+for the two old thread commands. Legacy framing cannot request a long-lived
+terminal wait. Framing detection and request-size checks happen before JSON
+decoding.
 
 The result includes the final bounded snapshot so a caller does not need an
 immediate second request.
@@ -316,6 +357,17 @@ invalid-pattern
 timeout
 response-too-large
 ```
+
+Keep `ControlResponse::NotReady` as a response state separate from typed hard
+errors. Return it when the caller cannot yet be distinguished from a terminal
+whose registry entry has not completed. `flintctl` applies the existing
+bounded client-side retry backoff to thread and terminal commands. If retries
+end without a match, the CLI reports that the caller is not recognized.
+
+An explicit target ID that was returned by `terminal list` but is no longer in
+the registry is a hard `terminal-not-found` error and is not retried. A newly
+created terminal has no public ID until registration completes, so scripts
+must obtain its ID from a successful create result or a retried list request.
 
 The CLI maps these failures to a nonzero exit status. `--json` prints the full
 response. Human-readable output stays concise and does not change the response
@@ -398,6 +450,7 @@ verify that newly started Agent Threads receive the `flintctl` discovery text.
 The first version does not:
 
 - keep terminals alive after Flint exits;
+- provide a persistent terminal host or terminal multiplexer;
 - create, split, move, focus, close, or resize terminal panes;
 - expose raw PTY file descriptors or arbitrary byte input;
 - infer whether a terminal is idle, blocked, or at a shell prompt;
@@ -413,15 +466,17 @@ boundary implicitly.
 ## Implementation order
 
 1. Add the `flintctl` command hierarchy, protocol version and status result,
-   protocol aliases, packaging, and the compatibility executable without
-   changing server behavior.
+   old flat-command aliases, new Agent Thread instructions, packaging, and the
+   compatibility executable without changing server behavior.
 2. Add `TerminalControlRegistry`, terminal lifecycle registration, caller
    resolution, and `terminal current` and `terminal list`.
 3. Add bounded terminal reads and their alternate-screen metadata.
 4. Add validated text and key input plus `terminal run`.
-5. Add cancellable `terminal wait-output`.
-6. Update Agent Thread instructions and remove the old command name only after
-   the compatibility period.
+5. Add length-prefixed framing and cancellable `terminal wait-output`, while
+   retaining legacy framing for old thread commands.
+6. After the compatibility period, migrate stored instruction blocks and then
+   remove the old flat-command aliases, compatibility executable, and old
+   marker name.
 
 Each stage keeps the current thread commands working and can be tested before
 the next stage changes the control surface.
