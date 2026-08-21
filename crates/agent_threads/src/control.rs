@@ -974,11 +974,31 @@ fn terminal_run(
                 "terminal process has exited",
             );
         }
-        let mut bytes = request.command.as_bytes().to_vec();
-        bytes.push(b'\r');
-        terminal.update(cx, |terminal, _cx| terminal.input(bytes));
+        let option_as_meta =
+            terminal::terminal_settings::TerminalSettings::get_global(cx).option_as_meta;
+        let accepted = terminal.update(cx, |terminal, _cx| {
+            input_terminal_run(terminal, &request.command, option_as_meta)
+        });
+        if !accepted {
+            return ControlResponse::error(
+                ControlErrorCode::Internal,
+                "could not map the terminal Enter key",
+            );
+        }
         ControlResponse::ok(ControlSuccess::TerminalInputAccepted)
     })
+}
+
+fn input_terminal_run(
+    terminal: &mut terminal::Terminal,
+    command: &str,
+    option_as_meta: bool,
+) -> bool {
+    let Ok(enter) = Keystroke::parse("enter") else {
+        return false;
+    };
+    terminal.input(command.as_bytes().to_vec());
+    terminal.try_keystroke(&enter, option_as_meta)
 }
 
 async fn terminal_wait_output(
@@ -1841,6 +1861,31 @@ mod tests {
             wait.result,
             ControlResult::Ok(ControlSuccess::TerminalWaitOutput(_))
         ));
+    }
+
+    #[gpui::test]
+    async fn terminal_run_writes_enter_separately_from_command_text(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let terminal = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .and_then(|record| record.terminal.upgrade())
+            .expect("spawned terminal must be registered");
+
+        let input_log = terminal.update(cx, |terminal, _cx| {
+            terminal.take_input_log();
+            input_terminal_run(terminal, "claude", false);
+            terminal.take_input_log()
+        });
+
+        assert_eq!(input_log, vec![b"claude".to_vec(), b"\r".to_vec()]);
     }
 
     #[gpui::test]
