@@ -38,12 +38,16 @@ On every application launch, Flint SHALL write the current release-channel-scope
 - **WHEN** Flint launches while Agent Thread control is disabled
 - **THEN** Flint still synchronizes the installed version's managed commands and instructions for supported installed agents
 
+#### Scenario: Flint closes
+- **WHEN** the running Flint instance closes
+- **THEN** its managed instruction block remains installed for the next Flint session, and Flint does not change content outside that marked block
+
 #### Scenario: Current marker refers to an older installation
 - **WHEN** Flint launches and the release-channel-scoped marker has an older executable path or content
 - **THEN** Flint replaces the marker with the running version's current `flintctl` location and metadata
 
 ### Requirement: Instruction synchronization preserves user content
-Flint SHALL replace only its managed instruction block and SHALL preserve all content outside the stable managed-block boundaries. Flint SHALL migrate a known exact unmarked block written by an earlier Flint version before it installs the current marked block.
+Flint SHALL identify the block as Flint-owned instructions that apply only to Flint-launched Agent Threads. The block SHALL remain installed across Flint sessions. Flint SHALL replace or remove only its managed instruction block and SHALL preserve all content outside the stable managed-block boundaries. Flint SHALL migrate a known exact unmarked block written by an earlier Flint version before it installs the current marked block.
 
 #### Scenario: User has content around a managed block
 - **WHEN** Flint refreshes a managed block in a global instruction file that also contains user-authored text
