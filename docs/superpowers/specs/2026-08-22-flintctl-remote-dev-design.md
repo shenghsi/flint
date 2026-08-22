@@ -2,235 +2,283 @@
 
 ## Status
 
-This document is a design proposal. No implementation work has started.
+This document is a design proposal. Local `flintctl` terminal control is
+implemented. Remote terminal control is not implemented.
 
 ## Goal
 
-Let a process that runs in a Flint remote-development terminal use the same
-`flintctl` commands as a process in a local terminal. Keep terminal state and
-terminal control in the local Flint application. Use the existing connection
-to `flint-remote-server` as the bridge. Do not open a public network port.
+Let a process in a Flint remote-development terminal use the same `flintctl`
+commands as a process in a local terminal. Keep terminal state and control in
+the local Flint application. Use the existing authenticated connection to
+`flint-remote-server` as the bridge. Do not open a public network port.
 
-The remote command surface stays the same:
+The remote command surface is the current local command surface:
 
 ```text
 flintctl status [--json]
 
-flintctl thread retie --worktree <path>
-flintctl thread create --worktree <current|new> --agent <agent> --prompt <prompt>
+flintctl thread retie --worktree <path> [--json]
+flintctl thread create --worktree <current|new> [--name <name>] --agent <agent> --prompt <prompt> [--json]
 
-flintctl terminal current
-flintctl terminal list
-flintctl terminal read <terminal-id> [--source visible|recent|recent-unwrapped] [--lines <count>]
-flintctl terminal send-text <terminal-id> <text>
-flintctl terminal send-key <terminal-id> <key>...
-flintctl terminal run <terminal-id> <command>
-flintctl terminal wait-output <terminal-id> (--match <text>|--regex <pattern>) [--timeout <duration>]
+flintctl terminal current [--json]
+flintctl terminal list [--all] [--json]
+flintctl terminal read <terminal-id> [--source visible|recent|recent-unwrapped|detection] [--lines <count>] [--since <cursor>] [--json]
+flintctl terminal send-text <terminal-id> <text> [--json]
+flintctl terminal send-key <terminal-id> <key>... [--json]
+flintctl terminal run <terminal-id> <command> [--json]
+flintctl terminal wait-output <terminal-id> (--match <text>|--regex <pattern>) [--source visible|recent|recent-unwrapped|detection] [--lines <count>] [--timeout <duration>] [--json]
 ```
+
+`terminal read --since` is valid only with the default `recent` source. The
+cursor is opaque. Remote control preserves the current defaults, limits,
+results, and error codes. It does not create a second command implementation.
 
 ## Current state
 
-Flint displays a remote terminal through a local `Terminal` entity. The local
-PTY runs an SSH, WSL, or container client. The shell and coding agent run on
-the remote host. The local `Terminal` still owns the emulated screen,
-scrollback, input path, and Flint terminal ID.
+Flint displays a remote terminal through a local `Terminal` entity. The remote
+shell and coding agent run in a PTY managed by `flint-remote-server`. The local
+`Terminal` owns the emulated screen, scrollback, input path, and Flint terminal
+ID.
 
-The first `flintctl` version rejects these terminals. Its local control server
-gets the client process ID from a Unix socket or Windows named pipe and walks
-local process ancestry. A `flintctl` process on the remote host has no local
-process ancestry, cannot open the local control endpoint, and cannot prove
-which local terminal displays its session.
+Local `flintctl` connects to a release-channel-scoped Unix socket or Windows
+named pipe. Flint gets the peer process ID from the operating system and first
+walks local process ancestry. It also has a constrained Agent Thread fallback
+for delegated command processes whose ancestry does not reach the terminal
+root. Flint rejects remote terminals because the remote process cannot connect
+to the local endpoint and its process ancestry exists only on the remote host.
 
-The remote host already runs the matching `flint-remote-server` binary. Flint
-updates that binary for the remote target when the local version changes.
+The local protocol is versioned and length-prefixed. Its current request and
+response limits are 1 MiB. The remote host already runs the matching
+`flint-remote-server` binary.
+
+Local executable discovery uses a marker instead of a custom environment
+variable. Some coding-agent command processes remove custom environment
+variables. Remote identity and discovery must not depend on an inherited
+custom environment variable for the same reason.
 
 ## Design summary
 
-Use `flint-remote-server` as a remote `flintctl` client bridge. Install a
-sibling command named `flintctl` that starts the same binary in client mode.
-The client connects to a user-scoped control endpoint on the remote host. The
-remote server forwards the request through its existing connection to local
-Flint. Local Flint validates a terminal-scoped capability and performs the
-operation on the local terminal model.
+Use `flint-remote-server` as a remote `flintctl` bridge. Install a sibling
+command named `flintctl` that starts the same binary in client mode. The client
+connects to user-scoped control endpoints on the remote host. The selected
+remote server gets the client process ID from the endpoint, resolves it to a
+PTY that the server owns, and forwards the current `ControlRequest` with a
+server-created caller identity to local Flint. Local Flint validates the
+connection and terminal registration, then uses the existing dispatcher.
 
 ```text
 Remote shell or agent
         |
-        | flintctl request + inherited capability
+        | current length-prefixed ControlRequest
         v
 Remote user-scoped control endpoint
         |
+        | peer process ID -> remote PTY registration
         v
 flint-remote-server
         |
-        | existing authenticated Flint connection
+        | authenticated connection
+        | + server-created caller registration ID
         v
 Local Flint control dispatcher
         |
-        | capability -> caller terminal and workspace
+        | connection + registration ID -> terminal and workspace
         v
 Local terminal registry and terminal model
 ```
 
-No terminal contents move to the remote server for control. They already move
-from the remote shell to the local terminal through the terminal connection.
-Reads use the local terminal model. Input uses the existing local PTY input
-path.
+The CLI does not present a capability, terminal ID, process ID, working
+directory, or other identity claim. Caller identity comes from the operating
+system and the remote server that owns the PTY.
+
+Terminal content does not move to the remote server for control. Reads use the
+local emulated screen and scrollback. Input uses the existing remote terminal
+input path.
 
 ## Remote command installation
 
 Do not add a separate remote release artifact. Extend the installed
-`flint-remote-server` binary with a `flintctl` client mode.
+`flint-remote-server` binary with a `flintctl` client mode. Dispatch this mode
+from the executable file name so the same binary supports both command parsers.
 
-After the remote server version is installed:
+After a remote server version is installed:
 
-- On Unix, create a sibling link named `flintctl` to the versioned remote
-  server binary.
-- On Windows, create a sibling `flintctl.exe` launcher or copy that starts the
-  same binary in client mode.
-- Write a release-channel- and version-scoped remote executable marker.
-- Replace the Flint-managed instruction block in each supported remote agent
-  instruction file with the instructions from the current Flint version.
+- On Unix, create a sibling link named `flintctl` to the versioned server.
+- On Windows, create a sibling `flintctl.exe` launcher or copy.
+- Write a release-channel- and version-scoped executable marker under Flint's
+  managed remote data directory.
+- Replace each supported Flint-managed remote agent instruction block with the
+  instructions from this Flint version.
 
-The command must not depend on `PATH`. Managed instructions discover the
-executable through the marker. A human can install a stable shell link as a
-separate convenience feature, but this design does not require it.
+The command must not depend on `PATH`. Managed instructions read the marker
+and run its exact path. A stable shell link can be a separate convenience
+feature.
 
-The remote command parser and the local protocol version come from the same
-Flint installation. A newly installed and launched Flint version replaces the
-remote command link, marker, and managed instructions. Old commands and old
-instructions must not remain active for a new remote session.
+The parser and control protocol come from the same Flint installation. A new
+remote server installation replaces its command link, marker, and instructions
+as one versioned operation. New sessions must not use old command text.
 
 ## Remote terminal identity
 
 The local terminal ID is an identifier, not a credential. It can appear in
-command output and logs. Remote caller authorization uses a separate random
-capability.
+command output and logs.
 
-Before Flint starts a remote terminal, it creates a remote control session:
+When `flint-remote-server` creates a PTY, it creates an opaque remote terminal
+registration ID and records the PTY root process identity. The ID is unique
+for the life of that server process. The server sends it to local Flint in the
+remote terminal creation flow. Local Flint stores this caller data with the
+local terminal record:
 
 ```text
-RemoteTerminalControlSession {
-    capability: 256 random bits,
-    release_channel,
-    flint_instance,
+RemoteTerminalCaller {
+    remote_connection_id,
+    remote_terminal_registration_id,
 }
 ```
 
-Flint injects the capability into the remote terminal environment. It must not
-put the capability in command-line arguments, terminal titles, logs, or
-terminal output. Child processes, including coding agents, inherit it.
+The record also contains the local terminal ID, the exact `Terminal` and
+`TerminalView` registration generation, the owning workspace, and Agent Thread
+state.
 
-The local `Terminal` stores the same capability until it is released. When its
-`TerminalView` registers with the terminal control registry, the registry maps
-the capability to:
+When remote `flintctl` connects, the server gets its peer process ID from the
+operating system. It walks ancestry from that process to a registered PTY root.
+It does not accept a process ID or registration ID from the client. If it finds
+a match, it forwards the server-side registration ID. Local Flint accepts that
+ID only on the remote connection that created it.
 
-- the current local terminal ID;
-- the exact terminal entity and registration generation;
-- the owning local workspace;
-- whether the terminal is an Agent Thread;
-- the active Flint instance and release channel.
+Registration can finish after the shell starts. During this race, the bridge
+returns `not-ready`, and `flintctl` uses the current bounded retry behavior.
 
-Registration can finish after the remote shell starts. During this race,
-remote requests return `not-ready`, and `flintctl` uses the same bounded retry
-behavior as local Agent Thread requests.
+`terminal current` needs no caller-supplied terminal ID. `terminal list`
+returns other live terminal IDs in the same workspace by default and includes
+the caller when `--all` is present.
 
-`flintctl terminal current` does not require the agent to know its local
-terminal ID. The inherited capability resolves the caller, and Flint returns
-the ID. `terminal list` returns other live terminal IDs in the same local
-workspace. Commands that target another terminal use an ID from that list.
+## Delegated Agent Thread caller fallback
 
-## Capability boundary
+Some agent tools run commands through a delegated process whose ancestry does
+not reach the terminal root. The remote design must preserve the reason for
+the current constrained local Agent Thread fallback.
 
-A capability authorizes only one live caller terminal and its local workspace.
-It does not authorize a host, user account, repository, or all remote sessions.
+The normal remote rule is process ancestry. If it fails, the remote server can
+apply an Agent Thread-only fallback equivalent to the local behavior. It can
+use operating-system facts that the server reads for the peer process, such as
+its working directory and executable. It can match only live Agent Thread
+registrations owned by that server and must reject an ambiguous match. It must
+not make an ordinary remote terminal controllable by working directory alone.
 
-Local Flint must reject a remote request when:
+Local Flint still verifies that the registration is live, belongs to the
+forwarding connection, and has Agent Thread state before a `thread` command.
 
-- the capability is missing, malformed, unknown, or expired;
-- the capability belongs to another Flint instance or release channel;
-- the caller terminal was released or replaced;
+## Caller and workspace boundary
+
+A verified caller authorizes only one live caller terminal and its local
+workspace. It does not authorize a host, user account, repository, connection,
+or all terminals owned by one server.
+
+Local Flint rejects a remote request when:
+
+- the forwarding connection did not register the caller ID;
+- the caller terminal was released or its generation changed;
+- the server restarted and lost the PTY registration;
 - the target terminal belongs to another workspace;
-- the target ID is stale;
-- the command is not supported by the negotiated protocol version.
+- the target terminal ID is stale;
+- the command is not supported by the protocol version.
 
-Reconnecting or recreating a terminal creates a new terminal ID and a new
-capability. Releasing the terminal removes the capability mapping. A later
-terminal must never reuse either value.
+Recreating a terminal creates new local and remote IDs. Releasing either side
+removes the mapping. A later terminal must not reuse either ID during the
+owning process lifetime.
 
-The remote control endpoint is user-scoped. Use mode `0600` for a Unix socket
-and a current-user access rule for a Windows named pipe. This endpoint limits
-which remote user can submit a request. The capability limits which live
-terminal and workspace that request can control.
+The endpoint is user-scoped. Use mode `0600` for a Unix socket and a
+current-user access rule for a Windows named pipe. The server must get the peer
+process ID from the operating system before dispatch. This boundary does not
+protect against a fully compromised process that runs as the same remote user.
 
-The capability protects the Flint boundary from unrelated remote sessions. It
-does not protect against a fully compromised process running as the same
-remote operating-system user, which can already inspect or control that
-user's processes on many supported systems.
+## Endpoint discovery and multiple Flint instances
+
+One remote host can have multiple server processes for different Flint
+versions, release channels, local instances, or projects. A single well-known
+endpoint cannot select one without a client identity claim.
+
+Each server creates an instance-scoped endpoint and a bounded discovery record
+in a release-channel- and version-scoped control directory. The record contains
+only the endpoint name, server process identity, and protocol version. It
+contains no credential.
+
+Remote `flintctl` reads the matching directory and tries its bounded set of
+live endpoints. Each server checks the peer process against only its own PTY
+registrations. Exactly one server can claim a normal caller. The client accepts
+the first verified response and does not fall back after a server claims the
+caller. Servers remove their records during normal shutdown. Discovery ignores
+records whose server process no longer exists.
+
+Thus, operating-system ancestry selects the matching Flint instance without
+an environment variable. A request must never run through another instance
+only because its endpoint was tried first.
 
 ## Request routing
 
-The remote `flintctl` client reads its terminal capability from the inherited
-environment and connects to the remote control endpoint. It sends the current
-bounded, length-prefixed request plus a remote caller envelope. It keeps the
-connection open for commands such as `terminal wait-output`.
+The client sends the current bounded, length-prefixed `ControlRequest` to each
+candidate endpoint. It keeps the selected connection open until it receives
+the response, which permits disconnect detection for `wait-output`.
 
-`flint-remote-server` forwards the request through the existing bidirectional
-protocol connection. It does not resolve terminal IDs, read terminal content,
-or write terminal input. Local Flint performs all authorization and command
-dispatch.
+After caller resolution, the server adds a transport-only envelope:
 
-The response returns through the same path. Client disconnect, remote-server
-disconnect, project disconnect, local Flint shutdown, and terminal release
-cancel an active wait.
+```text
+RemoteControlEnvelope {
+    remote_terminal_registration_id,
+    control_request,
+}
+```
 
-The remote bridge must apply the same request and response byte limits as the
-local transport. It must not accept an unbounded message before forwarding.
+The authenticated remote connection supplies the remote connection identity.
+Local Flint must not accept an envelope from a connection that did not create
+the registration.
+
+The server does not resolve local terminal IDs, read terminal content,
+interpret operations, or write terminal input. Local Flint uses the current
+request, response, dispatcher, byte limits, and protocol rules.
+
+The response returns through the same path. Client disconnect, server
+disconnect, project disconnect, Flint shutdown, and terminal release cancel an
+active wait. The bridge enforces the current 1 MiB limits before allocation and
+at each framing boundary.
 
 ## Terminal registration
 
-Register local and remote terminals in one local registry. A local record uses
-local process ancestry for caller resolution. A remote record uses its remote
-capability. Both record types use the same terminal ID, workspace check,
-metadata, snapshot, input, and wait implementation.
+Register local and remote terminals in one local registry. Both use the same
+terminal ID, workspace check, metadata, snapshot, cursor, input, and wait
+implementation. Only caller resolution differs.
 
 ```text
 TerminalControlCaller
-    Local {
-        root_process_id,
-    }
-    Remote {
-        capability,
-        remote_connection_id,
-    }
+    Local { root_process_id }
+    Remote { remote_connection_id, remote_terminal_registration_id }
 ```
 
-Do not infer a remote caller from its working directory, remote host, agent
-kind, or SSH destination. Several terminals can share all of those values.
+The server owns its PTY process-to-registration map. Local Flint owns the
+connection-and-registration-to-terminal map. Neither side infers a caller from
+a host name, SSH destination, agent kind, repository, or client-supplied path.
 
 ## Direct and Tunneled Agent Thread routes
 
-Remote `flintctl` support must not change agent launch or credential behavior.
+Remote control must not change agent launch or credential behavior.
 
-- Direct continues to run only the configured ambient agent executable on the
-  remote host.
-- Tunneled continues to run only the pinned Flint-managed agent executable on
-  the remote host and routes its network traffic through local Flint.
-- Both routes inherit the terminal capability and use the same remote
-  `flintctl` bridge.
-- The bridge must not expose Flint-managed agent binaries, credentials, or
-  Tunneled proxy capabilities to a Direct session.
+- Direct uses only the configured ambient agent executable on the remote host.
+- Tunneled uses only the pinned Flint-managed executable on the remote host and
+  routes its network traffic through local Flint.
+- Both routes use the same process-based bridge.
+- The bridge does not expose managed binaries, credentials, or Tunneled proxy
+  capabilities to a Direct session.
 
-`thread create` must preserve the workspace's current route rules. A Direct
-caller cannot request a Tunneled launch by changing request data, and a
-Tunneled caller cannot bypass its pinned executable or credential boundary.
+`thread create` preserves the workspace's route rules. Request data cannot
+change a Direct caller to Tunneled or let a Tunneled caller bypass its pinned
+executable and credential boundary.
 
 ## Ordinary remote terminals
 
-The feature is not limited to Agent Threads. An ordinary remote terminal gets
-a capability when Flint creates it. A process in that terminal can use
-`status` and the `terminal` command group. Agent Thread-only operations keep
-their existing checks:
+Every supported remote PTY gets a registration. A process in an ordinary
+remote terminal can use `status` and the `terminal` group through process
+ancestry. Agent Thread operations keep their current checks:
 
 - `thread retie` requires a registered Agent Thread caller.
 - `thread create` requires a registered Agent Thread caller and enabled Agent
@@ -238,95 +286,94 @@ their existing checks:
 
 ## Command behavior
 
-Remote commands use the local command semantics without a second
-implementation:
+Remote commands use local semantics:
 
-- `terminal current` resolves the capability to the local terminal ID.
-- `terminal list` lists only the caller's local Flint workspace.
-- `terminal read` reads the local emulated screen and scrollback.
-- `send-text`, `send-key`, and `run` use the local terminal input path.
-- `wait-output` observes the pinned local terminal registration.
-- `thread retie` and `thread create` update local Flint Agent Thread state.
+- `status --json` reports the local Flint version, protocol version, release
+  channel, and supported capabilities.
+- `terminal current` returns the caller's local terminal metadata.
+- `terminal list` excludes the caller by default and includes it with `--all`.
+- `terminal read` reads the local screen and scrollback, returns an opaque
+  cursor, and preserves `--since` and `cursor-expired` behavior.
+- `send-text`, `send-key`, and `run` use the current terminal input path.
+- `wait-output` preserves source, line, timeout, cancellation, and matching
+  behavior for the pinned terminal registration.
+- `thread retie` and `thread create` update local Agent Thread state.
 
-A remote command does not start a shell command outside the displayed
-terminal. `terminal run` still means terminal input followed by Enter.
+`terminal run` sends input followed by Enter as one non-interleavable control
+operation. It does not start a separate shell process.
 
 ## Connection and lifecycle behavior
 
-If the remote server is not connected to local Flint, remote `flintctl`
-reports that no matching Flint session is available. It must not start Flint,
-start another remote server, or search other users' sessions.
+If no server can verify the caller, `flintctl` reports that the process is not
+in a controllable Flint remote terminal. If a server verifies the caller but
+has no local Flint connection, it reports that the matching session is
+unavailable. It does not start Flint or another server.
 
-If several local Flint applications connect to the same remote host, each one
-uses an instance-scoped remote endpoint or routing record. The inherited
-capability selects the correct Flint instance. A request must never fall back
-to another live instance.
+A server disconnect invalidates all of its local caller mappings and cancels
+active waits. A reconnect uses new connection identity. Existing terminals
+must register again with fresh IDs or become explicitly unavailable. They must
+not attach silently to a different Flint instance.
 
-When local Flint upgrades its remote server, it must not change an already
-running terminal's control route in place. Existing terminals either continue
-with their matching server until they close or become explicitly unavailable.
-New terminals use the new server, command marker, and instructions. The
-implementation must define and test this handover before allowing two server
-versions to share an endpoint.
+After an upgrade, existing terminals continue with their current server and
+endpoint until they close, or control becomes explicitly unavailable. New
+terminals use the new server, marker, and instructions. An upgrade must not
+change a live terminal's route in place.
 
 ## Errors
 
-Add remote-specific machine-readable errors where the current errors are not
-sufficient:
+Preserve current control errors, including `caller-not-recognized`,
+`caller-not-agent-thread`, `terminal-not-found`,
+`terminal-outside-workspace`, `terminal-exited`, `invalid-key`,
+`invalid-pattern`, `invalid-request`, `cursor-expired`, `timeout`,
+`response-too-large`, and `unsupported-protocol`.
 
-- `remote-control-unavailable` when the remote bridge is not connected;
-- `remote-caller-unrecognized` when the capability cannot resolve a live
-  terminal;
-- `remote-session-stale` when the capability belongs to an ended or replaced
-  terminal;
-- `remote-version-mismatch` when the remote client and local Flint cannot use
-  one protocol version.
+Add remote transport errors only where current errors are not sufficient:
 
-Keep current target errors such as `terminal-not-found`, `terminal-exited`,
-and `terminal-outside-workspace` after caller resolution succeeds.
+- `remote-control-unavailable` when the matching bridge has no local Flint
+  connection;
+- `remote-session-stale` when the server resolves a caller but local Flint no
+  longer has its connection-bound registration;
+- `remote-version-mismatch` when all three components cannot use one protocol
+  version.
 
-Human output must explain whether the failure is discovery, connection,
-caller identity, workspace authorization, or target lifecycle. JSON output
-must preserve the error code.
+Failure to match the peer uses `not-ready` during the bounded registration
+race. After retries, the CLI reports `caller-not-recognized`. Human output
+explains the failure boundary. JSON output preserves the error code.
 
 ## Verification
 
-Protocol tests cover:
+Protocol and local control tests cover:
 
-- remote caller-envelope serialization and byte limits;
-- capability omission, malformed values, and unknown fields;
-- version negotiation and typed remote errors;
-- disconnect and cancellation propagation for output waits.
+- remote envelope serialization and current byte limits;
+- rejection when the forwarding connection does not own the registration;
+- protocol negotiation, additive minor fields, and typed transport errors;
+- exact `terminal current` resolution without a caller-supplied terminal ID;
+- list exclusion and `--all` inclusion;
+- same-workspace access and cross-workspace denial;
+- invalidation on release, replacement, and disconnect;
+- no local terminal ID or remote registration ID reuse;
+- cursor reads and `cursor-expired` through the remote route;
+- disconnect cancellation for output waits;
+- unchanged local caller resolution.
 
-Local control tests cover:
+Remote server tests cover:
 
-- one remote capability resolving to its exact local terminal ID;
-- `terminal current` without a caller-supplied terminal ID;
-- same-workspace listing and access for local and remote targets;
-- denial for another workspace, Flint instance, and release channel;
-- immediate invalidation on terminal release or replacement;
-- no capability or terminal ID reuse;
-- unchanged local process-ancestry authorization.
+- endpoint permissions and peer identity on Unix and Windows;
+- ancestry resolution to the exact owned PTY;
+- constrained Agent Thread fallback and ambiguous-match rejection;
+- no working-directory fallback for ordinary terminals;
+- concurrent instances, stale discovery records, and version handover;
+- forwarding without interpreting terminal operations;
+- current byte limits and cancellation in both directions.
 
-Remote-server tests cover:
+End-to-end tests cover ordinary terminals and Agent Threads on Direct and
+Tunneled routes. For each applicable route, verify status, current, list with
+and without `--all`, snapshot and cursor reads, input, run, wait, retie, and
+create with an optional name. Verify human and JSON output. Verify the ambient
+Direct executable and pinned Tunneled executable boundaries.
 
-- user-scoped endpoint permissions on Unix and Windows;
-- forwarding without inspecting or changing terminal operations;
-- bounded messages in both directions;
-- concurrent local Flint instances on one remote host;
-- remote-server restart and version handover;
-- cancellation when either side disconnects.
-
-End-to-end remote tests cover ordinary terminals and Agent Threads on Direct
-and Tunneled routes. For each route, verify `status`, `terminal current`,
-list/read/input/run/wait, `thread retie`, and `thread create`. Verify that
-Direct still uses the ambient agent executable and Tunneled still uses the
-pinned managed executable.
-
-Instruction and package tests verify that a new Flint version installs the
-matching remote command mode, rewrites the remote executable marker, and
-replaces every Flint-managed remote agent instruction block with the latest
-commands.
+Instruction and package tests verify the matching remote command mode,
+executable marker, and all supported managed remote agent instruction blocks.
 
 ## Non-goals
 
@@ -334,26 +381,26 @@ This design does not:
 
 - move terminal rendering or scrollback ownership to the remote host;
 - expose a public TCP or HTTP control API;
-- allow control across local Flint workspaces or Flint instances;
-- preserve terminal IDs or capabilities across terminal recreation;
-- use a terminal ID as a credential;
-- infer caller identity from a path, host, agent kind, or repository;
-- change Direct or Tunneled agent executable and credential rules;
+- allow control across local workspaces or Flint instances;
+- preserve terminal IDs or registrations across terminal recreation;
+- use a terminal ID, environment variable, working directory, or client PID
+  claim as a credential;
+- change Direct or Tunneled executable and credential rules;
 - add pane, split, focus, resize, or terminal creation commands;
 - keep terminals alive after local Flint exits.
 
 ## Implementation order
 
-1. Add the remote caller envelope, capability type, registry record variant,
-   lifecycle invalidation, and local authorization tests.
-2. Create a remote control session before remote terminal launch, inject the
-   capability, and register the resulting local terminal entity.
-3. Add the remote-server control endpoint and bidirectional request forwarding
-   with limits, cancellation, and instance scoping.
-4. Add `flintctl` client mode and remote command discovery to the installed
-   remote-server binary.
-5. Synchronize versioned Flint-managed instructions on the remote host.
-6. Enable the existing command dispatcher for remote callers.
-7. Add Direct, Tunneled, ordinary-terminal, reconnect, upgrade, Unix, and
-   Windows verification.
-
+1. Add connection-bound remote registration IDs to the local registry and add
+   lifecycle and authorization tests.
+2. Add remote PTY registration and peer-process ancestry resolution, including
+   the constrained Agent Thread fallback.
+3. Add instance endpoints, bounded discovery records, and concurrent-instance
+   tests.
+4. Add the remote envelope and bidirectional forwarding with current limits,
+   protocol rules, and cancellation.
+5. Add executable-name dispatch and remote discovery to the installed server.
+6. Synchronize versioned managed instructions on the remote host.
+7. Route verified requests through the existing local dispatcher.
+8. Add Direct, Tunneled, ordinary-terminal, cursor, reconnect, upgrade, Unix,
+   and Windows verification.
