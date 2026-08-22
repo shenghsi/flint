@@ -183,6 +183,8 @@ Replace the append-only offer and substring detection with a launch-time synchro
 
 Preserve bytes outside the managed range, apart from the minimum newline normalization needed at the insertion boundary. Write through a temporary file in the same directory and atomically replace the destination so a crash does not leave a partial global instruction file. Propagate or show a visible error when synchronization fails; do not record a stale block as current.
 
+State inside the marked block that Flint owns the block across application sessions and that its instructions apply only to Agent Threads that Flint launches. Do not remove the block when Flint closes. A closed Flint instance is already represented by the absence of its executable marker, and close-time file changes are not reliable when an instance crashes or when multiple instances run.
+
 Run synchronization when Flint launches, not only when an Agent Thread starts or a workspace shows a toast. Run it even when Agent Thread control is disabled in settings, because the installed version owns the current managed text. Remove the one-time dismissed state because current instructions are a managed part of the installed Flint version, not an optional append action. Keep the installed-agent check so Flint does not create global files for agent tools that are absent. Keep remote-host instruction files outside this local synchronization; the feature does not install `flintctl` on remote hosts.
 
 Alternative: Keep the user prompt and update only after another click. Rejected because a new Flint version could run with stale commands until the user opens the correct workspace and accepts the prompt.

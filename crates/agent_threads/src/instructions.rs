@@ -124,9 +124,15 @@ The main decision rule is: use a feature branch for change ownership; use a
 worktree for directory isolation.
 ";
 
-const MANAGED_BLOCK_VERSION: u32 = 1;
+const MANAGED_BLOCK_VERSION: u32 = 2;
 const MANAGED_BLOCK_BEGIN_PREFIX: &str = "<!-- Flint managed agent-thread instructions: begin v";
 const MANAGED_BLOCK_END: &str = "<!-- Flint managed agent-thread instructions: end -->";
+const MANAGED_BLOCK_OWNERSHIP_NOTICE: &str = "\
+This block is managed by Flint. The block remains installed when Flint closes.
+Flint updates or removes only this marked block. The instructions in this block
+apply only to Agent Threads that Flint launches.
+
+";
 
 #[cfg(any(unix, test))]
 static WORKTREE_INSTRUCTIONS_BLOCK: LazyLock<String> = LazyLock::new(|| {
@@ -145,7 +151,10 @@ static POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK: LazyLock<String> = LazyLock::new(
 });
 
 fn managed_block(body: String) -> String {
-    format!("{MANAGED_BLOCK_BEGIN_PREFIX}{MANAGED_BLOCK_VERSION} -->\n{body}{MANAGED_BLOCK_END}\n")
+    format!(
+        "{MANAGED_BLOCK_BEGIN_PREFIX}{MANAGED_BLOCK_VERSION} -->\n\
+         {MANAGED_BLOCK_OWNERSHIP_NOTICE}{body}{MANAGED_BLOCK_END}\n"
+    )
 }
 
 /// `None` for a kind whose global-instructions-file convention isn't
@@ -601,6 +610,19 @@ mod tests {
             POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK
                 .contains("& $control thread retie --worktree \"<path>\"")
         );
+    }
+
+    #[test]
+    fn all_platform_blocks_define_flint_ownership_and_scope() {
+        for block in [
+            WORKTREE_INSTRUCTIONS_BLOCK.as_str(),
+            POWERSHELL_WORKTREE_INSTRUCTIONS_BLOCK.as_str(),
+        ] {
+            assert!(block.contains("This block is managed by Flint"));
+            assert!(block.contains("The block remains installed when Flint closes"));
+            assert!(block.contains("Flint updates or removes only this marked block"));
+            assert!(block.contains("apply only to Agent Threads that Flint launches"));
+        }
     }
 
     #[test]
