@@ -79,6 +79,64 @@ pub(crate) fn classify(kind_id: &str, input: DetectionInput<'_>) -> AttentionSta
     matched.map_or(AttentionState::Unknown, |rule| rule.state)
 }
 
+/// Classifies a terminal that was not launched as an Agent Thread. A regular
+/// Terminal does not have an Agent Kind, so all bundled manifests are checked.
+/// The most urgent recognized state wins.
+pub(crate) fn classify_any(input: DetectionInput<'_>) -> AttentionState {
+    if generic_terminal_is_blocked(input.screen_tail) {
+        return AttentionState::Blocked;
+    }
+    BUNDLED_MANIFESTS
+        .iter()
+        .map(|(kind_id, _)| {
+            let state = classify(
+                kind_id,
+                DetectionInput {
+                    screen_tail: input.screen_tail,
+                    osc_title: input.osc_title,
+                },
+            );
+            if *kind_id == "codex"
+                && state == AttentionState::Idle
+                && !input.screen_tail.lines().any(codex_prompt_line)
+            {
+                AttentionState::Unknown
+            } else {
+                state
+            }
+        })
+        .max_by_key(|state| match state {
+            AttentionState::Unknown => 0,
+            AttentionState::Working => 1,
+            AttentionState::Idle => 2,
+            AttentionState::Blocked => 3,
+        })
+        .unwrap_or(AttentionState::Unknown)
+}
+
+fn generic_terminal_is_blocked(screen_tail: &str) -> bool {
+    static PASSWORD_PROMPT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?i)^(?:\[sudo\]\s*)?(?:enter\s+)?(?:password|passphrase)(?:\s+for\s+.*)?:\s*$",
+        )
+        .expect("generic Terminal password prompt regex should compile")
+    });
+    static CONFIRMATION_PROMPT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?i)(?:\[(?:y(?:es)?/n(?:o)?|n(?:o)?/y(?:es)?)\]|\((?:y(?:es)?/n(?:o)?|n(?:o)?/y(?:es)?)\))\s*:?[?]?\s*$",
+        )
+        .expect("generic Terminal confirmation prompt regex should compile")
+    });
+    static SSH_CONFIRMATION_PROMPT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\(yes/no/\[fingerprint\]\)\?\s*$")
+            .expect("SSH confirmation prompt regex should compile")
+    });
+    let last_line = bottom_non_empty_lines(screen_tail, 1).trim();
+    PASSWORD_PROMPT.is_match(last_line)
+        || CONFIRMATION_PROMPT.is_match(last_line)
+        || SSH_CONFIRMATION_PROMPT.is_match(last_line)
+}
+
 const BUNDLED_MANIFESTS: &[(&str, &str)] = &[
     ("claude", include_str!("attention_manifests/claude.toml")),
     ("codex", include_str!("attention_manifests/codex.toml")),
@@ -443,6 +501,71 @@ mod tests {
                 osc_title: "",
             },
         )
+    }
+
+    #[test]
+    fn classify_any_ignores_a_regular_shell_title() {
+        assert_eq!(
+            classify_any(DetectionInput {
+                screen_tail: "flint %",
+                osc_title: "flint — zsh",
+            }),
+            AttentionState::Unknown
+        );
+    }
+
+    #[test]
+    fn classify_any_recognizes_a_codex_terminal() {
+        assert_eq!(
+            classify_any(DetectionInput {
+                screen_tail: "›",
+                osc_title: "flint",
+            }),
+            AttentionState::Idle
+        );
+        assert_eq!(
+            classify_any(DetectionInput {
+                screen_tail: "Allow command?\n› 1. Yes",
+                osc_title: "Action Required",
+            }),
+            AttentionState::Blocked
+        );
+    }
+
+    #[test]
+    fn classify_any_recognizes_generic_password_prompts() {
+        for prompt in [
+            "Password:",
+            "[sudo] password for user:",
+            "Enter passphrase for key '/home/user/.ssh/id_ed25519':",
+        ] {
+            assert_eq!(
+                classify_any(DetectionInput {
+                    screen_tail: prompt,
+                    osc_title: "zsh",
+                }),
+                AttentionState::Blocked,
+                "{prompt} should block the Terminal",
+            );
+        }
+    }
+
+    #[test]
+    fn classify_any_recognizes_generic_confirmation_prompts() {
+        for prompt in [
+            "Continue? [y/N]",
+            "Do you want to proceed (yes/no)?",
+            "Are you sure you want to continue connecting (yes/no/[fingerprint])?",
+        ] {
+            assert_eq!(
+                classify_any(DetectionInput {
+                    screen_tail: prompt,
+                    osc_title: "zsh",
+                }),
+                AttentionState::Blocked,
+                "{prompt} should block the Terminal",
+            );
+        }
     }
 
     #[test]

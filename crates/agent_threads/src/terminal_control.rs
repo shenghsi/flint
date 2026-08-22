@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agent_control_protocol::{TerminalControlId, TerminalMetadata};
-use gpui::{App, AppContext as _, Entity, EntityId, Global, Subscription, WeakEntity};
+use anyhow::{Result, anyhow};
+use gpui::{App, AppContext as _, Entity, EntityId, Global, Subscription, WeakEntity, Window};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use workspace::Workspace;
@@ -20,9 +21,10 @@ pub(crate) struct TerminalControlRecord {
 }
 
 #[derive(Default)]
-struct TerminalControlRegistry {
+pub(crate) struct TerminalControlRegistry {
     next_sequence: u64,
     records: HashMap<TerminalControlId, TerminalControlRecord>,
+    subscriptions: HashMap<TerminalControlId, Subscription>,
 }
 
 impl TerminalControlRegistry {
@@ -65,6 +67,8 @@ impl TerminalControlRegistry {
         self.records.retain(|_, record| {
             record.terminal.upgrade().is_some() && record.view.upgrade().is_some()
         });
+        self.subscriptions
+            .retain(|id, _| self.records.contains_key(id));
         for record in self.records.values_mut() {
             record.working_directory = record
                 .terminal
@@ -100,17 +104,130 @@ pub(crate) fn init(cx: &mut App) {
         let terminal = terminal.downgrade();
         let workspace = view.workspace_handle();
         let view = cx.entity().downgrade();
-        registry.update(cx, |registry, _cx| {
-            registry.register(
+        registry.update(cx, |registry, cx| {
+            let id = registry.register(
                 root_process_id,
                 working_directory,
-                terminal,
+                terminal.clone(),
                 view,
                 workspace,
             );
+            if let Some(terminal) = terminal.upgrade() {
+                let subscription = cx.subscribe(&terminal, |_registry, _, event, cx| {
+                    if matches!(
+                        event,
+                        terminal::Event::Wakeup
+                            | terminal::Event::Bell
+                            | terminal::Event::CloseTerminal
+                    ) {
+                        cx.notify();
+                    }
+                });
+                registry.subscriptions.insert(id, subscription);
+            }
+            cx.notify();
         });
     })
     .detach();
+}
+
+pub(crate) fn registry(cx: &App) -> Entity<TerminalControlRegistry> {
+    cx.global::<GlobalTerminalControlRegistry>().0.clone()
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RegularTerminalSummary {
+    pub status: crate::store::ProjectAttentionStatus,
+    pub terminal_item_id: EntityId,
+    pub creation_sequence: u64,
+}
+
+pub(crate) fn regular_terminal_summaries(
+    cx: &mut App,
+) -> HashMap<EntityId, Vec<RegularTerminalSummary>> {
+    let mut summaries: HashMap<EntityId, Vec<RegularTerminalSummary>> = HashMap::default();
+    for record in records(cx) {
+        let Some(view) = record.view.upgrade() else {
+            continue;
+        };
+        if view.read(cx).is_agent_thread() {
+            continue;
+        }
+        let Some(workspace_id) = workspace_id(&record, cx) else {
+            continue;
+        };
+        let Some(terminal) = record.terminal.upgrade() else {
+            continue;
+        };
+        let terminal = terminal.read(cx);
+        let screen_tail = terminal
+            .last_n_non_empty_lines(crate::attention_detection::SCREEN_TAIL_LINE_COUNT)
+            .join("\n");
+        let state =
+            crate::attention_detection::classify_any(crate::attention_detection::DetectionInput {
+                screen_tail: &screen_tail,
+                osc_title: &terminal.breadcrumb_text,
+            });
+        let status = match state {
+            crate::attention_detection::AttentionState::Working => {
+                crate::store::ProjectAttentionStatus::Working
+            }
+            crate::attention_detection::AttentionState::Idle => {
+                crate::store::ProjectAttentionStatus::Idle
+            }
+            crate::attention_detection::AttentionState::Blocked => {
+                crate::store::ProjectAttentionStatus::Blocked
+            }
+            crate::attention_detection::AttentionState::Unknown => continue,
+        };
+        summaries
+            .entry(workspace_id)
+            .or_default()
+            .push(RegularTerminalSummary {
+                status,
+                terminal_item_id: view.entity_id(),
+                creation_sequence: record.creation_sequence,
+            });
+    }
+    summaries
+}
+
+pub(crate) fn focus_terminal(
+    terminal_item_id: EntityId,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    let record = records(cx)
+        .into_iter()
+        .find(|record| {
+            record
+                .view
+                .upgrade()
+                .is_some_and(|view| view.entity_id() == terminal_item_id)
+        })
+        .ok_or_else(|| anyhow!("terminal no longer exists"))?;
+    let workspace = record
+        .view
+        .upgrade()
+        .and_then(|view| view.read(cx).workspace_handle().upgrade())
+        .or_else(|| record.workspace.upgrade())
+        .ok_or_else(|| anyhow!("terminal workspace closed"))?;
+    let terminal_view = record
+        .view
+        .upgrade()
+        .ok_or_else(|| anyhow!("terminal closed"))?;
+    workspace.update(cx, |workspace, cx| {
+        let pane = workspace
+            .pane_for_item_id(terminal_item_id)
+            .ok_or_else(|| anyhow!("terminal pane closed"))?;
+        pane.update(cx, |pane, cx| {
+            let index = pane
+                .index_for_item(&terminal_view)
+                .ok_or_else(|| anyhow!("terminal item closed"))?;
+            pane.activate_item(index, true, true, window, cx);
+            Ok(())
+        })
+    })
 }
 
 pub(crate) fn records(cx: &mut App) -> Vec<TerminalControlRecord> {
