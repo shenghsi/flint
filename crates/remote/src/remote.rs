@@ -9,9 +9,9 @@ mod transport;
 pub use remote_client::OpenWslPath;
 pub use remote_client::{
     CommandTemplate, ConnectionIdentifier, ConnectionSharing, ConnectionState, Interactive,
-    LocalPortForward, RemoteArch, RemoteClient, RemoteClientDelegate, RemoteClientEvent,
-    RemoteConnection, RemoteConnectionOptions, RemoteLibc, RemoteOs, RemotePlatform,
-    RemotePortForward, connect, has_active_connection,
+    LocalPortForward, REMOTE_TERMINAL_CONTROL_CAPABILITY, RemoteArch, RemoteClient,
+    RemoteClientDelegate, RemoteClientEvent, RemoteConnection, RemoteConnectionOptions, RemoteLibc,
+    RemoteOs, RemotePlatform, RemotePortForward, connect, has_active_connection,
 };
 pub use remote_identity::{
     RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,

@@ -22,7 +22,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let invoked_as_flintctl = std::env::args_os().next().is_some_and(invokes_flintctl);
 
     // Keep everything Flint stores on the remote host under `~/.flint/remote`
     // (managed agent binaries, db, extensions, languages, logs, server_state,
@@ -31,6 +31,16 @@ fn main() -> anyhow::Result<()> {
     // the crash-handler subprocess and proxy agree with the server on paths.
     let remote_data_dir = paths::home_dir().join(".flint").join("remote");
     paths::set_custom_data_dir(&remote_data_dir.to_string_lossy());
+
+    if invoked_as_flintctl {
+        agent_control_cli::main_with_transport(remote_server::run_remote_control_client);
+        return Ok(());
+    }
+
+    let cli = Cli::parse();
+    if let Err(error) = remote_server::install_remote_control_command() {
+        log::warn!("failed to install remote flintctl command: {error:#}");
+    }
 
     if let Some(socket_path) = &cli.askpass {
         askpass::main(socket_path);
@@ -67,5 +77,23 @@ fn main() -> anyhow::Result<()> {
             .write_all(b"usage: remote <run|proxy|version>\n")
             .ok();
         std::process::exit(1);
+    }
+}
+
+fn invokes_flintctl(path: impl AsRef<std::ffi::OsStr>) -> bool {
+    PathBuf::from(path.as_ref())
+        .file_stem()
+        .is_some_and(|stem| stem == "flintctl")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn executable_name_selects_remote_control_mode() {
+        assert!(invokes_flintctl("/remote/version/flintctl"));
+        assert!(invokes_flintctl("flintctl.exe"));
+        assert!(!invokes_flintctl("/remote/version/remote_server"));
     }
 }

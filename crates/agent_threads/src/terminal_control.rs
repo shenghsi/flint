@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agent_control_protocol::{TerminalControlId, TerminalMetadata};
+use agent_control_protocol::{RemoteTerminalRegistrationId, TerminalControlId, TerminalMetadata};
 use anyhow::{Result, anyhow};
 use gpui::{App, AppContext as _, Entity, EntityId, Global, Subscription, WeakEntity, Window};
 use terminal::Terminal;
@@ -13,17 +13,42 @@ pub(crate) struct TerminalControlRecord {
     pub id: TerminalControlId,
     pub creation_sequence: u64,
     pub generation: u64,
-    pub root_process_id: u32,
+    pub caller: TerminalControlCaller,
     pub working_directory: Option<PathBuf>,
     pub terminal: WeakEntity<Terminal>,
     pub view: WeakEntity<TerminalView>,
     pub workspace: WeakEntity<Workspace>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct RemoteConnectionId {
+    pub client_entity_id: u64,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalControlCaller {
+    Local {
+        root_process_id: u32,
+    },
+    Remote {
+        remote_connection_id: RemoteConnectionId,
+        remote_terminal_registration_id: RemoteTerminalRegistrationId,
+    },
+}
+
+#[derive(Clone)]
+struct RemoteTerminalMapping {
+    terminal_id: TerminalControlId,
+    generation: u64,
+}
+
 #[derive(Default)]
 pub(crate) struct TerminalControlRegistry {
     next_sequence: u64,
     records: HashMap<TerminalControlId, TerminalControlRecord>,
+    remote_mappings:
+        HashMap<(RemoteConnectionId, RemoteTerminalRegistrationId), RemoteTerminalMapping>,
     subscriptions: HashMap<TerminalControlId, Subscription>,
 }
 
@@ -45,6 +70,48 @@ impl TerminalControlRegistry {
         view: WeakEntity<TerminalView>,
         workspace: WeakEntity<Workspace>,
     ) -> TerminalControlId {
+        self.register_with_caller(
+            TerminalControlCaller::Local { root_process_id },
+            working_directory,
+            terminal,
+            view,
+            workspace,
+        )
+    }
+
+    fn register_remote(
+        &mut self,
+        remote_connection_id: RemoteConnectionId,
+        remote_terminal_registration_id: RemoteTerminalRegistrationId,
+        working_directory: Option<PathBuf>,
+        terminal: WeakEntity<Terminal>,
+        view: WeakEntity<TerminalView>,
+        workspace: WeakEntity<Workspace>,
+    ) -> TerminalControlId {
+        let caller = TerminalControlCaller::Remote {
+            remote_connection_id,
+            remote_terminal_registration_id: remote_terminal_registration_id.clone(),
+        };
+        let id = self.register_with_caller(caller, working_directory, terminal, view, workspace);
+        let generation = self.next_sequence;
+        self.remote_mappings.insert(
+            (remote_connection_id, remote_terminal_registration_id),
+            RemoteTerminalMapping {
+                terminal_id: id.clone(),
+                generation,
+            },
+        );
+        id
+    }
+
+    fn register_with_caller(
+        &mut self,
+        caller: TerminalControlCaller,
+        working_directory: Option<PathBuf>,
+        terminal: WeakEntity<Terminal>,
+        view: WeakEntity<TerminalView>,
+        workspace: WeakEntity<Workspace>,
+    ) -> TerminalControlId {
         let id = self.allocate_id();
         let sequence = self.next_sequence;
         self.records.insert(
@@ -53,7 +120,7 @@ impl TerminalControlRegistry {
                 id: id.clone(),
                 creation_sequence: sequence,
                 generation: sequence,
-                root_process_id,
+                caller,
                 working_directory,
                 terminal,
                 view,
@@ -69,6 +136,11 @@ impl TerminalControlRegistry {
         });
         self.subscriptions
             .retain(|id, _| self.records.contains_key(id));
+        self.remote_mappings.retain(|_, mapping| {
+            self.records
+                .get(&mapping.terminal_id)
+                .is_some_and(|record| record.generation == mapping.generation)
+        });
         for record in self.records.values_mut() {
             record.working_directory = record
                 .terminal
@@ -78,6 +150,31 @@ impl TerminalControlRegistry {
         let mut records = self.records.values().cloned().collect::<Vec<_>>();
         records.sort_by_key(|record| record.creation_sequence);
         records
+    }
+
+    fn resolve_remote(
+        &self,
+        remote_connection_id: RemoteConnectionId,
+        remote_terminal_registration_id: &RemoteTerminalRegistrationId,
+    ) -> Option<&TerminalControlRecord> {
+        let mapping = self.remote_mappings.get(&(
+            remote_connection_id,
+            remote_terminal_registration_id.clone(),
+        ))?;
+        self.records
+            .get(&mapping.terminal_id)
+            .filter(|record| record.generation == mapping.generation)
+    }
+
+    #[cfg(test)]
+    fn invalidate_remote_connection(&mut self, remote_connection_id: RemoteConnectionId) {
+        self.remote_mappings
+            .retain(|(connection_id, _), _| *connection_id != remote_connection_id);
+    }
+
+    fn invalidate_remote_client(&mut self, client_entity_id: u64) {
+        self.remote_mappings
+            .retain(|(connection_id, _), _| connection_id.client_entity_id != client_entity_id);
     }
 }
 
@@ -95,6 +192,40 @@ pub(crate) fn init(cx: &mut App) {
         let terminal = view.terminal().clone();
         let terminal_state = terminal.read(cx);
         if terminal_state.is_remote() {
+            let Some(registration) = terminal_state.remote_control_registration().cloned() else {
+                return;
+            };
+            let working_directory = terminal_state.working_directory();
+            let terminal = terminal.downgrade();
+            let workspace = view.workspace_handle();
+            let view = cx.entity().downgrade();
+            registry.update(cx, |registry, cx| {
+                let id = registry.register_remote(
+                    RemoteConnectionId {
+                        client_entity_id: registration.remote_connection_id,
+                        generation: registration.remote_connection_generation,
+                    },
+                    RemoteTerminalRegistrationId(registration.remote_terminal_registration_id),
+                    working_directory,
+                    terminal.clone(),
+                    view,
+                    workspace,
+                );
+                if let Some(terminal) = terminal.upgrade() {
+                    let subscription = cx.subscribe(&terminal, |_registry, _, event, cx| {
+                        if matches!(
+                            event,
+                            terminal::Event::Wakeup
+                                | terminal::Event::Bell
+                                | terminal::Event::CloseTerminal
+                        ) {
+                            cx.notify();
+                        }
+                    });
+                    registry.subscriptions.insert(id, subscription);
+                }
+                cx.notify();
+            });
             return;
         }
         let Some(root_process_id) = terminal_state.pid().map(|pid| pid.as_u32()) else {
@@ -236,6 +367,68 @@ pub(crate) fn focus_terminal(
 pub(crate) fn records(cx: &mut App) -> Vec<TerminalControlRecord> {
     let registry = cx.global::<GlobalTerminalControlRegistry>().0.clone();
     registry.update(cx, |registry, cx| registry.live_records(cx))
+}
+
+#[cfg(test)]
+pub(crate) fn register_remote_terminal(
+    remote_connection_id: RemoteConnectionId,
+    remote_terminal_registration_id: RemoteTerminalRegistrationId,
+    terminal: Entity<Terminal>,
+    view: Entity<TerminalView>,
+    workspace: Entity<Workspace>,
+    cx: &mut App,
+) -> TerminalControlId {
+    let registry = registry(cx);
+    let working_directory = terminal.read(cx).working_directory();
+    registry.update(cx, |registry, cx| {
+        let id = registry.register_remote(
+            remote_connection_id,
+            remote_terminal_registration_id,
+            working_directory,
+            terminal.downgrade(),
+            view.downgrade(),
+            workspace.downgrade(),
+        );
+        let subscription = cx.subscribe(&terminal, |_registry, _, event, cx| {
+            if matches!(
+                event,
+                terminal::Event::Wakeup | terminal::Event::Bell | terminal::Event::CloseTerminal
+            ) {
+                cx.notify();
+            }
+        });
+        registry.subscriptions.insert(id.clone(), subscription);
+        cx.notify();
+        id
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn invalidate_remote_connection(remote_connection_id: RemoteConnectionId, cx: &mut App) {
+    registry(cx).update(cx, |registry, cx| {
+        registry.invalidate_remote_connection(remote_connection_id);
+        cx.notify();
+    });
+}
+
+pub fn invalidate_remote_client(client_entity_id: u64, cx: &mut App) {
+    registry(cx).update(cx, |registry, cx| {
+        registry.invalidate_remote_client(client_entity_id);
+        cx.notify();
+    });
+}
+
+pub(crate) fn remote_record(
+    remote_connection_id: RemoteConnectionId,
+    remote_terminal_registration_id: &RemoteTerminalRegistrationId,
+    cx: &mut App,
+) -> Option<TerminalControlRecord> {
+    registry(cx).update(cx, |registry, cx| {
+        registry.live_records(cx);
+        registry
+            .resolve_remote(remote_connection_id, remote_terminal_registration_id)
+            .cloned()
+    })
 }
 
 pub(crate) fn observe_output(

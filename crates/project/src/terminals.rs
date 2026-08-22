@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
@@ -15,8 +15,8 @@ use std::{
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder, insert_flint_terminal_env,
-    terminal_settings::TerminalSettings,
+    RemoteTerminalControlRegistration, TaskState, TaskStatus, Terminal, TerminalBuilder,
+    insert_flint_terminal_env, terminal_settings::TerminalSettings,
 };
 use util::{
     command::new_std_command, get_default_system_shell, get_system_shell, maybe, rel_path::RelPath,
@@ -139,6 +139,12 @@ impl Project {
         cx.spawn(async move |project, cx| {
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            let remote_control_registration = match remote_client.as_ref() {
+                Some(remote_client) => {
+                    allocate_remote_control_registration(remote_client, cx).await?
+                }
+                None => None,
+            };
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -159,92 +165,96 @@ impl Project {
             .await
             .unwrap_or_default();
 
-            let builder = project
-                .update(cx, move |_, cx| {
-                    let format_to_run = |spawn_task: &SpawnInTerminal| {
-                        format_task_for_activation(
-                            spawn_task,
-                            shell_kind,
-                            &shell,
-                            path_style.is_windows(),
-                        )
-                    };
+            let builder = project.update(cx, move |_, cx| {
+                let format_to_run = |spawn_task: &SpawnInTerminal| {
+                    format_task_for_activation(
+                        spawn_task,
+                        shell_kind,
+                        &shell,
+                        path_style.is_windows(),
+                    )
+                };
 
-                    let (shell, env) = {
-                        let to_run =
-                            (!activation_script.is_empty()).then(|| format_to_run(&spawn_task));
-                        env.extend(spawn_task.env);
-                        match remote_client {
-                            Some(remote_client) => match activation_script.clone() {
-                                activation_script if !activation_script.is_empty() => {
-                                    let separator = shell_kind.sequential_commands_separator();
-                                    let activation_script =
-                                        activation_script.join(&format!("{separator} "));
-                                    let to_run = to_run.expect("activation command was formatted");
+                let (shell, env, remote_control_registration) = {
+                    let to_run =
+                        (!activation_script.is_empty()).then(|| format_to_run(&spawn_task));
+                    env.extend(spawn_task.env);
+                    match remote_client {
+                        Some(remote_client) => match activation_script.clone() {
+                            activation_script if !activation_script.is_empty() => {
+                                let separator = shell_kind.sequential_commands_separator();
+                                let activation_script =
+                                    activation_script.join(&format!("{separator} "));
+                                let to_run = to_run.expect("activation command was formatted");
 
-                                    let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(true, arg);
-                                    let shell = remote_client
-                                        .read(cx)
-                                        .shell()
-                                        .unwrap_or_else(get_default_system_shell);
+                                let arg = format!("{activation_script}{separator} {to_run}");
+                                let args = shell_kind.args_for_shell(true, arg);
+                                let shell = remote_client
+                                    .read(cx)
+                                    .shell()
+                                    .unwrap_or_else(get_default_system_shell);
 
-                                    create_remote_shell(
-                                        Some((&shell, &args)),
-                                        env,
-                                        path,
-                                        remote_client,
-                                        connection_sharing_for(settings.dedicated_ssh_connection),
-                                        cx,
-                                    )?
-                                }
-                                _ => create_remote_shell(
-                                    spawn_task
-                                        .command
-                                        .as_ref()
-                                        .map(|command| (command, &spawn_task.args)),
+                                create_remote_shell(
+                                    Some((&shell, &args)),
                                     env,
                                     path,
                                     remote_client,
+                                    remote_control_registration.clone(),
                                     connection_sharing_for(settings.dedicated_ssh_connection),
                                     cx,
-                                )?,
-                            },
-                            None => match activation_script.clone() {
-                                activation_script if !activation_script.is_empty() => {
-                                    let separator = shell_kind.sequential_commands_separator();
-                                    let activation_script =
-                                        activation_script.join(&format!("{separator} "));
-                                    let to_run = to_run.expect("activation command was formatted");
+                                )?
+                            }
+                            _ => create_remote_shell(
+                                spawn_task
+                                    .command
+                                    .as_ref()
+                                    .map(|command| (command, &spawn_task.args)),
+                                env,
+                                path,
+                                remote_client,
+                                remote_control_registration,
+                                connection_sharing_for(settings.dedicated_ssh_connection),
+                                cx,
+                            )?,
+                        },
+                        None => match activation_script.clone() {
+                            activation_script if !activation_script.is_empty() => {
+                                let separator = shell_kind.sequential_commands_separator();
+                                let activation_script =
+                                    activation_script.join(&format!("{separator} "));
+                                let to_run = to_run.expect("activation command was formatted");
 
-                                    let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(true, arg);
+                                let arg = format!("{activation_script}{separator} {to_run}");
+                                let args = shell_kind.args_for_shell(true, arg);
 
-                                    (
-                                        Shell::WithArguments {
-                                            program: shell,
-                                            args,
-                                            title_override: None,
-                                        },
-                                        env,
-                                    )
-                                }
-                                _ => (
-                                    if let Some(program) = spawn_task.command {
-                                        Shell::WithArguments {
-                                            program,
-                                            args: spawn_task.args,
-                                            title_override: None,
-                                        }
-                                    } else {
-                                        Shell::System
+                                (
+                                    Shell::WithArguments {
+                                        program: shell,
+                                        args,
+                                        title_override: None,
                                     },
                                     env,
-                                ),
-                            },
-                        }
-                    };
-                    anyhow::Ok(TerminalBuilder::new(
+                                    None,
+                                )
+                            }
+                            _ => (
+                                if let Some(program) = spawn_task.command {
+                                    Shell::WithArguments {
+                                        program,
+                                        args: spawn_task.args,
+                                        title_override: None,
+                                    }
+                                } else {
+                                    Shell::System
+                                },
+                                env,
+                                None,
+                            ),
+                        },
+                    }
+                };
+                anyhow::Ok((
+                    TerminalBuilder::new(
                         local_path.map(|path| path.to_path_buf()),
                         task_state,
                         shell,
@@ -260,9 +270,14 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
-                    ))
-                })??
-                .await?;
+                    ),
+                    remote_control_registration,
+                ))
+            })??;
+            let (builder, remote_control_registration) = builder;
+            let builder = builder
+                .await?
+                .with_remote_control_registration(remote_control_registration);
             project.update(cx, move |this, cx| {
                 let terminal_handle = cx.new(|cx| builder.subscribe(cx));
 
@@ -384,6 +399,12 @@ impl Project {
             let shell_kind = ShellKind::new(&shell, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            let remote_control_registration = match remote_client.as_ref() {
+                Some(remote_client) => {
+                    allocate_remote_control_registration(remote_client, cx).await?
+                }
+                None => None,
+            };
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -404,22 +425,23 @@ impl Project {
             .await
             .unwrap_or_default();
 
-            let builder = project
-                .update(cx, move |_, cx| {
-                    let (shell, env) = {
-                        match remote_client {
-                            Some(remote_client) => create_remote_shell(
-                                None,
-                                env,
-                                path,
-                                remote_client,
-                                connection_sharing_for(settings.dedicated_ssh_connection),
-                                cx,
-                            )?,
-                            None => (settings.shell, env),
-                        }
-                    };
-                    anyhow::Ok(TerminalBuilder::new(
+            let builder = project.update(cx, move |_, cx| {
+                let (shell, env, remote_control_registration) = {
+                    match remote_client {
+                        Some(remote_client) => create_remote_shell(
+                            None,
+                            env,
+                            path,
+                            remote_client,
+                            remote_control_registration,
+                            connection_sharing_for(settings.dedicated_ssh_connection),
+                            cx,
+                        )?,
+                        None => (settings.shell, env, None),
+                    }
+                };
+                anyhow::Ok((
+                    TerminalBuilder::new(
                         local_path.map(|path| path.to_path_buf()),
                         None,
                         shell,
@@ -435,9 +457,14 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
-                    ))
-                })??
-                .await?;
+                    ),
+                    remote_control_registration,
+                ))
+            })??;
+            let (builder, remote_control_registration) = builder;
+            let builder = builder
+                .await?
+                .with_remote_control_registration(remote_control_registration);
             project.update(cx, move |this, cx| {
                 let terminal_handle = cx.new(|cx| builder.subscribe(cx));
 
@@ -626,24 +653,104 @@ fn connection_sharing_for(dedicated_ssh_connection: bool) -> ConnectionSharing {
     }
 }
 
+async fn allocate_remote_control_registration(
+    remote_client: &Entity<RemoteClient>,
+    cx: &mut gpui::AsyncApp,
+) -> Result<Option<RemoteTerminalControlRegistration>> {
+    let allocation = remote_client.read_with(cx, |remote_client, _cx| {
+        if !remote_client.has_server_capability(remote::REMOTE_TERMINAL_CONTROL_CAPABILITY)
+            || remote_client.remote_server_executable().is_none()
+        {
+            return None;
+        }
+        Some((
+            remote_client.control_connection_generation(),
+            remote_client
+                .proto_client()
+                .request(rpc::proto::AllocateRemoteTerminalRegistration {}),
+        ))
+    });
+    let Some(allocation) = allocation else {
+        return Ok(None);
+    };
+    let (remote_connection_generation, allocation) = allocation;
+    let response = allocation
+        .await
+        .context("failed to allocate remote terminal control registration")?;
+    if response.registration_id.is_empty() {
+        anyhow::bail!("remote server returned an empty terminal control registration");
+    }
+    Ok(Some(RemoteTerminalControlRegistration {
+        remote_connection_id: remote_client.entity_id().as_u64(),
+        remote_connection_generation,
+        remote_terminal_registration_id: response.registration_id,
+    }))
+}
+
 fn create_remote_shell(
     spawn_command: Option<(&String, &Vec<String>)>,
     mut env: HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
+    registration: Option<RemoteTerminalControlRegistration>,
     connection_sharing: ConnectionSharing,
     cx: &mut App,
-) -> Result<(Shell, HashMap<String, String>)> {
+) -> Result<(
+    Shell,
+    HashMap<String, String>,
+    Option<RemoteTerminalControlRegistration>,
+)> {
     insert_flint_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
 
-    let (program, args) = match spawn_command {
-        Some((program, args)) => (Some(program.clone()), args),
-        None => (None, &Vec::new()),
+    let remote_client_state = remote_client.read(cx);
+    let remote_shell = remote_client_state
+        .shell()
+        .unwrap_or_else(get_default_system_shell);
+    let shell_kind = ShellKind::new(&remote_shell, remote_client_state.path_style().is_windows());
+    let registration_command = registration
+        .as_ref()
+        .and_then(|registration| {
+            Some((
+                remote_client_state.remote_server_executable()?,
+                registration.remote_terminal_registration_id.clone(),
+            ))
+        })
+        .map(|(server_executable, remote_terminal_registration_id)| {
+            let (program, args) = wrap_remote_terminal_command(
+                shell_kind,
+                &remote_shell,
+                &server_executable,
+                &remote_terminal_registration_id,
+                spawn_command,
+            )?;
+            Ok::<_, anyhow::Error>((
+                program,
+                args,
+                RemoteTerminalControlRegistration {
+                    remote_connection_id: registration
+                        .as_ref()
+                        .map(|registration| registration.remote_connection_id)
+                        .context("remote terminal registration is missing")?,
+                    remote_connection_generation: registration
+                        .as_ref()
+                        .map(|registration| registration.remote_connection_generation)
+                        .context("remote terminal registration is missing")?,
+                    remote_terminal_registration_id,
+                },
+            ))
+        })
+        .transpose()?;
+    let (program, args, registration) = match registration_command {
+        Some((program, args, registration)) => (Some(program), args, Some(registration)),
+        None => match spawn_command {
+            Some((program, args)) => (Some(program.clone()), args.clone(), None),
+            None => (None, Vec::new(), None),
+        },
     };
 
     let command = remote_client.read(cx).build_command_with_options(
         program,
-        args.as_slice(),
+        &args,
         &env,
         working_directory.map(|path| path.display().to_string()),
         None,
@@ -661,6 +768,52 @@ fn create_remote_shell(
             title_override: Some(format!("{} — Terminal", host)),
         },
         command.env,
+        registration,
+    ))
+}
+
+fn wrap_remote_terminal_command(
+    shell_kind: ShellKind,
+    remote_shell: &str,
+    server_executable: &str,
+    remote_terminal_registration_id: &str,
+    spawn_command: Option<(&String, &Vec<String>)>,
+) -> Result<(String, Vec<String>)> {
+    let server_executable = shell_kind
+        .try_quote(server_executable)
+        .context("remote server executable cannot be quoted")?;
+    let server_executable = shell_kind.prepend_command_prefix(&server_executable);
+    let registration_id = shell_kind
+        .try_quote(remote_terminal_registration_id)
+        .context("remote terminal registration id cannot be quoted")?;
+    let register =
+        format!("{server_executable} register-terminal --registration-id {registration_id}");
+    let target = match spawn_command {
+        Some((program, args)) => std::iter::once(program)
+            .chain(args)
+            .map(|argument| {
+                shell_kind
+                    .try_quote(argument)
+                    .context("remote terminal command argument cannot be quoted")
+            })
+            .collect::<Result<Vec<_>>>()?
+            .join(" "),
+        None => {
+            let remote_shell = shell_kind
+                .try_quote(remote_shell)
+                .context("remote shell executable cannot be quoted")?;
+            shell_kind
+                .prepend_command_prefix(&remote_shell)
+                .into_owned()
+        }
+    };
+    let command = format!(
+        "{register}{} {target}",
+        shell_kind.sequential_commands_separator()
+    );
+    Ok((
+        remote_shell.to_string(),
+        shell_kind.args_for_shell(true, command),
     ))
 }
 
@@ -898,6 +1051,28 @@ mod tests {
                 "source ~/.profile && '/opt/Flint Agents/codex' resume 'session with spaces'"
             ]
         );
+    }
+
+    #[test]
+    fn remote_registration_preserves_direct_and_tunneled_agent_executables() {
+        let arguments = vec!["resume".to_string(), "session with spaces".to_string()];
+        for executable in ["/usr/local/bin/codex", "/home/user/.flint/agents/codex"] {
+            let executable = executable.to_string();
+            let (program, wrapped_arguments) = wrap_remote_terminal_command(
+                ShellKind::new("/bin/sh", false),
+                "/bin/sh",
+                "/home/user/.flint/remote/remote_server",
+                "registration-1",
+                Some((&executable, &arguments)),
+            )
+            .expect("wrap remote agent command");
+            let command = wrapped_arguments.join(" ");
+
+            assert_eq!(program, "/bin/sh");
+            assert!(command.contains("register-terminal --registration-id registration-1"));
+            assert!(command.contains(&executable));
+            assert!(command.contains("'session with spaces'"));
+        }
     }
 
     #[test]

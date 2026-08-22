@@ -919,6 +919,13 @@ pub struct TerminalBuilder {
     events_rx: UnboundedReceiver<PtyEvent>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteTerminalControlRegistration {
+    pub remote_connection_id: u64,
+    pub remote_connection_generation: u64,
+    pub remote_terminal_registration_id: String,
+}
+
 impl TerminalBuilder {
     pub fn new_display_only(
         cursor_shape: SettingsCursorShape,
@@ -982,6 +989,7 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
             is_remote_terminal: false,
+            remote_control_registration: None,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             mouse_down_hyperlink: None,
@@ -1207,6 +1215,7 @@ impl TerminalBuilder {
                 ),
                 vi_mode_enabled: false,
                 is_remote_terminal,
+                remote_control_registration: None,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
                 mouse_down_hyperlink: None,
@@ -1261,6 +1270,14 @@ impl TerminalBuilder {
             })
         };
         cx.background_spawn(fut)
+    }
+
+    pub fn with_remote_control_registration(
+        mut self,
+        registration: Option<RemoteTerminalControlRegistration>,
+    ) -> Self {
+        self.terminal.remote_control_registration = registration;
+        self
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
@@ -1377,6 +1394,7 @@ pub struct Terminal {
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     is_remote_terminal: bool,
+    remote_control_registration: Option<RemoteTerminalControlRegistration>,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<GpuiPoint<Pixels>>,
     mouse_down_hyperlink: Option<HyperlinkMatch>,
@@ -2547,6 +2565,10 @@ impl Terminal {
 
     pub fn is_remote(&self) -> bool {
         self.is_remote_terminal
+    }
+
+    pub fn remote_control_registration(&self) -> Option<&RemoteTerminalControlRegistration> {
+        self.remote_control_registration.as_ref()
     }
 
     pub fn has_exited(&self) -> bool {

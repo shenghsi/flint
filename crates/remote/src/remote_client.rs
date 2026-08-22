@@ -266,6 +266,8 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_CONNECTION_TIMEOUT: Duration =
     Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
 
+pub const REMOTE_TERMINAL_CONTROL_CAPABILITY: &str = "remote-terminal-control-v1";
+
 pub const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
 enum State {
@@ -435,11 +437,13 @@ pub struct RemoteClient {
     connection_options: RemoteConnectionOptions,
     platform: Option<RemotePlatform>,
     path_style: PathStyle,
+    control_connection_generation: u64,
     state: Option<State>,
 }
 
 #[derive(Debug)]
 pub enum RemoteClientEvent {
+    ControlConnectionReset,
     Disconnected { server_not_running: bool },
 }
 
@@ -541,6 +545,7 @@ impl RemoteClient {
                     connection_options: remote_connection.connection_options(),
                     platform,
                     path_style,
+                    control_connection_generation: 0,
                     state: Some(State::Connecting),
                 });
 
@@ -699,7 +704,11 @@ impl RemoteClient {
             );
         }
 
-        let state = self.state.take().unwrap();
+        let state = self.state.take().context("remote client has no state")?;
+        let starts_new_connection = matches!(
+            &state,
+            State::Connected { .. } | State::HeartbeatMissed { .. }
+        );
         let (attempts, remote_connection, delegate) = match state {
             State::Connected {
                 remote_connection,
@@ -731,6 +740,13 @@ impl RemoteClient {
         };
 
         let attempts = attempts + 1;
+        if starts_new_connection {
+            self.control_connection_generation = self
+                .control_connection_generation
+                .checked_add(1)
+                .context("remote control connection generation exhausted")?;
+            cx.emit(RemoteClientEvent::ControlConnectionReset);
+        }
         if attempts > MAX_RECONNECT_ATTEMPTS {
             log::error!(
                 "Failed to reconnect to after {} attempts, giving up",
@@ -1036,6 +1052,10 @@ impl RemoteClient {
         Some(self.remote_connection()?.shell())
     }
 
+    pub fn control_connection_generation(&self) -> u64 {
+        self.control_connection_generation
+    }
+
     pub fn default_system_shell(&self) -> Option<String> {
         Some(self.remote_connection()?.default_system_shell())
     }
@@ -1048,6 +1068,10 @@ impl RemoteClient {
     pub fn has_wsl_interop(&self) -> bool {
         self.remote_connection()
             .map_or(false, |connection| connection.has_wsl_interop())
+    }
+
+    pub fn remote_server_executable(&self) -> Option<String> {
+        self.remote_connection()?.remote_server_executable()
     }
 
     pub fn build_command(
@@ -1895,6 +1919,9 @@ pub trait RemoteConnection: Send + Sync {
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;
+    fn remote_server_executable(&self) -> Option<String> {
+        None
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}

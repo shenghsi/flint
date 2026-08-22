@@ -26,9 +26,10 @@ use agent_control_protocol::ControlResult;
 use agent_control_protocol::{
     ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, ControlSuccess,
     CreateThreadRequest, CreateThreadWorktree, FRAME_LENGTH_BYTES, MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES, PROTOCOL_VERSION, RetieThreadRequest, StatusResult, TerminalControlId,
-    TerminalOutputMatcher, TerminalReadRequest, TerminalRunRequest, TerminalSendKeyRequest,
-    TerminalSendTextRequest, TerminalSnapshot, TerminalWaitOutputRequest, frame_payload,
+    MAX_RESPONSE_BYTES, PROTOCOL_VERSION, RemoteControlEnvelope, RetieThreadRequest, StatusResult,
+    TerminalControlId, TerminalOutputMatcher, TerminalReadRequest, TerminalRunRequest,
+    TerminalSendKeyRequest, TerminalSendTextRequest, TerminalSnapshot, TerminalWaitOutputRequest,
+    frame_payload,
 };
 #[cfg(unix)]
 use anyhow::{Context as _, Result};
@@ -695,6 +696,89 @@ pub(crate) async fn dispatch(
     dispatch_for_caller(terminal_item_id, request, store, cx).await
 }
 
+pub(crate) async fn dispatch_remote(
+    remote_connection_id: crate::terminal_control::RemoteConnectionId,
+    envelope: &RemoteControlEnvelope,
+    store: &Entity<AgentThreadStore>,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    let request = &envelope.control_request;
+    if request.protocol.major != PROTOCOL_VERSION.major {
+        return ControlResponse::error(
+            ControlErrorCode::UnsupportedProtocol,
+            format!(
+                "unsupported protocol major {}; server supports {}",
+                request.protocol.major, PROTOCOL_VERSION.major
+            ),
+        );
+    }
+
+    let caller_record = cx.update(|cx| {
+        crate::terminal_control::remote_record(
+            remote_connection_id,
+            &envelope.remote_terminal_registration_id,
+            cx,
+        )
+    });
+    let Some(caller_record) = caller_record else {
+        return ControlResponse::error(
+            ControlErrorCode::RemoteSessionStale,
+            "remote terminal registration is not live on this connection",
+        );
+    };
+
+    if matches!(request.command, ControlCommand::Status) {
+        let (flint_version, release_channel) = cx.update(|cx| {
+            (
+                release_channel::AppVersion::global(cx).to_string(),
+                release_channel::ReleaseChannel::try_global(cx)
+                    .unwrap_or(*release_channel::RELEASE_CHANNEL)
+                    .dev_name()
+                    .to_string(),
+            )
+        });
+        return ControlResponse::ok(ControlSuccess::Status(StatusResult {
+            flint_version,
+            protocol_version: PROTOCOL_VERSION,
+            release_channel,
+            capabilities: command_capabilities(),
+        }));
+    }
+
+    let records = cx.update(crate::terminal_control::records);
+    if matches!(
+        request.command,
+        ControlCommand::TerminalCurrent
+            | ControlCommand::TerminalList(_)
+            | ControlCommand::TerminalRead(_)
+            | ControlCommand::TerminalSendText(_)
+            | ControlCommand::TerminalSendKey(_)
+            | ControlCommand::TerminalRun(_)
+            | ControlCommand::TerminalWaitOutput(_)
+    ) {
+        return dispatch_terminal(&caller_record, &records, request, cx).await;
+    }
+
+    let agent_control_enabled =
+        cx.update(|cx| crate::AgentThreadSettings::get_global(cx).agent_control);
+    if !agent_control_enabled {
+        return error_response("agent_threads.agent_control is disabled");
+    }
+    let Some(terminal_item_id) = caller_record
+        .view
+        .upgrade()
+        .filter(|view| view.read_with(cx, |view, _cx| view.is_agent_thread()))
+        .map(|view| view.entity_id())
+    else {
+        return ControlResponse::error(
+            ControlErrorCode::CallerNotAgentThread,
+            "caller is not an Agent Thread terminal",
+        );
+    };
+
+    dispatch_for_caller(terminal_item_id, request, store, cx).await
+}
+
 fn resolve_terminal_caller(
     peer_pid: u32,
     records: &[crate::terminal_control::TerminalControlRecord],
@@ -709,10 +793,12 @@ fn resolve_terminal_caller(
     let tracked = records
         .iter()
         .filter_map(|record| {
-            record
-                .view
-                .upgrade()
-                .map(|view| (record.root_process_id, view.entity_id()))
+            record.view.upgrade().and_then(|view| match record.caller {
+                crate::terminal_control::TerminalControlCaller::Local { root_process_id } => {
+                    Some((root_process_id, view.entity_id()))
+                }
+                crate::terminal_control::TerminalControlCaller::Remote { .. } => None,
+            })
         })
         .collect::<HashMap<_, _>>();
     let view_id = walk_ancestry_for_match(peer_pid, &system, &tracked)?;
@@ -1915,6 +2001,210 @@ mod tests {
         assert!(matches!(
             wait.result,
             ControlResult::Ok(ControlSuccess::TerminalWaitOutput(_))
+        ));
+    }
+
+    #[gpui::test]
+    async fn remote_dispatch_is_bound_to_connection_and_registration(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_other_window_handle, other_terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let local_record = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .cloned()
+            .expect("spawned terminal must be registered");
+        let other_terminal_id = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == other_terminal_item_id)
+            })
+            .map(|record| record.id.clone())
+            .expect("other terminal must be registered");
+        let terminal = local_record
+            .terminal
+            .upgrade()
+            .expect("terminal must be live");
+        let view = local_record.view.upgrade().expect("view must be live");
+        let workspace = local_record
+            .workspace
+            .upgrade()
+            .expect("workspace must be live");
+        let connection_id = crate::terminal_control::RemoteConnectionId {
+            client_entity_id: 7,
+            generation: 1,
+        };
+        let registration_id =
+            agent_control_protocol::RemoteTerminalRegistrationId("remote-terminal-7".to_string());
+        cx.update(|cx| {
+            crate::terminal_control::register_remote_terminal(
+                connection_id,
+                registration_id.clone(),
+                terminal,
+                view,
+                workspace,
+                cx,
+            )
+        });
+        let envelope = RemoteControlEnvelope {
+            remote_terminal_registration_id: registration_id,
+            control_request: ControlRequest::current(ControlCommand::TerminalCurrent),
+        };
+        let store = cx.update(|cx| AgentThreadStore::global(cx));
+        let mut async_cx = cx.to_async();
+
+        let wrong_connection = dispatch_remote(
+            crate::terminal_control::RemoteConnectionId {
+                client_entity_id: 8,
+                generation: 1,
+            },
+            &envelope,
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            wrong_connection.result,
+            ControlResult::Error(ref error)
+                if error.code == ControlErrorCode::RemoteSessionStale
+        ));
+
+        let wrong_generation = dispatch_remote(
+            crate::terminal_control::RemoteConnectionId {
+                client_entity_id: 7,
+                generation: 2,
+            },
+            &envelope,
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            wrong_generation.result,
+            ControlResult::Error(ref error)
+                if error.code == ControlErrorCode::RemoteSessionStale
+        ));
+
+        let current = dispatch_remote(connection_id, &envelope, &store, &mut async_cx).await;
+        let ControlResult::Ok(ControlSuccess::TerminalCurrent(current)) = current.result else {
+            panic!("remote terminal current did not return terminal metadata");
+        };
+
+        let request = |command| RemoteControlEnvelope {
+            remote_terminal_registration_id: envelope.remote_terminal_registration_id.clone(),
+            control_request: ControlRequest::current(command),
+        };
+        let listed = dispatch_remote(
+            connection_id,
+            &request(ControlCommand::TerminalList(
+                agent_control_protocol::TerminalListRequest { all: false },
+            )),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            listed.result,
+            ControlResult::Ok(ControlSuccess::TerminalList(ref terminals))
+                if terminals.iter().all(|terminal| terminal.id != current.id)
+        ));
+        let listed_all = dispatch_remote(
+            connection_id,
+            &request(ControlCommand::TerminalList(
+                agent_control_protocol::TerminalListRequest { all: true },
+            )),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            listed_all.result,
+            ControlResult::Ok(ControlSuccess::TerminalList(ref terminals))
+                if terminals.iter().any(|terminal| terminal.id == current.id)
+        ));
+        let read = dispatch_remote(
+            connection_id,
+            &request(ControlCommand::TerminalRead(TerminalReadRequest {
+                terminal_id: current.id,
+                source: agent_control_protocol::TerminalReadSource::Recent,
+                lines: 120,
+                since: None,
+            })),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        let ControlResult::Ok(ControlSuccess::TerminalRead(snapshot)) = read.result else {
+            panic!("remote terminal read did not return a snapshot");
+        };
+        let incremental = dispatch_remote(
+            connection_id,
+            &request(ControlCommand::TerminalRead(TerminalReadRequest {
+                terminal_id: snapshot.terminal.id.clone(),
+                source: agent_control_protocol::TerminalReadSource::Recent,
+                lines: 120,
+                since: Some(snapshot.cursor),
+            })),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            incremental.result,
+            ControlResult::Ok(ControlSuccess::TerminalRead(_))
+        ));
+        let expired = dispatch_remote(
+            connection_id,
+            &request(ControlCommand::TerminalRead(TerminalReadRequest {
+                terminal_id: snapshot.terminal.id,
+                source: agent_control_protocol::TerminalReadSource::Recent,
+                lines: 120,
+                since: Some(agent_control_protocol::TerminalReadCursor {
+                    anchor: "expired-remote-cursor".to_string(),
+                }),
+            })),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            expired.result,
+            ControlResult::Error(ref error) if error.code == ControlErrorCode::CursorExpired
+        ));
+        let outside_workspace = dispatch_remote(
+            connection_id,
+            &request(ControlCommand::TerminalRead(TerminalReadRequest {
+                terminal_id: other_terminal_id,
+                source: agent_control_protocol::TerminalReadSource::Recent,
+                lines: 120,
+                since: None,
+            })),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            outside_workspace.result,
+            ControlResult::Error(ref error)
+                if error.code == ControlErrorCode::TerminalOutsideWorkspace
+        ));
+
+        async_cx
+            .update(|cx| crate::terminal_control::invalidate_remote_connection(connection_id, cx));
+        let disconnected = dispatch_remote(connection_id, &envelope, &store, &mut async_cx).await;
+        assert!(matches!(
+            disconnected.result,
+            ControlResult::Error(ref error)
+                if error.code == ControlErrorCode::RemoteSessionStale
         ));
     }
 

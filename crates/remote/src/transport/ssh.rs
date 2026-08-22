@@ -49,6 +49,7 @@ pub(crate) struct SshRemoteConnection {
     /// reused ControlMaster sessions start with `master_process` as `None`.
     killed: AtomicBool,
     remote_binary_path: Option<Arc<RelPath>>,
+    remote_home_directory: String,
     ssh_platform: RemotePlatform,
     ssh_path_style: PathStyle,
     ssh_shell: String,
@@ -878,6 +879,16 @@ impl RemoteConnection for SshRemoteConnection {
     fn has_wsl_interop(&self) -> bool {
         false
     }
+
+    fn remote_server_executable(&self) -> Option<String> {
+        self.remote_binary_path.as_ref().map(|path| {
+            super::remote_server_executable_path(
+                &self.remote_home_directory,
+                path,
+                self.ssh_path_style,
+            )
+        })
+    }
 }
 
 /// Check if the user already has an active SSH ControlMaster session for the
@@ -1130,12 +1141,25 @@ impl SshRemoteConnection {
             killed: AtomicBool::new(false),
             _temp_dir: temp_dir,
             remote_binary_path: None,
+            remote_home_directory: String::new(),
             ssh_path_style,
             ssh_platform,
             ssh_shell,
             ssh_shell_kind,
             ssh_default_system_shell,
         };
+
+        let (home_command, home_arguments): (&str, &[&str]) = if this.ssh_platform.os.is_windows() {
+            ("cmd.exe", &["/c", "echo", "%USERPROFILE%"])
+        } else {
+            ("pwd", &[])
+        };
+        let remote_home_output = this
+            .socket
+            .run_command(this.ssh_shell_kind, home_command, home_arguments, false)
+            .await
+            .context("failed to determine remote home directory")?;
+        this.remote_home_directory = super::parse_remote_home_directory(&remote_home_output)?;
 
         let (release_channel, version) =
             cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)));

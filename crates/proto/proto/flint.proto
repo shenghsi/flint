@@ -405,7 +405,11 @@ message Envelope {
     ExtractAgentTranscript extract_agent_transcript = 469;
     AgentTranscriptExcerpt agent_transcript_excerpt = 470;
     ResolveCodeAction resolve_code_action = 471;
-    ResolveCodeActionResponse resolve_code_action_response = 472; // current max
+    ResolveCodeActionResponse resolve_code_action_response = 472;
+    RemoteTerminalControl remote_terminal_control = 473;
+    RemoteTerminalControlResponse remote_terminal_control_response = 474;
+    AllocateRemoteTerminalRegistration allocate_remote_terminal_registration = 475;
+    AllocateRemoteTerminalRegistrationResponse allocate_remote_terminal_registration_response = 476; // current max
   }
 
   reserved 87 to 88;
@@ -486,6 +490,20 @@ message RemoteStarted {
   // "agent-thread-history-index-v1". Absent from older servers, which lets a
   // new client fall back without sending an unknown request.
   repeated string capabilities = 1;
+}
+
+message RemoteTerminalControl {
+  bytes envelope = 1;
+}
+
+message RemoteTerminalControlResponse {
+  bytes response = 1;
+}
+
+message AllocateRemoteTerminalRegistration {}
+
+message AllocateRemoteTerminalRegistrationResponse {
+  string registration_id = 1;
 }
 
 // Streaming request: the host-owned agent thread history index. The server

@@ -33,14 +33,6 @@ use settings::{ExtendingVec, RegisterSetting, Settings};
 use ui::IconName;
 use workspace::Workspace;
 
-pub use history::HistoricalThread;
-pub use panel::AgentThreadsPanel;
-pub use store::{
-    AgentThreadStore, AgentThreadStoreEvent, checkpoint_live_agent_threads,
-    prune_stale_session_restore_snapshots, restore_threads_for_workspace,
-    snapshot_live_agent_threads,
-};
-
 use agent_release::{
     AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy, CLAUDE_RELEASES, CODEX_RELEASES,
     OPENCODE_RELEASES, PI_RELEASES,
@@ -48,8 +40,15 @@ use agent_release::{
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
 use history::AgentHistoryProvider;
+pub use history::HistoricalThread;
 use opencode_history::OpenCodeHistoryProvider;
+pub use panel::AgentThreadsPanel;
 use pi_history::PiHistoryProvider;
+pub use store::{
+    AgentThreadStore, AgentThreadStoreEvent, checkpoint_live_agent_threads,
+    prune_stale_session_restore_snapshots, restore_threads_for_workspace,
+    snapshot_live_agent_threads,
+};
 
 actions!(
     agent_threads,
@@ -757,6 +756,72 @@ pub fn init_control_server(cx: &mut App) {
         let instruction_sync_errors = Arc::new(instructions::synchronize_worktree_instructions());
         cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
             instructions::show_sync_errors(&instruction_sync_errors, workspace, cx);
+        })
+        .detach();
+        cx.observe_new(|remote_client: &mut remote::RemoteClient, _window, cx| {
+            let remote_client_entity_id = cx.entity_id().as_u64();
+            remote_client.proto_client().add_request_handler(
+                cx.weak_entity(),
+                move |remote_client,
+                      envelope: rpc::TypedEnvelope<proto::RemoteTerminalControl>,
+                      mut cx| async move {
+                    if envelope.payload.envelope.len() > agent_control_protocol::MAX_REQUEST_BYTES {
+                        let response = agent_control_protocol::ControlResponse::error(
+                            agent_control_protocol::ControlErrorCode::InvalidRequest,
+                            "remote terminal control request exceeds the byte limit",
+                        );
+                        return Ok(proto::RemoteTerminalControlResponse {
+                            response: serde_json::to_vec(&response)?,
+                        });
+                    }
+                    let envelope = match serde_json::from_slice(&envelope.payload.envelope) {
+                        Ok(envelope) => envelope,
+                        Err(error) => {
+                            let response = agent_control_protocol::ControlResponse::error(
+                                agent_control_protocol::ControlErrorCode::InvalidRequest,
+                                format!("remote terminal control request is malformed: {error}"),
+                            );
+                            return Ok(proto::RemoteTerminalControlResponse {
+                                response: serde_json::to_vec(&response)?,
+                            });
+                        }
+                    };
+                    let remote_connection_id =
+                        cx.update(|cx| terminal_control::RemoteConnectionId {
+                            client_entity_id: remote_client_entity_id,
+                            generation: remote_client.read(cx).control_connection_generation(),
+                        });
+                    let store = cx.update(|cx| AgentThreadStore::global(cx));
+                    let response =
+                        control::dispatch_remote(remote_connection_id, &envelope, &store, &mut cx)
+                            .await;
+                    let response = serde_json::to_vec(&response)?;
+                    if response.len() > agent_control_protocol::MAX_RESPONSE_BYTES {
+                        let response = agent_control_protocol::ControlResponse::error(
+                            agent_control_protocol::ControlErrorCode::ResponseTooLarge,
+                            "remote terminal control response exceeds the byte limit",
+                        );
+                        return Ok(proto::RemoteTerminalControlResponse {
+                            response: serde_json::to_vec(&response)?,
+                        });
+                    }
+                    Ok(proto::RemoteTerminalControlResponse { response })
+                },
+            );
+            cx.subscribe_self(move |_remote_client, event, cx| {
+                if matches!(
+                    event,
+                    remote::RemoteClientEvent::ControlConnectionReset
+                        | remote::RemoteClientEvent::Disconnected { .. }
+                ) {
+                    terminal_control::invalidate_remote_client(remote_client_entity_id, cx);
+                }
+            })
+            .detach();
+            cx.on_release(move |_remote_client, cx| {
+                terminal_control::invalidate_remote_client(remote_client_entity_id, cx);
+            })
+            .detach();
         })
         .detach();
         control::init(cx);

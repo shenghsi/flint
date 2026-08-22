@@ -1,4 +1,5 @@
 mod headless_project;
+mod remote_control;
 
 #[cfg(test)]
 mod remote_editing_tests;
@@ -79,6 +80,11 @@ pub enum Commands {
         identifier: String,
     },
     Version,
+    #[command(hide = true)]
+    RegisterTerminal {
+        #[arg(long)]
+        registration_id: String,
+    },
 }
 
 pub fn run(command: Commands) -> anyhow::Result<()> {
@@ -122,7 +128,22 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
             };
             Ok(())
         }
+        Commands::RegisterTerminal { registration_id } => {
+            remote_control::register_current_terminal(
+                agent_control_protocol::RemoteTerminalRegistrationId(registration_id),
+            )
+        }
     }
+}
+
+pub fn run_remote_control_client(
+    request: agent_control_protocol::ControlRequest,
+) -> anyhow::Result<agent_control_protocol::ControlResponse> {
+    remote_control::run_client(request)
+}
+
+pub fn install_remote_control_command() -> anyhow::Result<()> {
+    remote_control::install_command()
 }
 
 pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
@@ -454,13 +475,18 @@ fn start_server(
     })
     .detach();
 
+    let advertised_capabilities = if cfg!(any(unix, windows)) {
+        vec![remote::REMOTE_TERMINAL_CONTROL_CAPABILITY.to_string()]
+    } else {
+        Vec::new()
+    };
     RemoteClient::proto_client_from_channels(
         incoming_rx,
         outgoing_tx,
         cx,
         "server",
         is_wsl_interop,
-        Vec::new(),
+        advertised_capabilities,
     )
 }
 
@@ -591,6 +617,9 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx, is_wsl_interop);
+        if let Err(error) = remote_control::start(session.clone(), cx) {
+            log::error!("failed to start remote flintctl endpoint: {error:#}");
+        }
         trusted_worktrees::init(HashMap::default(), cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
