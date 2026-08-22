@@ -81,7 +81,7 @@ fn aggregate_live_activity(
     roots: &[PathBuf],
     live_summaries: &HashMap<PathBuf, ProjectLiveSummary>,
 ) -> (ProjectAttentionStatus, usize, Option<gpui::EntityId>) {
-    let mut status = ProjectAttentionStatus::Working;
+    let mut status = ProjectAttentionStatus::Idle;
     let mut live_thread_count = 0;
     let mut attention_terminal_item_id = None;
     let mut attention_launched_at = None;
@@ -101,7 +101,36 @@ fn aggregate_live_activity(
             attention_launched_at = summary.most_urgent_launched_at;
         }
     }
-    (status, live_thread_count, attention_terminal_item_id)
+    if live_thread_count == 0 {
+        (ProjectAttentionStatus::Working, 0, None)
+    } else {
+        (status, live_thread_count, attention_terminal_item_id)
+    }
+}
+
+fn merge_regular_terminal_activity(
+    workspace_id: gpui::EntityId,
+    activity: (ProjectAttentionStatus, usize, Option<gpui::EntityId>),
+    regular_terminals: &std::collections::HashMap<
+        gpui::EntityId,
+        Vec<crate::terminal_control::RegularTerminalSummary>,
+    >,
+) -> (ProjectAttentionStatus, usize, Option<gpui::EntityId>) {
+    let (mut status, mut count, mut target) = activity;
+    let agent_thread_count = count;
+    let Some(terminals) = regular_terminals.get(&workspace_id) else {
+        return activity;
+    };
+    count += terminals.len();
+    if let Some(terminal) = terminals
+        .iter()
+        .max_by_key(|terminal| (terminal.status, terminal.creation_sequence))
+        && (agent_thread_count == 0 || terminal.status > status)
+    {
+        status = terminal.status;
+        target = Some(terminal.terminal_item_id);
+    }
+    (status, count, target)
 }
 
 /// The pure part of the cross-project rollup: given `live_summaries` (see
@@ -114,6 +143,10 @@ fn other_projects_with_live_activity(
     workspace: &Entity<Workspace>,
     multi_workspace: &Entity<MultiWorkspace>,
     live_summaries: &HashMap<PathBuf, ProjectLiveSummary>,
+    regular_terminals: &std::collections::HashMap<
+        gpui::EntityId,
+        Vec<crate::terminal_control::RegularTerminalSummary>,
+    >,
     cx: &App,
 ) -> Vec<ProjectRollupRow> {
     let mut others = Vec::new();
@@ -127,8 +160,13 @@ fn other_projects_with_live_activity(
             .iter()
             .map(|path| path.to_path_buf())
             .collect();
+        let activity = aggregate_live_activity(&roots, live_summaries);
         let (status, live_thread_count, attention_terminal_item_id) =
-            aggregate_live_activity(&roots, live_summaries);
+            merge_regular_terminal_activity(
+                other_workspace.entity_id(),
+                activity,
+                regular_terminals,
+            );
         let Some(first_root) = (live_thread_count > 0).then(|| roots.first()).flatten() else {
             continue;
         };
@@ -162,6 +200,10 @@ fn other_projects_with_live_activity(
 fn current_project_activity(
     workspace: &Entity<Workspace>,
     live_summaries: &HashMap<PathBuf, ProjectLiveSummary>,
+    regular_terminals: &std::collections::HashMap<
+        gpui::EntityId,
+        Vec<crate::terminal_control::RegularTerminalSummary>,
+    >,
     cx: &App,
 ) -> ProjectRollupRow {
     let roots: Vec<PathBuf> = workspace
@@ -170,8 +212,9 @@ fn current_project_activity(
         .iter()
         .map(|path| path.to_path_buf())
         .collect();
+    let activity = aggregate_live_activity(&roots, live_summaries);
     let (status, live_thread_count, attention_terminal_item_id) =
-        aggregate_live_activity(&roots, live_summaries);
+        merge_regular_terminal_activity(workspace.entity_id(), activity, regular_terminals);
     let label = roots
         .first()
         .map(|root| store::notification_project_name(root))
@@ -546,6 +589,11 @@ impl AgentThreadsPanel {
                 cx.subscribe(&store, |this: &mut AgentThreadsPanel, _, event, cx| {
                     this.handle_store_event(event, cx);
                 });
+            let terminal_registry = crate::terminal_control::registry(cx);
+            let terminal_subscription = cx.observe(
+                &terminal_registry,
+                |_this: &mut AgentThreadsPanel, _, cx| cx.notify(),
+            );
             // Deriving the active row from the workspace's active item (rather
             // than tracking a separate "selected row" field) means there is no
             // second source of truth to drift; this subscription just triggers
@@ -595,6 +643,7 @@ impl AgentThreadsPanel {
                     store_subscription,
                     settings_subscription,
                     active_item_subscription,
+                    terminal_subscription,
                 ],
                 history_tasks: HashMap::default(),
                 history_index,
@@ -1194,6 +1243,24 @@ impl AgentThreadsPanel {
             .log_err();
     }
 
+    fn focus_rollup_terminal(
+        &mut self,
+        terminal_item_id: gpui::EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .store
+            .read(cx)
+            .thread_display_status(terminal_item_id)
+            .is_some()
+        {
+            self.focus_live_thread(terminal_item_id, window, cx);
+        } else {
+            crate::terminal_control::focus_terminal(terminal_item_id, window, cx).log_err();
+        }
+    }
+
     fn toggle_section_collapsed(&mut self, kind_id: &'static str) {
         if let Some(section) = self.sections.get_mut(kind_id) {
             section.collapsed = !section.collapsed;
@@ -1400,9 +1467,15 @@ impl AgentThreadsPanel {
     ) -> Option<AnyElement> {
         let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
         let live_summaries = self.store.read(cx).live_summary_by_worktree_root();
-        let others =
-            other_projects_with_live_activity(workspace, &multi_workspace, &live_summaries, cx);
-        let current = current_project_activity(workspace, &live_summaries, cx);
+        let regular_terminals = crate::terminal_control::regular_terminal_summaries(cx);
+        let others = other_projects_with_live_activity(
+            workspace,
+            &multi_workspace,
+            &live_summaries,
+            &regular_terminals,
+            cx,
+        );
+        let current = current_project_activity(workspace, &live_summaries, &regular_terminals, cx);
 
         Some(
             v_flex()
@@ -1502,9 +1575,19 @@ impl AgentThreadsPanel {
                     .color(Color::Muted),
             );
 
-        if is_current {
+        if is_current && attention_terminal_item_id.is_none() {
             content
                 .bg(cx.theme().colors().element_selected)
+                .into_any_element()
+        } else if is_current {
+            content
+                .bg(cx.theme().colors().element_selected)
+                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if let Some(terminal_item_id) = attention_terminal_item_id {
+                        this.focus_rollup_terminal(terminal_item_id, window, cx);
+                    }
+                }))
                 .into_any_element()
         } else {
             let multi_workspace = multi_workspace.clone();
@@ -1521,7 +1604,7 @@ impl AgentThreadsPanel {
                         );
                     });
                     if let Some(terminal_item_id) = attention_terminal_item_id {
-                        this.focus_live_thread(terminal_item_id, window, cx);
+                        this.focus_rollup_terminal(terminal_item_id, window, cx);
                     }
                 }))
                 .into_any_element()
@@ -4380,9 +4463,16 @@ mod tests {
                 .read(cx)
                 .live_summary_by_worktree_root()
         });
+        let regular_terminals = std::collections::HashMap::default();
 
         let others_from_b = cx.update(|cx| {
-            other_projects_with_live_activity(&workspace_b, &multi_workspace, &live_summaries, cx)
+            other_projects_with_live_activity(
+                &workspace_b,
+                &multi_workspace,
+                &live_summaries,
+                &regular_terminals,
+                cx,
+            )
         });
         assert_eq!(
             others_from_b.len(),
@@ -4400,7 +4490,13 @@ mod tests {
         );
 
         let others_from_a = cx.update(|cx| {
-            other_projects_with_live_activity(&workspace_a, &multi_workspace, &live_summaries, cx)
+            other_projects_with_live_activity(
+                &workspace_a,
+                &multi_workspace,
+                &live_summaries,
+                &regular_terminals,
+                cx,
+            )
         });
         assert!(
             others_from_a.is_empty(),
@@ -4411,8 +4507,9 @@ mod tests {
         // should reflect each workspace's own live activity (not the other
         // workspace's), so the rollup can show "you are here" alongside
         // the other-project rows this test already covers.
-        let current_for_a =
-            cx.update(|cx| current_project_activity(&workspace_a, &live_summaries, cx));
+        let current_for_a = cx.update(|cx| {
+            current_project_activity(&workspace_a, &live_summaries, &regular_terminals, cx)
+        });
         assert_eq!(current_for_a.status, ProjectAttentionStatus::Blocked);
         assert_eq!(current_for_a.live_thread_count, 1);
         assert_eq!(
@@ -4421,8 +4518,9 @@ mod tests {
         );
         assert_eq!(current_for_a.workspace, workspace_a);
 
-        let current_for_b =
-            cx.update(|cx| current_project_activity(&workspace_b, &live_summaries, cx));
+        let current_for_b = cx.update(|cx| {
+            current_project_activity(&workspace_b, &live_summaries, &regular_terminals, cx)
+        });
         assert_eq!(
             current_for_b.status,
             ProjectAttentionStatus::Working,
@@ -4466,6 +4564,68 @@ mod tests {
             aggregate_live_activity(&[newer_root, older_root], &live_summaries);
 
         assert_eq!(terminal_item_id, Some(newer_terminal_item_id));
+    }
+
+    #[test]
+    fn regular_terminal_status_participates_in_rollup_priority() {
+        let workspace_id = gpui::EntityId::from(1);
+        let agent_terminal_item_id = gpui::EntityId::from(2);
+        let regular_terminal_item_id = gpui::EntityId::from(3);
+        let mut regular_terminals = std::collections::HashMap::new();
+        regular_terminals.insert(
+            workspace_id,
+            vec![crate::terminal_control::RegularTerminalSummary {
+                status: ProjectAttentionStatus::Blocked,
+                terminal_item_id: regular_terminal_item_id,
+                creation_sequence: 1,
+            }],
+        );
+
+        let (status, count, target) = merge_regular_terminal_activity(
+            workspace_id,
+            (
+                ProjectAttentionStatus::Working,
+                1,
+                Some(agent_terminal_item_id),
+            ),
+            &regular_terminals,
+        );
+
+        assert_eq!(status, ProjectAttentionStatus::Blocked);
+        assert_eq!(count, 2);
+        assert_eq!(target, Some(regular_terminal_item_id));
+
+        regular_terminals.insert(
+            workspace_id,
+            vec![crate::terminal_control::RegularTerminalSummary {
+                status: ProjectAttentionStatus::Working,
+                terminal_item_id: regular_terminal_item_id,
+                creation_sequence: 1,
+            }],
+        );
+        let (status, _, target) = merge_regular_terminal_activity(
+            workspace_id,
+            (
+                ProjectAttentionStatus::Idle,
+                1,
+                Some(agent_terminal_item_id),
+            ),
+            &regular_terminals,
+        );
+        assert_eq!(status, ProjectAttentionStatus::Working);
+        assert_eq!(target, Some(regular_terminal_item_id));
+
+        let (status, _, target) = merge_regular_terminal_activity(
+            workspace_id,
+            (
+                ProjectAttentionStatus::Finished,
+                1,
+                Some(agent_terminal_item_id),
+            ),
+            &regular_terminals,
+        );
+        assert_eq!(status, ProjectAttentionStatus::Finished);
+        assert_eq!(target, Some(agent_terminal_item_id));
     }
 
     #[gpui::test]
@@ -4514,7 +4674,13 @@ mod tests {
         );
 
         let others_from_b = cx.update(|cx| {
-            other_projects_with_live_activity(&workspace_b, &multi_workspace, &live_summaries, cx)
+            other_projects_with_live_activity(
+                &workspace_b,
+                &multi_workspace,
+                &live_summaries,
+                &std::collections::HashMap::default(),
+                cx,
+            )
         });
         assert_eq!(others_from_b.len(), 1);
         assert_eq!(others_from_b[0].status, ProjectAttentionStatus::Working);

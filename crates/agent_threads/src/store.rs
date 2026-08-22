@@ -550,16 +550,16 @@ enum AttentionTrigger {
 /// rollup in `AgentThreadsPanel`. Combining multiple threads' status for one
 /// worktree prefers the most urgent, in declaration order below (`Ord` is
 /// derived, so `max()` picks the last-declared variant present): `Blocked`
-/// wins over `Finished`, which wins over `Idle`, which wins over `Working`,
+/// wins over `Finished`, which wins over `Working`, which wins over `Idle`,
 /// since the rollup exists to answer "does this project need me", and a
 /// project with anything blocked (or, failing that, anything finished and
 /// unchecked) does more than one that's merely working or fully caught up.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub(crate) enum ProjectAttentionStatus {
-    Working,
     /// Every thread that finished in this project has already been looked
     /// at (`ThreadEntry::finished_seen`); nothing here needs the user.
     Idle,
+    Working,
     /// At least one thread finished and the user hasn't looked at it yet.
     Finished,
     Blocked,
@@ -819,7 +819,7 @@ impl AgentThreadStore {
         for entry in self.threads.values() {
             let root = entry.metadata.tied_worktree_root.clone();
             let summary = summaries.entry(root.clone()).or_insert(ProjectLiveSummary {
-                status: ProjectAttentionStatus::Working,
+                status: ProjectAttentionStatus::Idle,
                 live_thread_count: 0,
                 most_urgent_terminal_item_id: None,
                 most_urgent_launched_at: None,
@@ -3211,7 +3211,11 @@ mod tests {
     fn project_attention_status_combines_to_the_most_urgent() {
         assert_eq!(
             ProjectAttentionStatus::Working.max(ProjectAttentionStatus::Idle),
-            ProjectAttentionStatus::Idle
+            ProjectAttentionStatus::Working
+        );
+        assert_eq!(
+            ProjectAttentionStatus::Working.max(ProjectAttentionStatus::Finished),
+            ProjectAttentionStatus::Finished
         );
         assert_eq!(
             ProjectAttentionStatus::Idle.max(ProjectAttentionStatus::Blocked),
