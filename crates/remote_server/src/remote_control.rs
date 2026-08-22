@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(windows)]
 #[path = "remote_control_windows.rs"]
-mod windows;
+mod windows_control;
 
 const MAX_DISCOVERY_RECORDS: usize = 64;
 const MAX_ANCESTRY_DEPTH: usize = 32;
@@ -374,7 +374,7 @@ fn bind_unix_endpoint(endpoint: &Path) -> Result<net::async_net::UnixListener> {
 
 #[cfg(windows)]
 pub(crate) fn start(session: AnyProtoClient, cx: &mut gpui::App) -> Result<()> {
-    windows::start(session, cx)
+    windows_control::start(session, cx)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -679,7 +679,7 @@ fn run_unix_client(request: &ControlRequest, directory: &Path) -> Result<Control
 
 #[cfg(windows)]
 pub(crate) fn run_client(request: ControlRequest) -> Result<ControlResponse> {
-    windows::run_client(request)
+    windows_control::run_client(request)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -718,7 +718,7 @@ pub(crate) fn register_current_terminal(
 pub(crate) fn register_current_terminal(
     remote_terminal_registration_id: RemoteTerminalRegistrationId,
 ) -> Result<()> {
-    windows::register_current_terminal(remote_terminal_registration_id)
+    windows_control::register_current_terminal(remote_terminal_registration_id)
 }
 
 #[cfg(not(any(unix, windows)))]
