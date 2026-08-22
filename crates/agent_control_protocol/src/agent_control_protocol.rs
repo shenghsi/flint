@@ -322,6 +322,12 @@ pub enum TerminalReadSource {
     #[default]
     Recent,
     RecentUnwrapped,
+    /// The same bottom-anchored physical lines as `Recent`, but always sized
+    /// to the terminal's current row count rather than `lines` -- a
+    /// canonical "what does the screen show right now" snapshot for
+    /// agent-state-detection heuristics, independent of whatever line count
+    /// a caller happened to request.
+    Detection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -700,6 +706,15 @@ mod tests {
             ),
             other => panic!("expected TerminalRead, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn terminal_read_source_detection_serializes_as_kebab_case() {
+        let json = serde_json::to_value(TerminalReadSource::Detection).expect("serialize");
+        assert_eq!(json, "detection");
+        let decoded: TerminalReadSource =
+            serde_json::from_value(json).expect("deserialize detection");
+        assert_eq!(decoded, TerminalReadSource::Detection);
     }
 
     #[test]

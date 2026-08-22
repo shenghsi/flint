@@ -484,6 +484,7 @@ pub enum ControlSnapshotSource {
     Visible,
     Recent,
     RecentUnwrapped,
+    Detection,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2558,6 +2559,12 @@ impl Terminal {
             ControlSnapshotSource::Visible => visible_physical_lines(&terminal, lines),
             ControlSnapshotSource::Recent => last_physical_lines(&terminal, lines),
             ControlSnapshotSource::RecentUnwrapped => last_non_empty_lines(&terminal, lines),
+            // Ignores the requested `lines`: always the terminal's current
+            // row count, so this snapshot means the same thing regardless
+            // of what a caller happened to ask for.
+            ControlSnapshotSource::Detection => {
+                last_physical_lines(&terminal, screen_lines(&terminal))
+            }
         };
         let text = lines.join("\n");
         ControlSnapshot {
@@ -4215,6 +4222,35 @@ mod tests {
             terminal.control_snapshot_since(unrelated, 10, 1_000_000, 10_000)
         });
         assert_eq!(result, Err(ControlReadCursorExpired));
+    }
+
+    #[gpui::test]
+    async fn detection_source_ignores_requested_lines_and_uses_the_current_row_count(
+        cx: &mut TestAppContext,
+    ) {
+        let terminal = new_exact_fit_display_only_terminal(cx, 3);
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"L1\nL2\nL3", cx);
+        });
+        cx.run_until_parked();
+        // The viewport is already full, so this scrolls: history gains L1
+        // and L2, and the 3-row viewport ends up showing L3, L4, L5.
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"\nL4\nL5", cx);
+        });
+        cx.run_until_parked();
+
+        let (detection, recent) = terminal.read_with(cx, |terminal, _cx| {
+            (
+                terminal.control_snapshot(ControlSnapshotSource::Detection, 1),
+                terminal.control_snapshot(ControlSnapshotSource::Recent, 1),
+            )
+        });
+
+        // Detection ignores the requested `lines: 1` and returns all 3
+        // current rows; Recent honors it and returns just the last line.
+        assert_eq!(detection.text, "L3\nL4\nL5");
+        assert_eq!(recent.text, "L5");
     }
 
     #[gpui::test]

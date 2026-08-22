@@ -155,6 +155,7 @@ enum ReadSourceArg {
     Visible,
     Recent,
     RecentUnwrapped,
+    Detection,
 }
 
 impl From<ReadSourceArg> for TerminalReadSource {
@@ -163,6 +164,7 @@ impl From<ReadSourceArg> for TerminalReadSource {
             ReadSourceArg::Visible => TerminalReadSource::Visible,
             ReadSourceArg::Recent => TerminalReadSource::Recent,
             ReadSourceArg::RecentUnwrapped => TerminalReadSource::RecentUnwrapped,
+            ReadSourceArg::Detection => TerminalReadSource::Detection,
         }
     }
 }
@@ -918,6 +920,27 @@ mod tests {
         let (request, _wants_json) = cli.into_request().expect("build request");
         match request.command {
             ControlCommand::TerminalRead(request) => assert_eq!(request.since, None),
+            other => panic!("expected TerminalRead, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_read_source_detection_is_parsed() {
+        let cli = Cli::try_parse_from([
+            "flintctl",
+            "terminal",
+            "read",
+            "t1",
+            "--source",
+            "detection",
+        ])
+        .expect("parse terminal read --source detection");
+
+        let (request, _wants_json) = cli.into_request().expect("build request");
+        match request.command {
+            ControlCommand::TerminalRead(request) => {
+                assert_eq!(request.source, TerminalReadSource::Detection)
+            }
             other => panic!("expected TerminalRead, got {other:?}"),
         }
     }

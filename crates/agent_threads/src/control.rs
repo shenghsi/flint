@@ -897,6 +897,9 @@ fn terminal_snapshot_source(
         agent_control_protocol::TerminalReadSource::RecentUnwrapped => {
             terminal::ControlSnapshotSource::RecentUnwrapped
         }
+        agent_control_protocol::TerminalReadSource::Detection => {
+            terminal::ControlSnapshotSource::Detection
+        }
     }
 }
 
