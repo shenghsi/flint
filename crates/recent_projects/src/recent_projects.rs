@@ -1192,15 +1192,35 @@ impl PickerDelegate for RecentProjectsDelegate {
                         let requesting_window = handle;
                         requesting_window
                             .update(cx, |multi_workspace, window, cx| {
-                                let workspace = multi_workspace
-                                    .last_active_workspace_for_group(&key, cx)
-                                    .or_else(|| {
-                                        multi_workspace
-                                            .workspaces_for_project_group(&key, cx)
-                                            .and_then(|workspaces| workspaces.into_iter().next())
-                                    });
+                                let last_active_workspace =
+                                    multi_workspace.last_active_workspace_for_group(&key, cx);
+                                let mut workspaces = multi_workspace
+                                    .workspaces_for_project_group(&key, cx)
+                                    .unwrap_or_default();
+                                if let Some(last_active_workspace) = &last_active_workspace
+                                    && let Some(index) = workspaces
+                                        .iter()
+                                        .position(|workspace| workspace == last_active_workspace)
+                                {
+                                    workspaces.swap(0, index);
+                                }
+                                let priority_terminal =
+                                    agent_threads::highest_priority_terminal(&workspaces, cx);
+                                let workspace = priority_terminal
+                                    .as_ref()
+                                    .map(|(workspace, _)| workspace.clone())
+                                    .or(last_active_workspace)
+                                    .or_else(|| workspaces.into_iter().next());
                                 if let Some(workspace) = workspace {
                                     multi_workspace.activate(workspace, None, window, cx);
+                                    if let Some((_, terminal_item_id)) = priority_terminal {
+                                        agent_threads::focus_priority_terminal(
+                                            terminal_item_id,
+                                            window,
+                                            cx,
+                                        )
+                                        .log_err();
+                                    }
                                     return;
                                 }
 

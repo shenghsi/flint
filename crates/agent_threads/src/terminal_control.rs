@@ -145,6 +145,9 @@ pub(crate) struct RegularTerminalSummary {
 pub(crate) fn regular_terminal_summaries(
     cx: &mut App,
 ) -> HashMap<EntityId, Vec<RegularTerminalSummary>> {
+    if !cx.has_global::<GlobalTerminalControlRegistry>() {
+        return HashMap::default();
+    }
     let mut summaries: HashMap<EntityId, Vec<RegularTerminalSummary>> = HashMap::default();
     for record in records(cx) {
         let Some(view) = record.view.upgrade() else {

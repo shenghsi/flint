@@ -4463,6 +4463,13 @@ mod tests {
                 .read(cx)
                 .live_summary_by_worktree_root()
         });
+        let priority_terminal = cx.update(|cx| {
+            crate::highest_priority_terminal(&[workspace_b.clone(), workspace_a.clone()], cx)
+        });
+        assert_eq!(
+            priority_terminal,
+            Some((workspace_a.clone(), terminal_item_id))
+        );
         let regular_terminals = std::collections::HashMap::default();
 
         let others_from_b = cx.update(|cx| {

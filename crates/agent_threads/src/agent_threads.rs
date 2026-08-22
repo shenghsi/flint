@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{App, Context, SharedString, Window, actions};
+use gpui::{App, Context, Entity, EntityId, SharedString, Window, actions};
 use settings::{ExtendingVec, RegisterSetting, Settings};
 use ui::IconName;
 use workspace::Workspace;
@@ -650,6 +650,98 @@ pub fn init(cx: &mut App) {
         workspace.register_action(new_opencode_thread);
     })
     .detach();
+}
+
+/// Returns the highest-priority live Terminal across `workspaces` using the
+/// Agent Threads rollup order: Blocked, Finished, Working, then Idle.
+pub fn highest_priority_terminal(
+    workspaces: &[Entity<Workspace>],
+    cx: &mut App,
+) -> Option<(Entity<Workspace>, EntityId)> {
+    let live_summaries = AgentThreadStore::try_global(cx)
+        .map(|store| store.read(cx).live_summary_by_worktree_root())
+        .unwrap_or_default();
+    #[cfg(any(unix, windows))]
+    let regular_terminals = terminal_control::regular_terminal_summaries(cx);
+
+    let mut selected = None;
+    for workspace in workspaces {
+        let roots = workspace.read(cx).root_paths(cx);
+        let mut status = store::ProjectAttentionStatus::Idle;
+        let mut terminal_item_id = None;
+        let mut attention_launched_at = None;
+        let mut live_thread_count = 0;
+        for root in roots {
+            let Some(summary) = live_summaries.get(root.as_ref()) else {
+                continue;
+            };
+            live_thread_count += summary.live_thread_count;
+            let is_more_urgent = terminal_item_id.is_none() || summary.status > status;
+            let is_tied_but_more_recent = summary.status == status
+                && summary.most_urgent_launched_at.is_some_and(|launched_at| {
+                    attention_launched_at.is_none_or(|current| launched_at > current)
+                });
+            if is_more_urgent || is_tied_but_more_recent {
+                status = summary.status;
+                terminal_item_id = summary.most_urgent_terminal_item_id;
+                attention_launched_at = summary.most_urgent_launched_at;
+            }
+        }
+
+        #[cfg(any(unix, windows))]
+        if let Some(terminal) =
+            regular_terminals
+                .get(&workspace.entity_id())
+                .and_then(|terminals| {
+                    terminals
+                        .iter()
+                        .max_by_key(|terminal| (terminal.status, terminal.creation_sequence))
+                })
+            && (live_thread_count == 0 || terminal.status > status)
+        {
+            status = terminal.status;
+            terminal_item_id = Some(terminal.terminal_item_id);
+        }
+
+        let Some(terminal_item_id) = terminal_item_id else {
+            continue;
+        };
+        if selected
+            .as_ref()
+            .is_none_or(|(_, selected_status, _)| status > *selected_status)
+        {
+            selected = Some((workspace.clone(), status, terminal_item_id));
+        }
+    }
+    selected.map(|(workspace, _, terminal_item_id)| (workspace, terminal_item_id))
+}
+
+/// Focuses a Terminal returned by `highest_priority_terminal`.
+pub fn focus_priority_terminal(
+    terminal_item_id: EntityId,
+    window: &mut Window,
+    cx: &mut App,
+) -> anyhow::Result<()> {
+    let store = AgentThreadStore::try_global(cx)
+        .ok_or_else(|| anyhow::anyhow!("Agent Thread store is not initialized"))?;
+    if store
+        .read(cx)
+        .thread_display_status(terminal_item_id)
+        .is_some()
+    {
+        store.update(cx, |store, cx| {
+            store.focus_thread(terminal_item_id, window, cx)
+        })
+    } else {
+        #[cfg(any(unix, windows))]
+        {
+            terminal_control::focus_terminal(terminal_item_id, window, cx)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            anyhow::bail!("Terminal no longer exists")
+        }
+    }
 }
 
 /// Starts the local-only agent-control server (see `control.rs`). Deliberately
