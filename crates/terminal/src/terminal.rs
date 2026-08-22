@@ -490,6 +490,56 @@ pub enum ControlSnapshotSource {
 pub struct ControlSnapshot {
     pub text: String,
     pub alternate_screen: bool,
+    pub cursor: ControlReadCursor,
+}
+
+/// An opaque position in a terminal's output stream: the trailing text of a
+/// prior read. Treat as opaque -- see `Terminal::control_snapshot_since`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlReadCursor {
+    pub anchor: String,
+}
+
+/// Returned by `control_snapshot_since` when `since` is older than what the
+/// terminal still retains (its scrollback evicted the relevant lines, or it
+/// switched between the primary and alternate screen) -- the cursor can no
+/// longer prove no output was missed, so the caller must fall back to a
+/// plain `control_snapshot` read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControlReadCursorExpired;
+
+/// How much trailing text a `ControlReadCursor` carries as its anchor.
+/// Larger makes an accidental duplicate match (see `control_snapshot_since`)
+/// less likely; it does not affect correctness, only how often an
+/// already-seen line gets harmlessly re-included.
+const CONTROL_READ_ANCHOR_BYTES: usize = 256;
+
+fn control_read_anchor(text: &str) -> String {
+    if text.len() <= CONTROL_READ_ANCHOR_BYTES {
+        return text.to_string();
+    }
+    let mut start = text.len() - CONTROL_READ_ANCHOR_BYTES;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_string()
+}
+
+/// Joins at most `max_lines` of `text`'s leading `\n`-separated lines, capped
+/// to `max_bytes`, whichever binds first. Only ever includes whole lines.
+fn cap_lines_and_bytes(text: &str, max_lines: usize, max_bytes: usize) -> String {
+    let mut result = String::new();
+    for line in text.split('\n').take(max_lines) {
+        let needed = line.len() + usize::from(!result.is_empty());
+        if result.len() + needed > max_bytes {
+            break;
+        }
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(line);
+    }
+    result
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -2509,10 +2559,66 @@ impl Terminal {
             ControlSnapshotSource::Recent => last_physical_lines(&terminal, lines),
             ControlSnapshotSource::RecentUnwrapped => last_non_empty_lines(&terminal, lines),
         };
+        let text = lines.join("\n");
         ControlSnapshot {
-            text: lines.join("\n"),
+            cursor: ControlReadCursor {
+                anchor: control_read_anchor(&text),
+            },
+            text,
             alternate_screen: self.last_content.mode.contains(Modes::ALT_SCREEN),
         }
+    }
+
+    /// Reads only the output appended after `since`, instead of a bounded
+    /// snapshot of the tail. `since.anchor` is matched against a fresh read
+    /// of up to `search_window_lines` physical lines; everything after its
+    /// first (leftmost) occurrence is "new". Matching leftmost rather than
+    /// the most recent occurrence means an accidental earlier duplicate of
+    /// the anchor text can only cause a little already-seen content to be
+    /// re-included, never cause genuinely new content to be skipped. If the
+    /// anchor isn't found at all -- it scrolled out of the search window,
+    /// or the terminal switched between its primary and alternate screen --
+    /// the caller can no longer be proven caught up, so this returns
+    /// `ControlReadCursorExpired` rather than guessing.
+    ///
+    /// Returns at most `max_lines` lines and `max_bytes` bytes of text; the
+    /// returned cursor always matches exactly what's in `text`, so a caller
+    /// that gets a capped response can simply call this again with the new
+    /// cursor to keep catching up without skipping anything.
+    pub fn control_snapshot_since(
+        &self,
+        since: ControlReadCursor,
+        max_lines: usize,
+        max_bytes: usize,
+        search_window_lines: usize,
+    ) -> Result<ControlSnapshot, ControlReadCursorExpired> {
+        let terminal = self.term.lock_unfair();
+        let window = last_physical_lines(&terminal, search_window_lines).join("\n");
+        let alternate_screen = self.last_content.mode.contains(Modes::ALT_SCREEN);
+        drop(terminal);
+
+        let start = if since.anchor.is_empty() {
+            0
+        } else {
+            match window.find(&since.anchor) {
+                Some(position) => position + since.anchor.len(),
+                None => return Err(ControlReadCursorExpired),
+            }
+        };
+        let available = window[start..]
+            .strip_prefix('\n')
+            .unwrap_or(&window[start..]);
+        let text = cap_lines_and_bytes(available, max_lines, max_bytes);
+        let anchor = if text.is_empty() {
+            since.anchor
+        } else {
+            control_read_anchor(&text)
+        };
+        Ok(ControlSnapshot {
+            text,
+            alternate_screen,
+            cursor: ControlReadCursor { anchor },
+        })
     }
 
     pub fn shell_kind(&self) -> ShellKind {
@@ -3953,6 +4059,162 @@ mod tests {
         assert_eq!(unwrapped.text, "abcdefghij");
         assert_eq!(visible.text, "fghij");
         assert!(!recent.alternate_screen);
+    }
+
+    /// A `Recent` read is bottom-anchored at the viewport's fixed last row,
+    /// not at wherever the cursor happens to be -- so a viewport taller than
+    /// what's been written so far pads reads with blank trailing rows down
+    /// to that fixed bottom. `rows` should equal the number of lines the
+    /// test's first write produces, so the viewport starts out exactly
+    /// full; every later line write then scrolls (never reveals a blank
+    /// row) and every `Recent`/anchor-window read stays padding-free.
+    fn new_exact_fit_display_only_terminal(
+        cx: &mut TestAppContext,
+        rows: usize,
+    ) -> Entity<Terminal> {
+        cx.new(|cx| {
+            TerminalBuilder::new_display_only_with_bounds(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+                TerminalBounds::new(
+                    px(20.0),
+                    px(10.0),
+                    bounds(
+                        point(px(0.0), px(0.0)),
+                        size(px(250.0), px(20.0 * rows as f32)),
+                    ),
+                ),
+            )
+            .subscribe(cx)
+        })
+    }
+
+    #[gpui::test]
+    async fn control_snapshot_since_returns_only_new_lines_and_chains_cursors(
+        cx: &mut TestAppContext,
+    ) {
+        let terminal = new_exact_fit_display_only_terminal(cx, 2);
+
+        // No trailing newline: the viewport is exactly 2 rows, so ending
+        // with one would advance the cursor to a third (nonexistent) row
+        // and scroll immediately, which this checkpoint doesn't want yet.
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"L1\nL2", cx);
+        });
+        cx.run_until_parked();
+        let baseline = terminal.read_with(cx, |terminal, _cx| {
+            terminal.control_snapshot(ControlSnapshotSource::Recent, 10)
+        });
+        assert_eq!(baseline.text, "L1\nL2");
+
+        // The viewport is already full, so each of these newlines scrolls
+        // rather than reveals a blank row.
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"\nL3\nL4\nL5", cx);
+        });
+        cx.run_until_parked();
+
+        // Capped to 2 lines: only the oldest 2 of the 3 new lines come back,
+        // and the cursor advances by exactly that much (not all the way to
+        // "now"), so nothing in between gets skipped.
+        let delta = terminal
+            .read_with(cx, |terminal, _cx| {
+                terminal.control_snapshot_since(baseline.cursor.clone(), 2, 1_000_000, 10_000)
+            })
+            .expect("cursor should not be expired");
+        assert_eq!(delta.text, "L3\nL4");
+
+        let rest = terminal
+            .read_with(cx, |terminal, _cx| {
+                terminal.control_snapshot_since(delta.cursor.clone(), 10, 1_000_000, 10_000)
+            })
+            .expect("cursor should not be expired");
+        assert_eq!(rest.text, "L5");
+
+        let nothing_new = terminal
+            .read_with(cx, |terminal, _cx| {
+                terminal.control_snapshot_since(rest.cursor.clone(), 10, 1_000_000, 10_000)
+            })
+            .expect("cursor should not be expired");
+        assert_eq!(nothing_new.text, "");
+        assert_eq!(nothing_new.cursor, rest.cursor);
+    }
+
+    #[gpui::test]
+    async fn control_snapshot_since_caps_by_byte_budget_without_splitting_a_line(
+        cx: &mut TestAppContext,
+    ) {
+        let terminal = new_exact_fit_display_only_terminal(cx, 1);
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"start", cx);
+        });
+        cx.run_until_parked();
+        let baseline = terminal.read_with(cx, |terminal, _cx| {
+            terminal.control_snapshot(ControlSnapshotSource::Recent, 10)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"\nAAAA\nBBBB\nCCCC", cx);
+        });
+        cx.run_until_parked();
+
+        // A byte budget that fits "AAAA" plus the separator but not "BBBB"
+        // too must still return only whole lines.
+        let capped = terminal
+            .read_with(cx, |terminal, _cx| {
+                terminal.control_snapshot_since(baseline.cursor.clone(), 10, 6, 10_000)
+            })
+            .expect("cursor should not be expired");
+        assert_eq!(capped.text, "AAAA");
+
+        let rest = terminal
+            .read_with(cx, |terminal, _cx| {
+                terminal.control_snapshot_since(capped.cursor.clone(), 10, 1_000_000, 10_000)
+            })
+            .expect("cursor should not be expired");
+        assert_eq!(rest.text, "BBBB\nCCCC");
+    }
+
+    #[gpui::test]
+    async fn control_snapshot_since_with_a_fresh_cursor_returns_everything(
+        cx: &mut TestAppContext,
+    ) {
+        let terminal = new_exact_fit_display_only_terminal(cx, 2);
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"L1\nL2", cx);
+        });
+        cx.run_until_parked();
+
+        let fresh = ControlReadCursor {
+            anchor: String::new(),
+        };
+        let snapshot = terminal
+            .read_with(cx, |terminal, _cx| {
+                terminal.control_snapshot_since(fresh, 10, 1_000_000, 10_000)
+            })
+            .expect("an empty anchor always matches");
+        assert_eq!(snapshot.text, "L1\nL2");
+    }
+
+    #[gpui::test]
+    async fn control_snapshot_since_rejects_a_cursor_it_cannot_find(cx: &mut TestAppContext) {
+        let terminal = new_exact_fit_display_only_terminal(cx, 2);
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"L1\nL2", cx);
+        });
+        cx.run_until_parked();
+
+        let unrelated = ControlReadCursor {
+            anchor: "this text was never in the terminal".to_string(),
+        };
+        let result = terminal.read_with(cx, |terminal, _cx| {
+            terminal.control_snapshot_since(unrelated, 10, 1_000_000, 10_000)
+        });
+        assert_eq!(result, Err(ControlReadCursorExpired));
     }
 
     #[gpui::test]

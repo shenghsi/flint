@@ -331,10 +331,28 @@ pub struct TerminalReadRequest {
     pub source: TerminalReadSource,
     #[serde(default = "default_read_lines")]
     pub lines: usize,
+    /// Read only the output appended after this cursor, instead of the usual
+    /// bounded snapshot. Only valid with the default `Recent` source. A
+    /// cursor from any prior `TerminalRead`/`TerminalWaitOutput` response
+    /// can be used here; the server rejects one it can no longer find in the
+    /// terminal's retained output with `CursorExpired`, since it can no
+    /// longer prove no output was missed.
+    #[serde(default)]
+    pub since: Option<TerminalReadCursor>,
 }
 
 fn default_read_lines() -> usize {
     DEFAULT_READ_LINES
+}
+
+/// An opaque position in a terminal's output stream, handed back on every
+/// read so a later call can pass it as `since` to read only what's new.
+/// Callers must treat this as opaque and never construct or inspect one by
+/// hand -- it's matched against the terminal's retained output as a literal
+/// string, not interpreted as a line number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalReadCursor {
+    pub anchor: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,6 +458,7 @@ pub enum ControlErrorCode {
     InvalidKey,
     InvalidPattern,
     InvalidRequest,
+    CursorExpired,
     Timeout,
     ResponseTooLarge,
     UnsupportedProtocol,
@@ -483,6 +502,9 @@ pub struct TerminalSnapshot {
     pub text: String,
     pub alternate_screen: bool,
     pub truncated: bool,
+    /// Pass this back as `TerminalReadRequest::since` to read only the
+    /// output appended after this snapshot.
+    pub cursor: TerminalReadCursor,
 }
 
 #[cfg(test)]
@@ -644,6 +666,63 @@ mod tests {
             }
             other => panic!("expected TerminalRun, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn terminal_read_request_omits_since_by_default_and_round_trips_when_present() {
+        let json = r#"{
+            "protocol":{"major":1,"minor":0},
+            "command":"terminal-read",
+            "terminal_id":"terminal-1"
+        }"#;
+        let decoded: ControlRequest = serde_json::from_str(json).expect("deserialize");
+        match decoded.command {
+            ControlCommand::TerminalRead(request) => assert_eq!(request.since, None),
+            other => panic!("expected TerminalRead, got {other:?}"),
+        }
+
+        let request = ControlRequest::current(ControlCommand::TerminalRead(TerminalReadRequest {
+            terminal_id: TerminalControlId("terminal-1".to_string()),
+            source: TerminalReadSource::Recent,
+            lines: DEFAULT_READ_LINES,
+            since: Some(TerminalReadCursor {
+                anchor: "previous output\n".to_string(),
+            }),
+        }));
+        let json = serde_json::to_string(&request).expect("serialize");
+        let decoded: ControlRequest = serde_json::from_str(&json).expect("deserialize");
+        match decoded.command {
+            ControlCommand::TerminalRead(request) => assert_eq!(
+                request.since,
+                Some(TerminalReadCursor {
+                    anchor: "previous output\n".to_string(),
+                })
+            ),
+            other => panic!("expected TerminalRead, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_snapshot_carries_its_read_cursor_through_json() {
+        let snapshot = TerminalSnapshot {
+            terminal: TerminalMetadata {
+                id: TerminalControlId("terminal-1".to_string()),
+                title: "zsh".to_string(),
+                working_directory: None,
+                is_agent_thread: false,
+                has_exited: false,
+            },
+            source: TerminalReadSource::Recent,
+            text: "hello".to_string(),
+            alternate_screen: false,
+            truncated: false,
+            cursor: TerminalReadCursor {
+                anchor: "hello".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&snapshot).expect("serialize");
+        let decoded: TerminalSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.cursor, snapshot.cursor);
     }
 
     #[test]

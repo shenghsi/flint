@@ -92,6 +92,12 @@ enum TerminalCommand {
         source: ReadSourceArg,
         #[arg(long, default_value_t = agent_control_protocol::DEFAULT_READ_LINES)]
         lines: usize,
+        /// Read only output appended after this cursor -- copy it verbatim
+        /// from a prior read's `cursor` field (JSON output) or its printed
+        /// "cursor" line (human output). Only valid with the default recent
+        /// source.
+        #[arg(long, value_parser = parse_read_cursor)]
+        since: Option<agent_control_protocol::TerminalReadCursor>,
         #[arg(long)]
         json: bool,
     },
@@ -235,12 +241,14 @@ impl Cli {
                     terminal_id,
                     source,
                     lines,
+                    since,
                     json,
                 } => (
                     ControlCommand::TerminalRead(TerminalReadRequest {
                         terminal_id: TerminalControlId(terminal_id),
                         source: source.into(),
                         lines,
+                        since,
                     }),
                     json,
                 ),
@@ -325,6 +333,27 @@ fn parse_duration_millis(value: &str) -> Result<u64, String> {
         .checked_mul(multiplier)
         .filter(|duration| *duration > 0)
         .ok_or_else(|| "duration is out of range".to_string())
+}
+
+/// Cursors carry a raw snippet of terminal output (see
+/// `agent_control_protocol::TerminalReadCursor`), which can contain
+/// anything a shell argument can't safely hold -- quotes, `$`, newlines,
+/// control bytes. Base64 keeps the CLI's textual `--since`/printed-cursor
+/// form a single shell-safe token; `--json` output carries the cursor's
+/// `anchor` field as a plain JSON string instead, with no encoding needed.
+fn parse_read_cursor(value: &str) -> Result<agent_control_protocol::TerminalReadCursor, String> {
+    use base64::Engine as _;
+    let invalid = || "cursor must be the exact value printed by a prior read".to_string();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|_| invalid())?;
+    let anchor = String::from_utf8(bytes).map_err(|_| invalid())?;
+    Ok(agent_control_protocol::TerminalReadCursor { anchor })
+}
+
+fn encode_read_cursor(cursor: &agent_control_protocol::TerminalReadCursor) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(cursor.anchor.as_bytes())
 }
 
 #[cfg(unix)]
@@ -631,6 +660,10 @@ fn print_response(response: &ControlResponse, wants_json: bool) -> i32 {
         ControlResult::Ok(ControlSuccess::TerminalRead(snapshot))
         | ControlResult::Ok(ControlSuccess::TerminalWaitOutput(snapshot)) => {
             print!("{}", snapshot.text);
+            eprintln!(
+                "flintctl: cursor {} (pass as --since to read only what's new)",
+                encode_read_cursor(&snapshot.cursor)
+            );
         }
         ControlResult::Ok(ControlSuccess::TerminalInputAccepted) => {}
         ControlResult::NotReady => {
@@ -679,6 +712,7 @@ fn error_code_name(code: agent_control_protocol::ControlErrorCode) -> &'static s
         ControlErrorCode::InvalidKey => "invalid-key",
         ControlErrorCode::InvalidPattern => "invalid-pattern",
         ControlErrorCode::InvalidRequest => "invalid-request",
+        ControlErrorCode::CursorExpired => "cursor-expired",
         ControlErrorCode::Timeout => "timeout",
         ControlErrorCode::ResponseTooLarge => "response-too-large",
         ControlErrorCode::UnsupportedProtocol => "unsupported-protocol",
@@ -834,6 +868,58 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn read_cursor_round_trips_through_its_printed_encoding() {
+        let cursor = agent_control_protocol::TerminalReadCursor {
+            anchor: "line one\nline two".to_string(),
+        };
+        let encoded = encode_read_cursor(&cursor);
+        // Base64 output is a single shell-safe token: no quotes, `$`, or
+        // whitespace that would need escaping on a command line.
+        assert!(
+            encoded
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric()
+                    || character == '+'
+                    || character == '/'
+                    || character == '=')
+        );
+        assert_eq!(parse_read_cursor(&encoded), Ok(cursor));
+    }
+
+    #[test]
+    fn read_cursor_rejects_malformed_input() {
+        assert!(parse_read_cursor("not valid base64!!").is_err());
+    }
+
+    #[test]
+    fn terminal_read_since_flag_builds_a_request_with_the_decoded_cursor() {
+        let cursor = agent_control_protocol::TerminalReadCursor {
+            anchor: "previous tail".to_string(),
+        };
+        let encoded = encode_read_cursor(&cursor);
+        let cli = Cli::try_parse_from(["flintctl", "terminal", "read", "t1", "--since", &encoded])
+            .expect("parse terminal read with --since");
+
+        let (request, _wants_json) = cli.into_request().expect("build request");
+        match request.command {
+            ControlCommand::TerminalRead(request) => assert_eq!(request.since, Some(cursor)),
+            other => panic!("expected TerminalRead, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_read_without_since_defaults_to_none() {
+        let cli = Cli::try_parse_from(["flintctl", "terminal", "read", "t1"])
+            .expect("parse terminal read");
+
+        let (request, _wants_json) = cli.into_request().expect("build request");
+        match request.command {
+            ControlCommand::TerminalRead(request) => assert_eq!(request.since, None),
+            other => panic!("expected TerminalRead, got {other:?}"),
+        }
     }
 
     #[cfg(windows)]

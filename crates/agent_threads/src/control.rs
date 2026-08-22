@@ -777,6 +777,14 @@ fn terminal_read(
             ),
         );
     }
+    if request.since.is_some()
+        && request.source != agent_control_protocol::TerminalReadSource::Recent
+    {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidRequest,
+            "since is only supported with the default recent source",
+        );
+    }
     let Some(record) = records
         .iter()
         .find(|record| record.id == request.terminal_id)
@@ -800,6 +808,29 @@ fn terminal_read(
         let Some(metadata) = crate::terminal_control::metadata(record, cx) else {
             return terminal_not_found(&request.terminal_id);
         };
+        if let Some(since) = request.since.clone() {
+            return match terminal.read(cx).control_snapshot_since(
+                terminal_read_cursor(since),
+                request.lines,
+                RESPONSE_TEXT_BYTE_BUDGET,
+                agent_control_protocol::MAX_READ_LINES,
+            ) {
+                Ok(snapshot) => {
+                    ControlResponse::ok(ControlSuccess::TerminalRead(TerminalSnapshot {
+                        terminal: metadata,
+                        source: request.source,
+                        text: snapshot.text,
+                        alternate_screen: snapshot.alternate_screen,
+                        truncated: false,
+                        cursor: protocol_read_cursor(snapshot.cursor),
+                    }))
+                }
+                Err(terminal::ControlReadCursorExpired) => ControlResponse::error(
+                    ControlErrorCode::CursorExpired,
+                    "cursor is older than the terminal's retained scrollback; read again without since",
+                ),
+            };
+        }
         let snapshot = terminal
             .read(cx)
             .control_snapshot(terminal_snapshot_source(request.source), request.lines);
@@ -810,6 +841,7 @@ fn terminal_read(
             text,
             alternate_screen: snapshot.alternate_screen,
             truncated,
+            cursor: protocol_read_cursor(snapshot.cursor),
         }))
     })
 }
@@ -821,18 +853,35 @@ fn terminal_not_found(id: &TerminalControlId) -> ControlResponse {
     )
 }
 
+const RESPONSE_METADATA_ALLOWANCE: usize = 4096;
+const RESPONSE_TEXT_BYTE_BUDGET: usize = MAX_RESPONSE_BYTES - RESPONSE_METADATA_ALLOWANCE;
+
 fn bounded_terminal_text(mut text: String) -> (String, bool) {
-    const RESPONSE_METADATA_ALLOWANCE: usize = 4096;
-    let maximum = MAX_RESPONSE_BYTES.saturating_sub(RESPONSE_METADATA_ALLOWANCE);
-    if text.len() <= maximum {
+    if text.len() <= RESPONSE_TEXT_BYTE_BUDGET {
         return (text, false);
     }
-    let mut end = maximum;
+    let mut end = RESPONSE_TEXT_BYTE_BUDGET;
     while !text.is_char_boundary(end) {
         end -= 1;
     }
     text.truncate(end);
     (text, true)
+}
+
+fn terminal_read_cursor(
+    cursor: agent_control_protocol::TerminalReadCursor,
+) -> terminal::ControlReadCursor {
+    terminal::ControlReadCursor {
+        anchor: cursor.anchor,
+    }
+}
+
+fn protocol_read_cursor(
+    cursor: terminal::ControlReadCursor,
+) -> agent_control_protocol::TerminalReadCursor {
+    agent_control_protocol::TerminalReadCursor {
+        anchor: cursor.anchor,
+    }
 }
 
 fn terminal_snapshot_source(
@@ -1049,6 +1098,7 @@ async fn terminal_wait_output(
                 text,
                 alternate_screen: terminal_snapshot.alternate_screen,
                 truncated,
+                cursor: protocol_read_cursor(terminal_snapshot.cursor),
             })
         });
         let Some(snapshot) = snapshot else {
@@ -1114,6 +1164,7 @@ fn command_capabilities() -> Vec<String> {
         "terminal-current",
         "terminal-list",
         "terminal-read",
+        "terminal-read-since",
         "terminal-send-text",
         "terminal-send-key",
         "terminal-run",
@@ -1833,6 +1884,7 @@ mod tests {
                 terminal_id: id.clone(),
                 source: agent_control_protocol::TerminalReadSource::Recent,
                 lines: 120,
+                since: None,
             })),
             &mut async_cx,
         )
@@ -1860,6 +1912,100 @@ mod tests {
         assert!(matches!(
             wait.result,
             ControlResult::Ok(ControlSuccess::TerminalWaitOutput(_))
+        ));
+    }
+
+    #[gpui::test]
+    async fn terminal_read_since_rejects_a_non_recent_source(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .expect("spawned terminal must be registered");
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_terminal(
+            caller,
+            &records,
+            &ControlRequest::current(ControlCommand::TerminalRead(TerminalReadRequest {
+                terminal_id: caller.id.clone(),
+                source: agent_control_protocol::TerminalReadSource::Visible,
+                lines: 120,
+                since: Some(agent_control_protocol::TerminalReadCursor {
+                    anchor: String::new(),
+                }),
+            })),
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            response.result,
+            ControlResult::Error(ref error) if error.code == ControlErrorCode::InvalidRequest
+        ));
+    }
+
+    #[gpui::test]
+    async fn terminal_read_since_round_trips_the_cursor_and_rejects_an_unrelated_one(
+        cx: &mut TestAppContext,
+    ) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .expect("spawned terminal must be registered");
+        let mut async_cx = cx.to_async();
+
+        let read_request = |since| {
+            ControlRequest::current(ControlCommand::TerminalRead(TerminalReadRequest {
+                terminal_id: caller.id.clone(),
+                source: agent_control_protocol::TerminalReadSource::Recent,
+                lines: 120,
+                since,
+            }))
+        };
+
+        let first = dispatch_terminal(caller, &records, &read_request(None), &mut async_cx).await;
+        let cursor = match first.result {
+            ControlResult::Ok(ControlSuccess::TerminalRead(snapshot)) => snapshot.cursor,
+            other => panic!("expected a successful read, got {other:?}"),
+        };
+
+        // Reusing the cursor with nothing new in between must succeed with
+        // an empty delta, not an error -- exercises the same wiring a real
+        // "read, then read since" round trip would.
+        let unchanged =
+            dispatch_terminal(caller, &records, &read_request(Some(cursor)), &mut async_cx).await;
+        assert!(matches!(
+            unchanged.result,
+            ControlResult::Ok(ControlSuccess::TerminalRead(ref snapshot)) if snapshot.text.is_empty()
+        ));
+
+        let expired = dispatch_terminal(
+            caller,
+            &records,
+            &read_request(Some(agent_control_protocol::TerminalReadCursor {
+                anchor: "text that was never on this terminal".to_string(),
+            })),
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            expired.result,
+            ControlResult::Error(ref error) if error.code == ControlErrorCode::CursorExpired
         ));
     }
 
