@@ -22,6 +22,8 @@ debug-embed = ["dep:rust-embed"]
 test-support = ["fs/test-support"]
 
 [dependencies]
+agent_control_cli.workspace = true
+agent_control_protocol.workspace = true
 agent_history.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
@@ -49,6 +51,7 @@ log.workspace = true
 lsp.workspace = true
 net.workspace = true
 node_runtime.workspace = true
+parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 proto.workspace = true

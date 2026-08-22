@@ -50,6 +50,7 @@ impl From<settings::WslConnection> for WslConnectionOptions {
 #[derive(Debug)]
 pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<Arc<RelPath>>,
+    remote_home_directory: String,
     platform: RemotePlatform,
     shell: String,
     shell_kind: ShellKind,
@@ -75,6 +76,7 @@ impl WslRemoteConnection {
         let mut this = Self {
             connection_options,
             remote_binary_path: None,
+            remote_home_directory: String::new(),
             platform: RemotePlatform {
                 os: RemoteOs::Linux,
                 arch: RemoteArch::X86_64,
@@ -92,6 +94,11 @@ impl WslRemoteConnection {
             .context("failed detecting shell")?;
         log::info!("Remote shell discovered: {}", this.shell);
         this.shell_kind = ShellKind::new(&this.shell, false);
+        let remote_home_output = this
+            .run_wsl_command_with_output("sh", &["-c", "printf %s \"$HOME\""])
+            .await
+            .context("failed to determine WSL home directory")?;
+        this.remote_home_directory = super::parse_remote_home_directory(&remote_home_output)?;
         this.has_wsl_interop = this.detect_has_wsl_interop().await.unwrap_or_default();
         log::info!(
             "Remote has wsl interop {}",
@@ -605,6 +612,16 @@ impl RemoteConnection for WslRemoteConnection {
 
     fn has_wsl_interop(&self) -> bool {
         self.has_wsl_interop
+    }
+
+    fn remote_server_executable(&self) -> Option<String> {
+        self.remote_binary_path.as_ref().map(|path| {
+            super::remote_server_executable_path(
+                &self.remote_home_directory,
+                path,
+                PathStyle::Posix,
+            )
+        })
     }
 }
 

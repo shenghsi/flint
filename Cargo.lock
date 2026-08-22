@@ -11686,6 +11686,8 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "agent_control_cli",
+ "agent_control_protocol",
  "agent_history",
  "anyhow",
  "askpass",
@@ -11720,6 +11722,7 @@ dependencies = [
  "minidumper",
  "net",
  "node_runtime",
+ "parking_lot",
  "paths",
  "pretty_assertions",
  "project",

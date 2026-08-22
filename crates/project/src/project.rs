@@ -2838,6 +2838,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
+            remote::RemoteClientEvent::ControlConnectionReset => {}
             &remote::RemoteClientEvent::Disconnected { server_not_running } => {
                 self.worktree_store.update(cx, |store, cx| {
                     store.disconnected_from_host(cx);

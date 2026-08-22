@@ -13,12 +13,36 @@ use futures::{
 use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
 use util::command::Child;
+use util::{paths::PathStyle, rel_path::RelPath};
 
 pub mod docker;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 pub mod ssh;
 pub mod wsl;
+
+fn remote_server_executable_path(
+    home_directory: &str,
+    relative_path: &RelPath,
+    path_style: PathStyle,
+) -> String {
+    format!(
+        "{}{}{}",
+        home_directory.trim_end_matches(path_style.separators_ch()),
+        path_style.primary_separator(),
+        relative_path.display(path_style)
+    )
+}
+
+fn parse_remote_home_directory(output: &str) -> Result<String> {
+    output
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+        .context("remote home directory command returned no path")
+}
 
 // SSH cannot safely preserve multiline arguments through every supported login shell.
 const POSIX_TARGET_PROBE: &str = concat!(
@@ -551,5 +575,28 @@ mod tests {
         );
         assert_eq!(parse_shell("", "sh"), "sh");
         assert_eq!(parse_shell("\n", "sh"), "sh");
+    }
+
+    #[test]
+    fn remote_server_command_path_is_absolute_for_each_path_style() {
+        let relative =
+            RelPath::unix(".flint_server/flint-remote-server").expect("relative server path");
+
+        assert_eq!(
+            remote_server_executable_path("/home/flint", relative, PathStyle::Posix),
+            "/home/flint/.flint_server/flint-remote-server"
+        );
+        assert_eq!(
+            remote_server_executable_path(r"C:\Users\flint", relative, PathStyle::Windows),
+            r"C:\Users\flint\.flint_server\flint-remote-server"
+        );
+    }
+
+    #[test]
+    fn remote_home_directory_uses_the_last_nonempty_output_line() {
+        assert_eq!(
+            parse_remote_home_directory("shell notice\n/home/flint\n").expect("parse remote home"),
+            "/home/flint"
+        );
     }
 }

@@ -125,7 +125,7 @@ pub struct ProtocolVersion {
     pub minor: u16,
 }
 
-pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor: 0 };
+pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor: 1 };
 
 /// `stable` | `dev` | `nightly` | `preview`. A local re-derivation of
 /// `release_channel::RELEASE_CHANNEL_NAME`'s own logic, not a dependency on
@@ -258,6 +258,16 @@ impl ControlRequest {
             command,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RemoteTerminalRegistrationId(pub String);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteControlEnvelope {
+    pub remote_terminal_registration_id: RemoteTerminalRegistrationId,
+    pub control_request: ControlRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -468,6 +478,9 @@ pub enum ControlErrorCode {
     Timeout,
     ResponseTooLarge,
     UnsupportedProtocol,
+    RemoteControlUnavailable,
+    RemoteSessionStale,
+    RemoteVersionMismatch,
     Internal,
 }
 
@@ -602,6 +615,96 @@ mod tests {
             response.result,
             ControlResult::Ok(ControlSuccess::Status(_))
         ));
+    }
+
+    #[test]
+    fn remote_control_envelope_round_trips_with_current_request() {
+        let envelope = RemoteControlEnvelope {
+            remote_terminal_registration_id: RemoteTerminalRegistrationId(
+                "remote-terminal-1".to_string(),
+            ),
+            control_request: ControlRequest::current(ControlCommand::TerminalCurrent),
+        };
+
+        let payload = serde_json::to_vec(&envelope).expect("serialize envelope");
+        let frame = frame_payload(&payload, MAX_REQUEST_BYTES).expect("frame envelope");
+        let decoded_payload = decode_frame(&frame, MAX_REQUEST_BYTES).expect("decode frame");
+        let decoded: RemoteControlEnvelope =
+            serde_json::from_slice(decoded_payload).expect("deserialize envelope");
+
+        assert_eq!(
+            decoded.remote_terminal_registration_id,
+            envelope.remote_terminal_registration_id
+        );
+        assert!(matches!(
+            decoded.control_request.command,
+            ControlCommand::TerminalCurrent
+        ));
+    }
+
+    #[test]
+    fn remote_control_envelope_obeys_request_byte_limit() {
+        let envelope = RemoteControlEnvelope {
+            remote_terminal_registration_id: RemoteTerminalRegistrationId(
+                "remote-terminal-1".to_string(),
+            ),
+            control_request: ControlRequest::current(ControlCommand::TerminalSendText(
+                TerminalSendTextRequest {
+                    terminal_id: TerminalControlId("terminal-1".to_string()),
+                    text: "x".repeat(MAX_REQUEST_BYTES),
+                },
+            )),
+        };
+
+        let payload = serde_json::to_vec(&envelope).expect("serialize envelope");
+        assert!(matches!(
+            frame_payload(&payload, MAX_REQUEST_BYTES),
+            Err(FrameError::TooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn remote_control_envelope_ignores_additive_minor_fields() {
+        let json = serde_json::json!({
+            "remote_terminal_registration_id": "remote-terminal-1",
+            "control_request": {
+                "protocol": { "major": PROTOCOL_VERSION.major, "minor": PROTOCOL_VERSION.minor },
+                "command": "status",
+                "future-request-field": true
+            },
+            "future-envelope-field": "ignored"
+        });
+
+        let envelope: RemoteControlEnvelope =
+            serde_json::from_value(json).expect("decode additive minor fields");
+
+        assert_eq!(
+            envelope.remote_terminal_registration_id,
+            RemoteTerminalRegistrationId("remote-terminal-1".to_string())
+        );
+        assert!(matches!(
+            envelope.control_request.command,
+            ControlCommand::Status
+        ));
+    }
+
+    #[test]
+    fn remote_transport_errors_have_stable_codes() {
+        for (code, expected) in [
+            (
+                ControlErrorCode::RemoteControlUnavailable,
+                "remote-control-unavailable",
+            ),
+            (ControlErrorCode::RemoteSessionStale, "remote-session-stale"),
+            (
+                ControlErrorCode::RemoteVersionMismatch,
+                "remote-version-mismatch",
+            ),
+        ] {
+            let response = ControlResponse::error(code, "transport error");
+            let json = serde_json::to_value(response).expect("serialize response");
+            assert_eq!(json["result"]["code"], expected);
+        }
     }
 
     #[test]

@@ -630,6 +630,16 @@ impl RemoteConnection for DockerExecConnection {
     fn has_wsl_interop(&self) -> bool {
         false
     }
+
+    fn remote_server_executable(&self) -> Option<String> {
+        self.remote_binary_relpath.as_ref().map(|path| {
+            super::remote_server_executable_path(
+                &self.remote_dir_for_server,
+                path,
+                self.path_style(),
+            )
+        })
+    }
     fn start_proxy(
         &self,
         unique_identifier: String,
