@@ -6,7 +6,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use agent_control_protocol::{
-    ControlRequest, ControlResponse, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+    ControlRequest, ControlResponse, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, decode_frame,
+    frame_payload,
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{App, Task};
@@ -119,6 +120,10 @@ fn start(
 ) -> Option<ControlServerHandle> {
     let pipe_name = scope.pipe_name().to_owned();
     let marker_path = scope.executable_location_path().to_path_buf();
+    match executable_override.clone() {
+        Some(executable) => control::write_executable_location_for(&marker_path, executable),
+        None => control::write_executable_location(&marker_path),
+    };
     let logon_sid = match current_logon_sid_string() {
         Ok(logon_sid) => logon_sid,
         Err(error) => {
@@ -207,19 +212,12 @@ fn start(
     }
 
     drop(dispatch_sender);
-    // Publish discovery only after the complete serving pool is running.
-    // Otherwise a thread-spawn failure could leave a marker pointing at an
-    // endpoint with no worker capable of accepting the client.
-    let marker_written = match executable_override {
-        Some(executable) => control::write_executable_location_for(&marker_path, executable),
-        None => control::write_executable_location(&marker_path),
-    };
     Some(ControlServerHandle {
         shutdown,
         _dispatcher: dispatcher,
         threads: Arc::new(Mutex::new(Some(worker_threads))),
         marker_path,
-        marker_written,
+        marker_written: false,
     })
 }
 
@@ -273,27 +271,29 @@ fn serve_one(
 ) -> Result<()> {
     connect(pipe, shutdown)?;
 
-    let response = match read_message(&pipe, MAX_REQUEST_BYTES, shutdown) {
-        Ok(request_bytes) => match serde_json::from_slice::<ControlRequest>(&request_bytes) {
-            Ok(request) => {
-                let mut peer_pid = 0;
-                // SAFETY: pipe is connected and peer_pid is valid writable storage.
-                match unsafe { GetNamedPipeClientProcessId(pipe.0, &mut peer_pid) } {
-                    Ok(()) => dispatch_request(dispatch_sender, peer_pid, request, shutdown),
-                    Err(error) => {
-                        error_response(format_args!("could not determine caller identity: {error}"))
+    let response = match read_message(&pipe, MAX_REQUEST_BYTES + 4, shutdown) {
+        Ok(request_frame) => match decode_frame(&request_frame, MAX_REQUEST_BYTES) {
+            Ok(request_bytes) => match serde_json::from_slice::<ControlRequest>(request_bytes) {
+                Ok(request) => {
+                    let mut peer_pid = 0;
+                    // SAFETY: pipe is connected and peer_pid is valid writable storage.
+                    match unsafe { GetNamedPipeClientProcessId(pipe.0, &mut peer_pid) } {
+                        Ok(()) => dispatch_request(dispatch_sender, peer_pid, request, shutdown),
+                        Err(error) => error_response(format_args!(
+                            "could not determine caller identity: {error}"
+                        )),
                     }
                 }
-            }
-            Err(error) => error_response(format_args!("malformed request: {error}")),
+                Err(error) => error_response(format_args!("malformed request: {error}")),
+            },
+            Err(error) => error_response(format_args!("invalid request frame: {error}")),
         },
         Err(error) => error_response(format_args!("could not read request: {error:#}")),
     };
     let response_bytes = serde_json::to_vec(&response).context("failed to encode response")?;
-    if response_bytes.len() > MAX_RESPONSE_BYTES {
-        bail!("encoded response exceeds protocol limit");
-    }
-    write_all(pipe, &response_bytes, shutdown)?;
+    let response_frame =
+        frame_payload(&response_bytes, MAX_RESPONSE_BYTES).context("failed to frame response")?;
+    write_all(pipe, &response_frame, shutdown)?;
     wait_for_client_close(pipe, shutdown)?;
     Ok(())
 }
@@ -1118,7 +1118,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn startup_publishes_and_removes_only_its_session_marker(cx: &mut TestAppContext) {
+    async fn startup_publishes_its_session_marker_and_leaves_it_after_stop(
+        cx: &mut TestAppContext,
+    ) {
         // Native pipe workers wake the GPUI dispatcher from OS threads.
         cx.executor().allow_parking();
         init_gpui_test(cx);
@@ -1152,11 +1154,11 @@ mod tests {
         }
 
         first.stop_and_join();
-        assert!(!first_marker.exists());
         assert!(
-            second_marker.exists(),
-            "stopping one session removed another session's marker"
+            first_marker.exists(),
+            "the marker is rewritten on the next launch, not removed on stop"
         );
+        assert!(second_marker.exists());
 
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         let client = std::thread::spawn(move || {
@@ -1181,6 +1183,6 @@ mod tests {
         client.join().expect("startup client thread panicked");
 
         second.stop_and_join();
-        assert!(!second_marker.exists());
+        assert!(second_marker.exists());
     }
 }

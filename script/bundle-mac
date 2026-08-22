@@ -209,7 +209,7 @@ function sign_app_binaries() {
         echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/flint-agent-control" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/flintctl" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/flint/resources/flint.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/flint" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/flint/resources/flint.entitlements --sign "$IDENTITY" "${app_path}" -v
@@ -324,7 +324,7 @@ function sign_binary() {
 
 cp target/${target_triple}/${target_dir}/flint "${app_path}/Contents/MacOS/flint"
 cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
-cp target/${target_triple}/${target_dir}/flint-agent-control "${app_path}/Contents/MacOS/flint-agent-control"
+cp target/${target_triple}/${target_dir}/flintctl "${app_path}/Contents/MacOS/flintctl"
 sign_app_binaries
 
 sign_binary "target/$target_triple/release/remote_server"

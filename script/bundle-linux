@@ -97,7 +97,7 @@ cargo build --release --target "${remote_server_triple}" --package remote_server
 # doesn't understand CREL sections produced by newer LLVM.
 llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/flint"
 llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
-llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/flint-agent-control"
+llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/flintctl"
 llvm-objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
@@ -123,7 +123,7 @@ flint_dir="${temp_dir}/flint$suffix.app"
 mkdir -p "${flint_dir}/bin" "${flint_dir}/libexec"
 cp "${target_dir}/${target_triple}/release/flint" "${flint_dir}/libexec/flint-editor"
 cp "${target_dir}/${target_triple}/release/cli" "${flint_dir}/bin/flint"
-cp "${target_dir}/${target_triple}/release/flint-agent-control" "${flint_dir}/libexec/flint-agent-control"
+cp "${target_dir}/${target_triple}/release/flintctl" "${flint_dir}/libexec/flintctl"
 
 # Libs
 # Bundle libstdc++ so older supported systems can run binaries built with our

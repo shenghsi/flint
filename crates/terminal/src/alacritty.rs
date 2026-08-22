@@ -874,6 +874,35 @@ pub(super) fn last_non_empty_lines(term: &Term<FlintListener>, line_count: usize
     lines
 }
 
+pub(super) fn last_physical_lines(term: &Term<FlintListener>, line_count: usize) -> Vec<String> {
+    physical_lines_ending_at(term, term.grid().bottommost_line().0, line_count)
+}
+
+pub(super) fn visible_physical_lines(term: &Term<FlintListener>, line_count: usize) -> Vec<String> {
+    physical_lines_ending_at(
+        term,
+        term.grid().bottommost_line().0,
+        line_count.min(term.screen_lines()),
+    )
+}
+
+fn physical_lines_ending_at(
+    term: &Term<FlintListener>,
+    end_line: i32,
+    line_count: usize,
+) -> Vec<String> {
+    if line_count == 0 {
+        return Vec::new();
+    }
+    let grid = term.grid();
+    let start_line = end_line
+        .saturating_sub(line_count.saturating_sub(1) as i32)
+        .max(grid.topmost_line().0);
+    (start_line..=end_line)
+        .map(|line| row_to_string(&grid[Line(line)]).trim_end().to_string())
+        .collect()
+}
+
 pub(super) fn update_vi_cursor_for_scroll(term: &mut Term<FlintListener>, scroll: Scroll) {
     match scroll {
         Scroll::Delta(delta) => {

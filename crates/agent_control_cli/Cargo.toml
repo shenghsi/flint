@@ -9,13 +9,14 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [[bin]]
-name = "flint-agent-control"
+name = "flintctl"
 path = "src/agent_control_cli.rs"
 doctest = false
 
 [dependencies]
 agent_control_protocol.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 

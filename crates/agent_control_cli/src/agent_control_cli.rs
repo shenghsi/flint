@@ -1,8 +1,5 @@
-//! `flint-agent-control`: the binary an agent thread's own CLI process (Codex,
-//! Claude Code, etc.) invokes to ask Flint to re-tie itself to a different
-//! worktree, or spawn a sibling thread. Talks to `agent_threads::control`'s
-//! platform transport over `agent_control_protocol`'s wire types: a Unix
-//! socket on Unix and a session-scoped named pipe on Windows.
+//! `flintctl` controls the running Flint process through the local control
+//! endpoint. Caller identity comes from the operating system, not CLI data.
 //!
 //! Sends bare, unauthenticated-looking requests on purpose: the server
 //! establishes caller identity itself, from the kernel-reported PID of
@@ -15,16 +12,15 @@
 use std::path::PathBuf;
 
 use agent_control_protocol::{
-    ControlRequest, ControlResponse, ControlSuccess, CreateThreadRequest, CreateThreadWorktree,
-    RetieThreadRequest,
+    ControlCommand, ControlRequest, ControlResponse, ControlResult, ControlSuccess,
+    CreateThreadRequest, CreateThreadWorktree, RetieThreadRequest, TerminalControlId,
+    TerminalListRequest, TerminalOutputMatcher, TerminalReadRequest, TerminalReadSource,
+    TerminalRunRequest, TerminalSendKeyRequest, TerminalSendTextRequest, TerminalWaitOutputRequest,
 };
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
-#[command(
-    name = "flint-agent-control",
-    about = "Control Flint's agent threads panel from an agent's own CLI process"
-)]
+#[command(name = "flintctl", about = "Control a running Flint application")]
 struct Cli {
     /// Unix socket to connect to. Defaults to the same path Flint's control
     /// server computes and binds -- only useful to override for testing.
@@ -42,27 +38,107 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Re-tie this thread to a different (existing) worktree.
-    RetieThread {
-        #[arg(long)]
-        worktree: PathBuf,
-        /// Print the raw JSON response instead of a human-readable summary.
+    Status {
         #[arg(long)]
         json: bool,
     },
-    /// Launch a new sibling thread, in this worktree or a brand-new one.
-    CreateThread {
+    Thread {
+        #[command(subcommand)]
+        command: ThreadCommand,
+    },
+    Terminal {
+        #[command(subcommand)]
+        command: TerminalCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ThreadCommand {
+    Retie {
+        #[arg(long)]
+        worktree: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    Create {
         #[arg(long)]
         worktree: WorktreeArg,
-        /// Branch/directory name hint for `--worktree new`; ignored for
-        /// `--worktree current`.
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
         agent: String,
         #[arg(long)]
         prompt: String,
-        /// Print the raw JSON response instead of a human-readable summary.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TerminalCommand {
+    Current {
+        #[arg(long)]
+        json: bool,
+    },
+    List {
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Read {
+        terminal_id: String,
+        #[arg(long, value_enum, default_value_t = ReadSourceArg::Recent)]
+        source: ReadSourceArg,
+        #[arg(long, default_value_t = agent_control_protocol::DEFAULT_READ_LINES)]
+        lines: usize,
+        /// Read only output appended after this cursor -- copy it verbatim
+        /// from a prior read's `cursor` field (JSON output) or its printed
+        /// "cursor" line (human output). Only valid with the default recent
+        /// source.
+        #[arg(long, value_parser = parse_read_cursor)]
+        since: Option<agent_control_protocol::TerminalReadCursor>,
+        #[arg(long)]
+        json: bool,
+    },
+    SendText {
+        terminal_id: String,
+        text: String,
+        #[arg(long)]
+        json: bool,
+    },
+    SendKey {
+        terminal_id: String,
+        /// Key names such as enter, escape, ctrl-c, alt-left, arrows, and F1-F12.
+        #[arg(required = true)]
+        keys: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Run {
+        terminal_id: String,
+        command: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(group(
+        ArgGroup::new("matcher")
+            .required(true)
+            .multiple(false)
+            .args(["match_text", "regex"])
+    ))]
+    WaitOutput {
+        terminal_id: String,
+        #[arg(long = "match")]
+        match_text: Option<String>,
+        #[arg(long)]
+        regex: Option<String>,
+        #[arg(long, value_enum, default_value_t = ReadSourceArg::Recent)]
+        source: ReadSourceArg,
+        #[arg(long, default_value_t = agent_control_protocol::DEFAULT_READ_LINES)]
+        lines: usize,
+        #[arg(long, default_value = "30s", value_parser = parse_duration_millis)]
+        timeout: u64,
         #[arg(long)]
         json: bool,
     },
@@ -72,6 +148,25 @@ enum Command {
 enum WorktreeArg {
     Current,
     New,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ReadSourceArg {
+    Visible,
+    Recent,
+    RecentUnwrapped,
+    Detection,
+}
+
+impl From<ReadSourceArg> for TerminalReadSource {
+    fn from(value: ReadSourceArg) -> Self {
+        match value {
+            ReadSourceArg::Visible => TerminalReadSource::Visible,
+            ReadSourceArg::Recent => TerminalReadSource::Recent,
+            ReadSourceArg::RecentUnwrapped => TerminalReadSource::RecentUnwrapped,
+            ReadSourceArg::Detection => TerminalReadSource::Detection,
+        }
+    }
 }
 
 impl From<WorktreeArg> for CreateThreadWorktree {
@@ -86,29 +181,15 @@ impl From<WorktreeArg> for CreateThreadWorktree {
 fn main() {
     let cli = Cli::parse();
     #[cfg(unix)]
-    let socket_override = cli.socket;
+    let socket_override = cli.socket.clone();
     #[cfg(windows)]
-    let pipe_override = cli.pipe;
-    let (request, wants_json) = match cli.command {
-        Command::RetieThread { worktree, json } => (
-            ControlRequest::RetieThread(RetieThreadRequest { worktree }),
-            json,
-        ),
-        Command::CreateThread {
-            worktree,
-            name,
-            agent,
-            prompt,
-            json,
-        } => (
-            ControlRequest::CreateThread(CreateThreadRequest {
-                worktree: worktree.into(),
-                name,
-                agent,
-                prompt,
-            }),
-            json,
-        ),
+    let pipe_override = cli.pipe.clone();
+    let (request, wants_json) = match cli.into_request() {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("flintctl: {error:#}");
+            std::process::exit(2);
+        }
     };
 
     #[cfg(unix)]
@@ -121,10 +202,160 @@ fn main() {
     match result {
         Ok(response) => std::process::exit(print_response(&response, wants_json)),
         Err(error) => {
-            eprintln!("flint-agent-control: {error:#}");
+            eprintln!("flintctl: {error:#}");
             std::process::exit(1);
         }
     }
+}
+
+impl Cli {
+    fn into_request(self) -> anyhow::Result<(ControlRequest, bool)> {
+        let (command, wants_json) = match self.command {
+            Command::Status { json } => (ControlCommand::Status, json),
+            Command::Thread { command } => match command {
+                ThreadCommand::Retie { worktree, json } => (
+                    ControlCommand::ThreadRetie(RetieThreadRequest { worktree }),
+                    json,
+                ),
+                ThreadCommand::Create {
+                    worktree,
+                    name,
+                    agent,
+                    prompt,
+                    json,
+                } => (
+                    ControlCommand::ThreadCreate(CreateThreadRequest {
+                        worktree: worktree.into(),
+                        name,
+                        agent,
+                        prompt,
+                    }),
+                    json,
+                ),
+            },
+            Command::Terminal { command } => match command {
+                TerminalCommand::Current { json } => (ControlCommand::TerminalCurrent, json),
+                TerminalCommand::List { all, json } => (
+                    ControlCommand::TerminalList(TerminalListRequest { all }),
+                    json,
+                ),
+                TerminalCommand::Read {
+                    terminal_id,
+                    source,
+                    lines,
+                    since,
+                    json,
+                } => (
+                    ControlCommand::TerminalRead(TerminalReadRequest {
+                        terminal_id: TerminalControlId(terminal_id),
+                        source: source.into(),
+                        lines,
+                        since,
+                    }),
+                    json,
+                ),
+                TerminalCommand::SendText {
+                    terminal_id,
+                    text,
+                    json,
+                } => (
+                    ControlCommand::TerminalSendText(TerminalSendTextRequest {
+                        terminal_id: TerminalControlId(terminal_id),
+                        text,
+                    }),
+                    json,
+                ),
+                TerminalCommand::SendKey {
+                    terminal_id,
+                    keys,
+                    json,
+                } => (
+                    ControlCommand::TerminalSendKey(TerminalSendKeyRequest {
+                        terminal_id: TerminalControlId(terminal_id),
+                        keys,
+                    }),
+                    json,
+                ),
+                TerminalCommand::Run {
+                    terminal_id,
+                    command,
+                    json,
+                } => (
+                    ControlCommand::TerminalRun(TerminalRunRequest {
+                        terminal_id: TerminalControlId(terminal_id),
+                        command,
+                    }),
+                    json,
+                ),
+                TerminalCommand::WaitOutput {
+                    terminal_id,
+                    match_text,
+                    regex,
+                    source,
+                    lines,
+                    timeout,
+                    json,
+                } => {
+                    let matcher = match (match_text, regex) {
+                        (Some(text), None) => TerminalOutputMatcher::Literal(text),
+                        (None, Some(pattern)) => TerminalOutputMatcher::Regex(pattern),
+                        _ => anyhow::bail!("select exactly one of --match or --regex"),
+                    };
+                    (
+                        ControlCommand::TerminalWaitOutput(TerminalWaitOutputRequest {
+                            terminal_id: TerminalControlId(terminal_id),
+                            source: source.into(),
+                            lines,
+                            matcher,
+                            timeout_millis: timeout,
+                        }),
+                        json,
+                    )
+                }
+            },
+        };
+        Ok((ControlRequest::current(command), wants_json))
+    }
+}
+
+fn parse_duration_millis(value: &str) -> Result<u64, String> {
+    let (number, multiplier) = if let Some(number) = value.strip_suffix("ms") {
+        (number, 1)
+    } else if let Some(number) = value.strip_suffix('s') {
+        (number, 1_000)
+    } else if let Some(number) = value.strip_suffix('m') {
+        (number, 60_000)
+    } else {
+        return Err("duration must end in ms, s, or m".to_string());
+    };
+    let number = number
+        .parse::<u64>()
+        .map_err(|_| "duration must start with a positive integer".to_string())?;
+    number
+        .checked_mul(multiplier)
+        .filter(|duration| *duration > 0)
+        .ok_or_else(|| "duration is out of range".to_string())
+}
+
+/// Cursors carry a raw snippet of terminal output (see
+/// `agent_control_protocol::TerminalReadCursor`), which can contain
+/// anything a shell argument can't safely hold -- quotes, `$`, newlines,
+/// control bytes. Base64 keeps the CLI's textual `--since`/printed-cursor
+/// form a single shell-safe token; `--json` output carries the cursor's
+/// `anchor` field as a plain JSON string instead, with no encoding needed.
+fn parse_read_cursor(value: &str) -> Result<agent_control_protocol::TerminalReadCursor, String> {
+    use base64::Engine as _;
+    let invalid = || "cursor must be the exact value printed by a prior read".to_string();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|_| invalid())?;
+    let anchor = String::from_utf8(bytes).map_err(|_| invalid())?;
+    Ok(agent_control_protocol::TerminalReadCursor { anchor })
+}
+
+fn encode_read_cursor(cursor: &agent_control_protocol::TerminalReadCursor) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(cursor.anchor.as_bytes())
 }
 
 #[cfg(unix)]
@@ -142,7 +373,7 @@ fn run(request: ControlRequest, pipe_override: Option<String>) -> anyhow::Result
 
 #[cfg(not(any(unix, windows)))]
 fn run(_request: ControlRequest) -> anyhow::Result<ControlResponse> {
-    anyhow::bail!("flint-agent-control is not supported on this platform")
+    anyhow::bail!("flintctl is not supported on this platform")
 }
 
 #[cfg(windows)]
@@ -150,7 +381,8 @@ mod windows_client {
     use std::time::Duration;
 
     use agent_control_protocol::{
-        ControlRequest, ControlResponse, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+        ControlRequest, ControlResponse, ControlResult, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+        decode_frame, frame_payload,
     };
     use anyhow::{Context as _, bail};
     use windows::Win32::Foundation::{
@@ -185,7 +417,7 @@ mod windows_client {
         fn drop(&mut self) {
             // SAFETY: this type exclusively owns the valid handle returned by CreateFileW.
             if let Err(error) = unsafe { CloseHandle(self.0) } {
-                eprintln!("flint-agent-control: failed to close named pipe: {error}");
+                eprintln!("flintctl: failed to close named pipe: {error}");
             }
         }
     }
@@ -203,8 +435,14 @@ mod windows_client {
         let mut attempt = 0;
         loop {
             let response = send_once(&pipe_name, &request)?;
-            if !matches!(response, ControlResponse::NotReady) || attempt >= RETRY_BACKOFFS.len() {
+            if !matches!(&response.result, ControlResult::NotReady) {
                 return Ok(response);
+            }
+            if attempt >= RETRY_BACKOFFS.len() {
+                return Ok(ControlResponse::error(
+                    agent_control_protocol::ControlErrorCode::CallerNotRecognized,
+                    "caller was not recognized before the retry deadline",
+                ));
             }
             std::thread::sleep(RETRY_BACKOFFS[attempt]);
             attempt += 1;
@@ -254,13 +492,15 @@ mod windows_client {
             .context("failed to select named-pipe message mode")?;
 
         let payload = serde_json::to_vec(request).context("failed to encode request")?;
-        if payload.len() > MAX_REQUEST_BYTES {
-            bail!("request exceeds the {MAX_REQUEST_BYTES}-byte protocol limit");
-        }
-        overlapped_write(handle.0, &payload, PIPE_IO_TIMEOUT).context("failed to send request")?;
-        let response = overlapped_read_message(handle.0, MAX_RESPONSE_BYTES, PIPE_IO_TIMEOUT)
-            .context("failed to read response")?;
-        serde_json::from_slice(&response).context("failed to decode response")
+        let frame =
+            frame_payload(&payload, MAX_REQUEST_BYTES).context("failed to frame request")?;
+        overlapped_write(handle.0, &frame, PIPE_IO_TIMEOUT).context("failed to send request")?;
+        let response_frame =
+            overlapped_read_message(handle.0, MAX_RESPONSE_BYTES + 4, PIPE_IO_TIMEOUT)
+                .context("failed to read response")?;
+        let response = decode_frame(&response_frame, MAX_RESPONSE_BYTES)
+            .context("failed to decode response frame")?;
+        serde_json::from_slice(response).context("failed to decode response")
     }
 
     fn overlapped_write(handle: HANDLE, bytes: &[u8], timeout: Duration) -> anyhow::Result<()> {
@@ -354,16 +594,14 @@ mod windows_client {
                     // ERROR_NOT_FOUND is a normal completion race. In every
                     // case we still observe terminal completion below before
                     // releasing the OVERLAPPED or its buffer.
-                    eprintln!(
-                        "flint-agent-control: named-pipe cancellation reported {cancel_error}"
-                    );
+                    eprintln!("flintctl: named-pipe cancellation reported {cancel_error}");
                 }
                 // SAFETY: waiting here ensures buffers can be released only after terminal completion.
                 let terminal =
                     unsafe { GetOverlappedResult(handle, overlapped, transferred, true) };
                 if let Err(terminal_error) = terminal {
                     eprintln!(
-                        "flint-agent-control: cancelled named-pipe operation completed with {terminal_error}"
+                        "flintctl: cancelled named-pipe operation completed with {terminal_error}"
                     );
                 }
                 bail!("named-pipe I/O timed out after {} ms", timeout.as_millis());
@@ -393,47 +631,109 @@ fn print_response(response: &ControlResponse, wants_json: bool) -> i32 {
     if wants_json {
         match serde_json::to_string(response) {
             Ok(json) => println!("{json}"),
-            Err(error) => eprintln!("flint-agent-control: failed to encode response: {error}"),
+            Err(error) => eprintln!("flintctl: failed to encode response: {error}"),
         }
         return exit_code_for(response);
     }
-    match response {
-        ControlResponse::Ok(ControlSuccess::Retied { worktree }) => {
+    match &response.result {
+        ControlResult::Ok(ControlSuccess::Retied { worktree }) => {
             println!("Retied to {}", worktree.display());
         }
-        ControlResponse::Ok(ControlSuccess::ThreadCreated { worktree }) => {
+        ControlResult::Ok(ControlSuccess::ThreadCreated { worktree }) => {
             println!("Created thread in {}", worktree.display());
         }
-        ControlResponse::NotReady => {
-            eprintln!(
-                "flint-agent-control: this terminal doesn't appear to be a Flint agent thread -- \
-                 if you're not using Flint here, this is expected and can be ignored."
+        ControlResult::Ok(ControlSuccess::Status(status)) => {
+            println!(
+                "Flint {} ({}, protocol {}.{})",
+                status.flint_version,
+                status.release_channel,
+                status.protocol_version.major,
+                status.protocol_version.minor
             );
         }
-        ControlResponse::Error { message } => {
-            eprintln!("flint-agent-control: {message}");
+        ControlResult::Ok(ControlSuccess::TerminalCurrent(terminal)) => {
+            print_terminal(terminal);
+        }
+        ControlResult::Ok(ControlSuccess::TerminalList(terminals)) => {
+            for terminal in terminals {
+                print_terminal(terminal);
+            }
+        }
+        ControlResult::Ok(ControlSuccess::TerminalRead(snapshot))
+        | ControlResult::Ok(ControlSuccess::TerminalWaitOutput(snapshot)) => {
+            print!("{}", snapshot.text);
+            eprintln!(
+                "flintctl: cursor {} (pass as --since to read only what's new)",
+                encode_read_cursor(&snapshot.cursor)
+            );
+        }
+        ControlResult::Ok(ControlSuccess::TerminalInputAccepted) => {}
+        ControlResult::NotReady => {
+            eprintln!(
+                "flintctl: this process does not appear to be in a controllable Flint terminal"
+            );
+        }
+        ControlResult::Error(error) => {
+            eprintln!(
+                "flintctl: {}: {}",
+                error_code_name(error.code),
+                error.message
+            );
         }
     }
     exit_code_for(response)
 }
 
 fn exit_code_for(response: &ControlResponse) -> i32 {
-    match response {
-        ControlResponse::Ok(_) => 0,
-        ControlResponse::NotReady | ControlResponse::Error { .. } => 1,
+    match &response.result {
+        ControlResult::Ok(_) => 0,
+        ControlResult::NotReady | ControlResult::Error(_) => 1,
+    }
+}
+
+fn print_terminal(terminal: &agent_control_protocol::TerminalMetadata) {
+    let working_directory = terminal
+        .working_directory
+        .as_deref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    println!(
+        "{}\t{}\t{}",
+        terminal.id.0, terminal.title, working_directory
+    );
+}
+
+fn error_code_name(code: agent_control_protocol::ControlErrorCode) -> &'static str {
+    use agent_control_protocol::ControlErrorCode;
+    match code {
+        ControlErrorCode::CallerNotRecognized => "caller-not-recognized",
+        ControlErrorCode::CallerNotAgentThread => "caller-not-agent-thread",
+        ControlErrorCode::TerminalNotFound => "terminal-not-found",
+        ControlErrorCode::TerminalOutsideWorkspace => "terminal-outside-workspace",
+        ControlErrorCode::TerminalExited => "terminal-exited",
+        ControlErrorCode::InvalidKey => "invalid-key",
+        ControlErrorCode::InvalidPattern => "invalid-pattern",
+        ControlErrorCode::InvalidRequest => "invalid-request",
+        ControlErrorCode::CursorExpired => "cursor-expired",
+        ControlErrorCode::Timeout => "timeout",
+        ControlErrorCode::ResponseTooLarge => "response-too-large",
+        ControlErrorCode::UnsupportedProtocol => "unsupported-protocol",
+        ControlErrorCode::Internal => "internal",
     }
 }
 
 #[cfg(unix)]
 mod unix {
     use std::io::{Read, Write};
-    use std::net::Shutdown;
     use std::os::unix::net::UnixStream;
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use agent_control_protocol::{ControlRequest, ControlResponse};
-    use anyhow::Context as _;
+    use agent_control_protocol::{
+        ControlRequest, ControlResponse, ControlResult, FRAME_LENGTH_BYTES, MAX_REQUEST_BYTES,
+        MAX_RESPONSE_BYTES, frame_payload,
+    };
+    use anyhow::{Context as _, bail};
 
     /// Bounded backoff for a `NotReady` response, which means Flint hasn't
     /// (yet, or ever will) matched the connecting process's PID ancestry to
@@ -454,8 +754,14 @@ mod unix {
         let mut attempt = 0;
         loop {
             let response = send_once(&socket_path, &request)?;
-            if !matches!(response, ControlResponse::NotReady) || attempt >= RETRY_BACKOFFS.len() {
+            if !matches!(&response.result, ControlResult::NotReady) {
                 return Ok(response);
+            }
+            if attempt >= RETRY_BACKOFFS.len() {
+                return Ok(ControlResponse::error(
+                    agent_control_protocol::ControlErrorCode::CallerNotRecognized,
+                    "caller was not recognized before the retry deadline",
+                ));
             }
             std::thread::sleep(RETRY_BACKOFFS[attempt]);
             attempt += 1;
@@ -473,17 +779,21 @@ mod unix {
             )
         })?;
         let payload = serde_json::to_vec(request).context("failed to encode request")?;
+        let frame =
+            frame_payload(&payload, MAX_REQUEST_BYTES).context("failed to frame request")?;
+        stream.write_all(&frame).context("failed to send request")?;
+        let mut length_bytes = [0; FRAME_LENGTH_BYTES];
         stream
-            .write_all(&payload)
-            .context("failed to send request")?;
+            .read_exact(&mut length_bytes)
+            .context("failed to read response length")?;
+        let response_length = u32::from_be_bytes(length_bytes) as usize;
+        if response_length > MAX_RESPONSE_BYTES {
+            bail!("response exceeds the {MAX_RESPONSE_BYTES}-byte protocol limit");
+        }
+        let mut response_bytes = vec![0; response_length];
         stream
-            .shutdown(Shutdown::Write)
-            .context("failed to finish sending request")?;
-
-        let mut response_bytes = Vec::new();
-        stream
-            .read_to_end(&mut response_bytes)
-            .context("failed to read response")?;
+            .read_exact(&mut response_bytes)
+            .context("failed to read response payload")?;
         serde_json::from_slice(&response_bytes).context("failed to decode response")
     }
 }
@@ -492,14 +802,158 @@ mod unix {
 mod tests {
     use super::*;
 
+    #[test]
+    fn noun_first_thread_command_builds_current_request() {
+        let cli = Cli::try_parse_from([
+            "flintctl",
+            "thread",
+            "retie",
+            "--worktree",
+            "/repo/worktree",
+        ])
+        .expect("parse thread retie");
+
+        let (request, wants_json) = cli.into_request().expect("build request");
+
+        assert!(!wants_json);
+        assert!(matches!(
+            request.command,
+            ControlCommand::ThreadRetie(RetieThreadRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn old_flat_commands_are_rejected() {
+        assert!(
+            Cli::try_parse_from(["flintctl", "retie-thread", "--worktree", "/repo/worktree"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "flintctl",
+                "create-thread",
+                "--worktree",
+                "current",
+                "--agent",
+                "codex",
+                "--prompt",
+                "test"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn terminal_wait_requires_exactly_one_matcher() {
+        assert!(
+            Cli::try_parse_from([
+                "flintctl",
+                "terminal",
+                "wait-output",
+                "t1",
+                "--match",
+                "ready"
+            ])
+            .is_ok()
+        );
+        assert!(Cli::try_parse_from(["flintctl", "terminal", "wait-output", "t1"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "flintctl",
+                "terminal",
+                "wait-output",
+                "t1",
+                "--match",
+                "ready",
+                "--regex",
+                "ready.*"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn read_cursor_round_trips_through_its_printed_encoding() {
+        let cursor = agent_control_protocol::TerminalReadCursor {
+            anchor: "line one\nline two".to_string(),
+        };
+        let encoded = encode_read_cursor(&cursor);
+        // Base64 output is a single shell-safe token: no quotes, `$`, or
+        // whitespace that would need escaping on a command line.
+        assert!(
+            encoded
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric()
+                    || character == '+'
+                    || character == '/'
+                    || character == '=')
+        );
+        assert_eq!(parse_read_cursor(&encoded), Ok(cursor));
+    }
+
+    #[test]
+    fn read_cursor_rejects_malformed_input() {
+        assert!(parse_read_cursor("not valid base64!!").is_err());
+    }
+
+    #[test]
+    fn terminal_read_since_flag_builds_a_request_with_the_decoded_cursor() {
+        let cursor = agent_control_protocol::TerminalReadCursor {
+            anchor: "previous tail".to_string(),
+        };
+        let encoded = encode_read_cursor(&cursor);
+        let cli = Cli::try_parse_from(["flintctl", "terminal", "read", "t1", "--since", &encoded])
+            .expect("parse terminal read with --since");
+
+        let (request, _wants_json) = cli.into_request().expect("build request");
+        match request.command {
+            ControlCommand::TerminalRead(request) => assert_eq!(request.since, Some(cursor)),
+            other => panic!("expected TerminalRead, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_read_without_since_defaults_to_none() {
+        let cli = Cli::try_parse_from(["flintctl", "terminal", "read", "t1"])
+            .expect("parse terminal read");
+
+        let (request, _wants_json) = cli.into_request().expect("build request");
+        match request.command {
+            ControlCommand::TerminalRead(request) => assert_eq!(request.since, None),
+            other => panic!("expected TerminalRead, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_read_source_detection_is_parsed() {
+        let cli = Cli::try_parse_from([
+            "flintctl",
+            "terminal",
+            "read",
+            "t1",
+            "--source",
+            "detection",
+        ])
+        .expect("parse terminal read --source detection");
+
+        let (request, _wants_json) = cli.into_request().expect("build request");
+        match request.command {
+            ControlCommand::TerminalRead(request) => {
+                assert_eq!(request.source, TerminalReadSource::Detection)
+            }
+            other => panic!("expected TerminalRead, got {other:?}"),
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_pipe_override_is_parsed_as_a_pipe_name() {
         let cli = Cli::try_parse_from([
-            "flint-agent-control",
+            "flintctl",
             "--pipe",
             r"\\.\pipe\flint-test",
-            "retie-thread",
+            "thread",
+            "retie",
             "--worktree",
             r"C:\repo",
         ])
@@ -588,11 +1042,12 @@ mod tests {
 
     #[test]
     fn unsuccessful_protocol_responses_have_nonzero_exit_codes() {
-        assert_eq!(exit_code_for(&ControlResponse::NotReady), 1);
+        assert_eq!(exit_code_for(&ControlResponse::not_ready()), 1);
         assert_eq!(
-            exit_code_for(&ControlResponse::Error {
-                message: "failed".into()
-            }),
+            exit_code_for(&ControlResponse::error(
+                agent_control_protocol::ControlErrorCode::Internal,
+                "failed",
+            )),
             1
         );
     }

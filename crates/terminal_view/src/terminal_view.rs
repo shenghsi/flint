@@ -420,10 +420,6 @@ impl TerminalView {
             subscribe_for_terminal_events(&self.terminal, workspace_handle, window, cx);
     }
 
-    pub fn is_agent_thread(&self) -> bool {
-        self.agent_thread
-    }
-
     const MAX_EMBEDDED_LINES: usize = 1_000;
 
     /// Returns the current `ContentMode` depending on the set `TerminalMode` and the current number of lines
@@ -997,6 +993,14 @@ impl TerminalView {
 
     pub fn terminal(&self) -> &Entity<Terminal> {
         &self.terminal
+    }
+
+    pub fn workspace_handle(&self) -> WeakEntity<Workspace> {
+        self.workspace.clone()
+    }
+
+    pub fn is_agent_thread(&self) -> bool {
+        self.agent_thread
     }
 
     pub fn set_block_below_cursor(
