@@ -32,12 +32,12 @@ slow-timeout = { period = "600s", terminate-after = 1 }
 filter = 'package(terminal) and test(test_terminal_no_exit_on_spawn_failure)'
 slow-timeout = { period = "120s", terminate-after = 1 }
 
-# These poll a real spawned PTY/subprocess pipeline (echo + terminal Wakeup
-# debounce) with a 500-iteration real-timer retry loop, which can outrun the
-# default 60s slow-timeout under CI contention -- see
-# `wait_for_thread_attention` in agent_threads' panel.rs tests.
+# This test polls a terminal Wakeup debounce with a 500-iteration real-timer
+# retry loop, which can outrun the default 60s slow-timeout under CI
+# contention -- see `wait_for_thread_attention` in agent_threads' panel.rs
+# tests.
 [[profile.default.overrides]]
-filter = 'package(agent_threads) and (test(pi_thread_reaches_blocked_via_wakeup_without_ever_ringing_a_bell) or test(reclassifying_to_working_silently_clears_an_existing_blocked_flag))'
+filter = 'package(agent_threads) and test(reclassifying_to_working_silently_clears_an_existing_blocked_flag)'
 slow-timeout = { period = "120s", terminate-after = 1 }
 
 [[profile.default.overrides]]
