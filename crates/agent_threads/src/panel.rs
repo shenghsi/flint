@@ -2675,31 +2675,6 @@ mod tests {
         })
     }
 
-    /// Overrides `kind_id`'s launch command to `echo text`, so its terminal
-    /// shows exactly `text` (including any embedded newlines) once the
-    /// process runs, instead of the generic per-kind label
-    /// `configure_echo_threads` sets up.
-    fn set_kind_echo_text(
-        cx: &mut TestAppContext,
-        kind_id: &'static str,
-        root_path: &str,
-        text: &str,
-    ) {
-        let command = echo_command(text, root_path);
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |settings| {
-                let content = settings.agent_threads.get_or_insert_default();
-                match kind_id {
-                    "codex" => content.codex = Some(command.clone()),
-                    "claude" => content.claude = Some(command.clone()),
-                    "pi" => content.pi = Some(command.clone()),
-                    "opencode" => content.opencode = Some(command.clone()),
-                    _ => panic!("unknown kind_id {kind_id}"),
-                };
-            });
-        });
-    }
-
     // See `wait_for_live_count` for why this polls with real timer ticks
     // rather than a single `run_until_parked()` -- `reclassify_attention`'s
     // Wakeup path is additionally debounced by `ATTENTION_WAKEUP_DEBOUNCE`.
@@ -4217,52 +4192,33 @@ mod tests {
     async fn pi_thread_reaches_blocked_via_wakeup_without_ever_ringing_a_bell(
         cx: &mut TestAppContext,
     ) {
-        // Pi never rings the terminal bell (confirmed by reading its actual
-        // installed source -- see attention_manifests/pi.toml's doc
-        // comment), so this is the only path that can ever flag a Pi
-        // thread: real terminal content, reclassified off `Wakeup`, no bell
-        // involved anywhere in this test.
+        // Pi never rings the terminal bell (see attention_manifests/pi.toml),
+        // so terminal output and its Wakeup event are the only path that can
+        // flag a Pi thread.
         cx.executor().allow_parking();
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
-        set_kind_echo_text(cx, "pi", root, "Project trust\nSaved decision: none");
         let window_handle = init_workspace(cx, root).await;
 
         launch_pi_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"Project trust\nSaved decision: none", cx);
+        });
         wait_for_thread_attention(cx, terminal_item_id, Some(ThreadAttention::Blocked)).await;
 
-        let final_attention = cx.update(|cx| {
-            AgentThreadStore::global(cx)
+        assert_eq!(
+            cx.update(|cx| AgentThreadStore::global(cx)
                 .read(cx)
-                .thread_attention(terminal_item_id)
-        });
-        // On a mismatch, dump what the terminal actually received -- CI has
-        // seen this assertion fail (attention staying `None`) even after
-        // waiting the helper's full real-time budget, while this passes
-        // reliably (and fast) locally, so the next CI failure should show
-        // whether the echoed prompt text ever landed in the terminal at all
-        // rather than requiring another guess-and-wait cycle.
-        if final_attention != Some(ThreadAttention::Blocked) {
-            let terminal = terminal_views(&window_handle, cx)[0]
-                .read_with(cx, |view, _| view.terminal().clone());
-            let (screen_tail, osc_title) = terminal.read_with(cx, |terminal, _| {
-                (
-                    terminal
-                        .last_n_non_empty_lines(crate::attention_detection::SCREEN_TAIL_LINE_COUNT),
-                    terminal.breadcrumb_text.clone(),
-                )
-            });
-            panic!(
-                "a Pi thread showing its Project trust prompt should be classified Blocked \
-                 purely from Wakeup-triggered terminal content, since it has no bell to react to \
-                 -- actual attention: {final_attention:?}, osc_title: {osc_title:?}, \
-                 screen_tail: {screen_tail:?}"
-            );
-        }
+                .thread_attention(terminal_item_id)),
+            Some(ThreadAttention::Blocked),
+            "a Pi Project trust prompt should be classified Blocked from terminal Wakeup without a bell"
+        );
     }
 
     #[gpui::test]
@@ -4277,13 +4233,17 @@ mod tests {
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
-        set_kind_echo_text(cx, "pi", root, "some ordinary output matching no Pi rule");
         let window_handle = init_workspace(cx, root).await;
 
         launch_pi_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
+        let terminal =
+            terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"some ordinary output matching no Pi rule", cx);
+        });
         // There's nothing to "wait to become" here -- give the debounced
         // Wakeup path the same window it gets in the positive test, then
         // assert the negative.
