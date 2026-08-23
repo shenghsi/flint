@@ -11,8 +11,13 @@ use agent_control_protocol::{
     ControlSuccess, FRAME_LENGTH_BYTES, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
     RemoteControlEnvelope, RemoteTerminalRegistrationId, frame_payload,
 };
-use anyhow::{Context as _, Result, bail};
-use futures::{AsyncWriteExt as _, FutureExt as _, select};
+#[cfg(not(windows))]
+use anyhow::bail;
+use anyhow::{Context as _, Result};
+#[cfg(unix)]
+use futures::AsyncWriteExt as _;
+use futures::{FutureExt as _, select};
+#[cfg(unix)]
 use gpui::AppContext as _;
 use parking_lot::Mutex;
 use release_channel::RELEASE_CHANNEL;
