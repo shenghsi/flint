@@ -4,6 +4,7 @@ members = [
     "crates/activity_indicator",
     "crates/agent_control_cli",
     "crates/agent_control_protocol",
+    "crates/agent_control_skill",
     "crates/agent_history",
     "crates/agent_threads",
     "crates/askpass",
@@ -214,6 +215,7 @@ edition = "2024"
 activity_indicator = { path = "crates/activity_indicator" }
 agent_control_cli = { path = "crates/agent_control_cli" }
 agent_control_protocol = { path = "crates/agent_control_protocol" }
+agent_control_skill = { path = "crates/agent_control_skill" }
 agent_history = { path = "crates/agent_history" }
 agent_threads = { path = "crates/agent_threads" }
 askpass = { path = "crates/askpass" }

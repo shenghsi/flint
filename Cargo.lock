@@ -134,6 +134,7 @@ name = "agent_control_cli"
 version = "0.1.0"
 dependencies = [
  "agent_control_protocol",
+ "agent_control_skill",
  "anyhow",
  "base64 0.22.1",
  "clap",
@@ -149,6 +150,19 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "agent_control_skill"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "paths",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
  "windows 0.61.3",
 ]
 
@@ -180,6 +194,7 @@ name = "agent_threads"
 version = "0.1.0"
 dependencies = [
  "agent_control_protocol",
+ "agent_control_skill",
  "agent_history",
  "anyhow",
  "async-channel 2.5.0",

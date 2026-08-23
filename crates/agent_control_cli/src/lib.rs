@@ -51,6 +51,35 @@ enum Command {
         #[command(subcommand)]
         command: TerminalCommand,
     },
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillCommand {
+    Print,
+    Status {
+        #[arg(long, value_enum)]
+        agent: SkillAgentArg,
+    },
+    Install {
+        #[arg(long, value_enum)]
+        agent: SkillAgentArg,
+        #[arg(long)]
+        replace: bool,
+    },
+    Update {
+        #[arg(long, value_enum)]
+        agent: SkillAgentArg,
+    },
+    Uninstall {
+        #[arg(long, value_enum)]
+        agent: SkillAgentArg,
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -152,6 +181,21 @@ enum WorktreeArg {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum SkillAgentArg {
+    Codex,
+    Claude,
+}
+
+impl From<SkillAgentArg> for agent_control_skill::AgentKind {
+    fn from(value: SkillAgentArg) -> Self {
+        match value {
+            SkillAgentArg::Codex => Self::Codex,
+            SkillAgentArg::Claude => Self::Claude,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum ReadSourceArg {
     Visible,
     Recent,
@@ -181,6 +225,15 @@ impl From<WorktreeArg> for CreateThreadWorktree {
 
 pub fn main() {
     let cli = Cli::parse();
+    if let Some(result) = cli.run_local_command() {
+        match result {
+            Ok(()) => return,
+            Err(error) => {
+                eprintln!("flintctl: {error:#}");
+                std::process::exit(1);
+            }
+        }
+    }
     #[cfg(unix)]
     let socket_override = cli.socket.clone();
     #[cfg(windows)]
@@ -213,6 +266,15 @@ pub fn main_with_transport(
     transport: impl FnOnce(ControlRequest) -> anyhow::Result<ControlResponse>,
 ) {
     let cli = Cli::parse();
+    if let Some(result) = cli.run_local_command() {
+        match result {
+            Ok(()) => return,
+            Err(error) => {
+                eprintln!("flintctl: {error:#}");
+                std::process::exit(1);
+            }
+        }
+    }
     let (request, wants_json) = match cli.into_request() {
         Ok(request) => request,
         Err(error) => {
@@ -231,6 +293,13 @@ pub fn main_with_transport(
 }
 
 impl Cli {
+    fn run_local_command(&self) -> Option<anyhow::Result<()>> {
+        let Command::Skill { command } = &self.command else {
+            return None;
+        };
+        Some(run_skill_command(command))
+    }
+
     fn into_request(self) -> anyhow::Result<(ControlRequest, bool)> {
         let (command, wants_json) = match self.command {
             Command::Status { json } => (ControlCommand::Status, json),
@@ -335,9 +404,65 @@ impl Cli {
                     )
                 }
             },
+            Command::Skill { .. } => anyhow::bail!("skill commands do not use the control server"),
         };
         Ok((ControlRequest::current(command), wants_json))
     }
+}
+
+fn run_skill_command(command: &SkillCommand) -> anyhow::Result<()> {
+    use agent_control_skill::{SkillEnvironment, SkillState};
+
+    let environment = SkillEnvironment::current();
+    match command {
+        SkillCommand::Print => print!("{}", agent_control_skill::BUNDLED_SKILL),
+        SkillCommand::Status { agent } => {
+            let agent = (*agent).into();
+            let state = agent_control_skill::status(agent, &environment)?;
+            let state = match state {
+                SkillState::NotInstalled => "not-installed",
+                SkillState::Unowned => "unowned",
+                SkillState::InstalledCurrent => "installed-current",
+                SkillState::InstalledOutdated => "installed-outdated",
+                SkillState::Modified => "modified",
+                SkillState::Missing => "missing",
+            };
+            println!("{}: {state}", agent.label());
+        }
+        SkillCommand::Install { agent, replace } => {
+            let agent = (*agent).into();
+            agent_control_skill::install(agent, &environment, *replace)?;
+            println!("Installed the Flint control skill for {}", agent.label());
+        }
+        SkillCommand::Update { agent } => {
+            let agent = (*agent).into();
+            match agent_control_skill::status(agent, &environment)? {
+                SkillState::InstalledOutdated => {
+                    agent_control_skill::install(agent, &environment, true)?;
+                    println!("Updated the Flint control skill for {}", agent.label());
+                }
+                SkillState::InstalledCurrent => {
+                    println!("The Flint control skill for {} is current", agent.label());
+                }
+                SkillState::Modified => anyhow::bail!(
+                    "the installed {} skill was modified; use skill install --replace only after review",
+                    agent.label()
+                ),
+                SkillState::NotInstalled | SkillState::Unowned | SkillState::Missing => {
+                    anyhow::bail!(
+                        "the Flint control skill for {} is not installed",
+                        agent.label()
+                    )
+                }
+            }
+        }
+        SkillCommand::Uninstall { agent, force } => {
+            let agent = (*agent).into();
+            agent_control_skill::uninstall(agent, &environment, *force)?;
+            println!("Uninstalled the Flint control skill for {}", agent.label());
+        }
+    }
+    Ok(())
 }
 
 fn parse_duration_millis(value: &str) -> Result<u64, String> {
@@ -826,6 +951,17 @@ mod unix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_commands_parse_without_a_control_endpoint() {
+        assert!(Cli::try_parse_from(["flintctl", "skill", "print"]).is_ok());
+        assert!(Cli::try_parse_from(["flintctl", "skill", "status", "--agent", "codex"]).is_ok());
+        assert!(Cli::try_parse_from(["flintctl", "skill", "install", "--agent", "claude"]).is_ok());
+        assert!(Cli::try_parse_from(["flintctl", "skill", "update", "--agent", "codex"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["flintctl", "skill", "uninstall", "--agent", "claude"]).is_ok()
+        );
+    }
 
     #[test]
     fn noun_first_thread_command_builds_current_request() {

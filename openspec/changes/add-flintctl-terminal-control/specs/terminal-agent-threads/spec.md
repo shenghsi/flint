@@ -19,47 +19,54 @@ The application SHALL provide `flintctl thread retie --worktree <path>` and `fli
 - **WHEN** an Agent Thread invokes `retie-thread` or `create-thread` without the `thread` command group
 - **THEN** `flintctl` rejects the unsupported command form
 
-### Requirement: Each launched version installs its current Agent Thread instructions
-On every application launch, Flint SHALL write the current release-channel-scoped executable marker and SHALL synchronize the Flint-managed block in each supported, installed agent's global instruction file. The managed block SHALL contain the commands and instruction text from the running Flint version.
+### Requirement: Flint provides an opt-in Agent Thread control skill
+Flint SHALL bundle a release-matched `flintctl` skill and SHALL let a user inspect, install, update, and uninstall it for each supported agent. Flint SHALL NOT install or update the skill before the user opts in, and SHALL NOT add new Flint text to global `AGENTS.md`, `CLAUDE.md`, or other general instruction files.
 
-#### Scenario: Current version launches for the first time
-- **WHEN** Flint launches and a supported installed agent has no Flint-managed instruction block
-- **THEN** Flint writes the current managed block with stable boundaries, its block version, current marker discovery, and `flintctl thread retie --worktree <path>`
+#### Scenario: User inspects the skill
+- **WHEN** a user runs `flintctl skill print`
+- **THEN** standard output contains the complete skill bundled with that `flintctl` executable without connecting to Flint
+
+#### Scenario: User installs the skill
+- **WHEN** a user confirms installation for a supported agent
+- **THEN** Flint writes the bundled skill to that agent's verified skill directory and records Flint ownership and the installed content digest
+
+#### Scenario: User has not installed the skill
+- **WHEN** Flint launches and no Flint-owned skill record exists for an agent
+- **THEN** Flint does not create or change that agent's skill or general instruction files
+
+#### Scenario: User uninstalls the skill
+- **WHEN** a user uninstalls an unchanged Flint-owned skill
+- **THEN** Flint removes the installed skill and its ownership record without changing other skills or general instructions
+
+### Requirement: Flint updates only skills it owns
+On every application launch, Flint SHALL compare each recorded Flint-owned skill with the release-matched bundled skill. Flint SHALL atomically replace an unchanged older Flint-owned skill. Flint SHALL preserve a user-modified installed skill and report a conflict instead of overwriting or deleting it.
 
 #### Scenario: A newer Flint version launches
-- **WHEN** the installed managed block has a different version or content from the running Flint version
-- **THEN** Flint replaces that managed block with the running version's current commands and instructions
+- **WHEN** a recorded skill still matches the digest that Flint installed and the bundled skill has changed
+- **THEN** Flint atomically replaces the skill and records the new version and digest
 
-#### Scenario: No workspace or instruction prompt is open
-- **WHEN** Flint launches without opening an Agent Threads workspace or showing an instruction prompt
-- **THEN** Flint still synchronizes the current managed instruction blocks for supported installed agents
+#### Scenario: User modified an installed skill
+- **WHEN** the installed skill no longer matches its recorded digest
+- **THEN** Flint preserves the file and reports a visible conflict with keep and replace choices
 
-#### Scenario: Agent control is disabled in settings
-- **WHEN** Flint launches while Agent Thread control is disabled
-- **THEN** Flint still synchronizes the installed version's managed commands and instructions for supported installed agents
+#### Scenario: Installed skill is current
+- **WHEN** the installed skill and ownership record match the current bundled skill
+- **THEN** Flint makes no file change
 
-#### Scenario: Flint closes
-- **WHEN** the running Flint instance closes
-- **THEN** its managed instruction block remains installed for the next Flint session, and Flint does not change content outside that marked block
+### Requirement: The skill detects Flint Agent Threads without affecting other sessions
+Flint SHALL set `FLINT_AGENT_THREAD=1` in local Agent Threads. The skill metadata SHALL trigger for worktree, Agent Thread, and terminal-control tasks. Its body SHALL use the release-channel marker to find `flintctl` only when `FLINT_AGENT_THREAD=1`; outside a Flint Agent Thread it SHALL continue the task without Flint control commands.
+
+#### Scenario: Agent creates a worktree in a Flint Agent Thread
+- **WHEN** an installed skill loads for a worktree task and `FLINT_AGENT_THREAD=1`
+- **THEN** the agent follows the skill's marker discovery and `flintctl thread retie` instructions
+
+#### Scenario: Skill loads outside Flint
+- **WHEN** the skill loads and `FLINT_AGENT_THREAD` is not `1`
+- **THEN** it does not invoke `flintctl` and continues the user's task normally
 
 #### Scenario: Current marker refers to an older installation
 - **WHEN** Flint launches and the release-channel-scoped marker has an older executable path or content
 - **THEN** Flint replaces the marker with the running version's current `flintctl` location and metadata
-
-### Requirement: Instruction synchronization preserves user content
-Flint SHALL identify the block as Flint-owned instructions that apply only to Flint-launched Agent Threads. The block SHALL remain installed across Flint sessions. Flint SHALL replace or remove only its managed instruction block and SHALL preserve all content outside the stable managed-block boundaries. Flint SHALL migrate a known exact unmarked block written by an earlier Flint version before it installs the current marked block.
-
-#### Scenario: User has content around a managed block
-- **WHEN** Flint refreshes a managed block in a global instruction file that also contains user-authored text
-- **THEN** the user-authored text before and after the managed block remains unchanged
-
-#### Scenario: File contains a known earlier Flint block without boundaries
-- **WHEN** Flint finds an exact unmarked block from an earlier Flint version
-- **THEN** Flint replaces that block with one current marked block and does not leave the old commands in the file
-
-#### Scenario: Similar user-authored text is not a known Flint block
-- **WHEN** a global instruction file contains similar text that does not match a managed block or a known exact earlier Flint block
-- **THEN** Flint preserves that text and installs the current managed block separately
 
 ### Requirement: Agent Thread remote route boundaries remain unchanged
 The new command name and protocol surface SHALL NOT change the Direct or Tunneled remote launch, executable, credential, or traffic boundaries for Agent Threads.

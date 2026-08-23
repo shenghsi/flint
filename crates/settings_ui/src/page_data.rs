@@ -5090,7 +5090,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 16] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 17] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5161,11 +5161,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Agent Control",
-                description: if cfg!(windows) {
-                    "Allow a local agent thread's own CLI process to ask Flint to re-tie itself to a different worktree or spawn a sibling thread. On Windows, automatic instructions are currently available for Codex; automatic setup for Claude Code, OpenCode, and Pi stays disabled until their native shell and cwd authorization paths are verified."
-                } else {
-                    "Allow a local agent thread's own CLI process to ask Flint to re-tie itself to a different worktree or spawn a sibling thread."
-                },
+                description: "Allow a local Agent Thread's own CLI process to ask Flint to re-tie itself to a different worktree or spawn a sibling thread.",
                 field: Box::new(SettingField {
                     json_path: Some("agent_threads.agent_control"),
                     pick: |settings_content| {
@@ -5183,6 +5179,30 @@ fn panels_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::ActionLink(ActionLink {
+                title: "Flint Control Skill".into(),
+                description: Some(
+                    "Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files."
+                        .into(),
+                ),
+                button_text: "Manage Skill".into(),
+                on_click: Arc::new(|settings_window, window, cx| {
+                    let Some(original_window) = settings_window.original_window else {
+                        return;
+                    };
+                    original_window
+                        .update(cx, |_workspace, original_window, cx| {
+                            original_window.dispatch_action(
+                                flint_actions::ManageAgentControlSkill.boxed_clone(),
+                                cx,
+                            );
+                            original_window.activate_window();
+                        })
+                        .ok();
+                    window.remove_window();
+                }),
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -9273,6 +9293,19 @@ mod tests {
             .expect("setting item should exist")
     }
 
+    fn action_link_by_title<'a>(pages: &'a [SettingsPage], title: &str) -> &'a crate::ActionLink {
+        pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .find_map(|item| match item {
+                SettingsPageItem::ActionLink(action_link) if action_link.title == title => {
+                    Some(action_link)
+                }
+                _ => None,
+            })
+            .expect("action link should exist")
+    }
+
     #[gpui::test]
     fn test_security_section_uses_trust_all_worktrees_key(cx: &mut gpui::TestAppContext) {
         let page = cx.update(|cx| {
@@ -10443,6 +10476,15 @@ mod tests {
                 Some(json_path)
             );
         }
+    }
+
+    #[test]
+    fn agent_threads_settings_offer_control_skill_management() {
+        let page = panels_page();
+        let pages = [page];
+
+        let action = action_link_by_title(&pages, "Flint Control Skill");
+        assert_eq!(action.button_text.as_ref(), "Manage Skill");
     }
 
     #[test]

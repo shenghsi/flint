@@ -2311,6 +2311,7 @@ fn spawn_thread_task_for_route(
     let remote_connection = remote_client
         .as_ref()
         .and_then(|client| client.read(cx).remote_connection());
+    apply_control_skill_environment(&mut command, remote_connection.is_some());
     if let Some(connection_options) = connection_options.as_ref()
         && AgentThreadStore::global(cx)
             .read(cx)
@@ -2391,6 +2392,14 @@ fn spawn_thread_task_for_route(
         })??;
         task.await
     })
+}
+
+fn apply_control_skill_environment(command: &mut AgentLaunchCommand, is_remote: bool) {
+    if !is_remote {
+        command
+            .env
+            .insert("FLINT_AGENT_THREAD".to_string(), "1".to_string());
+    }
 }
 
 fn apply_proxy_environment(command: &mut AgentLaunchCommand, proxy_url: &str) {
@@ -3205,6 +3214,23 @@ mod tests {
 
     fn at(seconds: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+    }
+
+    #[test]
+    fn flint_agent_thread_environment_is_local_only() {
+        let mut local_command = AgentLaunchCommand::default();
+        apply_control_skill_environment(&mut local_command, false);
+        assert_eq!(
+            local_command
+                .env
+                .get("FLINT_AGENT_THREAD")
+                .map(String::as_str),
+            Some("1")
+        );
+
+        let mut remote_command = AgentLaunchCommand::default();
+        apply_control_skill_environment(&mut remote_command, true);
+        assert!(!remote_command.env.contains_key("FLINT_AGENT_THREAD"));
     }
 
     #[test]

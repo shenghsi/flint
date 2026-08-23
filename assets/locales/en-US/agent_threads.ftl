@@ -63,3 +63,5 @@ agent-threads-handoff-no-resumable-session = This thread has no resumable sessio
 agent-threads-handoff-not-enough-conversation = There is not enough conversation to hand off yet.
 agent-threads-handoff-unsupported-history = The selected agent does not support handoff history.
 agent-threads-current-project = current
+agent-threads-manage-control-skill = Manage the Flint control skill
+agent-threads-control-skill-title = Flint control skill for { $agent }
