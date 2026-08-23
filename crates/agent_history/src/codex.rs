@@ -54,7 +54,16 @@ impl HistoryProvider for CodexHistoryProvider {
                 continue;
             };
             let summary = match previous.rollouts.get(&key) {
-                Some(entry) if entry.identity == identity => entry.summary.clone(),
+                Some(entry)
+                    if entry.identity == identity
+                        && !entry
+                            .summary
+                            .as_ref()
+                            .and_then(|summary| summary.fallback_title.as_deref())
+                            .is_some_and(is_injected_instructions) =>
+                {
+                    entry.summary.clone()
+                }
                 // New or changed (or a changed previously-malformed) file: parse.
                 _ => parse_summary(&host.fs.load(path).await.unwrap_or_default()),
             };
@@ -402,6 +411,9 @@ fn parse_history_titles(content: &str) -> BTreeMap<String, String> {
 fn user_message_title(payload: &Value, seen_user_messages: &mut HashSet<String>) -> Option<String> {
     if payload.get("type").and_then(Value::as_str) == Some("user_message") {
         let message = payload.get("message").and_then(Value::as_str)?;
+        if is_injected_instructions(message) {
+            return None;
+        }
         return normalize_title(message.to_string());
     }
 
@@ -418,11 +430,19 @@ fn user_message_title(payload: &Value, seen_user_messages: &mut HashSet<String>)
         else {
             continue;
         };
+        if is_injected_instructions(text) {
+            continue;
+        }
         if seen_user_messages.insert(text.to_string()) {
             parts.push(text);
         }
     }
     normalize_title(parts.join(" "))
+}
+
+fn is_injected_instructions(text: &str) -> bool {
+    text.trim_start()
+        .starts_with("# AGENTS.md instructions for ")
 }
 
 fn normalize_title(text: String) -> Option<String> {
