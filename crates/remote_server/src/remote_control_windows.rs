@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use gpui::AppContext as _;
 use windows::{
     Win32::{
@@ -29,14 +29,14 @@ use windows::{
         Storage::FileSystem::{
             CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE,
             FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, ReadFile,
-            WriteFile,
+            WRITE_DAC, WriteFile,
         },
         System::{
             Pipes::{
                 ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
-                GetNamedPipeClientProcessId, PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS,
-                PIPE_TYPE_MESSAGE, PIPE_WAIT, PeekNamedPipe, SetNamedPipeHandleState,
-                WaitNamedPipeW,
+                GetNamedPipeClientProcessId, NAMED_PIPE_MODE, PIPE_READMODE_MESSAGE,
+                PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE, PIPE_WAIT, PeekNamedPipe,
+                SetNamedPipeHandleState, WaitNamedPipeW,
             },
             SystemServices::SE_GROUP_LOGON_ID,
             Threading::{GetCurrentProcess, OpenProcessToken},
@@ -413,15 +413,17 @@ fn open_pipe(name: &str) -> Result<Option<Pipe>> {
         Ok(handle) => handle,
         Err(error) if error.code() == WIN32_ERROR(ERROR_PIPE_BUSY.0).into() => {
             // SAFETY: name remains valid for the duration of the wait.
-            unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 1_000) }.ok();
+            if let Err(error) = unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 1_000) }.ok() {
+                log::debug!("failed waiting for busy remote flintctl named pipe: {error}");
+            }
             return Ok(None);
         }
         Err(error) => return Err(error).context("failed to open remote flintctl named pipe"),
     };
     let pipe = Pipe(handle);
-    let mut mode = PIPE_READMODE_MESSAGE.0;
+    let mode = NAMED_PIPE_MODE(PIPE_READMODE_MESSAGE.0);
     // SAFETY: pipe is a connected named-pipe client handle.
-    unsafe { SetNamedPipeHandleState(pipe.0, Some(&mut mode), None, None) }
+    unsafe { SetNamedPipeHandleState(pipe.0, Some(&mode), None, None) }
         .context("failed to set remote flintctl pipe mode")?;
     Ok(Some(pipe))
 }
@@ -442,7 +444,8 @@ fn create_pipe(name: &str, logon_sid: &str, first: bool) -> Result<Pipe> {
     let name = HSTRING::from(name);
     let mut open_mode = PIPE_ACCESS_DUPLEX;
     if first {
-        open_mode = FILE_FLAGS_AND_ATTRIBUTES(open_mode.0 | FILE_FLAG_FIRST_PIPE_INSTANCE.0);
+        open_mode =
+            FILE_FLAGS_AND_ATTRIBUTES(open_mode.0 | FILE_FLAG_FIRST_PIPE_INSTANCE.0 | WRITE_DAC.0);
     }
     let mode = PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS;
     // SAFETY: inputs remain valid for the duration of CreateNamedPipeW.
