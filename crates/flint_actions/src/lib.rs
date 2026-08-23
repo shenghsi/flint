@@ -63,6 +63,8 @@ actions!(
         OpenPerformanceProfiler,
         /// Opens the onboarding view.
         OpenOnboarding,
+        /// Opens the Flint Agent Thread control skill manager.
+        ManageAgentControlSkill,
         /// Shows the auto-update notification for testing.
         ShowUpdateNotification,
     ]

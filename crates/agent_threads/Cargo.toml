@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 agent_control_protocol.workspace = true
+agent_control_skill.workspace = true
 agent_history.workspace = true
 anyhow.workspace = true
 async-compression.workspace = true

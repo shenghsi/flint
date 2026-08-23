@@ -4,7 +4,7 @@ See `proposal.md` for the motivation and the delta specs for observable behavior
 
 The current `flint-agent-control` client sends one JSON request per local connection. Unix uses a user-scoped socket, Windows uses a named pipe, and the server gets the peer process ID from the operating system. The server walks a bounded process ancestry and accepts a request only when it can map that ancestry, or the constrained working-directory and agent-kind fallback, to a live Agent Thread.
 
-The current command has two flat operations: `retie-thread` and `create-thread`. Agent Thread instruction blocks discover the executable through a release-channel-scoped marker whose file name contains `agent-control`. The current instruction flow offers an append-only block, checks only for a command substring, and never refreshes text that an earlier Flint version wrote.
+The current command has two flat operations: `retie-thread` and `create-thread`. Agent Thread instruction blocks discover the executable through a release-channel-scoped marker whose file name contains `agent-control`. Writing these commands into every agent's general global instruction file is broader than the task-specific control surface requires.
 
 Flint already owns each PTY terminal, terminal view, workspace item, and split layout. A new or cloned split creates a new PTY and process. A moved split keeps the same terminal and process. Existing terminal APIs can read the emulated grid and scrollback, write input, paste text, and map UI key events. The missing controls are a stable identity for each live terminal, a registry that maps callers and targets, bounded wire results, and a wait operation that reacts to terminal output.
 
@@ -20,7 +20,7 @@ GPUI entities stay on the foreground thread. Socket and named-pipe input and out
 - Keep access local, user-scoped, release-channel-scoped, and limited to one workspace.
 - Reuse terminal rendering, content, and key semantics so control input behaves like UI input.
 - Bound memory, request size, response size, line count, wait duration, and retry duration.
-- Make the running Flint version the source of truth for its managed commands and global instruction blocks.
+- Make the running Flint version the source of truth for dedicated control skills that the user chose to install.
 
 **Non-Goals:**
 
@@ -50,11 +50,11 @@ Stop building and packaging the `flint-agent-control` executable in this change.
 
 This is a breaking change for scripts that invoke the old executable name or old flat commands. Do not provide a wrapper, adapter, second binary target, command alias, or protocol alias. Remove the old executable from package and updater manifests.
 
-Replace stale managed instructions during launch so current Agent Threads do not require old command aliases.
+Update recorded Flint-owned skills during launch so current Agent Threads do not require old command aliases.
 
 Alternative: Package a compatibility executable for the old name. Rejected because it keeps a second installed control surface that is not required for stored instructions.
 
-Alternative: Keep old command and protocol aliases for stored instructions. Rejected because the running Flint version must install its current instructions and must not keep obsolete commands as a permanent migration mechanism.
+Alternative: Keep old command and protocol aliases for stored skills. Rejected because the running Flint version can update skills it owns and must not keep obsolete commands as a permanent migration mechanism.
 
 Alternative: Keep `flint-agent-control` as the primary command and add terminal commands to it. This would keep an agent-specific name for a general local control surface.
 
@@ -167,29 +167,33 @@ Alternative: Forward local terminal commands to the remote host. The local serve
 
 Add `flintctl` to macOS application bundles and Linux and Windows packages. Remove `flint-agent-control` from binary targets, package file lists, signing steps, and updater manifests. Use the existing marker location for discovery and keep endpoint and marker names release-channel scoped. The CLI connects only to a running matching Flint instance and does not launch the application.
 
-Add package tests that inspect each supported package layout and prove that it contains `flintctl` but not `flint-agent-control`. Add instruction tests that check the exact new command and marker behavior.
+Add package tests that inspect each supported package layout and prove that it contains `flintctl` but not `flint-agent-control`. Add skill tests that check the exact new command and marker behavior.
 
 Alternative: Require `flintctl` in `PATH`. Flint already has marker-based discovery, and managed Agent Threads must use the executable from the matching application build.
 
-### Synchronize versioned Flint-managed instruction blocks at launch
+### Install a dedicated control skill with consent
 
-Replace the append-only offer and substring detection with a launch-time synchronizer. Give the managed block stable begin and end markers plus a block format version. For every supported agent kind whose local installation is present, read its known global instruction file and apply one of these operations:
+Bundle one concise, release-matched `flintctl` skill. Its metadata triggers on worktree creation or switching, Agent Thread coordination, and Flint terminal control. Its body first checks `FLINT_AGENT_THREAD=1`. Outside a Flint Agent Thread it returns control to the normal task without invoking `flintctl`. Inside a local Agent Thread it reads the existing release-channel marker and uses its executable value.
 
-- insert the current block when no managed block exists;
-- replace the complete marked block when its version or content differs;
-- leave the block unchanged when it already equals the running version;
-- replace an exact known unmarked block from an earlier Flint version with the current marked block; or
-- preserve similar text that is not an exact known block and insert the managed block separately.
+Expose the bundled text through `flintctl skill print` without connecting to Flint. Add install, status, update, and uninstall operations for agent kinds whose skill directory convention is verified. The Settings Editor and Agent Threads UI show the destination and full text before initial installation. Initial installation always requires a user action.
 
-Preserve bytes outside the managed range, apart from the minimum newline normalization needed at the insertion boundary. Write through a temporary file in the same directory and atomically replace the destination so a crash does not leave a partial global instruction file. Propagate or show a visible error when synchronization fails; do not record a stale block as current.
+Store an ownership record outside the skill with the agent kind, destination, bundled skill version, installed content digest, and release channel. Write the skill and record through temporary files in their destination directories and replace them atomically. A future Flint launch updates a recorded skill only when the file still matches the recorded digest. If the user changed it, keep it and show a conflict. An explicit replace action can adopt the current bundled content and digest. Uninstall removes only an unchanged recorded skill.
 
-State inside the marked block that Flint owns the block across application sessions and that its instructions apply only to Agent Threads that Flint launches. Do not remove the block when Flint closes. A closed Flint instance is already represented by the absence of its executable marker, and close-time file changes are not reliable when an instance crashes or when multiple instances run.
+Do not add, update, or remove text in global `AGENTS.md`, `CLAUDE.md`, or other general instruction files. Existing Flint-managed blocks from earlier versions remain unchanged.
 
-Run synchronization when Flint launches, not only when an Agent Thread starts or a workspace shows a toast. Run it even when Agent Thread control is disabled in settings, because the installed version owns the current managed text. Remove the one-time dismissed state because current instructions are a managed part of the installed Flint version, not an optional append action. Keep the installed-agent check so Flint does not create global files for agent tools that are absent. Keep remote-host instruction files outside this local synchronization; the feature does not install `flintctl` on remote hosts.
+Alternative: Depend on the skill body to discover that it is inside Flint. Rejected because the body is not loaded until metadata triggers; the metadata must name the tasks that need the skill.
 
-Alternative: Keep the user prompt and update only after another click. Rejected because a new Flint version could run with stale commands until the user opens the correct workspace and accepts the prompt.
+Alternative: Install the skill automatically when an agent executable is found. Rejected because skill installation changes an agent's configuration and requires consent.
 
-Alternative: Replace the full global instruction file. Rejected because Flint owns only its managed block and must preserve user and third-party instructions.
+Alternative: Update every file at a known skill path. Rejected because Flint can safely update only installations for which it recorded ownership and the prior content digest.
+
+### Keep worktree retie explicit
+
+Set `FLINT_AGENT_THREAD=1` only for a local Agent Thread. Do not set it for Direct or Tunneled remote launches because their control executable and routing boundaries are different.
+
+Do not automatically retie a thread whenever its terminal working directory changes. Agents and users can enter another worktree temporarily for inspection, and the terminal working directory does not prove a durable ownership decision. The skill tells the agent to run `flintctl thread retie` after it creates the worktree that the current thread will own. This preserves explicit intent while avoiding always-on global instructions.
+
+Alternative: Retie to every recognized worktree entered by the terminal. Rejected because temporary directory changes would silently move thread ownership and history.
 
 ## Risks / Trade-offs
 
@@ -199,19 +203,19 @@ Alternative: Replace the full global instruction file. Rejected because Flint ow
 - [Large scrollback or output causes high memory use] → Enforce line, request, response, and timeout limits. Truncate text at a UTF-8 boundary.
 - [Rapid output generates many notifications] → Coalesce through the existing GPUI notification behavior and take only bounded snapshots.
 - [External scripts still invoke `flint-agent-control`] → Mark the removal as breaking and update first-party instructions and package tests to use only `flintctl`.
-- [Instruction synchronization changes user-owned files] → Use explicit managed boundaries, preserve all outside content, migrate only exact known legacy blocks, and use atomic replacement.
-- [Instruction synchronization fails at launch] → Show a visible error with the affected agent and path, keep the original file intact, and retry on the next launch.
+- [A user edits an installed skill] → Compare its content with the recorded digest, preserve it, and require an explicit replace action.
+- [A skill update fails at launch] → Keep the original skill and ownership record intact, show the affected agent and path, and retry on the next launch.
 - [Windows caller verification differs from Unix] → Keep transport-specific peer-process tests and require the same caller-resolution contract on both platforms.
 - [Local-only control surprises users in remote projects] → Report capabilities through `status` and omit remote PTYs from list results instead of exposing partial control.
 
 ## Migration Plan
 
 1. Add the `flintctl` parser, protocol version, status result, and noun-first thread commands. Remove the old binary target, flat commands, serialized aliases, and package references. Keep current thread behavior unchanged.
-2. Add stable managed-block boundaries, exact legacy-block migration, launch-time instruction synchronization, atomic file replacement, visible errors, and current marker rewriting.
+2. Add the bundled skill, consent-based installation, ownership records, launch-time updates, conflict handling, and current marker rewriting. Stop all new global instruction-file writes without removing old blocks.
 3. Add terminal lifecycle registration, stable IDs, caller resolution, workspace checks, `terminal current`, and `terminal list`.
 4. Add the shared bounded snapshot implementation and `terminal read`.
 5. Add complete validation and atomic foreground updates for text, keys, and run input.
 6. Add length-prefixed framing, terminal observations, disconnect cancellation, and `terminal wait-output`.
-7. Verify protocol, CLI, server, terminal, instruction migration, package, Unix, Windows, local, Direct remote, and Tunneled remote behavior before release.
+7. Verify protocol, CLI, server, terminal, skill lifecycle, package, Unix, Windows, local, Direct remote, and Tunneled remote behavior before release.
 
-Rollback to an earlier release restores that release's old executable and marker value through the normal package or updater rollback. Do not roll back only the server protocol after new instructions have shipped; keep the client, marker, and server protocol versions aligned within each application build.
+Rollback to an earlier release restores that release's old executable and marker value through the normal package or updater rollback. A recorded skill can be updated again by the version that next launches, but a user-modified skill is never replaced automatically. Keep the client, skill, marker, and server protocol versions aligned within each application build.

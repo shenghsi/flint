@@ -6,13 +6,13 @@ mod codex_history;
 pub mod connect_proxy;
 #[cfg(any(unix, windows))]
 mod control;
+#[cfg(any(unix, windows))]
+mod control_skill;
 #[cfg(windows)]
 mod control_windows;
 mod egress;
 mod handoff;
 mod history;
-#[cfg(any(unix, windows))]
-mod instructions;
 pub mod managed_agent;
 mod managed_agent_progress;
 mod opencode_history;
@@ -28,10 +28,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{App, Context, Entity, EntityId, SharedString, Window, actions};
+use gpui::{
+    App, Context, Entity, EntityId, PromptButton, PromptLevel, SharedString, TaskExt, Window,
+    actions,
+};
 use settings::{ExtendingVec, RegisterSetting, Settings};
 use ui::IconName;
-use workspace::Workspace;
+use workspace::{Toast, Workspace, notifications::NotificationId};
 
 use agent_release::{
     AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy, CLAUDE_RELEASES, CODEX_RELEASES,
@@ -647,9 +650,132 @@ pub fn init(cx: &mut App) {
         workspace.register_action(new_claude_thread);
         workspace.register_action(new_pi_thread);
         workspace.register_action(new_opencode_thread);
+        workspace.register_action(manage_agent_control_skill);
     })
     .detach();
 }
+
+fn manage_agent_control_skill(
+    _workspace: &mut Workspace,
+    _: &flint_actions::ManageAgentControlSkill,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let selection = window.prompt(
+        PromptLevel::Info,
+        "Manage the Flint control skill",
+        Some("Select an agent. The next step shows the complete skill and its current state before any file changes."),
+        &[
+            PromptButton::new("Codex"),
+            PromptButton::new("Claude Code"),
+            PromptButton::cancel("Cancel"),
+        ],
+        cx,
+    );
+    cx.spawn_in(window, async move |workspace, cx| {
+        let agent = match selection.await.ok() {
+            Some(0) => agent_control_skill::AgentKind::Codex,
+            Some(1) => agent_control_skill::AgentKind::Claude,
+            _ => return Ok(()),
+        };
+        let environment = agent_control_skill::SkillEnvironment::current();
+        let state = agent_control_skill::status(agent, &environment)?;
+        let destination = environment.skill_path(agent);
+        let detail = format!(
+            "Destination: {}\nCurrent state: {state:?}\n\n{}",
+            destination.display(),
+            agent_control_skill::BUNDLED_SKILL
+        );
+        let operation = control_skill_operation(state);
+        let buttons = match state {
+            agent_control_skill::SkillState::NotInstalled => {
+                vec![PromptButton::new("Install"), PromptButton::cancel("Cancel")]
+            }
+            agent_control_skill::SkillState::Unowned => {
+                vec![PromptButton::cancel("Keep")]
+            }
+            agent_control_skill::SkillState::Missing => {
+                vec![PromptButton::new("Restore"), PromptButton::cancel("Cancel")]
+            }
+            agent_control_skill::SkillState::InstalledCurrent
+            | agent_control_skill::SkillState::InstalledOutdated => {
+                vec![
+                    PromptButton::new("Update"),
+                    PromptButton::new("Uninstall"),
+                    PromptButton::cancel("Cancel"),
+                ]
+            }
+            agent_control_skill::SkillState::Modified => {
+                vec![PromptButton::new("Replace"), PromptButton::cancel("Keep")]
+            }
+        };
+        let confirmation = cx.update(|window, cx| {
+            window.prompt(
+                PromptLevel::Info,
+                &format!("Flint control skill for {}", agent.label()),
+                Some(&detail),
+                &buttons,
+                cx,
+            )
+        })?;
+        let choice = confirmation.await.ok();
+        let message = match (operation, choice) {
+            (ControlSkillOperation::Install, Some(0)) => {
+                agent_control_skill::install(agent, &environment, false)?;
+                format!("Installed the Flint control skill for {}", agent.label())
+            }
+            (ControlSkillOperation::UpdateOrUninstall, Some(0)) => {
+                agent_control_skill::install(agent, &environment, true)?;
+                format!("Updated the Flint control skill for {}", agent.label())
+            }
+            (ControlSkillOperation::UpdateOrUninstall, Some(1)) => {
+                agent_control_skill::uninstall(agent, &environment, false)?;
+                format!("Uninstalled the Flint control skill for {}", agent.label())
+            }
+            (ControlSkillOperation::Replace, Some(0)) => {
+                agent_control_skill::install(agent, &environment, true)?;
+                format!("Replaced the Flint control skill for {}", agent.label())
+            }
+            _ => return Ok(()),
+        };
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::composite::<ControlSkillChange>(SharedString::from(agent.id())),
+                    message,
+                )
+                .autohide(),
+                cx,
+            );
+        })?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
+}
+
+fn control_skill_operation(state: agent_control_skill::SkillState) -> ControlSkillOperation {
+    match state {
+        agent_control_skill::SkillState::NotInstalled => ControlSkillOperation::Install,
+        agent_control_skill::SkillState::Unowned => ControlSkillOperation::NoChange,
+        agent_control_skill::SkillState::InstalledCurrent
+        | agent_control_skill::SkillState::InstalledOutdated => {
+            ControlSkillOperation::UpdateOrUninstall
+        }
+        agent_control_skill::SkillState::Modified | agent_control_skill::SkillState::Missing => {
+            ControlSkillOperation::Replace
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ControlSkillOperation {
+    NoChange,
+    Install,
+    UpdateOrUninstall,
+    Replace,
+}
+
+enum ControlSkillChange {}
 
 /// Returns the highest-priority live Terminal across `workspaces` using the
 /// Agent Threads rollup order: Blocked, Finished, Working, then Idle.
@@ -753,9 +879,9 @@ pub fn focus_priority_terminal(
 pub fn init_control_server(cx: &mut App) {
     #[cfg(any(unix, windows))]
     {
-        let instruction_sync_errors = Arc::new(instructions::synchronize_worktree_instructions());
+        let skill_sync_errors = Arc::new(control_skill::synchronize_control_skills());
         cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
-            instructions::show_sync_errors(&instruction_sync_errors, workspace, cx);
+            control_skill::show_sync_errors(&skill_sync_errors, workspace, cx);
         })
         .detach();
         cx.observe_new(|remote_client: &mut remote::RemoteClient, _window, cx| {
@@ -937,6 +1063,14 @@ fn new_opencode_thread(
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+
+    #[test]
+    fn missing_control_skill_uses_an_owned_replacement_operation() {
+        assert_eq!(
+            control_skill_operation(agent_control_skill::SkillState::Missing),
+            ControlSkillOperation::Replace
+        );
+    }
 
     #[test]
     fn registry_orders_opencode_after_existing_agents() {
