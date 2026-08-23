@@ -663,7 +663,7 @@ fn manage_agent_control_skill(
 ) {
     let selection = window.prompt(
         PromptLevel::Info,
-        "Manage the Flint control skill",
+        &localization::text(cx, "agent-threads-manage-control-skill"),
         Some("Select an agent. The next step shows the complete skill and its current state before any file changes."),
         &[
             PromptButton::new("Codex"),
@@ -710,9 +710,11 @@ fn manage_agent_control_skill(
             }
         };
         let confirmation = cx.update(|window, cx| {
+            let mut args = localization::FluentArgs::new();
+            args.set("agent", agent.label());
             window.prompt(
                 PromptLevel::Info,
-                &format!("Flint control skill for {}", agent.label()),
+                &localization::text_with_args(cx, "agent-threads-control-skill-title", &args),
                 Some(&detail),
                 &buttons,
                 cx,

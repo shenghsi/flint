@@ -1553,6 +1553,32 @@ mod tests {
         (window_handle, terminal_item_id)
     }
 
+    async fn wait_for_terminal_text(
+        cx: &mut TestAppContext,
+        record: &crate::terminal_control::TerminalControlRecord,
+        expected: &str,
+    ) {
+        for _ in 0..50 {
+            cx.run_until_parked();
+            let found = cx.update(|cx| {
+                record.terminal.upgrade().is_some_and(|terminal| {
+                    terminal
+                        .read(cx)
+                        .control_snapshot(terminal::ControlSnapshotSource::Recent, 120)
+                        .text
+                        .contains(expected)
+                })
+            });
+            if found {
+                return;
+            }
+            cx.executor()
+                .timer(std::time::Duration::from_millis(50))
+                .await;
+        }
+        panic!("terminal output did not contain {expected:?}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn get_peer_pid_returns_the_actual_connecting_process() {
@@ -1936,11 +1962,13 @@ mod tests {
                     .upgrade()
                     .is_some_and(|view| view.entity_id() == terminal_item_id)
             })
+            .cloned()
             .expect("spawned terminal must be registered");
+        wait_for_terminal_text(cx, &caller, "codex").await;
         let mut async_cx = cx.to_async();
 
         let current = dispatch_terminal(
-            caller,
+            &caller,
             &records,
             &ControlRequest::current(ControlCommand::TerminalCurrent),
             &mut async_cx,
@@ -1952,7 +1980,7 @@ mod tests {
         };
 
         let list = dispatch_terminal(
-            caller,
+            &caller,
             &records,
             &ControlRequest::current(ControlCommand::TerminalList(
                 agent_control_protocol::TerminalListRequest { all: true },
@@ -1967,7 +1995,7 @@ mod tests {
         ));
 
         let read = dispatch_terminal(
-            caller,
+            &caller,
             &records,
             &ControlRequest::current(ControlCommand::TerminalRead(TerminalReadRequest {
                 terminal_id: id.clone(),
@@ -1984,7 +2012,7 @@ mod tests {
         ));
 
         let wait = dispatch_terminal(
-            caller,
+            &caller,
             &records,
             &ControlRequest::current(ControlCommand::TerminalWaitOutput(
                 TerminalWaitOutputRequest {

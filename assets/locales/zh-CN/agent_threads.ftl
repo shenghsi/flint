@@ -63,3 +63,5 @@ agent-threads-handoff-no-resumable-session = 此线程尚无可恢复的会话 I
 agent-threads-handoff-not-enough-conversation = 还没有足够的对话可供移交。
 agent-threads-handoff-unsupported-history = 所选智能体不支持移交历史记录。
 agent-threads-current-project = 当前
+agent-threads-manage-control-skill = 管理 Flint 控制技能
+agent-threads-control-skill-title = { $agent } 的 Flint 控制技能
