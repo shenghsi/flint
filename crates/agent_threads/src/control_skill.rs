@@ -2,9 +2,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use agent_control_skill::{SkillEnvironment, SkillState};
 use db::kvp::KeyValueStore;
-use gpui::{Action, AppContext, Context, PromptButton, PromptLevel, SharedString, TaskExt, Window};
+use gpui::{
+    App, AppContext, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, Render,
+    SharedString, TaskExt, Window,
+};
+use ui::{AlertModal, Button, ButtonStyle, Checkbox, ToggleState, prelude::*};
 use workspace::notifications::NotificationId;
-use workspace::{Toast, Workspace};
+use workspace::{ModalView, Toast, Workspace};
 
 const INSTALL_REMINDER_SHOWN_KEY: &str = "agent-threads-control-skill-install-reminder-shown";
 static INSTALL_REMINDER_STARTED: AtomicBool = AtomicBool::new(false);
@@ -53,7 +57,7 @@ pub(crate) fn show_sync_errors(
 }
 
 pub(crate) fn show_install_reminder(
-    _workspace: &mut Workspace,
+    workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -76,31 +80,156 @@ pub(crate) fn show_install_reminder(
     })
     .detach_and_log_err(cx);
 
-    let prompt = window.prompt(
-        PromptLevel::Info,
-        &localization::text(cx, "agent-threads-control-skill-reminder"),
-        Some(&localization::text(
-            cx,
-            "agent-threads-control-skill-reminder-detail",
-        )),
-        &[
-            PromptButton::new(localization::text(cx, "agent-threads-control-skill-manage")),
-            PromptButton::cancel(localization::text(
-                cx,
-                "agent-threads-control-skill-not-now",
-            )),
-        ],
-        cx,
-    );
-    cx.spawn_in(window, async move |_workspace, cx| {
-        if matches!(prompt.await.ok(), Some(0)) {
-            cx.update(|window, cx| {
-                window.dispatch_action(flint_actions::ManageAgentControlSkill.boxed_clone(), cx);
-            })?;
+    let selected_agents = install_reminder_agents(&environment);
+    let workspace_handle = cx.weak_entity();
+    workspace.toggle_modal(window, cx, move |_, cx| {
+        ControlSkillInstallModal::new(selected_agents, workspace_handle, cx)
+    });
+}
+
+fn install_reminder_agents(environment: &SkillEnvironment) -> Vec<agent_control_skill::AgentKind> {
+    agent_control_skill::AgentKind::ALL
+        .into_iter()
+        .filter(|agent| {
+            matches!(
+                agent_control_skill::status(*agent, environment),
+                Ok(SkillState::NotInstalled)
+            )
+        })
+        .collect()
+}
+
+struct ControlSkillInstallModal {
+    selected_agents: Vec<agent_control_skill::AgentKind>,
+    workspace: gpui::WeakEntity<Workspace>,
+    focus_handle: FocusHandle,
+    error: Option<SharedString>,
+}
+
+impl ControlSkillInstallModal {
+    fn new(
+        selected_agents: Vec<agent_control_skill::AgentKind>,
+        workspace: gpui::WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            selected_agents,
+            workspace,
+            focus_handle: cx.focus_handle(),
+            error: None,
         }
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
+    }
+
+    fn install(&mut self, cx: &mut Context<Self>) {
+        let environment = SkillEnvironment::current();
+        for agent in self.selected_agents.iter().copied() {
+            if let Err(error) = agent_control_skill::install(agent, &environment, false) {
+                self.error = Some(
+                    format!(
+                        "Could not install the skill for {}: {error:#}",
+                        agent.label()
+                    )
+                    .into(),
+                );
+                cx.notify();
+                return;
+            }
+        }
+
+        let count = self.selected_agents.len();
+        if let Err(error) = self.workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<ControlSkillInstallReminder>(),
+                    format!("Installed the Flint control skill for {count} agent(s)"),
+                )
+                .autohide(),
+                cx,
+            );
+        }) {
+            log::error!("show control skill installation result: {error:#}");
+        }
+        cx.emit(DismissEvent);
+    }
+}
+
+impl Focusable for ControlSkillInstallModal {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for ControlSkillInstallModal {}
+impl ModalView for ControlSkillInstallModal {}
+
+impl Render for ControlSkillInstallModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        AlertModal::new("control-skill-install-reminder")
+            .title(localization::text(
+                cx,
+                "agent-threads-control-skill-reminder",
+            ))
+            .width(rems(32.))
+            .key_context("ControlSkillInstallReminder")
+            .track_focus(&self.focus_handle)
+            .child(localization::text(
+                cx,
+                "agent-threads-control-skill-reminder-detail",
+            ))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .children(
+                        agent_control_skill::AgentKind::ALL
+                            .into_iter()
+                            .map(|agent| {
+                                Checkbox::new(
+                                    format!("control-skill-agent-{}", agent.id()),
+                                    ToggleState::from(self.selected_agents.contains(&agent)),
+                                )
+                                .label(agent.label())
+                                .on_click(cx.listener(
+                                    move |this, state: &ToggleState, _, cx| {
+                                        if state.selected() {
+                                            if !this.selected_agents.contains(&agent) {
+                                                this.selected_agents.push(agent);
+                                            }
+                                        } else {
+                                            this.selected_agents
+                                                .retain(|selected| *selected != agent);
+                                        }
+                                        cx.notify();
+                                    },
+                                ))
+                            }),
+                    ),
+            )
+            .when_some(self.error.clone(), |modal, error| {
+                modal.child(Label::new(error).color(ui::Color::Error))
+            })
+            .footer(
+                h_flex()
+                    .p_3()
+                    .gap_1()
+                    .justify_end()
+                    .child(
+                        Button::new(
+                            "control-skill-not-now",
+                            localization::text(cx, "agent-threads-control-skill-not-now"),
+                        )
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                    )
+                    .child(
+                        Button::new(
+                            "control-skill-install-selected",
+                            localization::text(cx, "agent-threads-control-skill-install-selected"),
+                        )
+                        .style(ButtonStyle::Filled)
+                        .disabled(self.selected_agents.is_empty())
+                        .on_click(cx.listener(|this, _, _, cx| this.install(cx))),
+                    ),
+            )
+    }
 }
 
 fn should_offer_install_reminder(environment: &SkillEnvironment) -> bool {
@@ -118,6 +247,7 @@ fn should_offer_install_reminder(environment: &SkillEnvironment) -> bool {
 }
 
 enum SkillSyncFailure {}
+enum ControlSkillInstallReminder {}
 
 #[cfg(test)]
 mod tests {
@@ -126,7 +256,9 @@ mod tests {
     use agent_control_skill::SkillEnvironment;
     use tempfile::TempDir;
 
-    use super::{should_offer_install_reminder, synchronize_control_skills_in};
+    use super::{
+        install_reminder_agents, should_offer_install_reminder, synchronize_control_skills_in,
+    };
 
     #[test]
     fn startup_does_not_change_general_instruction_files_without_an_owned_skill() {
@@ -163,5 +295,21 @@ mod tests {
         agent_control_skill::install(agent_control_skill::AgentKind::Claude, &environment, false)
             .expect("install Claude skill");
         assert!(!should_offer_install_reminder(&environment));
+    }
+
+    #[test]
+    fn install_reminder_selects_only_agents_without_the_skill() {
+        let temporary_directory = TempDir::new().expect("create temporary directory");
+        let environment = SkillEnvironment::new(
+            temporary_directory.path().join("home"),
+            temporary_directory.path().join("data"),
+        );
+        agent_control_skill::install(agent_control_skill::AgentKind::Codex, &environment, false)
+            .expect("install Codex skill");
+
+        assert_eq!(
+            install_reminder_agents(&environment),
+            vec![agent_control_skill::AgentKind::Claude]
+        );
     }
 }
