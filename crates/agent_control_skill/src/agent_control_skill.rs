@@ -44,7 +44,7 @@ impl AgentKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Codex => "Codex",
+            Self::Codex => "Codex, Pi, and OpenCode",
             Self::Claude => "Claude Code",
         }
     }
@@ -336,6 +336,11 @@ mod tests {
             temporary_directory.path().join("home"),
             temporary_directory.path().join("data"),
         )
+    }
+
+    #[test]
+    fn shared_agent_skill_target_names_all_supported_agents() {
+        assert_eq!(AgentKind::Codex.label(), "Codex, Pi, and OpenCode");
     }
 
     #[test]
