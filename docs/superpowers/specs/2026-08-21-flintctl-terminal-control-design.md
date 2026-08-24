@@ -408,7 +408,7 @@ invalid-split-direction
 invalid-placement
 terminal-create-failed
 terminal-placement-failed
-unsupported-remote-terminal
+remote-terminal-create-failed
 invalid-key
 invalid-pattern
 timeout
@@ -448,22 +448,21 @@ request cannot interleave bytes within that operation.
 
 ## Remote behavior
 
-The first version controls only terminals whose PTY process runs on the same
-machine as the Flint control server.
+Remote development provides the same terminal command forms, defaults,
+response shapes, focus behavior, and workspace checks through the authenticated
+`flint-remote-server` bridge described in
+`docs/superpowers/specs/2026-08-22-flintctl-remote-dev-design.md`.
 
-For a remote project:
+Creation follows the source terminal route. `terminal open` follows the caller
+terminal. `terminal split` follows the selected terminal. Local Flint owns the
+new terminal view and pane placement. The remote server owns a remote PTY and
+its connection-bound registration when the selected route is remote. A remote
+`--cwd` is interpreted and validated on the remote host.
 
-- A local terminal created with Flint's local route can use local `flintctl`.
-- A terminal whose shell runs through the remote server is not exposed unless
-  the local server can verify its caller process identity and route input to
-  that exact terminal without weakening the workspace boundary.
-- `terminal open` and `terminal split` reject a request when the selected
-  workspace route would create a remote PTY.
-
-No executable is copied to a remote host for this feature. Direct and tunneled
-Agent Thread routes, including `thread create`, keep their existing launch and
-credential boundaries. Remote plain-terminal control and creation need a
-separate design and tests before they are enabled.
+Direct and Tunneled Agent Thread routes, including `thread create`, keep their
+existing launch and credential boundaries. Direct uses only the configured
+ambient executable. Tunneled uses only the pinned Flint-managed executable and
+its existing local traffic tunnel.
 
 ## Packaging and discovery
 
@@ -504,7 +503,9 @@ Server tests cover:
 - unchanged `thread retie` behavior and `thread create` tab, split, focus,
   returned-identity, and new-worktree placement behavior;
 - denial of Agent Thread creation from an ordinary terminal;
-- local, Direct remote, and Tunneled remote route boundaries.
+- local, Direct remote, and Tunneled remote command parity for terminal open,
+  terminal split, and Agent Thread creation, including cwd, placement, focus,
+  returned identity, cleanup, executable, credential, and traffic boundaries.
 
 Package tests verify that `flintctl` is in the macOS application bundle and
 Linux and Windows packages and that `flint-agent-control` is absent.

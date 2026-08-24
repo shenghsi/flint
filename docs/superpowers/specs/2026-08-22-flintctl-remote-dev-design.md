@@ -18,10 +18,12 @@ The remote command surface is the current local command surface:
 flintctl status [--json]
 
 flintctl thread retie --worktree <path> [--json]
-flintctl thread create --worktree <current|new> [--name <name>] --agent <agent> --prompt <prompt> [--json]
+flintctl thread create --worktree <current|new> [--name <name>] --agent <agent> --prompt <prompt> [--split <left|right|up|down>] [--focus] [--json]
 
 flintctl terminal current [--json]
 flintctl terminal list [--all] [--json]
+flintctl terminal open [--cwd <path>] [--focus] [--json]
+flintctl terminal split (--current|--terminal <terminal-id>) --direction <left|right|up|down> [--cwd <path>] [--focus] [--json]
 flintctl terminal read <terminal-id> [--source visible|recent|recent-unwrapped|detection] [--lines <count>] [--since <cursor>] [--json]
 flintctl terminal send-text <terminal-id> <text> [--json]
 flintctl terminal send-key <terminal-id> <key>... [--json]
@@ -31,7 +33,8 @@ flintctl terminal wait-output <terminal-id> (--match <text>|--regex <pattern>) [
 
 `terminal read --since` is valid only with the default `recent` source. The
 cursor is opaque. Remote control preserves the current defaults, limits,
-results, and error codes. It does not create a second command implementation.
+results, placement, focus behavior, and error codes. It does not create a
+second command implementation.
 
 ## Current state
 
@@ -138,7 +141,8 @@ RemoteTerminalCaller {
 
 The record also contains the local terminal ID, the exact `Terminal` and
 `TerminalView` registration generation, the owning workspace, and Agent Thread
-state.
+state. For an Agent Thread, it also contains the current agent kind and
+attached session ID used by daemon caller disambiguation.
 
 When remote `flintctl` connects, the server gets its peer process ID from the
 operating system. It walks ancestry from that process to a registered PTY root.
@@ -148,6 +152,9 @@ ID only on the remote connection that created it.
 
 Registration can finish after the shell starts. During this race, the bridge
 returns `not-ready`, and `flintctl` uses the current bounded retry behavior.
+Agent kind and session metadata use the same connection and registration
+generation. Local Flint sends an update when session discovery attaches an ID.
+The remote server removes the metadata with the registration.
 
 `terminal current` needs no caller-supplied terminal ID. `terminal list`
 returns other live terminal IDs in the same workspace by default and includes
@@ -165,6 +172,20 @@ use operating-system facts that the server reads for the peer process, such as
 its working directory and executable. It can match only live Agent Thread
 registrations owned by that server and must reject an ambiguous match. It must
 not make an ordinary remote terminal controllable by working directory alone.
+
+For a daemon-routed kind with several threads in one worktree, use the same
+session-ID tie-break as local control. The remote server reads the configured
+session variable from the true peer process. Local Flint sends the Agent
+Thread kind and attached session ID as connection-bound metadata for the
+matching remote PTY registration. It updates that metadata after session
+discovery. Missing, stale, or ambiguous metadata stays unresolved.
+
+Fresh Codex threads have no Flint-assigned session ID. Extend the existing
+background discovery loop to remote projects by using the existing remote
+history index through the authenticated project connection. Apply the same
+project, kind, launch-time, and already-bound rules as local discovery. A
+remote history or connection failure leaves the thread unassociated and
+retries later. It must not cause local filesystem access to a remote path.
 
 Local Flint still verifies that the registration is live, belongs to the
 forwarding connection, and has Agent Thread state before a `thread` command.
@@ -284,6 +305,44 @@ ancestry. Agent Thread operations keep their current checks:
 - `thread create` requires a registered Agent Thread caller and enabled Agent
   Thread control.
 
+## Remote terminal creation and placement
+
+Remote development uses the same creation rules as local development:
+
+- `terminal open` creates another terminal item in the caller's exact pane.
+- `terminal split` creates a new pane beside the exact selected terminal in
+  the required direction.
+- Both commands keep focus on the caller unless `--focus` is present.
+- Both commands return the created local terminal metadata only after remote
+  PTY registration completes.
+
+The created terminal follows the source terminal route. `terminal open`
+follows the caller. `terminal split` follows the selected terminal. This rule
+also handles a remote workspace that contains an explicit local terminal: a
+split beside that local terminal creates another local terminal, while a split
+beside a remote terminal creates another remote terminal.
+
+For a remote route, local Flint performs pane placement and asks the existing
+project terminal service to create the PTY through `flint-remote-server`. The
+server validates the remote working directory using the remote path style and
+filesystem. It creates the PTY, assigns a new remote registration ID, and
+returns it through the existing terminal creation flow. Local Flint waits for
+the matching local registry entry before it completes the control request.
+
+If remote PTY creation or registration fails, local Flint removes any partial
+terminal view or pane. Return `remote-terminal-create-failed` with a useful
+message. Do not fall back to a local PTY because that changes the requested
+execution host.
+
+`thread create` keeps the same placement behavior on local, Direct, and
+Tunneled routes. For `--worktree current`, `--split` places the new Agent
+Thread beside the caller. For `--worktree new`, `--split` is invalid because
+the destination is another workspace. `--focus` is explicit in both cases.
+
+Direct uses only the configured ambient remote agent executable. Tunneled uses
+only the pinned Flint-managed executable and its existing local traffic
+tunnel. Terminal placement must not change these choices.
+
 ## Command behavior
 
 Remote commands use local semantics:
@@ -292,12 +351,16 @@ Remote commands use local semantics:
   channel, and supported capabilities.
 - `terminal current` returns the caller's local terminal metadata.
 - `terminal list` excludes the caller by default and includes it with `--all`.
+- `terminal open` creates another terminal in the caller's pane and route.
+- `terminal split` creates another terminal beside the selected terminal and
+  follows that terminal's route.
 - `terminal read` reads the local screen and scrollback, returns an opaque
   cursor, and preserves `--since` and `cursor-expired` behavior.
 - `send-text`, `send-key`, and `run` use the current terminal input path.
 - `wait-output` preserves source, line, timeout, cancellation, and matching
   behavior for the pinned terminal registration.
-- `thread retie` and `thread create` update local Agent Thread state.
+- `thread retie` and `thread create` update local Agent Thread state;
+  `thread create` also returns the created terminal metadata.
 
 `terminal run` sends input followed by Enter as one non-interleavable control
 operation. It does not start a separate shell process.
@@ -325,7 +388,9 @@ Preserve current control errors, including `caller-not-recognized`,
 `caller-not-agent-thread`, `terminal-not-found`,
 `terminal-outside-workspace`, `terminal-exited`, `invalid-key`,
 `invalid-pattern`, `invalid-request`, `cursor-expired`, `timeout`,
-`response-too-large`, and `unsupported-protocol`.
+`response-too-large`, `unsupported-protocol`, `invalid-working-directory`,
+`invalid-split-direction`, `invalid-placement`, `terminal-create-failed`, and
+`terminal-placement-failed`.
 
 Add remote transport errors only where current errors are not sufficient:
 
@@ -335,6 +400,8 @@ Add remote transport errors only where current errors are not sufficient:
   longer has its connection-bound registration;
 - `remote-version-mismatch` when all three components cannot use one protocol
   version.
+- `remote-terminal-create-failed` when the remote PTY or its registration
+  cannot be created.
 
 Failure to match the peer uses `not-ready` during the bounded registration
 race. After retries, the CLI reports `caller-not-recognized`. Human output
@@ -354,6 +421,8 @@ Protocol and local control tests cover:
 - no local terminal ID or remote registration ID reuse;
 - cursor reads and `cursor-expired` through the remote route;
 - disconnect cancellation for output waits;
+- remote terminal open and split forwarding, returned terminal identity,
+  focus behavior, route selection, and partial-failure cleanup;
 - unchanged local caller resolution.
 
 Remote server tests cover:
@@ -361,6 +430,11 @@ Remote server tests cover:
 - endpoint permissions and peer identity on Unix and Windows;
 - ancestry resolution to the exact owned PTY;
 - constrained Agent Thread fallback and ambiguous-match rejection;
+- connection-bound agent kind and session metadata, session update,
+  same-kind session-ID disambiguation, stale generation, and missing-session
+  rejection;
+- remote history discovery, retry after connection failure, already-bound
+  filtering, and ambiguous-session rejection;
 - no working-directory fallback for ordinary terminals;
 - concurrent instances, stale discovery records, and version handover;
 - forwarding without interpreting terminal operations;
@@ -368,9 +442,12 @@ Remote server tests cover:
 
 End-to-end tests cover ordinary terminals and Agent Threads on Direct and
 Tunneled routes. For each applicable route, verify status, current, list with
-and without `--all`, snapshot and cursor reads, input, run, wait, retie, and
-create with an optional name. Verify human and JSON output. Verify the ambient
-Direct executable and pinned Tunneled executable boundaries.
+and without `--all`, terminal open, all four split directions, default and
+explicit cwd, default and explicit focus, returned terminal identity,
+snapshot and cursor reads, input, run, wait, retie, and Agent Thread creation
+with tab and split placement. Verify human and JSON output. Verify the ambient
+Direct executable and pinned Tunneled executable boundaries and Tunneled
+traffic routing.
 
 Instruction and package tests verify the matching remote command mode,
 executable marker, and all supported managed remote agent instruction blocks.
@@ -386,7 +463,7 @@ This design does not:
 - use a terminal ID, environment variable, working directory, or client PID
   claim as a credential;
 - change Direct or Tunneled executable and credential rules;
-- add pane, split, focus, resize, or terminal creation commands;
+- add general pane move, close, resize, or reorder commands;
 - keep terminals alive after local Flint exits.
 
 ## Implementation order
@@ -402,5 +479,13 @@ This design does not:
 5. Add executable-name dispatch and remote discovery to the installed server.
 6. Synchronize versioned managed instructions on the remote host.
 7. Route verified requests through the existing local dispatcher.
-8. Add Direct, Tunneled, ordinary-terminal, cursor, reconnect, upgrade, Unix,
-   and Windows verification.
+8. Extend session discovery to the remote history index and add
+   connection-bound Agent Thread kind and session metadata updates for daemon
+   caller disambiguation.
+9. Add remote terminal open and split through the existing project terminal
+   creation route, including remote cwd validation, exact pane placement,
+   registration wait, returned identity, and cleanup.
+10. Add Agent Thread placement and focus options without changing Direct or
+    Tunneled route selection.
+11. Add Direct, Tunneled, ordinary-terminal, cursor, reconnect, upgrade, Unix,
+    and Windows verification.

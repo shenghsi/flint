@@ -145,6 +145,13 @@ terminal. A fresh Codex thread starts with
 history discovery runs every 30 seconds and can also remain ambiguous when
 several new sessions appear in the same project.
 
+The current discovery candidate filter excludes remote projects. Extend it to
+use the existing remote history index through the authenticated project
+connection. Apply the same launch-time, project, kind, and already-bound rules
+as local discovery. Do not scan a remote user's files from the local
+filesystem. A connection failure leaves the session unassociated and retries
+on the next bounded discovery interval.
+
 This design does not claim that `CODEX_THREAD_ID` solves that earlier
 association problem. The server follows these rules:
 
@@ -165,6 +172,24 @@ supported Codex-to-Flint session registration channel if Codex exposes one.
 The current official Codex documentation does not establish a launch option
 that lets Flint assign a session ID to a fresh session, so this design does
 not invent one.
+
+### Remote caller disambiguation
+
+Remote development uses the same resolution order on the remote host. The
+remote `flintctl` bridge gets the peer PID, and `flint-remote-server` reads the
+remote process ancestry, cwd, process names, and configured session
+environment variable. Local Flint must send the live Agent Thread kind and
+attached session ID as connection-bound metadata for the matching remote PTY
+registration. The remote server must not scan local paths or infer this state
+from a client claim.
+
+When local Flint attaches or changes a session ID, it updates the live remote
+registration through the authenticated project connection. The remote server
+discards this metadata when the PTY, connection, or registration generation
+ends. Until the update arrives, ambiguous same-kind remote callers remain
+unresolved. Direct and Tunneled routes use the same identity exchange; the
+exchange does not change how either agent executable starts or reaches its
+provider.
 
 ### Generalizing beyond Codex
 
@@ -339,7 +364,7 @@ invalid-split-direction
 invalid-placement
 terminal-create-failed
 terminal-placement-failed
-unsupported-remote-terminal
+remote-terminal-create-failed
 ```
 
 `flintctl status --json` reports `terminal-open`, `terminal-split`, and the
@@ -353,16 +378,32 @@ Any caller that resolves to a live local controllable terminal can use
 registered Agent Thread can use `thread create`. Every explicit target must
 belong to the caller's workspace.
 
-The new `terminal open` and `terminal split` operations create only local
-PTYs. Reject either operation when the selected workspace route would create
-a remote PTY. `thread create` keeps its existing local, Direct, and Tunneled
-route behavior; the placement options must not change executable, credential,
-or traffic routing. Remote plain-terminal creation needs a separate design.
+Local and remote callers get the same command forms, defaults, response
+shapes, focus behavior, and workspace checks. The new PTY follows the selected
+terminal's route:
+
+- `terminal open` follows the caller terminal's local or remote route.
+- `terminal split` follows the selected terminal's local or remote route.
+- A remote `--cwd` is a path on the remote host and uses that host's path
+  style and directory validation.
+- Local Flint owns pane placement and terminal metadata for both routes. The
+  remote server owns only the remote PTY process and its registration.
+
+The remote bridge forwards the same control request to local Flint. Local
+Flint creates the terminal through the existing project terminal route and
+waits for the new remote PTY registration before it returns success. A remote
+creation failure returns a typed error and cleans up local partial placement.
+
+`thread create` keeps its existing local, Direct, and Tunneled route behavior.
+Placement options must not change executable, credential, or traffic routing.
+Direct uses the configured ambient remote executable. Tunneled uses the pinned
+Flint-managed remote executable and its existing local traffic tunnel.
 
 ### Skill behavior
 
 After the probe succeeds, the skill uses the installed executable's help as
-the syntax authority. It uses:
+the syntax authority. Local and remote managed skills use their respective
+release-matched markers and the same command policy. The skill uses:
 
 - `terminal open` when the user needs another shell terminal without a new
   pane;
@@ -386,11 +427,11 @@ plain terminal is sufficient.
   stays unresolved when two of its threads share a worktree, same as today.
 - Guaranteeing immediate control for concurrent fresh Codex threads before
   Flint has attached their session IDs.
-- Changing how `resumed_session_id` is discovered or persisted. A supported
-  direct session-registration channel is future work.
+- Inventing a Codex session-registration channel that Codex does not support.
+  This design extends the existing history discovery to remote projects but
+  keeps its conservative association rules.
 - Moving, closing, resizing, or reordering existing panes through
   `flintctl`.
-- Creating remote PTY terminals.
 
 ## Open questions
 
@@ -442,7 +483,15 @@ plain terminal is sufficient.
 - Test that an ordinary local terminal can open and split terminals but
   cannot create an Agent Thread.
 - Test local, Direct remote, and Tunneled remote boundaries for all three
-  creation operations.
+  creation operations. For Direct and Tunneled, verify matching command forms,
+  cwd behavior, placement, focus, returned identity, cleanup, and exact
+  executable and traffic boundaries.
+- Add remote bridge tests for connection-bound kind and session metadata,
+  update after session discovery, same-kind disambiguation, stale-generation
+  rejection, disconnect cleanup, and missing-session fail-closed behavior.
+- Add remote session-discovery tests for fresh Codex threads, reconnect,
+  history lookup failure, already-bound IDs, and ambiguous concurrent
+  sessions.
 - Verify on Linux, macOS, and Windows that environment-read failure is handled
   as no match. A manual platform check can supplement the automated tests but
   cannot replace the detached-process regression test.
@@ -469,12 +518,16 @@ plain terminal is sufficient.
    the control-server probe.
 8. Extend the terminal registry with exact pane and placement-surface state,
    and add shared no-focus terminal placement helpers.
-9. Add `terminal open` and `terminal split` to the protocol, CLI, server,
-   capability result, and installed skill.
-10. Extend `thread create` with current-worktree split placement, focus
+9. Extend conservative session discovery to remote projects and synchronize
+   attached kind and session metadata to the connection-bound remote PTY
+   registration.
+10. Add `terminal open` and `terminal split` to the protocol, CLI, local and
+   remote dispatchers, capability result, and installed skills.
+11. Extend `thread create` with current-worktree split placement, focus
     control, and the created terminal metadata result. Keep new-worktree
     creation non-activating by default.
-11. Update
+12. Update
     `docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`
-    and the active OpenSpec with the new creation commands, access rules,
-    remote limits, response shapes, errors, tests, and capabilities.
+    `docs/superpowers/specs/2026-08-22-flintctl-remote-dev-design.md`, and the
+    active OpenSpec with the new creation commands, access rules, remote
+    behavior, response shapes, errors, tests, and capabilities.
