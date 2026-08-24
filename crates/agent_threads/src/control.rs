@@ -27,23 +27,24 @@ use agent_control_protocol::{
     ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, ControlSuccess,
     CreateThreadRequest, CreateThreadWorktree, FRAME_LENGTH_BYTES, MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES, PROTOCOL_VERSION, RemoteControlEnvelope, RetieThreadRequest, StatusResult,
-    TerminalControlId, TerminalOutputMatcher, TerminalReadRequest, TerminalRunRequest,
-    TerminalSendKeyRequest, TerminalSendTextRequest, TerminalSnapshot, TerminalWaitOutputRequest,
-    frame_payload,
+    TerminalControlId, TerminalOpenRequest, TerminalOutputMatcher, TerminalReadRequest,
+    TerminalRunRequest, TerminalSendKeyRequest, TerminalSendTextRequest, TerminalSnapshot,
+    TerminalSplitRequest, TerminalWaitOutputRequest, frame_payload,
 };
 #[cfg(unix)]
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 #[cfg(unix)]
 use gpui::Task;
-use gpui::{App, AsyncApp, Entity, EntityId, Keystroke};
+use gpui::{App, AsyncApp, Entity, EntityId, Keystroke, WindowHandle};
 #[cfg(unix)]
 use net::async_net::{UnixListener, UnixStream};
 use settings::Settings as _;
 #[cfg(unix)]
 use smol::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use terminal_view::terminal_panel::{TerminalPanel, TerminalPlacementError};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{AppState, MultiWorkspace, SplitDirection, Workspace};
 
 use crate::agent_kind_registry;
 use crate::store::{self, AgentThreadStore, LiveTerminalWorktree};
@@ -661,6 +662,8 @@ pub(crate) async fn dispatch(
         request.command,
         ControlCommand::TerminalCurrent
             | ControlCommand::TerminalList(_)
+            | ControlCommand::TerminalOpen(_)
+            | ControlCommand::TerminalSplit(_)
             | ControlCommand::TerminalRead(_)
             | ControlCommand::TerminalSendText(_)
             | ControlCommand::TerminalSendKey(_)
@@ -750,6 +753,8 @@ pub(crate) async fn dispatch_remote(
         request.command,
         ControlCommand::TerminalCurrent
             | ControlCommand::TerminalList(_)
+            | ControlCommand::TerminalOpen(_)
+            | ControlCommand::TerminalSplit(_)
             | ControlCommand::TerminalRead(_)
             | ControlCommand::TerminalSendText(_)
             | ControlCommand::TerminalSendKey(_)
@@ -763,6 +768,15 @@ pub(crate) async fn dispatch_remote(
         cx.update(|cx| crate::AgentThreadSettings::get_global(cx).agent_control);
     if !agent_control_enabled {
         return error_response("agent_threads.agent_control is disabled");
+    }
+    let Some(caller_workspace) = caller_record.workspace.upgrade() else {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidPlacement,
+            "terminal workspace closed",
+        );
+    };
+    if let Err(response) = validate_terminal_route(&caller_record, &caller_workspace, cx) {
+        return *response;
     }
     let Some(terminal_item_id) = caller_record
         .view
@@ -834,6 +848,10 @@ async fn dispatch_terminal(
                 .collect();
             ControlResponse::ok(ControlSuccess::TerminalList(terminals))
         }),
+        ControlCommand::TerminalOpen(options) => terminal_open(caller, options, cx).await,
+        ControlCommand::TerminalSplit(options) => {
+            terminal_split(caller, records, options, cx).await
+        }
         ControlCommand::TerminalRead(read) => terminal_read(caller, records, read, cx),
         ControlCommand::TerminalSendText(input) => terminal_send_text(caller, records, input, cx),
         ControlCommand::TerminalSendKey(input) => terminal_send_keys(caller, records, input, cx),
@@ -845,6 +863,319 @@ async fn dispatch_terminal(
             ControlErrorCode::InvalidRequest,
             "terminal control command is not implemented",
         ),
+    }
+}
+
+async fn terminal_open(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    request: &TerminalOpenRequest,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    let Some(view) = caller.view.upgrade() else {
+        return terminal_not_found(&caller.id);
+    };
+    let Some(workspace) = view.read_with(cx, |view, _| view.workspace_handle().upgrade()) else {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidPlacement,
+            "terminal workspace closed",
+        );
+    };
+    if let Err(response) = validate_terminal_route(caller, &workspace, cx) {
+        return *response;
+    }
+    if let Err(response) = validate_local_working_directory(caller, request.cwd.as_deref()) {
+        return *response;
+    }
+    let cwd = request
+        .cwd
+        .clone()
+        .or_else(|| usable_terminal_working_directory(caller, cx));
+    let pane = match workspace.read_with(cx, |workspace, _| {
+        workspace.pane_for_item_id(view.entity_id())
+    }) {
+        Some(pane) => pane,
+        None => {
+            return ControlResponse::error(
+                ControlErrorCode::InvalidPlacement,
+                "caller terminal has no owning pane",
+            );
+        }
+    };
+    let Some(window_handle) = workspace_window(caller, &workspace, cx) else {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidPlacement,
+            "terminal workspace has no window",
+        );
+    };
+    let creation = window_handle.update(cx, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            TerminalPanel::add_terminal_view_to_pane(
+                workspace,
+                pane,
+                request.focus,
+                request.focus,
+                window,
+                cx,
+                |project, cx| project.create_terminal_shell(cwd, cx),
+            )
+        })
+    });
+    let creation = match creation {
+        Ok(creation) => creation,
+        Err(error) => {
+            return ControlResponse::error(ControlErrorCode::InvalidPlacement, error.to_string());
+        }
+    };
+    terminal_creation_response(caller, creation.await, cx)
+}
+
+async fn terminal_split(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    records: &[crate::terminal_control::TerminalControlRecord],
+    request: &TerminalSplitRequest,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    let direction = match parse_split_direction(&request.direction) {
+        Ok(direction) => direction,
+        Err(response) => return *response,
+    };
+    let target = if request.current {
+        caller
+    } else if let Some(terminal_id) = request.terminal_id.as_ref() {
+        match accessible_terminal(caller, records, terminal_id, cx) {
+            Ok(record) => record,
+            Err(response) => return *response,
+        }
+    } else {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidPlacement,
+            "terminal split requires one target",
+        );
+    };
+    let Some(view) = target.view.upgrade() else {
+        return terminal_not_found(&target.id);
+    };
+    let Some(workspace) = view.read_with(cx, |view, _| view.workspace_handle().upgrade()) else {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidPlacement,
+            "terminal workspace closed",
+        );
+    };
+    if let Err(response) = validate_terminal_route(target, &workspace, cx) {
+        return *response;
+    }
+    if let Err(response) = validate_local_working_directory(target, request.cwd.as_deref()) {
+        return *response;
+    }
+    let cwd = request
+        .cwd
+        .clone()
+        .or_else(|| usable_terminal_working_directory(target, cx));
+    let pane = match workspace.read_with(cx, |workspace, _| {
+        workspace.pane_for_item_id(view.entity_id())
+    }) {
+        Some(pane) => pane,
+        None => {
+            return ControlResponse::error(
+                ControlErrorCode::InvalidPlacement,
+                "selected terminal has no owning pane",
+            );
+        }
+    };
+    let Some(window_handle) = workspace_window(target, &workspace, cx) else {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidPlacement,
+            "terminal workspace has no window",
+        );
+    };
+    let creation = window_handle.update(cx, |_, window, cx| {
+        let panel = workspace
+            .read(cx)
+            .panel::<TerminalPanel>(cx)
+            .ok_or_else(|| anyhow::anyhow!("terminal panel is unavailable"))?;
+        anyhow::Ok(panel.update(cx, |panel, cx| {
+            panel.create_adjacent_terminal_view(
+                pane,
+                direction,
+                request.focus,
+                window,
+                cx,
+                |project, cx| project.create_terminal_shell(cwd, cx),
+            )
+        }))
+    });
+    let creation = match creation {
+        Ok(Ok(creation)) => creation,
+        Ok(Err(error)) | Err(error) => {
+            return ControlResponse::error(ControlErrorCode::InvalidPlacement, error.to_string());
+        }
+    };
+    terminal_creation_response(caller, creation.await, cx)
+}
+
+fn workspace_window(
+    record: &crate::terminal_control::TerminalControlRecord,
+    workspace: &Entity<Workspace>,
+    cx: &mut AsyncApp,
+) -> Option<WindowHandle<MultiWorkspace>> {
+    if let Some(window) = record.window {
+        return Some(window);
+    }
+    cx.update(|cx| {
+        AppState::try_global(cx)?
+            .workspace_store
+            .read(cx)
+            .workspaces_with_windows()
+            .find_map(|(window, candidate)| {
+                candidate
+                    .upgrade()
+                    .filter(|candidate| candidate == workspace)
+                    .and_then(|_| window.downcast::<MultiWorkspace>())
+            })
+    })
+}
+
+fn validate_terminal_route(
+    record: &crate::terminal_control::TerminalControlRecord,
+    workspace: &Entity<Workspace>,
+    cx: &mut AsyncApp,
+) -> std::result::Result<(), Box<ControlResponse>> {
+    let workspace_is_remote = workspace.read_with(cx, |workspace, cx| {
+        workspace.project().read(cx).remote_client().is_some()
+    });
+    let terminal_is_remote = matches!(
+        record.caller,
+        crate::terminal_control::TerminalControlCaller::Remote { .. }
+    );
+    if workspace_is_remote == terminal_is_remote {
+        Ok(())
+    } else {
+        Err(Box::new(ControlResponse::error(
+            ControlErrorCode::TerminalRouteMismatch,
+            "terminal route does not match its workspace",
+        )))
+    }
+}
+
+fn validate_local_working_directory(
+    record: &crate::terminal_control::TerminalControlRecord,
+    cwd: Option<&std::path::Path>,
+) -> std::result::Result<(), Box<ControlResponse>> {
+    if matches!(
+        record.caller,
+        crate::terminal_control::TerminalControlCaller::Remote { .. }
+    ) {
+        return Ok(());
+    }
+    if let Some(cwd) = cwd
+        && (!cwd.is_absolute() || !cwd.is_dir())
+    {
+        return Err(Box::new(ControlResponse::error(
+            ControlErrorCode::InvalidWorkingDirectory,
+            format!("{} is not an absolute existing directory", cwd.display()),
+        )));
+    }
+    Ok(())
+}
+
+fn usable_terminal_working_directory(
+    record: &crate::terminal_control::TerminalControlRecord,
+    cx: &AsyncApp,
+) -> Option<PathBuf> {
+    let working_directory = record
+        .terminal
+        .upgrade()
+        .and_then(|terminal| terminal.read_with(cx, |terminal, _| terminal.working_directory()))?;
+    if working_directory.as_os_str().is_empty() {
+        return None;
+    }
+    if matches!(
+        record.caller,
+        crate::terminal_control::TerminalControlCaller::Remote { .. }
+    ) || working_directory.is_absolute() && working_directory.is_dir()
+    {
+        Some(working_directory)
+    } else {
+        None
+    }
+}
+
+fn terminal_creation_response(
+    caller: &crate::terminal_control::TerminalControlRecord,
+    result: anyhow::Result<(
+        gpui::WeakEntity<terminal::Terminal>,
+        gpui::WeakEntity<terminal_view::TerminalView>,
+    )>,
+    cx: &mut AsyncApp,
+) -> ControlResponse {
+    let (terminal, view) = match result {
+        Ok(created) => created,
+        Err(error) => {
+            let code = if error.downcast_ref::<TerminalPlacementError>().is_some() {
+                ControlErrorCode::TerminalPlacementFailed
+            } else if matches!(
+                caller.caller,
+                crate::terminal_control::TerminalControlCaller::Remote { .. }
+            ) {
+                ControlErrorCode::RemoteTerminalCreateFailed
+            } else {
+                ControlErrorCode::TerminalCreateFailed
+            };
+            return ControlResponse::error(code, error.to_string());
+        }
+    };
+    cx.update(|cx| {
+        let (Some(terminal), Some(view)) = (terminal.upgrade(), view.upgrade()) else {
+            return ControlResponse::error(
+                ControlErrorCode::TerminalPlacementFailed,
+                "created terminal closed before registration",
+            );
+        };
+        crate::terminal_control::records(cx)
+            .iter()
+            .find(|record| {
+                record
+                    .terminal
+                    .upgrade()
+                    .is_some_and(|candidate| candidate == terminal)
+            })
+            .and_then(|record| crate::terminal_control::metadata(record, cx))
+            .map(|metadata| ControlResponse::ok(ControlSuccess::TerminalCreated(metadata)))
+            .unwrap_or_else(|| {
+                if let (Some(workspace), Some(window)) =
+                    (view.read(cx).workspace_handle().upgrade(), caller.window)
+                {
+                    let view_id = view.entity_id();
+                    window
+                        .update(cx, |_, window, cx| {
+                            if let Some(pane) = workspace.read(cx).pane_for_item_id(view_id) {
+                                pane.update(cx, |pane, cx| {
+                                    pane.remove_item(view_id, false, true, window, cx)
+                                });
+                            }
+                        })
+                        .ok();
+                }
+                ControlResponse::error(
+                    ControlErrorCode::TerminalPlacementFailed,
+                    "created terminal was not registered",
+                )
+            })
+    })
+}
+
+fn parse_split_direction(
+    direction: &str,
+) -> std::result::Result<SplitDirection, Box<ControlResponse>> {
+    match direction {
+        "left" => Ok(SplitDirection::Left),
+        "right" => Ok(SplitDirection::Right),
+        "up" => Ok(SplitDirection::Up),
+        "down" => Ok(SplitDirection::Down),
+        _ => Err(Box::new(ControlResponse::error(
+            ControlErrorCode::InvalidSplitDirection,
+            format!("invalid split direction {direction:?}"),
+        ))),
     }
 }
 
@@ -1252,6 +1583,8 @@ fn command_capabilities() -> Vec<String> {
         "thread-create",
         "terminal-current",
         "terminal-list",
+        "terminal-open",
+        "terminal-split",
         "terminal-read",
         "terminal-read-since",
         "terminal-send-text",
@@ -1310,6 +1643,17 @@ async fn handle_create_thread(
     store: &Entity<AgentThreadStore>,
     cx: &mut AsyncApp,
 ) -> ControlResponse {
+    if request.worktree == CreateThreadWorktree::New && request.split.is_some() {
+        return ControlResponse::error(
+            ControlErrorCode::InvalidPlacement,
+            "--split cannot be used with --worktree new",
+        );
+    }
+    if let Some(direction) = request.split.as_deref()
+        && let Err(response) = parse_split_direction(direction)
+    {
+        return *response;
+    }
     let Some(kind) = agent_kind_registry()
         .into_iter()
         .find(|kind| kind.id == request.agent)
@@ -1323,7 +1667,7 @@ async fn handle_create_thread(
         ));
     }
 
-    let (source_workspace, _terminal_view) = match store.read_with(cx, |store, _| {
+    let (source_workspace, terminal_view) = match store.read_with(cx, |store, _| {
         store.thread_workspace_and_terminal(terminal_item_id)
     }) {
         Ok(pair) => pair,
@@ -1334,17 +1678,69 @@ async fn handle_create_thread(
         Ok(window_handle) => window_handle,
         Err(error) => return error_response(error),
     };
+    let creation_error_code = source_workspace.read_with(cx, |workspace, cx| {
+        if workspace.project().read(cx).remote_client().is_some() {
+            ControlErrorCode::RemoteTerminalCreateFailed
+        } else {
+            ControlErrorCode::TerminalCreateFailed
+        }
+    });
+    let prompt = request.prompt.trim();
+    if prompt.is_empty() || prompt.starts_with('-') {
+        return ControlResponse::error(
+            creation_error_code,
+            "initial prompt must contain text and must not start with '-'",
+        );
+    }
 
     match request.worktree {
         CreateThreadWorktree::Current => {
-            match window_handle.update(cx, |_, window, cx| {
+            let Some(source_pane) = source_workspace.read_with(cx, |workspace, _| {
+                workspace.pane_for_item_id(terminal_view.entity_id())
+            }) else {
+                return ControlResponse::error(
+                    ControlErrorCode::InvalidPlacement,
+                    "caller terminal has no owning pane",
+                );
+            };
+            let placement = if let Some(direction) = request.split.as_deref() {
+                let direction = match parse_split_direction(direction) {
+                    Ok(direction) => direction,
+                    Err(response) => return *response,
+                };
+                store::SeededThreadPlacement::Split {
+                    pane: source_pane,
+                    direction,
+                    focus: request.focus,
+                }
+            } else {
+                store::SeededThreadPlacement::Tab {
+                    pane: source_pane,
+                    focus: request.focus,
+                }
+            };
+            let launch = window_handle.update(cx, |_, window, cx| {
                 source_workspace.update(cx, |workspace, cx| {
-                    launch_seeded_and_respond(workspace, &kind, &request.prompt, window, cx)
+                    let worktree =
+                        crate::history::project_worktree_roots(workspace.project().read(cx), cx)
+                            .into_iter()
+                            .next();
+                    let task = store::launch_seeded_thread_at(
+                        workspace,
+                        &kind,
+                        &request.prompt,
+                        Some(placement),
+                        window,
+                        cx,
+                    );
+                    (worktree, task)
                 })
-            }) {
-                Ok(response) => response,
-                Err(error) => error_response(error),
-            }
+            });
+            let (worktree, task) = match launch {
+                Ok(launch) => launch,
+                Err(error) => return error_response(error),
+            };
+            seeded_launch_response(worktree, task.await, creation_error_code, cx)
         }
         CreateThreadWorktree::New => {
             let action = flint_actions::CreateWorktree {
@@ -1366,46 +1762,113 @@ async fn handle_create_thread(
                 Ok(created) => created,
                 Err(error) => return error_response(error),
             };
-            match window_handle.update(cx, |_, window, cx| {
+            let launch = window_handle.update(cx, |_, window, cx| {
                 created.workspace.update(cx, |workspace, cx| {
-                    launch_seeded_and_respond(workspace, &kind, &request.prompt, window, cx)
+                    let worktree =
+                        crate::history::project_worktree_roots(workspace.project().read(cx), cx)
+                            .into_iter()
+                            .next();
+                    let task =
+                        store::launch_seeded_thread(workspace, &kind, &request.prompt, window, cx);
+                    (worktree, task)
                 })
-            }) {
-                Ok(response) => response,
-                Err(error) => error_response(error),
+            });
+            let (worktree, task) = match launch {
+                Ok(launch) => launch,
+                Err(error) => return error_response(error),
+            };
+            let launch = task.await;
+            if request.focus
+                && let Ok(launch) = &launch
+            {
+                let terminal_view = launch.terminal_view.clone();
+                if let Err(error) = window_handle.update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.activate(
+                        created.workspace.clone(),
+                        Some(source_workspace.downgrade()),
+                        window,
+                        cx,
+                    );
+                    created.workspace.update(cx, |workspace, cx| {
+                        let pane = workspace
+                            .pane_for_item_id(terminal_view.entity_id())
+                            .ok_or_else(|| anyhow::anyhow!("created Agent Thread has no pane"))?;
+                        pane.update(cx, |pane, cx| {
+                            let index = pane.index_for_item(&terminal_view).ok_or_else(|| {
+                                anyhow::anyhow!("created Agent Thread terminal is not in its pane")
+                            })?;
+                            pane.activate_item(index, true, true, window, cx);
+                            anyhow::Ok(())
+                        })
+                    })
+                }) {
+                    return ControlResponse::error(
+                        ControlErrorCode::TerminalPlacementFailed,
+                        error.to_string(),
+                    );
+                }
             }
+            seeded_launch_response(worktree, launch, creation_error_code, cx)
         }
     }
 }
 
-fn launch_seeded_and_respond(
-    workspace: &mut Workspace,
-    kind: &crate::AgentKindDefinition,
-    prompt: &str,
-    window: &mut gpui::Window,
-    cx: &mut gpui::Context<Workspace>,
+fn seeded_launch_response(
+    worktree: Option<PathBuf>,
+    result: anyhow::Result<store::SeededThreadLaunch>,
+    creation_error_code: ControlErrorCode,
+    cx: &mut AsyncApp,
 ) -> ControlResponse {
-    let seeded = store::launch_seeded_thread(workspace, kind, prompt, window, cx);
-    if !seeded {
-        return error_response(format_args!(
-            "{} does not support a seeded initial prompt",
-            kind.label
-        ));
+    let launch = match result {
+        Ok(launch) => launch,
+        Err(error) => {
+            let code = if error.downcast_ref::<TerminalPlacementError>().is_some() {
+                ControlErrorCode::TerminalPlacementFailed
+            } else {
+                creation_error_code
+            };
+            return ControlResponse::error(code, error.to_string());
+        }
+    };
+    if !launch.seeded {
+        return ControlResponse::error(
+            creation_error_code,
+            "agent kind does not support a seeded initial prompt",
+        );
     }
-    match crate::history::project_worktree_roots(workspace.project().read(cx), cx)
-        .into_iter()
-        .next()
-    {
-        Some(worktree) => ControlResponse::ok(ControlSuccess::ThreadCreated { worktree }),
-        None => error_response("could not resolve the new thread's worktree"),
-    }
+    let Some(worktree) = worktree else {
+        return error_response("could not resolve the new thread's worktree");
+    };
+    cx.update(|cx| {
+        crate::terminal_control::records(cx)
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view == launch.terminal_view)
+            })
+            .and_then(|record| crate::terminal_control::metadata(record, cx))
+            .map(|mut terminal| {
+                if terminal.working_directory.is_none() {
+                    terminal.working_directory = Some(worktree.clone());
+                }
+                ControlResponse::ok(ControlSuccess::ThreadCreated { worktree, terminal })
+            })
+            .unwrap_or_else(|| {
+                ControlResponse::error(
+                    ControlErrorCode::TerminalPlacementFailed,
+                    "created Agent Thread was not registered",
+                )
+            })
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use fs::Fs;
-    use gpui::{EntityId, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, EntityId, Focusable as _, TestAppContext, WindowHandle};
     use project::{FakeFs, Project};
     use settings::{AgentThreadCommandContent, AgentThreadSettingsContent, SettingsStore};
     use std::path::PathBuf;
@@ -1434,6 +1897,45 @@ mod tests {
             terminal_view::init(cx);
             crate::init(cx);
         });
+    }
+
+    #[test]
+    fn status_reports_terminal_creation_capabilities_separately() {
+        let capabilities = command_capabilities();
+        assert!(
+            capabilities
+                .iter()
+                .any(|capability| capability == "terminal-open")
+        );
+        assert!(
+            capabilities
+                .iter()
+                .any(|capability| capability == "terminal-split")
+        );
+    }
+
+    #[gpui::test]
+    fn managed_seeded_launch_failures_reach_typed_control_responses(cx: &mut TestAppContext) {
+        let mut async_cx = cx.to_async();
+        for message in [
+            "managed agent preparation failed",
+            "managed agent preparation was cancelled",
+            "managed agent preparation is already in progress",
+            "managed agent launch failed",
+        ] {
+            let response = seeded_launch_response(
+                Some(PathBuf::from("/remote/worktree")),
+                Err(anyhow::anyhow!(message)),
+                ControlErrorCode::RemoteTerminalCreateFailed,
+                &mut async_cx,
+            );
+            assert!(matches!(
+                response.result,
+                ControlResult::Error(ref error)
+                    if error.code == ControlErrorCode::RemoteTerminalCreateFailed
+                        && error.message == message
+            ));
+        }
     }
 
     fn echo_command(label: &str, root_path: &str) -> AgentThreadCommandContent {
@@ -2033,6 +2535,411 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn terminal_split_rejects_a_raw_invalid_direction(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .cloned()
+            .expect("spawned terminal must be registered");
+        let request = ControlRequest::current(ControlCommand::TerminalSplit(
+            agent_control_protocol::TerminalSplitRequest {
+                current: true,
+                terminal_id: None,
+                direction: "diagonal".to_string(),
+                cwd: None,
+                focus: false,
+            },
+        ));
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_terminal(&caller, &records, &request, &mut async_cx).await;
+
+        assert!(matches!(
+            response.result,
+            ControlResult::Error(ref error)
+                if error.code == ControlErrorCode::InvalidSplitDirection
+        ));
+    }
+
+    #[gpui::test]
+    async fn terminal_open_rejects_a_nonexistent_local_working_directory(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .cloned()
+            .expect("spawned terminal must be registered");
+        let request = ControlRequest::current(ControlCommand::TerminalOpen(
+            agent_control_protocol::TerminalOpenRequest {
+                cwd: Some(PathBuf::from("/definitely/not/a/real/flint-directory")),
+                focus: false,
+            },
+        ));
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_terminal(&caller, &records, &request, &mut async_cx).await;
+
+        assert!(matches!(
+            response.result,
+            ControlResult::Error(ref error)
+                if error.code == ControlErrorCode::InvalidWorkingDirectory
+        ));
+    }
+
+    #[gpui::test]
+    async fn terminal_open_returns_registered_metadata_in_the_callers_pane(
+        cx: &mut TestAppContext,
+    ) {
+        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .cloned()
+            .expect("spawned terminal must be registered");
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    if workspace.panel::<TerminalPanel>(cx).is_none() {
+                        let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                });
+            })
+            .expect("install terminal panel");
+        let source_pane = caller
+            .workspace
+            .upgrade()
+            .and_then(|workspace| {
+                workspace.read_with(cx, |workspace, _| {
+                    workspace.pane_for_item_id(terminal_item_id)
+                })
+            })
+            .expect("caller pane");
+        let source_item_id = source_pane.read_with(cx, |pane, _| {
+            pane.active_item().expect("caller item").item_id()
+        });
+        let request = ControlRequest::current(ControlCommand::TerminalOpen(
+            agent_control_protocol::TerminalOpenRequest {
+                cwd: None,
+                focus: false,
+            },
+        ));
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_terminal(&caller, &records, &request, &mut async_cx).await;
+
+        let metadata = match response.result {
+            ControlResult::Ok(ControlSuccess::TerminalCreated(metadata)) => metadata,
+            other => panic!("expected terminal-created, got {other:?}"),
+        };
+        assert!(!metadata.is_agent_thread);
+        assert_ne!(metadata.id, caller.id);
+        window_handle
+            .update(cx, |_, _, cx| {
+                assert_eq!(source_pane.read(cx).items_len(), 2);
+                assert_eq!(
+                    source_pane
+                        .read(cx)
+                        .active_item()
+                        .expect("caller stays active")
+                        .item_id(),
+                    source_item_id
+                );
+            })
+            .expect("inspect caller pane");
+
+        let focused_request = ControlRequest::current(ControlCommand::TerminalOpen(
+            agent_control_protocol::TerminalOpenRequest {
+                cwd: None,
+                focus: true,
+            },
+        ));
+        let focused_response =
+            dispatch_terminal(&caller, &records, &focused_request, &mut async_cx).await;
+        let focused_id = match focused_response.result {
+            ControlResult::Ok(ControlSuccess::TerminalCreated(metadata)) => metadata.id,
+            other => panic!("expected focused terminal-created, got {other:?}"),
+        };
+        let focused_view_id = cx
+            .update(crate::terminal_control::records)
+            .into_iter()
+            .find(|record| record.id == focused_id)
+            .and_then(|record| record.view.upgrade())
+            .map(|view| view.entity_id())
+            .expect("focused terminal view");
+        window_handle
+            .update(cx, |_, window, cx| {
+                assert_eq!(
+                    source_pane
+                        .read(cx)
+                        .active_item()
+                        .expect("new terminal is active")
+                        .item_id(),
+                    focused_view_id
+                );
+                assert!(
+                    source_pane
+                        .read(cx)
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                );
+            })
+            .expect("inspect focused terminal");
+    }
+
+    #[gpui::test]
+    async fn terminal_split_places_a_registered_terminal_beside_the_selected_center_terminal(
+        cx: &mut TestAppContext,
+    ) {
+        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .cloned()
+            .expect("spawned terminal must be registered");
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    if workspace.panel::<TerminalPanel>(cx).is_none() {
+                        let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                });
+            })
+            .expect("install terminal panel");
+        let request = ControlRequest::current(ControlCommand::TerminalSplit(
+            agent_control_protocol::TerminalSplitRequest {
+                current: true,
+                terminal_id: None,
+                direction: "right".to_string(),
+                cwd: None,
+                focus: false,
+            },
+        ));
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_terminal(&caller, &records, &request, &mut async_cx).await;
+
+        assert!(matches!(
+            response.result,
+            ControlResult::Ok(ControlSuccess::TerminalCreated(ref metadata))
+                if !metadata.is_agent_thread && metadata.id != caller.id
+        ));
+        window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                assert_eq!(multi_workspace.workspace().read(cx).panes().len(), 2);
+            })
+            .expect("inspect workspace panes");
+    }
+
+    #[gpui::test]
+    async fn terminal_split_places_a_registered_terminal_beside_the_selected_panel_terminal(
+        cx: &mut TestAppContext,
+    ) {
+        let (window_handle, _terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                    workspace.add_panel(panel.clone(), window, cx);
+                    panel
+                })
+            })
+            .expect("install terminal panel");
+        let terminal = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |panel, cx| {
+                    let pane = (*panel.panes().first().expect("initial panel pane")).clone();
+                    panel.add_terminal_shell_to_pane(pane, None, true, true, window, cx)
+                })
+            })
+            .expect("start panel terminal")
+            .await
+            .expect("create panel terminal")
+            .upgrade()
+            .expect("panel terminal remains open");
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .terminal
+                    .upgrade()
+                    .is_some_and(|candidate| candidate == terminal)
+            })
+            .cloned()
+            .expect("panel terminal is registered");
+        let request = ControlRequest::current(ControlCommand::TerminalSplit(
+            agent_control_protocol::TerminalSplitRequest {
+                current: true,
+                terminal_id: None,
+                direction: "right".to_string(),
+                cwd: None,
+                focus: false,
+            },
+        ));
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_terminal(&caller, &records, &request, &mut async_cx).await;
+
+        assert!(matches!(
+            response.result,
+            ControlResult::Ok(ControlSuccess::TerminalCreated(_))
+        ));
+        window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(multi_workspace.workspace().read(cx).panes().len(), 1);
+                assert_eq!(terminal_panel.read(cx).panes().len(), 2);
+            })
+            .expect("inspect terminal panel panes");
+    }
+
+    #[gpui::test]
+    async fn ordinary_terminal_can_create_terminals_but_cannot_create_agent_threads(
+        cx: &mut TestAppContext,
+    ) {
+        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    if workspace.panel::<TerminalPanel>(cx).is_none() {
+                        let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                });
+            })
+            .expect("install terminal panel");
+        cx.run_until_parked();
+        let records = cx.update(crate::terminal_control::records);
+        let caller = records
+            .iter()
+            .find(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.entity_id() == terminal_item_id)
+            })
+            .cloned()
+            .expect("spawned Agent Thread must be registered");
+        let mut async_cx = cx.to_async();
+        let created = terminal_open(
+            &caller,
+            &agent_control_protocol::TerminalOpenRequest {
+                cwd: None,
+                focus: false,
+            },
+            &mut async_cx,
+        )
+        .await;
+        let plain_id = match created.result {
+            ControlResult::Ok(ControlSuccess::TerminalCreated(metadata)) => metadata.id,
+            other => panic!("expected plain terminal creation, got {other:?}"),
+        };
+        let plain = async_cx
+            .update(crate::terminal_control::records)
+            .into_iter()
+            .find(|record| record.id == plain_id)
+            .expect("plain terminal record");
+        let plain_pid = plain
+            .terminal
+            .upgrade()
+            .and_then(|terminal| terminal.read_with(&async_cx, |terminal, _| terminal.pid()))
+            .map(|pid| pid.as_u32())
+            .expect("plain terminal process id");
+        let store = async_cx.update(|cx| AgentThreadStore::global(cx));
+
+        let open = dispatch(
+            plain_pid,
+            &ControlRequest::current(ControlCommand::TerminalOpen(
+                agent_control_protocol::TerminalOpenRequest {
+                    cwd: None,
+                    focus: false,
+                },
+            )),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            open.result,
+            ControlResult::Ok(ControlSuccess::TerminalCreated(_))
+        ));
+
+        let split = dispatch(
+            plain_pid,
+            &ControlRequest::current(ControlCommand::TerminalSplit(
+                agent_control_protocol::TerminalSplitRequest {
+                    current: true,
+                    terminal_id: None,
+                    direction: "right".to_string(),
+                    cwd: None,
+                    focus: false,
+                },
+            )),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(
+            matches!(
+                split.result,
+                ControlResult::Ok(ControlSuccess::TerminalCreated(_))
+            ),
+            "ordinary terminal split failed: {split:?}"
+        );
+
+        let thread = dispatch(
+            plain_pid,
+            &ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
+                worktree: CreateThreadWorktree::Current,
+                name: None,
+                agent: "codex".to_string(),
+                prompt: "must be rejected".to_string(),
+                split: None,
+                focus: false,
+            })),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            thread.result,
+            ControlResult::Error(ref error)
+                if error.code == ControlErrorCode::CallerNotAgentThread
+        ));
+    }
+
+    #[gpui::test]
     async fn remote_dispatch_is_bound_to_connection_and_registration(cx: &mut TestAppContext) {
         let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let (_other_window_handle, other_terminal_item_id) = spawn_live_codex_thread(cx).await;
@@ -2226,6 +3133,24 @@ mod tests {
                 if error.code == ControlErrorCode::TerminalOutsideWorkspace
         ));
 
+        let mismatched_creation = dispatch_remote(
+            connection_id,
+            &request(ControlCommand::TerminalOpen(
+                agent_control_protocol::TerminalOpenRequest {
+                    cwd: None,
+                    focus: false,
+                },
+            )),
+            &store,
+            &mut async_cx,
+        )
+        .await;
+        assert!(matches!(
+            mismatched_creation.result,
+            ControlResult::Error(ref error)
+                if error.code == ControlErrorCode::TerminalRouteMismatch
+        ));
+
         async_cx
             .update(|cx| crate::terminal_control::invalidate_remote_connection(connection_id, cx));
         let disconnected = dispatch_remote(connection_id, &envelope, &store, &mut async_cx).await;
@@ -2364,6 +3289,8 @@ mod tests {
             name: None,
             agent: "not-a-real-agent".to_string(),
             prompt: "do the thing".to_string(),
+            split: None,
+            focus: false,
         }));
         let mut async_cx = cx.to_async();
         let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
@@ -2371,24 +3298,230 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn dispatch_for_caller_seeds_a_new_sibling_thread(cx: &mut TestAppContext) {
+    async fn dispatch_for_caller_rejects_split_for_a_new_worktree(cx: &mut TestAppContext) {
+        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let store = cx.update(|cx| AgentThreadStore::global(cx));
+        let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
+            worktree: CreateThreadWorktree::New,
+            name: Some("unused-worktree".to_string()),
+            agent: "codex".to_string(),
+            prompt: "do the thing".to_string(),
+            split: Some("right".to_string()),
+            focus: false,
+        }));
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
+
+        assert!(matches!(
+            response.result,
+            ControlResult::Error(ref error) if error.code == ControlErrorCode::InvalidPlacement
+        ));
+    }
+
+    #[gpui::test]
+    async fn dispatch_for_caller_rejects_an_unseedable_prompt_without_starting_a_thread(
+        cx: &mut TestAppContext,
+    ) {
         let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
         let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::Current,
             name: None,
             agent: "codex".to_string(),
+            prompt: "   ".to_string(),
+            split: None,
+            focus: false,
+        }));
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
+
+        assert!(matches!(response.result, ControlResult::Error(_)));
+        cx.run_until_parked();
+        let agent_thread_count = cx
+            .update(crate::terminal_control::records)
+            .into_iter()
+            .filter(|record| {
+                record
+                    .view
+                    .upgrade()
+                    .is_some_and(|view| view.read_with(cx, |view, _| view.is_agent_thread()))
+            })
+            .count();
+        assert_eq!(agent_thread_count, 1);
+    }
+
+    #[gpui::test]
+    async fn dispatch_for_caller_seeds_a_new_sibling_thread(cx: &mut TestAppContext) {
+        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let source_pane = window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .pane_for_item_id(terminal_item_id)
+            })
+            .expect("read source pane")
+            .expect("source pane");
+        let store = cx.update(|cx| AgentThreadStore::global(cx));
+        let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
+            worktree: CreateThreadWorktree::Current,
+            name: None,
+            agent: "codex".to_string(),
             prompt: "do the thing".to_string(),
+            split: None,
+            focus: false,
         }));
         let mut async_cx = cx.to_async();
         let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
         match response.result {
-            ControlResult::Ok(ControlSuccess::ThreadCreated { worktree }) => {
+            ControlResult::Ok(ControlSuccess::ThreadCreated { worktree, terminal }) => {
                 assert_eq!(worktree, PathBuf::from(SPAWNING_TEST_ROOT.as_str()));
+                assert!(terminal.is_agent_thread);
+                assert_eq!(terminal.working_directory, Some(worktree));
             }
             other => panic!("expected a successful create-thread, got {other:?}"),
         }
         wait_for_live_count(cx, SPAWNING_TEST_ROOT.as_str(), 2).await;
+        window_handle
+            .update(cx, |_, window, cx| {
+                assert_eq!(source_pane.read(cx).items_len(), 2);
+                assert_eq!(
+                    source_pane
+                        .read(cx)
+                        .active_item()
+                        .expect("caller remains active")
+                        .item_id(),
+                    terminal_item_id
+                );
+                assert!(
+                    source_pane
+                        .read(cx)
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                );
+            })
+            .expect("inspect source pane");
+    }
+
+    #[gpui::test]
+    async fn dispatch_for_caller_places_a_sibling_thread_in_each_split_direction(
+        cx: &mut TestAppContext,
+    ) {
+        for direction in ["left", "right", "up", "down"] {
+            let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+            cx.run_until_parked();
+            window_handle
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.workspace().update(cx, |workspace, cx| {
+                        if workspace.panel::<TerminalPanel>(cx).is_none() {
+                            let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                            workspace.add_panel(panel, window, cx);
+                        }
+                    });
+                })
+                .expect("install terminal panel");
+            let source_pane = window_handle
+                .read_with(cx, |multi_workspace, cx| {
+                    multi_workspace
+                        .workspace()
+                        .read(cx)
+                        .pane_for_item_id(terminal_item_id)
+                })
+                .expect("read source pane")
+                .expect("source pane");
+            let store = cx.update(|cx| AgentThreadStore::global(cx));
+            let request =
+                ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
+                    worktree: CreateThreadWorktree::Current,
+                    name: None,
+                    agent: "codex".to_string(),
+                    prompt: format!("split {direction}"),
+                    split: Some(direction.to_string()),
+                    focus: false,
+                }));
+            let mut async_cx = cx.to_async();
+
+            let response =
+                dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
+
+            assert!(matches!(
+                response.result,
+                ControlResult::Ok(ControlSuccess::ThreadCreated { ref terminal, .. })
+                    if terminal.is_agent_thread
+            ));
+            window_handle
+                .update(cx, |multi_workspace, window, cx| {
+                    assert_eq!(multi_workspace.workspace().read(cx).panes().len(), 2);
+                    assert_eq!(source_pane.read(cx).items_len(), 1);
+                    assert!(
+                        source_pane
+                            .read(cx)
+                            .focus_handle(cx)
+                            .contains_focused(window, cx)
+                    );
+                })
+                .expect("inspect split placement");
+        }
+    }
+
+    #[gpui::test]
+    async fn dispatch_for_caller_focuses_a_sibling_thread_only_when_requested(
+        cx: &mut TestAppContext,
+    ) {
+        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let source_pane = window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .pane_for_item_id(terminal_item_id)
+            })
+            .expect("read source pane")
+            .expect("source pane");
+        let store = cx.update(|cx| AgentThreadStore::global(cx));
+        let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
+            worktree: CreateThreadWorktree::Current,
+            name: None,
+            agent: "codex".to_string(),
+            prompt: "focus the sibling".to_string(),
+            split: None,
+            focus: true,
+        }));
+        let mut async_cx = cx.to_async();
+
+        let response = dispatch_for_caller(terminal_item_id, &request, &store, &mut async_cx).await;
+
+        let terminal_id = match response.result {
+            ControlResult::Ok(ControlSuccess::ThreadCreated { terminal, .. }) => terminal.id,
+            other => panic!("expected created thread, got {other:?}"),
+        };
+        let created_view_id = cx
+            .update(crate::terminal_control::records)
+            .into_iter()
+            .find(|record| record.id == terminal_id)
+            .and_then(|record| record.view.upgrade())
+            .map(|view| view.entity_id())
+            .expect("created thread view");
+        window_handle
+            .update(cx, |_, window, cx| {
+                assert_eq!(
+                    source_pane
+                        .read(cx)
+                        .active_item()
+                        .expect("created thread is active")
+                        .item_id(),
+                    created_view_id
+                );
+                assert!(
+                    source_pane
+                        .read(cx)
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                );
+            })
+            .expect("inspect focused sibling");
     }
 
     #[gpui::test]

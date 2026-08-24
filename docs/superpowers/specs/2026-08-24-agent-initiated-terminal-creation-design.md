@@ -2,7 +2,7 @@
 
 ## Status
 
-Design proposal. No implementation work has started.
+Implemented on 2026-08-24.
 
 **Scope authority is
 `docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`.** That

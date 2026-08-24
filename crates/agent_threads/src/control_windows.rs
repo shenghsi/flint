@@ -6,8 +6,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use agent_control_protocol::{
-    ControlRequest, ControlResponse, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, decode_frame,
-    frame_payload,
+    ControlCommand, ControlRequest, ControlResponse, ControlResult, MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES, decode_frame, frame_payload,
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{App, Task};
@@ -906,17 +906,21 @@ mod tests {
     }
 
     fn prompt_request(prompt: impl Into<String>) -> ControlRequest {
-        ControlRequest::CreateThread(agent_control_protocol::CreateThreadRequest {
-            worktree: agent_control_protocol::CreateThreadWorktree::Current,
-            name: None,
-            agent: "codex".to_string(),
-            prompt: prompt.into(),
-        })
+        ControlRequest::current(ControlCommand::ThreadCreate(
+            agent_control_protocol::CreateThreadRequest {
+                worktree: agent_control_protocol::CreateThreadWorktree::Current,
+                name: None,
+                agent: "codex".to_string(),
+                prompt: prompt.into(),
+                split: None,
+                focus: false,
+            },
+        ))
     }
 
     fn error_message(response: ControlResponse) -> String {
-        match response {
-            ControlResponse::Error { message } => message,
+        match response.result {
+            ControlResult::Error(error) => error.message,
             other => panic!("expected an error response, got {other:?}"),
         }
     }
@@ -1017,12 +1021,13 @@ mod tests {
 
     #[test]
     fn message_framing_rejects_bad_input_and_recycles_the_instance() {
-        let server = start_test_server("framing", 1, |request| match request {
-            ControlRequest::CreateThread(request) => error_response(format!(
+        let server = start_test_server("framing", 1, |request| match request.command {
+            ControlCommand::ThreadCreate(request) => error_response(format!(
                 "accepted prompt with {} bytes",
                 request.prompt.len()
             )),
-            ControlRequest::RetieThread(_) => error_response("accepted retie"),
+            ControlCommand::ThreadRetie(_) => error_response("accepted retie"),
+            _ => error_response("unexpected request"),
         });
 
         let malformed = transact_raw(&server.name, b"{not-json").expect("malformed round trip");
@@ -1056,7 +1061,7 @@ mod tests {
     fn concurrent_pool_services_a_fast_request_while_another_dispatch_is_slow() {
         let (slow_started_sender, slow_started_receiver) = mpsc::sync_channel(1);
         let server = start_test_server("concurrent", 2, move |request| {
-            let ControlRequest::CreateThread(request) = request else {
+            let ControlCommand::ThreadCreate(request) = request.command else {
                 return error_response("unexpected request");
             };
             if request.prompt == "slow" {
@@ -1179,7 +1184,7 @@ mod tests {
                 }
             }
         };
-        assert!(matches!(response, ControlResponse::NotReady));
+        assert!(matches!(response.result, ControlResult::NotReady));
         client.join().expect("startup client thread panicked");
 
         second.stop_and_join();

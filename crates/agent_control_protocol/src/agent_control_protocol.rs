@@ -125,7 +125,7 @@ pub struct ProtocolVersion {
     pub minor: u16,
 }
 
-pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor: 1 };
+pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor: 2 };
 
 /// `stable` | `dev` | `nightly` | `preview`. A local re-derivation of
 /// `release_channel::RELEASE_CHANNEL_NAME`'s own logic, not a dependency on
@@ -278,6 +278,8 @@ pub enum ControlCommand {
     Status,
     TerminalCurrent,
     TerminalList(TerminalListRequest),
+    TerminalOpen(TerminalOpenRequest),
+    TerminalSplit(TerminalSplitRequest),
     TerminalRead(TerminalReadRequest),
     TerminalSendText(TerminalSendTextRequest),
     TerminalSendKey(TerminalSendKeyRequest),
@@ -313,6 +315,10 @@ pub struct CreateThreadRequest {
     pub name: Option<String>,
     pub agent: String,
     pub prompt: String,
+    #[serde(default)]
+    pub split: Option<String>,
+    #[serde(default)]
+    pub focus: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -323,6 +329,24 @@ pub struct TerminalControlId(pub String);
 pub struct TerminalListRequest {
     #[serde(default)]
     pub all: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalOpenRequest {
+    pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub focus: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalSplitRequest {
+    #[serde(default)]
+    pub current: bool,
+    pub terminal_id: Option<TerminalControlId>,
+    pub direction: String,
+    pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub focus: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -474,6 +498,13 @@ pub enum ControlErrorCode {
     InvalidKey,
     InvalidPattern,
     InvalidRequest,
+    InvalidWorkingDirectory,
+    InvalidSplitDirection,
+    InvalidPlacement,
+    TerminalRouteMismatch,
+    TerminalCreateFailed,
+    TerminalPlacementFailed,
+    RemoteTerminalCreateFailed,
     CursorExpired,
     Timeout,
     ResponseTooLarge,
@@ -487,11 +518,17 @@ pub enum ControlErrorCode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
 pub enum ControlSuccess {
-    Retied { worktree: PathBuf },
-    ThreadCreated { worktree: PathBuf },
+    Retied {
+        worktree: PathBuf,
+    },
+    ThreadCreated {
+        worktree: PathBuf,
+        terminal: TerminalMetadata,
+    },
     Status(StatusResult),
     TerminalCurrent(TerminalMetadata),
     TerminalList(Vec<TerminalMetadata>),
+    TerminalCreated(TerminalMetadata),
     TerminalRead(TerminalSnapshot),
     TerminalInputAccepted,
     TerminalWaitOutput(TerminalSnapshot),
@@ -590,6 +627,82 @@ mod tests {
             );
             assert!(serde_json::from_str::<ControlRequest>(&json).is_err());
         }
+    }
+
+    #[test]
+    fn terminal_creation_requests_keep_raw_direction_and_placement_options() {
+        let split: ControlRequest = serde_json::from_value(serde_json::json!({
+            "protocol": { "major": 1, "minor": 1 },
+            "command": "terminal-split",
+            "current": true,
+            "terminal_id": null,
+            "direction": "diagonal",
+            "cwd": "/tmp",
+            "focus": true
+        }))
+        .expect("decode raw split request");
+
+        match split.command {
+            ControlCommand::TerminalSplit(request) => {
+                assert!(request.current);
+                assert_eq!(request.direction, "diagonal");
+                assert_eq!(request.cwd, Some(PathBuf::from("/tmp")));
+                assert!(request.focus);
+            }
+            other => panic!("expected terminal split, got {other:?}"),
+        }
+
+        let open = ControlRequest::current(ControlCommand::TerminalOpen(TerminalOpenRequest {
+            cwd: Some(PathBuf::from("/var/tmp")),
+            focus: false,
+        }));
+        let json = serde_json::to_value(open).expect("encode terminal open");
+        assert_eq!(json["command"], "terminal-open");
+        assert_eq!(json["cwd"], "/var/tmp");
+        assert_eq!(json["focus"], false);
+    }
+
+    #[test]
+    fn terminal_creation_error_codes_decode_as_typed_errors() {
+        for code in [
+            "invalid-working-directory",
+            "invalid-split-direction",
+            "invalid-placement",
+            "terminal-route-mismatch",
+            "terminal-create-failed",
+            "terminal-placement-failed",
+            "remote-terminal-create-failed",
+        ] {
+            let response = serde_json::json!({
+                "protocol": { "major": 1, "minor": 1 },
+                "status": "error",
+                "result": { "code": code, "message": "failed" }
+            });
+            assert!(
+                serde_json::from_value::<ControlResponse>(response).is_ok(),
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_created_response_returns_immediately_addressable_metadata() {
+        let response = serde_json::json!({
+            "protocol": { "major": 1, "minor": 1 },
+            "status": "ok",
+            "result": {
+                "kind": "terminal-created",
+                "data": {
+                    "id": "terminal-18-test",
+                    "title": "shell",
+                    "working_directory": "/tmp",
+                    "is_agent_thread": false,
+                    "has_exited": false
+                }
+            }
+        });
+
+        assert!(serde_json::from_value::<ControlResponse>(response).is_ok());
     }
 
     #[test]
@@ -739,6 +852,8 @@ mod tests {
             name: Some("feature-x".to_string()),
             agent: "codex".to_string(),
             prompt: "implement the thing".to_string(),
+            split: Some("right".to_string()),
+            focus: true,
         }));
         let json = serde_json::to_string(&request).expect("serialize");
         let decoded: ControlRequest = serde_json::from_str(&json).expect("deserialize");
@@ -748,6 +863,8 @@ mod tests {
                 assert_eq!(request.name.as_deref(), Some("feature-x"));
                 assert_eq!(request.agent, "codex");
                 assert_eq!(request.prompt, "implement the thing");
+                assert_eq!(request.split.as_deref(), Some("right"));
+                assert!(request.focus);
             }
             other => panic!("expected ThreadCreate, got {other:?}"),
         }
@@ -851,6 +968,13 @@ mod tests {
             }),
             ControlResponse::ok(ControlSuccess::ThreadCreated {
                 worktree: PathBuf::from("/repo/worktrees/feature"),
+                terminal: TerminalMetadata {
+                    id: TerminalControlId("terminal-1-test".to_string()),
+                    title: "Codex".to_string(),
+                    working_directory: Some(PathBuf::from("/repo/worktrees/feature")),
+                    is_agent_thread: true,
+                    has_exited: false,
+                },
             }),
             ControlResponse::not_ready(),
             ControlResponse::error(ControlErrorCode::CallerNotRecognized, "unrecognized caller"),
@@ -858,6 +982,24 @@ mod tests {
             let json = serde_json::to_string(&response).expect("serialize");
             let _decoded: ControlResponse = serde_json::from_str(&json).expect("deserialize");
         }
+    }
+
+    #[test]
+    fn thread_created_response_includes_terminal_metadata() {
+        let response = ControlResponse::ok(ControlSuccess::ThreadCreated {
+            worktree: PathBuf::from("/repo"),
+            terminal: TerminalMetadata {
+                id: TerminalControlId("terminal-18-test".to_string()),
+                title: "Codex".to_string(),
+                working_directory: Some(PathBuf::from("/repo")),
+                is_agent_thread: true,
+                has_exited: false,
+            },
+        });
+
+        let json = serde_json::to_value(response).expect("serialize response");
+
+        assert_eq!(json["result"]["data"]["terminal"]["id"], "terminal-18-test");
     }
 
     #[cfg(unix)]
