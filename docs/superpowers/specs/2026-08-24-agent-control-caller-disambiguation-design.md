@@ -1,4 +1,4 @@
-# Caller Disambiguation for Daemon-Routed Agent CLIs
+# Caller Disambiguation and Agent-Initiated Terminal Creation
 
 ## Status
 
@@ -13,6 +13,11 @@ available signals identify one thread. The server must return
 `caller-not-recognized` when the signals are missing or ambiguous. This rule
 must also apply to a CLI that routes tool commands through a shared,
 long-lived daemon instead of forking its own child process.
+
+After Flint identifies the caller, let the caller create a plain terminal,
+create a split terminal, or create a sibling Agent Thread. Terminal creation
+must use the caller's workspace and current placement as its scope. It must
+not depend on whichever pane the user has focused.
 
 ## Background
 
@@ -217,6 +222,160 @@ Remove `apply_control_skill_environment`, its launch-path call, and its unit
 test from `store.rs`. Update the active OpenSpec requirement and scenarios so
 they require the probe instead of the environment variable.
 
+## Agent-initiated creation commands
+
+The current `terminal` command group can inspect and operate only terminals
+that already exist. Add these commands:
+
+```text
+flintctl terminal open [--cwd <path>] [--focus]
+flintctl terminal split (--current|--terminal <terminal-id>) \
+  --direction <left|right|up|down> [--cwd <path>] [--focus]
+
+flintctl thread create --worktree <current|new> --agent <agent> \
+  --prompt <prompt> [--split <left|right|up|down>] [--focus]
+```
+
+`thread create` already exists. This change keeps it in the `thread` group,
+adds optional placement for a current-worktree thread, returns the created
+terminal identity, and teaches the installed skill when to use it. Do not add
+a second terminal command that starts an agent.
+
+### `terminal open`
+
+Create a new plain shell terminal as another item in the caller's current
+terminal pane. The new terminal has a new `Terminal`, PTY, shell process,
+`TerminalView`, and `TerminalControlId`. It does not copy the caller's running
+shell state or start an Agent Thread.
+
+The default working directory is the caller terminal's last known working
+directory. If that value is unavailable, use the workspace terminal default.
+An explicit `--cwd` must be an absolute existing directory on the machine
+that will own the PTY. The caller can already change to any accessible local
+directory, so the path does not have to be inside a project root.
+
+The command does not move user focus by default. `--focus` activates the new
+terminal after creation. The response returns the same terminal metadata as
+`terminal current`.
+
+### `terminal split`
+
+Create a new plain shell terminal in a new pane adjacent to the selected
+terminal. `--current` selects the caller. `--terminal` selects an existing
+terminal in the caller's workspace. The two forms are mutually exclusive and
+one is required. The direction is required so the server never guesses from
+window geometry or focus state.
+
+The default working directory is the selected terminal's last known working
+directory, with the workspace terminal default as the fallback. `--cwd` and
+`--focus` follow `terminal open` semantics. A split creates an empty terminal;
+it does not use Flint's clone mode and does not copy the selected shell state.
+
+The server splits the exact pane that owns the selected `TerminalView`. It
+must work for a terminal in the terminal panel and for a terminal in the
+workspace center. It must not dispatch the normal UI split action, because
+that action uses active-pane state and normally moves focus. Add a shared
+placement helper that takes the source pane, pane group, direction, and focus
+choice explicitly.
+
+The registry must therefore also retain the terminal's current owning `Pane`
+and placement surface. Update this information when the terminal moves. Pane
+identity remains an internal placement detail; it does not become a public
+control ID.
+
+### `thread create`
+
+Only a resolved Agent Thread can use `thread create`, as today. The command
+continues to validate the agent kind, prompt support, worktree mode, and
+remote route before it changes UI state.
+
+For `--worktree current`:
+
+- Without `--split`, create the Agent Thread as another item in the caller's
+  current terminal pane.
+- With `--split`, create it in a new pane adjacent to the caller in the
+  requested direction.
+- Do not move focus unless `--focus` is present.
+
+For `--worktree new`, Flint creates or opens the destination worktree
+workspace and launches the Agent Thread there. `--split` is invalid because
+the caller's pane belongs to another workspace and there is no target pane in
+the destination workspace. `--focus` activates the destination only when the
+caller asks for it. The default remains a background, non-activating
+workspace.
+
+Refactor `launch_seeded_thread` so the control handler receives the created
+terminal view instead of a Boolean. The success response includes:
+
+```json
+{
+  "worktree": "/path/to/worktree",
+  "terminal": {
+    "id": "t7",
+    "title": "codex",
+    "working_directory": "/path/to/worktree",
+    "is_agent_thread": true,
+    "has_exited": false
+  }
+}
+```
+
+This lets the caller immediately use `terminal read`, `terminal wait-output`,
+or other terminal commands without racing `terminal list`.
+
+### Creation completion and errors
+
+A creation request succeeds only after the PTY, `TerminalView`, pane
+placement, Agent Thread registration when applicable, and
+`TerminalControlRegistry` entry exist. Return the created terminal metadata
+in the same response. Do not leave an unplaced terminal or an unregistered
+Agent Thread when a later creation step fails.
+
+Add these typed errors:
+
+```text
+invalid-working-directory
+invalid-split-direction
+invalid-placement
+terminal-create-failed
+terminal-placement-failed
+unsupported-remote-terminal
+```
+
+`flintctl status --json` reports `terminal-open`, `terminal-split`, and the
+current `thread-create` capability separately. A client must not infer support
+from the protocol minor version alone.
+
+### Access and remote boundaries
+
+Any caller that resolves to a live local controllable terminal can use
+`terminal open` and `terminal split`. Only a caller that also resolves to a
+registered Agent Thread can use `thread create`. Every explicit target must
+belong to the caller's workspace.
+
+The new `terminal open` and `terminal split` operations create only local
+PTYs. Reject either operation when the selected workspace route would create
+a remote PTY. `thread create` keeps its existing local, Direct, and Tunneled
+route behavior; the placement options must not change executable, credential,
+or traffic routing. Remote plain-terminal creation needs a separate design.
+
+### Skill behavior
+
+After the probe succeeds, the skill uses the installed executable's help as
+the syntax authority. It uses:
+
+- `terminal open` when the user needs another shell terminal without a new
+  pane;
+- `terminal split` when the user asks for a split terminal or needs visible
+  side-by-side terminal work;
+- `thread create` when the user asks for another coding agent or when a
+  delegated Agent Thread is necessary for the requested work.
+
+The skill preserves the caller's working directory unless the user asks for
+another directory. It does not request focus unless the user asks to focus the
+new terminal. It must not create a worktree or Agent Thread only because a
+plain terminal is sufficient.
+
 ## Non-goals
 
 - Giving a daemon-routed caller the same strong ancestry proof as a direct
@@ -229,6 +388,9 @@ they require the probe instead of the environment variable.
   Flint has attached their session IDs.
 - Changing how `resumed_session_id` is discovered or persisted. A supported
   direct session-registration channel is future work.
+- Moving, closing, resizing, or reordering existing panes through
+  `flintctl`.
+- Creating remote PTY terminals.
 
 ## Open questions
 
@@ -266,6 +428,21 @@ they require the probe instead of the environment variable.
 - Add skill tests for a successful Agent Thread probe, an ordinary-terminal
   response, a missing marker, a connection failure, a protocol mismatch, and
   `caller-not-recognized`.
+- Add protocol and CLI tests for `terminal open`, `terminal split`, the four
+  split directions, mutually exclusive targets, cwd validation, focus flags,
+  typed errors, capability reporting, and the expanded `thread create`
+  result.
+- Add GPUI tests that create and register a terminal in the caller's pane,
+  split beside the exact selected terminal in both the terminal panel and
+  workspace center, keep focus by default, focus only when requested, and
+  clean up all partial state after failure.
+- Add Agent Thread tests for current-worktree tab placement, each split
+  direction, returned terminal identity, new-worktree background behavior,
+  rejection of `--split` with `--worktree new`, and exact error propagation.
+- Test that an ordinary local terminal can open and split terminals but
+  cannot create an Agent Thread.
+- Test local, Direct remote, and Tunneled remote boundaries for all three
+  creation operations.
 - Verify on Linux, macOS, and Windows that environment-read failure is handled
   as no match. A manual platform check can supplement the automated tests but
   cannot replace the detached-process regression test.
@@ -290,3 +467,14 @@ they require the probe instead of the environment variable.
    `openspec/changes/add-flintctl-terminal-control/specs/terminal-agent-threads/spec.md`
    and its related tasks and design text to replace the environment gate with
    the control-server probe.
+8. Extend the terminal registry with exact pane and placement-surface state,
+   and add shared no-focus terminal placement helpers.
+9. Add `terminal open` and `terminal split` to the protocol, CLI, server,
+   capability result, and installed skill.
+10. Extend `thread create` with current-worktree split placement, focus
+    control, and the created terminal metadata result. Keep new-worktree
+    creation non-activating by default.
+11. Update
+    `docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`
+    and the active OpenSpec with the new creation commands, access rules,
+    remote limits, response shapes, errors, tests, and capabilities.
