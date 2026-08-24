@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 pub const BUNDLED_SKILL: &str = include_str!("../skills/flintctl/SKILL.md");
-pub const BUNDLED_SKILL_VERSION: u32 = 1;
+pub const BUNDLED_SKILL_VERSION: u32 = 2;
 
 static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
@@ -403,7 +403,7 @@ mod tests {
         install(AgentKind::Codex, &environment, false).expect("install skill");
         let installed_path = environment.codex_skill_path();
         let old_skill = fs::read_to_string(&installed_path).expect("read installed skill");
-        environment.replace_bundled_skill_for_test(old_skill.replace("version: 1", "version: 2"));
+        environment.replace_bundled_skill_for_test(old_skill.replace("version: 2", "version: 3"));
 
         assert_eq!(
             synchronize(&environment).expect("synchronize skills").len(),
@@ -412,7 +412,7 @@ mod tests {
         assert!(
             fs::read_to_string(installed_path)
                 .expect("read updated skill")
-                .contains("version: 2")
+                .contains("version: 3")
         );
         assert_eq!(
             status(AgentKind::Codex, &environment).expect("read status"),
@@ -480,7 +480,54 @@ mod tests {
         )
         .expect("parse ownership record");
 
-        assert_eq!(record["bundled_skill_version"], 1);
+        assert_eq!(record["bundled_skill_version"], 2);
         assert!(record["release_channel"].as_str().is_some());
+    }
+
+    #[test]
+    fn installed_skill_probes_the_endpoint_before_flintctl() {
+        let temporary_directory = TempDir::new().expect("create temporary directory");
+        let environment = environment(&temporary_directory);
+        install(AgentKind::Codex, &environment, false).expect("install skill");
+        let installed = fs::read_to_string(environment.codex_skill_path())
+            .expect("read installed control skill");
+
+        let unix_endpoint = installed
+            .find("matching marker or socket")
+            .expect("Unix endpoint gate");
+        let windows_endpoint = installed
+            .find("marker or named pipe is absent")
+            .expect("Windows endpoint gate");
+        let probe = installed
+            .find("terminal current --json")
+            .expect("authoritative caller probe");
+
+        assert!(unix_endpoint < probe);
+        assert!(windows_endpoint < probe);
+        assert!(!installed.contains("FLINT_AGENT_THREAD="));
+    }
+
+    #[test]
+    fn installed_skill_separates_terminal_and_thread_probe_results() {
+        let temporary_directory = TempDir::new().expect("create temporary directory");
+        let environment = environment(&temporary_directory);
+        install(AgentKind::Codex, &environment, false).expect("install skill");
+        let installed = fs::read_to_string(environment.codex_skill_path())
+            .expect("read installed control skill");
+
+        for required_decision in [
+            "is_agent_thread: true",
+            "is_agent_thread: false",
+            "connection fails",
+            "protocol is incompatible",
+            "caller is not recognized",
+            "TERM_PROGRAM",
+            "ZED_TERM",
+        ] {
+            assert!(
+                installed.contains(required_decision),
+                "installed skill must cover {required_decision:?}"
+            );
+        }
     }
 }

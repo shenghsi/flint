@@ -1,63 +1,73 @@
-# Caller Disambiguation and Agent-Initiated Terminal Creation
+# Caller Disambiguation for Daemon-Routed Agent CLIs
 
 ## Status
 
-This document is a design proposal. No implementation work has started.
+Change A is implemented. Change B did not pass its required step 0 platform
+check and is not implemented.
+
+On 2026-08-24, a live macOS test spawned a same-user child with a unique
+environment variable and refreshed it with the pinned `sysinfo` 0.37.2
+`ProcessRefreshKind::with_environ(UpdateKind::Always)`. `sysinfo` found the
+child and its executable name but returned no matching environment entry. The
+active Codex `CODEX_THREAD_ID` did match both `session_meta.payload.id` and
+`session_meta.payload.session_id` in its rollout file, so the identifier
+assumption passed and the macOS environment-access assumption failed. Per step
+0, do not implement Change B with peer-process environment reads. A future
+design needs another connection-bound session signal before Change B can resume.
+
+Two limits apply. Read them before the rest of this document:
+
+- The tie-break in Change B needs an attached session ID on **every** candidate.
+  Codex gets its session ID from a background history scan that runs every 30
+  seconds, so two *fresh* concurrent Codex threads stay unresolved. See "What
+  this does not fix".
+- Change B rests on two unverified assumptions. Step 0 verifies them. If either
+  assumption fails, do not build the rest of Change B.
 
 ## Goal
 
 Give the agent control server (`crates/agent_threads/src/control.rs`) the best
-available way to answer one question: which live Agent Thread, if any, does
-this connecting process belong to? The answer must be exact when the
-available signals identify one thread. The server must return
-`caller-not-recognized` when the signals are missing or ambiguous. This rule
-must also apply to a CLI that routes tool commands through a shared,
-long-lived daemon instead of forking its own child process.
+available answer to one question: which live Agent Thread, if any, does this
+connecting process belong to?
 
-After Flint identifies the caller, let the caller create a plain terminal,
-create a split terminal, or create a sibling Agent Thread. Terminal creation
-must use the caller's workspace and current placement as its scope. It must
-not depend on whichever pane the user has focused.
+The answer must be exact when the signals identify one thread. The server must
+return `caller-not-recognized` when the signals are missing or ambiguous. This
+rule must also apply to a CLI that routes tool commands through a shared,
+long-lived daemon instead of forking its own child process.
 
 ## Background
 
-`crates/agent_threads/src/control.rs` and
-`docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`
-already describe a two-step caller resolution:
+`control.rs` and
+`docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md` already
+describe a two-step caller resolution:
 
 1. **Process ancestry.** The server reads the true peer process ID of the
    connecting socket from the operating system (`LOCAL_PEERPID` on macOS,
-   `SO_PEERCRED` on Linux, the named-pipe client PID on Windows), then walks
-   its parent chain looking for a PID the server already tracks as a live
-   terminal. This step needs no cooperation from the agent CLI and is the
-   strong signal.
-2. **Working-directory fallback.** Some CLIs, Codex among them, run tool
-   commands through an already-running daemon (`codex app-server`) instead
-   of forking a child of the interactive session. No ancestor PID is ever
-   one Flint tracks, so step 1 finds nothing. The server then matches the
-   connecting process's own current working directory against each tracked
-   thread's tied worktree root. When more than one thread ties to that root,
-   the server tries to break the tie using the connecting process's own
-   ancestry process names against each candidate's `kind_id` (for example,
-   `"codex"`).
+   `SO_PEERCRED` on Linux, the named-pipe client PID on Windows). It then walks
+   the parent chain for a PID it already tracks as a live terminal. This step
+   needs no cooperation from the agent CLI. It is the strong signal.
+2. **Working-directory fallback.** Codex runs tool commands through an
+   already-running daemon (`codex app-server`). No ancestor PID is one that
+   Flint tracks, so step 1 finds nothing. The server then matches the connecting
+   process's own working directory against each tracked thread's tied worktree
+   root. When more than one thread ties to that root, the server tries to break
+   the tie with the caller's ancestry process names against each candidate's
+   `kind_id`.
 
-This design is already agent-neutral by construction. Unit tests in
-`control.rs` already model the Codex daemon topology
-(`resolve_caller_thread_falls_back_to_cwd_when_ancestry_has_no_match`) and
-pass.
+This design is agent-neutral by construction. Unit tests in `control.rs` already
+model the Codex daemon topology
+(`resolve_caller_thread_falls_back_to_cwd_when_ancestry_has_no_match`).
 
 ## The problem
 
-Step 2's tie-break by process name only works when the ambiguous candidates
-are of *different* kinds. When two Agent Threads of the *same* kind are tied
-to the same worktree at the same time, the connecting process's name (for
-example, `"codex"`) matches every candidate equally, and the server correctly
-refuses to guess. This is exercised today by
-`resolve_caller_thread_refuses_an_ambiguous_cwd_match`.
+The tie-break by process name works only when the ambiguous candidates are of
+*different* kinds. When two threads of the *same* kind tie to the same worktree,
+the caller's process name matches every candidate equally. The server correctly
+refuses to guess (`resolve_caller_thread_refuses_an_ambiguous_cwd_match`).
 
-This is not a rare case. It is the normal case for a user who runs more than
-one Codex Agent Thread in the same worktree at once. Live evidence from this
-machine's own Flint log (`~/.local/share/flint/logs/Flint.log`) confirms it:
+This is the normal case for a user who runs more than one Codex thread in one
+worktree. This machine's own Flint log
+(`~/.local/share/flint/logs/Flint.log`) shows it:
 
 ```text
 agent control caller 891556 could not be resolved:
@@ -70,147 +80,127 @@ tracked worktrees:
   ...
 ```
 
-Two `codex`-kind threads are tied to the same worktree. Working-directory
-matching finds both. Process-name matching cannot separate them: both
-candidates' `kind_id` is `"codex"`, and the caller's own ancestry contains
-`"codex"` regardless of which of the two threads it belongs to. The server
-reports `caller-not-recognized`, correctly, given the information it has
-today.
+Both `codex` candidates have `kind_id == "codex"`, and the caller's ancestry
+contains `"codex"` whichever thread it belongs to.
 
-### A separate, smaller problem
+## Two independent changes
+
+Change A and Change B have no dependency on each other. Ship them separately.
+
+## Change A: remove the stale environment gate
 
 `crates/agent_control_skill/skills/flintctl/SKILL.md` gates all use of
-`flintctl` on `FLINT_AGENT_THREAD=1` being set in the calling process's own
-environment. Flint sets this variable once, at launch time, for every local
-Agent Thread process
-(`apply_control_skill_environment` in `crates/agent_threads/src/store.rs`).
-For a CLI that forks its own tool subprocess (Claude Code, for example), the
-variable is inherited and current. For Codex, the variable's value comes
-from whenever its shared `app-server` daemon last started, which can predate
-the current Agent Thread entirely, or be missing if the daemon started
-outside any Flint Agent Thread.
+`flintctl` on `FLINT_AGENT_THREAD=1` in the caller's own environment. Flint sets
+this variable once, at launch, for every local Agent Thread process
+(`apply_control_skill_environment` in `store.rs`).
 
-This gate sits in front of the server-side resolution above and can hide a
-real Agent Thread from the skill even when the server-side resolution would
-have found it. It is a real defect, but fixing it alone does not fix the
-same-kind ambiguity problem, which is a caller-identity gap in the server,
-not a skill-side gate problem.
+A CLI that forks its own tool subprocess inherits a current value. Codex does
+not. Its value comes from whenever the shared daemon last started, which can
+predate the current thread or be missing. The gate can therefore hide a live
+Agent Thread from the skill even when the server would resolve the caller.
 
-## Proposed method
+This is a confirmed defect, and it needs nothing from Change B. Ship it alone.
 
-**Rule:** never treat a value a local process can freely claim about itself
-(an environment variable, a declared ID) as sufficient identity on its own.
-Use it only to break a tie after the operating system has supplied the peer
-PID and Flint has narrowed the candidates by current working directory and
-agent kind. The session ID is a disambiguation signal. It is not an
+Remove `FLINT_AGENT_THREAD` completely. Put no environment variable in its
+place. Flint also sets `TERM_PROGRAM=flint`, `TERM_PROGRAM_VERSION`, and
+`ZED_TERM=true` in every terminal (`insert_flint_terminal_env` in
+`crates/terminal/src/terminal.rs`), but those carry the same defect and must not
+become the new gate. A daemon-routed tool process inherits the daemon's
+environment, so such variables fail in both directions. They are absent when the
+daemon started outside Flint although the caller really is in a thread, and they
+persist after Flint quit although the caller is not.
+
+The skill uses a two-stage gate instead.
+
+**Stage 1: a cheap negative check.** Test that the release-matched marker exists
+and that the control endpoint exists — the socket on Unix, the named pipe on
+Windows. Neither test reads the caller's environment, so no stale daemon can
+affect the answer. The marker proves Flint is installed. The endpoint proves
+Flint is running, because the control server creates it at start and removes it
+on quit. If either is absent, continue the task without Flint.
+
+Stage 1 earns its place on cost. When the server cannot resolve the caller, the
+CLI sleeps through `RETRY_BACKOFFS` of 250 ms, 500 ms, and 1000 ms before it
+reports `caller-not-recognized` (`crates/agent_control_cli/src/lib.rs`). An agent
+that never runs in Flint would pay about two seconds on every skill activation.
+
+**Stage 2: the probe.** Run `flintctl terminal current --json`. It is the only
+authoritative answer, and one call answers two questions:
+
+- The call succeeds. The caller is in a live Flint terminal and can use the
+  terminal commands.
+- The response also has `is_agent_thread: true`. The caller is an Agent Thread
+  and can additionally use `thread retie` and `thread create`.
+
+A connection failure, a protocol mismatch, or `caller-not-recognized` means the
+skill continues without any Flint control. `is_agent_thread: false` is not such a
+case. It withdraws only the thread commands.
+
+Also correct the skill's frontmatter description. It currently reads "Outside a
+Flint Agent Thread, continue without Flint control commands", which understates
+what an ordinary Flint terminal caller may do.
+
+## Change B: session-ID tie-break
+
+**Rule:** never treat a value a local process can freely claim about itself as
+sufficient identity on its own. Use it only to break a tie after the operating
+system has supplied the peer PID and Flint has narrowed the candidates by working
+directory and agent kind. The session ID is a disambiguation signal. It is not an
 authorization token.
 
-The daemon fallback is weaker than terminal-PID ancestry. A same-user process
-can choose a working directory, process name, and environment. The local
-socket remains user-scoped and the server requires a matching live local
-Agent Thread, but the fallback cannot prove that the caller descended from a
-Flint PTY. This is an accepted limit for daemon-routed agents. The server
-must not describe this fallback as equivalent to the strong ancestry match.
+The daemon fallback stays weaker than terminal-PID ancestry. A same-user process
+can choose its working directory, process name, and environment. The local socket
+remains user-scoped and the server still requires a matching live local Agent
+Thread, but the fallback cannot prove the caller descended from a Flint PTY. This
+is an accepted limit. The server must not describe this fallback as equivalent to
+the ancestry match.
 
-### New step: session-ID tie-break
+### The step
 
-Add one step, used only when the working-directory step still has more than
+Add one step, used only when the working-directory step still leaves more than
 one candidate of the *same* kind:
 
-3. **Session-ID tie-break.** Some agent CLIs carry a stable, per-run session
-   ID in their own process environment, even when routed through a shared
-   daemon. Codex sets `CODEX_THREAD_ID` on every tool-call process it
-   spawns, confirmed present and stable across calls in the same session.
-   Flint already learns and stores a matching Codex session ID per Agent
-   Thread today, for history resume
+3. **Session-ID tie-break.** Codex sets `CODEX_THREAD_ID` in the environment of
+   the tool-call process, so a `flintctl` run from that process inherits it.
+   Flint already stores a Codex session ID per thread for history resume
    (`AgentThreadMetadata::resumed_session_id`, populated by
-   `attach_discovered_session_id` in `store.rs`). The server can read the
-   ambiguous candidates' stored session IDs and the connecting process's own
-   `CODEX_THREAD_ID` (via `sysinfo`'s `Process::environ()` and
-   `ProcessRefreshKind::with_environ`) and keep only the candidate whose
-   stored ID matches. Exactly one match resolves the caller. Zero or more
-   than one match stays unresolved, the same fail-closed behavior the server
-   already uses everywhere else.
+   `attach_discovered_session_id` in `store.rs`). The server keeps only the
+   candidate whose stored session ID equals the caller's. Exactly one match
+   resolves the caller. Zero or more than one match stays unresolved.
 
-Process-environment access can fail on every supported platform because of
-permissions, process exit, or operating-system restrictions. An unavailable,
-missing, non-Unicode, or empty value is no match. The server must not fall
-back to guessing after this failure.
+### The server reads the peer's environment
 
-### Session association readiness
+The server reads the connecting process's own environment through `sysinfo`'s
+`Process::environ()` and `ProcessRefreshKind::with_environ`. `flintctl` does not
+send the value.
 
-The tie-break can work only after Flint has attached a session ID to the live
-terminal. A fresh Codex thread starts with
-`AgentThreadMetadata::resumed_session_id == None`; the existing background
-history discovery runs every 30 seconds and can also remain ambiguous when
-several new sessions appear in the same project.
+The deciding reason is which side knows what to look for. By this point the
+server has narrowed the candidates to one kind and knows that kind's
+`caller_session_env_var`. A generic `flintctl` binary is not told in advance
+which kind it will be matched against, so it cannot know which variable to read.
+It would have to send every known kind's value speculatively, which grows the
+request surface with each new kind and leaks values the server does not need.
+Reading server-side also keeps the existing sentence in the 2026-08-21 design
+literally true: "No token supplied by the client is treated as caller identity."
 
-The current discovery candidate filter excludes remote projects. Extend it to
-use the existing remote history index through the authenticated project
-connection. Apply the same launch-time, project, kind, and already-bound rules
-as local discovery. Do not scan a remote user's files from the local
-filesystem. A connection failure leaves the session unassociated and retries
-on the next bounded discovery interval.
+The cost is real and this design accepts it. Process-environment access can fail
+on every supported platform because of permissions, process exit, or operating
+system restrictions. An unavailable, missing, non-Unicode, or empty value is no
+match. The server must not guess after a failure.
 
-This design does not claim that `CODEX_THREAD_ID` solves that earlier
-association problem. The server follows these rules:
+### Fail-closed rules
 
-1. If exactly one cwd-and-kind candidate exists, resolve it as today. The
-   session ID is not needed.
-2. If several same-kind candidates exist, use only candidates that already
-   have an attached session ID.
-3. If exactly one attached ID matches the peer's session ID, resolve it.
-4. If no ID matches, more than one ID matches, or one or more candidates are
-   still unassociated and prevent a unique result, return
-   `caller-not-recognized`.
-
-The skill can retry a not-ready response through the existing CLI retry
-deadline, but it must not wait without a bound. If concurrent fresh Codex
-threads cannot be associated by the existing history discovery, control from
-those daemon-routed threads remains unavailable. A later design can add a
-supported Codex-to-Flint session registration channel if Codex exposes one.
-The current official Codex documentation does not establish a launch option
-that lets Flint assign a session ID to a fresh session, so this design does
-not invent one.
-
-### Remote caller disambiguation
-
-Remote development uses the same resolution order on the remote host. The
-remote `flintctl` bridge gets the peer PID, and `flint-remote-server` reads the
-remote process ancestry, cwd, process names, and configured session
-environment variable. Local Flint must send the live Agent Thread kind and
-attached session ID as connection-bound metadata for the matching remote PTY
-registration. The remote server must not scan local paths or infer this state
-from a client claim.
-
-When local Flint attaches or changes a session ID, it updates the live remote
-registration through the authenticated project connection. The remote server
-discards this metadata when the PTY, connection, or registration generation
-ends. Until the update arrives, ambiguous same-kind remote callers remain
-unresolved. Direct and Tunneled routes use the same identity exchange; the
-exchange does not change how either agent executable starts or reaches its
-provider.
-
-### Generalizing beyond Codex
-
-To keep this usable for a future daemon-routed agent kind without special
-casing, add one optional field to `AgentKindDefinition`
-(`crates/agent_threads/src/agent_threads.rs`):
-
-```rust
-/// Environment variable this kind's own CLI sets on every tool-call
-/// process, carrying a session ID stable for that CLI run. Used only to
-/// break a tie between live threads of this kind tied to the same worktree,
-/// after ancestry, cwd, and process name have already narrowed the
-/// candidates to that kind. This value is not an authorization token.
-/// `None` for kinds that do not provide a stable session ID in each
-/// tool-call process.
-pub caller_session_env_var: Option<&'static str>,
-```
-
-Only Codex sets this today (`Some("CODEX_THREAD_ID")`). A kind whose CLI
-forks its own tool subprocess directly never needs it, because step 1
-already gives a strong, unambiguous answer for it.
+1. Exactly one cwd-and-kind candidate resolves as today. The session ID is not
+   needed.
+2. With several same-kind candidates, every one must already have an attached
+   session ID. If one or more is still unassociated, return
+   `caller-not-recognized`. Do not compare only the associated candidates.
+   `attach_discovered_session_id` infers the ID from history files instead of
+   receiving it from Codex, so an unassociated candidate can still be the true
+   caller.
+3. Exactly one attached ID equal to the caller's session ID resolves that
+   candidate.
+4. No match, or more than one match, returns `caller-not-recognized`.
 
 ### Full resolution order
 
@@ -227,324 +217,201 @@ peer's own ancestry process names -> candidate kind_id
   |  narrows to 1 -> resolved
   |  2+ candidates of the SAME kind remain
   v
-peer's own <kind's caller_session_env_var> -> candidate's stored session ID   [NEW]
+any remaining candidate has no attached session ID?   [NEW]
+  |  yes -> unresolved
+  |  no
+  v
+caller's session ID -> candidate's stored session ID   [NEW]
   |  exactly 1 match -> resolved
   |  0 or 2+ matches
   v
 caller-not-recognized (unchanged, fail closed)
 ```
 
-### `SKILL.md` probe
+### Generalizing beyond Codex
 
-Remove `FLINT_AGENT_THREAD` completely. The skill locates the release-matched
-executable and calls `flintctl terminal current --json`. A successful response
-with `is_agent_thread: true` is the sole positive answer. A missing marker,
-connection failure, protocol mismatch, `caller-not-recognized`, or
-`is_agent_thread: false` means that the skill must continue without Flint
-Agent Thread control.
+Add one optional field to `AgentKindDefinition`
+(`crates/agent_threads/src/agent_threads.rs`):
 
-Remove `apply_control_skill_environment`, its launch-path call, and its unit
-test from `store.rs`. Update the active OpenSpec requirement and scenarios so
-they require the probe instead of the environment variable.
-
-## Agent-initiated creation commands
-
-The current `terminal` command group can inspect and operate only terminals
-that already exist. Add these commands:
-
-```text
-flintctl terminal open [--cwd <path>] [--focus]
-flintctl terminal split (--current|--terminal <terminal-id>) \
-  --direction <left|right|up|down> [--cwd <path>] [--focus]
-
-flintctl thread create --worktree <current|new> --agent <agent> \
-  --prompt <prompt> [--split <left|right|up|down>] [--focus]
+```rust
+/// Environment variable this kind's own CLI sets on every tool-call
+/// process, carrying a session ID stable for that CLI run. Used only to
+/// break a tie between live threads of this kind tied to the same worktree,
+/// after ancestry, cwd, and process name have already narrowed the
+/// candidates to that kind. This value is not an authorization token.
+/// `None` for kinds that do not provide a stable session ID in each
+/// tool-call process.
+pub caller_session_env_var: Option<&'static str>,
 ```
 
-`thread create` already exists. This change keeps it in the `thread` group,
-adds optional placement for a current-worktree thread, returns the created
-terminal identity, and teaches the installed skill when to use it. Do not add
-a second terminal command that starts an agent.
+Only Codex sets this today (`Some("CODEX_THREAD_ID")`). A kind whose CLI forks
+its own tool subprocess never needs it, because step 1 already answers for it.
 
-### `terminal open`
+### Remote callers
 
-Create a new plain shell terminal as another item in the caller's current
-terminal pane. The new terminal has a new `Terminal`, PTY, shell process,
-`TerminalView`, and `TerminalControlId`. It does not copy the caller's running
-shell state or start an Agent Thread.
+Remote development uses this same resolution order on the remote host, as
+`docs/superpowers/specs/2026-08-22-flintctl-remote-dev-design.md` requires. That
+document owns the mechanism; this section states only what Change B must supply.
 
-The default working directory is the caller terminal's last known working
-directory. If that value is unavailable, use the workspace terminal default.
-An explicit `--cwd` must be an absolute existing directory on the machine
-that will own the PTY. The caller can already change to any accessible local
-directory, so the path does not have to be inside a project root.
+The remote server reads the peer PID, ancestry, working directory, process
+names, and the configured session variable from the true remote peer process.
+`AgentKindDefinition` is local application state, so local Flint must send the
+kind, the kind's `caller_session_env_var`, the attached session ID, and the tied
+worktree root as connection-bound metadata on the matching remote PTY
+registration. The tied worktree root is needed because the working directory
+captured at PTY registration does not follow a later retie.
 
-The command does not move user focus by default. `--focus` activates the new
-terminal after creation. The response returns the same terminal metadata as
-`terminal current`.
+All paths in this metadata are remote-host paths. The remote server must not
+scan local paths or infer identity from a client claim. Local Flint sends the
+metadata when it binds the registration and updates it after a retie or after
+session discovery attaches an ID. Each update is bound to the authenticated
+project connection and the current registration generation; the server rejects a
+stale generation and discards the metadata when the PTY, connection, or
+generation ends. Until the metadata arrives, ambiguous same-kind remote callers
+stay unresolved. Direct and Tunneled use the same exchange, which does not change
+how either executable starts or reaches its provider.
 
-### `terminal split`
+Fresh remote Codex threads hit the same limit as local ones. 08-22 additionally
+requires extending the background discovery loop to remote projects through the
+existing remote history index over the authenticated project connection, using
+the same project, kind, launch-time, and already-bound rules as local discovery.
+A remote history or connection failure leaves the thread unassociated and retries
+on the next bounded interval.
 
-Create a new plain shell terminal in a new pane adjacent to the selected
-terminal. `--current` selects the caller. `--terminal` selects an existing
-terminal in the caller's workspace. The two forms are mutually exclusive and
-one is required. The direction is required so the server never guesses from
-window geometry or focus state.
+## What this does not fix
 
-The default working directory is the selected terminal's last known working
-directory, with the workspace terminal default as the fallback. `--cwd` and
-`--focus` follow `terminal open` semantics. A split creates an empty terminal;
-it does not use Flint's clone mode and does not copy the selected shell state.
+Codex has `session_id_flag: None` (`agent_threads.rs`), so Flint cannot assign a
+session ID at launch. The ID arrives only from the background history scan, which
+runs every 30 seconds and can itself stay ambiguous when several new sessions
+appear in one project.
 
-The server splits the exact pane that owns the selected `TerminalView`. It
-must work for a terminal in the terminal panel and for a terminal in the
-workspace center. It must not dispatch the normal UI split action, because
-that action uses active-pane state and normally moves focus. Add a shared
-placement helper that takes the source pane, pane group, direction, and focus
-choice explicitly.
+Rule 2 above requires an attached ID on every same-kind candidate. Therefore two
+*fresh* concurrent Codex threads in one worktree — the case in the log above —
+stay unresolved for at least 30 seconds, and permanently if discovery stays
+ambiguous. Change B fixes the case where both threads are old enough to have been
+discovered. It does not fix the first 30 seconds.
 
-The registry must therefore also retain the terminal's current owning `Pane`
-and placement surface. Update this information when the terminal moves. Pane
-identity remains an internal placement detail; it does not become a public
-control ID.
+Measure this before you commit to Change B. If most real reports are fresh
+threads, the tie-break buys less than its cost, and the better answer is a
+supported Codex-to-Flint session registration channel. The current official Codex
+documentation does not establish a launch option that lets Flint assign a session
+ID to a fresh session, so this design does not invent one.
 
-### `thread create`
-
-Only a resolved Agent Thread can use `thread create`, as today. The command
-continues to validate the agent kind, prompt support, worktree mode, and
-remote route before it changes UI state.
-
-For `--worktree current`:
-
-- Without `--split`, create the Agent Thread as another item in the caller's
-  current terminal pane.
-- With `--split`, create it in a new pane adjacent to the caller in the
-  requested direction.
-- Do not move focus unless `--focus` is present.
-
-For `--worktree new`, Flint creates or opens the destination worktree
-workspace and launches the Agent Thread there. `--split` is invalid because
-the caller's pane belongs to another workspace and there is no target pane in
-the destination workspace. `--focus` activates the destination only when the
-caller asks for it. The default remains a background, non-activating
-workspace.
-
-Refactor `launch_seeded_thread` so the control handler receives the created
-terminal view instead of a Boolean. The success response includes:
-
-```json
-{
-  "worktree": "/path/to/worktree",
-  "terminal": {
-    "id": "t7",
-    "title": "codex",
-    "working_directory": "/path/to/worktree",
-    "is_agent_thread": true,
-    "has_exited": false
-  }
-}
-```
-
-This lets the caller immediately use `terminal read`, `terminal wait-output`,
-or other terminal commands without racing `terminal list`.
-
-### Creation completion and errors
-
-A creation request succeeds only after the PTY, `TerminalView`, pane
-placement, Agent Thread registration when applicable, and
-`TerminalControlRegistry` entry exist. Return the created terminal metadata
-in the same response. Do not leave an unplaced terminal or an unregistered
-Agent Thread when a later creation step fails.
-
-Add these typed errors:
-
-```text
-invalid-working-directory
-invalid-split-direction
-invalid-placement
-terminal-route-mismatch
-terminal-create-failed
-terminal-placement-failed
-remote-terminal-create-failed
-```
-
-`flintctl status --json` reports `terminal-open`, `terminal-split`, and the
-current `thread-create` capability separately. A client must not infer support
-from the protocol minor version alone.
-
-### Access and remote boundaries
-
-Any caller that resolves to a live controllable terminal can use
-`terminal open` and `terminal split`. Only a caller that also resolves to a
-registered Agent Thread can use `thread create`. Every explicit target must
-belong to the caller's workspace.
-
-Local and remote callers get the same command forms, defaults, response
-shapes, focus behavior, and workspace checks. The owning workspace controls
-the new PTY host:
-
-- A local workspace creates only local terminals.
-- A remote workspace creates only remote terminals through its authenticated
-  remote connection.
-- `terminal open` uses the caller terminal only to select the workspace and
-  exact pane.
-- `terminal split` uses the selected terminal only to select the workspace,
-  exact pane, and split position.
-- A remote `--cwd` is a path on the remote host and uses that host's path
-  style and directory validation.
-- Local Flint owns pane placement and terminal metadata for both workspace
-  routes. The remote server owns only the remote PTY process and its
-  registration.
-
-There is no per-terminal local or remote route choice. A terminal registry
-entry must match its owning workspace route. Registration and creation return
-`terminal-route-mismatch` if the PTY host does not match the workspace. Flint
-does not keep a compatibility path for a local terminal in a remote workspace.
-
-The remote bridge forwards the same control request to local Flint. Local
-Flint creates the terminal through the existing project terminal route and
-waits for the new remote PTY registration before it returns success. A remote
-creation failure returns a typed error and cleans up local partial placement.
-
-`thread create` uses the destination workspace route for its terminal PTY.
-For `--worktree current`, this is the caller's workspace. A worktree created
-from a remote workspace also gets a remote workspace and remote PTY. Placement
-options must not change executable, credential, or traffic routing. Direct
-uses the configured ambient remote executable. Tunneled uses the pinned
-Flint-managed remote executable and its existing local traffic tunnel.
-
-### Skill behavior
-
-After the probe succeeds, the skill uses the installed executable's help as
-the syntax authority. Local and remote managed skills use their respective
-release-matched markers and the same command policy. The skill uses:
-
-- `terminal open` when the user needs another shell terminal without a new
-  pane;
-- `terminal split` when the user asks for a split terminal or needs visible
-  side-by-side terminal work;
-- `thread create` when the user asks for another coding agent or when a
-  delegated Agent Thread is necessary for the requested work.
-
-The skill preserves the caller's working directory unless the user asks for
-another directory. It does not request focus unless the user asks to focus the
-new terminal. It must not create a worktree or Agent Thread only because a
-plain terminal is sufficient.
+The skill can retry a not-ready response through the existing CLI retry deadline,
+but it must not wait without a bound.
 
 ## Non-goals
 
-- Giving a daemon-routed caller the same strong ancestry proof as a direct
-  child of a Flint PTY. The cwd, kind, and session fallback has the weaker
-  same-user boundary described above.
-- Solving ambiguity for a daemon-routed kind that has no per-session
-  environment variable available on its tool-call processes. Such a kind
-  stays unresolved when two of its threads share a worktree, same as today.
-- Guaranteeing immediate control for concurrent fresh Codex threads before
-  Flint has attached their session IDs.
+- Giving a daemon-routed caller the same strong ancestry proof as a direct child
+  of a Flint PTY.
+- Solving ambiguity for a daemon-routed kind that has no per-session environment
+  variable on its tool-call processes. Such a kind stays unresolved when two of
+  its threads share a worktree, the same as today.
+- Guaranteeing control for concurrent fresh Codex threads. See "What this does
+  not fix".
 - Inventing a Codex session-registration channel that Codex does not support.
-  This design extends the existing history discovery to remote projects but
-  keeps its conservative association rules.
-- Moving, closing, resizing, or reordering existing panes through
-  `flintctl`.
 
 ## Open questions
 
 - Does every supported Codex version put `CODEX_THREAD_ID` in every tool-call
-  process? The implementation must fail closed when it is absent, regardless
-  of the answer.
-- Do the macOS and Windows production builds have permission to read the peer
-  process environment? The implementation must treat an empty result as no
-  match and the release validation must exercise both platforms.
-- Can a supported future Codex hook or app-server protocol report the session
-  ID together with a Flint-provided terminal identity? If so, a later design
-  can remove the fresh-session readiness limit.
+  process? The implementation must fail closed when it is absent.
+- Can a supported future Codex hook or app-server protocol report the session ID
+  together with a Flint-provided terminal identity? That would remove the
+  fresh-session limit and make Change B unnecessary.
 
 ## Verification
 
-- Extend the existing `control.rs` test suite with:
-  - Two same-kind candidates tied to the same worktree, disambiguated by a
-    matching `caller_session_env_var` value on the connecting test process.
-  - The same setup with no matching stored session ID (stays unresolved).
-  - The same setup with the stored session ID matching more than one
-    candidate (stays unresolved).
-  - A kind with no `caller_session_env_var` set still refuses to
-    disambiguate same-kind candidates (regression coverage for
-    `resolve_caller_thread_refuses_an_ambiguous_cwd_match`).
-  - A matching peer session ID with candidates whose stored session IDs are
-    all missing stays unresolved.
-  - Process-environment access that returns no data, an empty value, or an
-    invalid operating-system string stays unresolved.
-  - A peer process that exits during inspection stays unresolved.
-- Add an automated end-to-end control test with a detached process, two live
-  Codex-kind terminals in one worktree, and distinct attached session IDs.
-  Verify that `terminal current --json` selects the matching terminal.
-- Add a test that `terminal current --json` stays unresolved for two
-  concurrent fresh Codex-kind terminals whose session IDs are not attached.
-- Add skill tests for a successful Agent Thread probe, an ordinary-terminal
-  response, a missing marker, a connection failure, a protocol mismatch, and
-  `caller-not-recognized`.
-- Add protocol and CLI tests for `terminal open`, `terminal split`, the four
-  split directions, mutually exclusive targets, cwd validation, focus flags,
-  typed errors, capability reporting, and the expanded `thread create`
-  result.
-- Add GPUI tests that create and register a terminal in the caller's pane,
-  split beside the exact selected terminal in both the terminal panel and
-  workspace center, keep focus by default, focus only when requested, and
-  clean up all partial state after failure.
-- Add Agent Thread tests for current-worktree tab placement, each split
-  direction, returned terminal identity, new-worktree background behavior,
-  rejection of `--split` with `--worktree new`, and exact error propagation.
-- Test that an ordinary local terminal can open and split terminals but
-  cannot create an Agent Thread.
-- Test local, Direct remote, and Tunneled remote boundaries for all three
-  creation operations. For Direct and Tunneled, verify matching command forms,
-  cwd behavior, placement, focus, returned identity, cleanup, and exact
-  executable and traffic boundaries. Verify that a remote workspace rejects a
-  local terminal registration and that terminal and Agent Thread creation
-  never fall back to a local PTY.
-- Add remote bridge tests for connection-bound kind and session metadata,
-  update after session discovery, same-kind disambiguation, stale-generation
-  rejection, disconnect cleanup, and missing-session fail-closed behavior.
-- Add remote session-discovery tests for fresh Codex threads, reconnect,
-  history lookup failure, already-bound IDs, and ambiguous concurrent
-  sessions.
-- Verify on Linux, macOS, and Windows that environment-read failure is handled
-  as no match. A manual platform check can supplement the automated tests but
-  cannot replace the detached-process regression test.
-- Remove all production and test references to `FLINT_AGENT_THREAD`.
+For Change A:
+
+- Skill tests for a successful Agent Thread probe, an ordinary-terminal response
+  that keeps the terminal commands and withdraws only the thread commands, a
+  missing marker, a missing endpoint, a connection failure, a protocol mismatch,
+  and `caller-not-recognized`.
+- A test that stage 1 stops before it runs `flintctl` when the endpoint is
+  absent, so a caller outside Flint never pays the retry backoff.
+- A test that a stale `TERM_PROGRAM=flint` or `ZED_TERM=true` in the caller's
+  environment changes no decision, in either direction.
+- Remove the production and test references to the exact variable
+  `FLINT_AGENT_THREAD`, which appear only in `store.rs` and `SKILL.md`. Do not
+  remove `FLINT_AGENT_THREAD_ID` in `crates/agent_threads/src/remote_process.rs`.
+  That is a different variable, it carries the remote lifecycle guard that stops
+  orphaned remote agent processes, and a substring search matches it too.
+
+For Change B, extend the existing `control.rs` suite with:
+
+- Two same-kind candidates disambiguated by a matching `caller_session_env_var`
+  value on the connecting test process.
+- The same setup with no matching stored ID, and with an ID matching more than
+  one candidate. Both stay unresolved.
+- A kind with no `caller_session_env_var` still refuses to disambiguate
+  (regression cover for `resolve_caller_thread_refuses_an_ambiguous_cwd_match`).
+- A matching peer session ID while another same-kind candidate is still
+  unassociated stays unresolved (rule 2).
+- A caller session ID that is absent, empty, or an invalid operating-system
+  string stays unresolved.
+- Environment access that returns no data stays unresolved, and a peer process
+  that exits during inspection stays unresolved.
+- An end-to-end control test with a detached process, two live Codex-kind
+  terminals in one worktree, and distinct attached session IDs. Verify that
+  `terminal current --json` selects the matching terminal.
+- Verify on Linux, macOS, and Windows that an environment-read failure counts as
+  no match. A manual platform check can supplement this but cannot replace the
+  detached-process regression test.
+- A session mismatch produces a log line and an unresolved result, never a panic
+  or a process exit, and the log contains no session ID value.
+
+For remote callers (see "Remote callers"; 08-22 owns the transport tests):
+
+- Remote bridge tests for connection-bound kind, session-variable name, session
+  ID, and tied-worktree metadata; metadata updates after retie and after session
+  discovery; linked-worktree repository matching; same-kind disambiguation;
+  stale-generation rejection; disconnect cleanup; and missing-metadata
+  fail-closed behavior.
+- Remote session-discovery tests for fresh Codex threads, reconnect, history
+  lookup failure, already-bound IDs, and ambiguous concurrent sessions.
 
 ## Implementation order
 
-1. Add `caller_session_env_var` to `AgentKindDefinition`; set it for Codex
-   only.
-2. Add the session-ID tie-break step to `resolve_caller_thread` in
-   `control.rs`, gated on there being more than one same-kind candidate
-   after the existing steps.
-3. Add the new tests listed under Verification.
-4. Update `SKILL.md` to use the `flintctl terminal current --json` probe.
-5. Remove `FLINT_AGENT_THREAD`, `apply_control_skill_environment`, and their
-   tests.
-6. Update
-   `docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`'s
-   "Caller resolution and access boundary" section to describe the new
-   step, so the two documents stay consistent.
-7. Update
+0. **Verify the two assumptions before writing code.** First, capture
+   `CODEX_THREAD_ID` from a live Codex tool-call process and compare it with the
+   `session_meta.payload.id` of that session's rollout file (`parse_summary` and
+   `summary.id` in `crates/agent_history/src/codex.rs`). Sample rollout files
+   show that `payload.id` and `payload.session_id` hold the same UUID, which
+   supports the assumption but does not prove it. If the values name different
+   things, the tie-break never matches, it fails closed and silently, and nothing
+   reports the defect. Second, confirm that the macOS and Windows production
+   builds can read a peer process environment at all. If either check fails, stop
+   and ship only Change A.
+
+Change A, shippable on its own:
+
+1. Update `SKILL.md` to the two-stage gate, and correct its frontmatter
+   description so it does not restrict the terminal commands to Agent Threads.
+2. Remove `FLINT_AGENT_THREAD`, `apply_control_skill_environment`, its launch
+   path call, and its unit test from `store.rs`.
+3. Update
    `openspec/changes/add-flintctl-terminal-control/specs/terminal-agent-threads/spec.md`
-   and its related tasks and design text to replace the environment gate with
-   the control-server probe.
-8. Extend the terminal registry with exact pane and placement-surface state,
-   enforce that each terminal PTY host matches its owning workspace, and add
-   shared no-focus terminal placement helpers.
-9. Extend conservative session discovery to remote projects and synchronize
-   attached kind and session metadata to the connection-bound remote PTY
-   registration.
-10. Add `terminal open` and `terminal split` to the protocol, CLI, local and
-   remote dispatchers, capability result, and installed skills.
-11. Extend `thread create` with current-worktree split placement, focus
-    control, and the created terminal metadata result. Keep new-worktree
-    creation non-activating by default.
-12. Update
-    `docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`
-    `docs/superpowers/specs/2026-08-22-flintctl-remote-dev-design.md`, and the
-    active OpenSpec with the new creation commands, access rules, remote
-    behavior, response shapes, errors, tests, and capabilities.
+   and its related tasks so they require the probe instead of the environment
+   gate.
+
+Change B, only after step 0 passes:
+
+4. Add `caller_session_env_var` to `AgentKindDefinition`; set it for Codex only.
+5. Add the tie-break to `resolve_caller_thread` in `control.rs`, gated on more
+   than one same-kind candidate remaining after the existing steps. Add a
+   diagnostic **log line only** at the comparison point, so a future divergence
+   between the two identifiers is visible rather than silent. Do not assert.
+   The caller's value is caller-controlled and unauthenticated, so a missing,
+   stale, empty, or false value is a normal input, not a program error; an
+   assertion would let any local process stop the control server. Redact the
+   values in the log — record the candidate count, whether each side was present,
+   and whether the formats agreed, not the session IDs themselves.
+6. Add the Change B tests listed under Verification.
+7. Extend the remote route: send the connection-bound identity metadata with the
+   remote PTY registration, update it after retie and session discovery with
+   generation checks, and extend background session discovery to remote projects.
+   See "Remote callers".
+8. Add the new step to the "Caller resolution and access boundary" section of
+   `docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`, so the
+   two documents stay consistent. That section already carries the weaker-fallback
+   caveat; only the new step is missing.
