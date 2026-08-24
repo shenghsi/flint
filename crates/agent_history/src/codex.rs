@@ -441,8 +441,8 @@ fn user_message_title(payload: &Value, seen_user_messages: &mut HashSet<String>)
 }
 
 fn is_injected_instructions(text: &str) -> bool {
-    text.trim_start()
-        .starts_with("# AGENTS.md instructions for ")
+    let text = text.trim_start();
+    text.starts_with("# AGENTS.md instructions for ") || text.starts_with("<environment_context>")
 }
 
 fn normalize_title(text: String) -> Option<String> {
