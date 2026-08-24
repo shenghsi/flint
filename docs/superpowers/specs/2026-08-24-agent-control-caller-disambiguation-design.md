@@ -146,30 +146,35 @@ values name different things, the tie-break never matches. It then fails
 closed and silently, so nothing reports the defect. Add an assertion or a log
 line at the comparison point so a future divergence is visible.
 
-#### Decision needed: where the caller's session ID comes from
+#### Decided: the server reads the peer's environment
 
-Two sources are possible. Select one before implementation, because the
-choice changes the remote design in `Remote caller disambiguation`.
+Two sources were possible: the server reads the connecting process's own
+environment through `sysinfo`'s `Process::environ()` and
+`ProcessRefreshKind::with_environ`, or `flintctl` sends its own value as an
+optional request field. This design uses the first.
 
-- **The server reads the peer's environment** through `sysinfo`'s
-  `Process::environ()` and `ProcessRefreshKind::with_environ`. This keeps the
-  existing sentence in
-  `docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`
-  literally true: "No token supplied by the client is treated as caller
-  identity." It also adds cost: process-environment access can fail on every
-  supported platform because of permissions, process exit, or operating-system
-  restrictions, and the remote server must repeat the read on the remote host.
-- **`flintctl` sends its own value** as an optional request field. `flintctl`
-  already runs inside the caller's environment, so this removes the permission
-  question, the peer-exit race, and the remote environment read. The trust
-  level does not change: a same-user process can set its own environment or
-  send a false field with equal ease, and this design already states that the
-  session ID is not an authorization token. This option needs the
-  `flintctl` and server versions to agree, which the release-matched marker
-  already provides.
+The deciding reason is which side of the connection knows what to look for.
+By the point this tie-break runs, the server has already narrowed the
+candidates to one kind (Codex, say) and knows that kind's
+`caller_session_env_var`. A generic `flintctl` binary has no equivalent
+knowledge at request-construction time: it is not told in advance which
+Agent Kind, if any, it is about to be matched against, so it cannot know
+which single variable name to read and send. It would have to send every
+known kind's session-variable value speculatively, which grows the request
+surface every time a new kind is registered and leaks environment values the
+server may not even need for this particular request. Reading the value
+server-side, only for the one kind resolution has already narrowed to, avoids
+both problems and keeps the existing sentence in
+`docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`
+literally true: "No token supplied by the client is treated as caller
+identity."
 
-Whichever source is selected, an unavailable, missing, non-Unicode, or empty
-value is no match. The server must not fall back to guessing after a failure.
+The cost is real and the design accepts it: process-environment access can
+fail on every supported platform because of permissions, process exit, or
+operating-system restrictions, and the remote server must repeat the read on
+the remote host rather than reuse a value the local bridge already had. An
+unavailable, missing, non-Unicode, or empty value is no match. The server
+must not fall back to guessing after a failure.
 
 ### Session association readiness
 
@@ -214,16 +219,13 @@ not invent one.
 ### Remote caller disambiguation
 
 Remote development uses the same resolution order on the remote host. The
-remote `flintctl` bridge gets the peer PID, and `flint-remote-server` reads the
-remote process ancestry, cwd, and process names. It gets the caller's session
-ID from whichever source "Decision needed: where the caller's session ID comes
-from" selects: either the remote server reads the configured session
-environment variable of the remote peer process, or the remote `flintctl`
-sends its own value in the request. The second option needs no remote
-environment read. Local Flint must send the live Agent Thread kind and
-attached session ID as connection-bound metadata for the matching remote PTY
-registration. The remote server must not scan local paths or infer this state
-from a client claim.
+remote `flintctl` bridge gets the peer PID, and `flint-remote-server` reads
+the remote process ancestry, cwd, process names, and -- per "Decided: the
+server reads the peer's environment" -- the remote peer process's own
+configured session environment variable. Local Flint must send the live
+Agent Thread kind and attached session ID as connection-bound metadata for
+the matching remote PTY registration. The remote server must not scan local
+paths or infer this state from a client claim.
 
 When local Flint attaches or changes a session ID, it updates the live remote
 registration through the authenticated project connection. The remote server
@@ -281,8 +283,8 @@ caller-not-recognized (unchanged, fail closed)
 ```
 
 The caller's session ID is the value of the kind's `caller_session_env_var`
-in the caller's own environment. "Decision needed: where the caller's session
-ID comes from" selects whether the server reads it or `flintctl` sends it.
+read from the caller's own environment by the server -- see "Decided: the
+server reads the peer's environment".
 
 ### `SKILL.md` probe
 
@@ -351,10 +353,13 @@ that already knows tmux or Herdr needs no new vocabulary for `terminal split`.
 
 `terminal open` is the one place that mental model does not carry over. It
 adds the new terminal as another **tab** inside an existing pane, not as a new
-resizable region. Tmux has no equivalent: a tmux pane cannot hold a second
-shell hidden behind the active one the way a Flint pane's tab bar can. State
-this plainly to an agent using the skill, because assuming `terminal open`
-behaves like a small split would put the new terminal in the wrong place.
+resizable region, and without `--focus` that tab is meant to stay behind the
+one already showing -- see "Reuse Flint's own terminal creation path" for the
+`activate`-versus-`focus_item` fix this default depends on. Tmux has no
+equivalent: a tmux pane cannot hold a second shell hidden behind the active
+one the way a Flint pane's tab bar can. State this plainly to an agent using
+the skill, because assuming `terminal open` behaves like a small split would
+put the new terminal in the wrong place.
 
 Two consequences follow:
 
@@ -412,24 +417,58 @@ pane entity: `Pane::split` takes `&mut self`, so
 window, cx))` targets an exact pane. The resulting `pane::Event::Split`
 carries that same pane to `TerminalPanel`, which already calls
 `center.split(&source_pane, &new_pane, direction, cx)` with the source pane
-from the event. Placement is therefore already deterministic and does not
+from the event, so placement itself is already deterministic and does not
 read `active_pane`.
 
-Three small gaps remain in the existing path. Close them by adding
-parameters, not by writing a second path:
+That event handler is not, on its own, something control code can use.
+`Pane::split` returns nothing, and `TerminalPanel`'s
+`pane::Event::Split` handler runs the actual pane and terminal creation
+inside `cx.spawn_in(window, async move |panel, cx| { … }).detach()`
+(`terminal_panel.rs`): it returns before creation finishes, and if
+`new_pane.await` comes back `None` the handler silently returns. A control
+request that just dispatched `Pane::split` would have no way to learn
+whether creation succeeded, when it finished, or what the new terminal's ID
+is -- exactly what "Creation completion and errors" below requires it to
+report.
 
-1. `TerminalPanel`'s `pane::Event::Split` handler calls
-   `window.focus(&new_pane.focus_handle(cx), cx)` unconditionally
-   (`terminal_panel.rs`). Make the focus step conditional so a control-created
-   split can keep focus on the caller.
-2. `add_terminal_shell_internal` reads `terminal_panel.active_pane`. Add a
-   variant that accepts an explicit pane. Its focus behavior needs no new
-   work: `RevealStrategy::Never`, `NoFocus`, and `Always` already express the
-   three cases this design needs.
-3. `new_pane_with_active_terminal` reads `self.active_pane`, and with
+Four gaps remain in the existing path. Close them by adding parameters and
+one shared function, not by writing a second creation path:
+
+1. Extract the body of that `SplitMode::ClonePane | SplitMode::EmptyPane` arm
+   into a method on `TerminalPanel`, for example
+   `create_adjacent_terminal(source_pane: Entity<Pane>, clone: bool,
+   direction: SplitDirection, window: &mut Window, cx: &mut Context<Self>)
+   -> Task<Result<WeakEntity<Terminal>>>`. The `pane::Event::Split` handler
+   calls it and detaches the task, same as today, except it should log a
+   failure instead of discarding it silently
+   (`task.detach_and_log_err(cx)`), consistent with this repository's error
+   handling rule. Control code calls the same method and **awaits** the
+   task, mapping `Ok` to the created terminal's metadata and `Err` to
+   `terminal-create-failed` or `terminal-placement-failed`. This is the one
+   piece of new plumbing this design needs; everything else below is a
+   parameter change to code that already exists.
+2. Inside that method, `window.focus(&new_pane.focus_handle(cx), cx)` must
+   become conditional, so a control-created split can keep focus on the
+   caller.
+3. `add_terminal_shell_internal` always calls `Pane::add_item`, and
+   `add_item` hardcodes its internal `activate: bool` to `true`
+   (`add_item_inner`'s third parameter), so `activate_item` always makes the
+   new terminal the pane's visible tab regardless of the existing
+   `focus_item` argument -- `focus_item` only calls
+   `focus_active_item` for keyboard focus afterward. `RevealStrategy` alone
+   cannot fix this: it gates the panel-level reveal and the keyboard-focus
+   step, not which tab a pane shows. Call the already-`pub`
+   `Pane::add_item_inner` directly instead of the `add_item` wrapper, with
+   an explicit `activate` argument distinct from `focus_item`. Default
+   `terminal open` (no `--focus`) must pass `activate: false`, so the
+   caller's current tab keeps showing; `--focus` passes `activate: true`
+   together with `focus_item: true`. Also add the explicit-pane variant of
+   `add_terminal_shell_internal` that reads a passed-in pane instead of
+   `terminal_panel.active_pane`.
+4. `new_pane_with_active_terminal` reads `self.active_pane`, and with
    `clone = false` it takes the working directory from
-   `default_working_directory` instead of the source terminal. Let the caller
-   pass the source terminal or an explicit working directory.
+   `default_working_directory` instead of the source terminal. Let the
+   caller pass the source terminal or an explicit working directory.
 
 ### `terminal open`
 
@@ -444,9 +483,14 @@ An explicit `--cwd` must be an absolute existing directory on the machine
 that will own the PTY. The caller can already change to any accessible local
 directory, so the path does not have to be inside a project root.
 
-The command does not move user focus by default. `--focus` activates the new
-terminal after creation. The response returns the same terminal metadata as
-`terminal current`.
+Without `--focus`, the new terminal is created but stays behind the caller's
+current tab: neither the pane's visible tab nor keyboard focus changes. This
+requires the `activate`-versus-`focus_item` fix in "Reuse Flint's own
+terminal creation path" -- calling today's `add_item` wrapper as-is would
+make the new terminal the visible tab regardless of `--focus`, because that
+wrapper hardcodes tab activation independently of focus. `--focus` makes the
+new terminal both the visible tab and the focused one. The response returns
+the same terminal metadata as `terminal current`.
 
 ### `terminal split`
 
@@ -487,10 +531,17 @@ would not.
 
 Add two optional blocks to each entry of the `terminal list` result:
 
-- **`neighbors`**: the nearest terminal in each direction, as
+- **`neighbors`**: the navigation neighbor in each direction -- the same pane
+  `activate_pane_in_direction` would jump to -- as
   `{"left": <id|null>, "right": <id|null>, "up": <id|null>, "down": <id|null>}`.
-  A direction resolves to the neighboring pane's **active** terminal tab,
-  because a pane can hold several.
+  Call it a navigation neighbor, not the nearest terminal:
+  `find_pane_in_direction` samples one point just past the pane's edge and
+  returns whichever pane sits there, rather than searching for the closest
+  pane in that direction. A pane offset from that sampled point can therefore
+  be missed even though it is the closest pane in that direction, and
+  `null` then means "no neighbor found at that point," not "provably no pane
+  exists in that direction." A direction resolves to the neighboring pane's
+  **active** terminal tab, because a pane can hold several.
 - **`placement`**: the surface, either `panel` or `center`; an opaque
   per-response key that groups the terminals sharing one pane; and the
   terminal's tab index inside that pane. The grouping key lets an agent say
@@ -543,6 +594,26 @@ the caller's pane belongs to another workspace and there is no target pane in
 the destination workspace. `--focus` activates the destination only when the
 caller asks for it. The default remains a background, non-activating
 workspace.
+
+`launch_seeded_thread`'s own doc comment states its current limit: "Only
+used on the configured (non-managed) route -- handoff does not support the
+managed/tunneled route yet." `launch_seeded_and_respond` in `control.rs`
+calls it directly, with no route dispatch, unlike `launch_new_thread`, which
+already dispatches between `launch_configured_thread` and
+`launch_managed_thread_for_route` through `new_thread_launch_route`. As
+written today, a seeded `thread create` on a project using the Tunneled
+route does not reach the managed launch path at all, contradicting "Access
+and remote boundaries"'s promise of Direct and Tunneled parity for `thread
+create`.
+
+Give `launch_seeded_thread` the same route dispatch `launch_new_thread`
+already has: a route-aware seeded launcher that calls
+`launch_managed_thread_for_route` for the Tunneled route and the existing
+configured path otherwise. `launch_managed_thread_for_route` is already
+`Task`-based (`cx.spawn_in`), so extend it to return the created terminal
+result rather than leaving it fire-and-forget, matching the awaitable
+contract "Reuse Flint's own terminal creation path" requires for
+`terminal open` and `terminal split`.
 
 Refactor `launch_seeded_thread` so the control handler receives the created
 terminal view. Keep its existing Boolean meaning as well: the Boolean reports
@@ -625,8 +696,13 @@ does not keep a compatibility path for a local terminal in a remote workspace.
 
 The remote bridge forwards the same control request to local Flint. Local
 Flint creates the terminal through the existing project terminal route and
-waits for the new remote PTY registration before it returns success. A remote
-creation failure returns a typed error and cleans up local partial placement.
+waits for the new remote PTY registration before it returns success. Two
+failure directions need cleanup, not one: a remote creation failure returns a
+typed error and cleans up local partial placement, and -- the direction the
+first version of this design left unspecified -- a remote PTY that starts
+successfully followed by a local placement, registration, or cancellation
+failure must terminate that remote PTY and remove its registration. Neither
+side of a failed creation may outlive the other.
 
 `thread create` uses the destination workspace route for its terminal PTY.
 For `--worktree current`, this is the caller's workspace. A worktree created
@@ -645,11 +721,13 @@ release-matched markers and the same command policy.
 
 The two commands look similar in a request ("give me a terminal", "open
 another terminal") but land the new terminal in visually different places, as
-"Terminology" describes: `terminal open` adds a hidden tab to the caller's own
-pane, and `terminal split` draws a second, visible box beside it. The decision
-that matters is not "does the user want a new terminal" -- both commands give
-one -- it is **whether the user needs to see the new terminal and the current
-one on screen at the same time.**
+"Terminology" describes: `terminal open` adds a terminal behind the caller's
+current tab, and `terminal split` draws a second, visible box beside it. (The
+"behind the current tab" default is a requirement on the implementation, not
+yet the existing behavior -- see "Reuse Flint's own terminal creation path".)
+The decision that matters is not "does the user want a new terminal" -- both
+commands give one -- it is **whether the user needs to see the new terminal
+and the current one on screen at the same time.**
 
 - **`--focus` does not answer this question.** `terminal open --focus`
   switches which tab is showing; it still shows exactly one terminal at a
@@ -666,10 +744,11 @@ one on screen at the same time.**
   this in the background"), and for any case where the user does not care
   whether the current terminal stays visible.
 - **When the request is genuinely ambiguous, prefer `terminal open`.** It is
-  the less disruptive action: it does not rearrange the caller's visible
-  layout, and a hidden tab is trivial for the user to bring forward, while an
-  unwanted split pane is a layout change the user has to undo by hand. This
-  matches the general rule below against doing more than the request needs.
+  the less disruptive action once the default-behind-current-tab fix lands:
+  it does not rearrange the caller's visible layout, and a background tab is
+  trivial for the user to bring forward, while an unwanted split pane is a
+  layout change the user has to undo by hand. This matches the general rule
+  below against doing more than the request needs.
 
 `thread create` is a separate decision, not a third option in this choice: use
 it when the user asks for another coding agent, or when the requested work
@@ -710,17 +789,13 @@ layout.
   `session_meta.payload.id` that Flint stores? See "Required assumption: the
   two IDs are the same identifier". Verify this before implementation step 2.
   The whole tie-break depends on it.
-- Which source supplies the caller's session ID: a server-side read of the
-  peer environment, or a field that `flintctl` sends? See "Decision needed:
-  where the caller's session ID comes from". Settle this before the remote
-  work in implementation step 9.
 - Does every supported Codex version put `CODEX_THREAD_ID` in every tool-call
   process? The implementation must fail closed when it is absent, regardless
   of the answer.
-- If the server reads the peer environment, do the macOS and Windows
-  production builds have permission to do it? The implementation must treat an
-  empty result as no match and the release validation must exercise both
-  platforms. The `flintctl`-sends-it option removes this question.
+- Do the macOS and Windows production builds have permission to read the peer
+  process environment? See "Decided: the server reads the peer's
+  environment". The implementation must treat an empty result as no match,
+  and the release validation must exercise both platforms.
 - Can a supported future Codex hook or app-server protocol report the session
   ID together with a Flint-provided terminal identity? If so, a later design
   can remove the fresh-session readiness limit.
@@ -743,9 +818,8 @@ layout.
     association readiness").
   - A caller session ID that is absent, empty, or an invalid operating-system
     string stays unresolved.
-  - If the server reads the peer environment: environment access that returns
-    no data stays unresolved, and a peer process that exits during inspection
-    stays unresolved.
+  - Environment access that returns no data stays unresolved, and a peer
+    process that exits during inspection stays unresolved.
 - Add an automated end-to-end control test with a detached process, two live
   Codex-kind terminals in one worktree, and distinct attached session IDs.
   Verify that `terminal current --json` selects the matching terminal.
@@ -787,6 +861,14 @@ layout.
 - Add a test that a control-created split keeps focus on the caller while the
   same split through the normal UI action still focuses the new pane, so the
   new conditional focus step does not change user-facing behavior.
+- Add a test that `create_adjacent_terminal`'s returned `Task` resolves only
+  after the new pane, terminal, and registry entry all exist, and that a
+  placement failure inside it surfaces as `Err` to an awaiting caller rather
+  than a silent no-op, covering both the control caller (awaits) and the UI
+  event handler (detaches and logs).
+- Add a test that a control-created `terminal open` without `--focus` leaves
+  the caller's pane showing its previous active tab, and a test that
+  `--focus` makes the new terminal both the active tab and the focused one.
 - Add Agent Thread tests for current-worktree tab placement, each split
   direction, returned terminal identity, new-worktree background behavior,
   rejection of `--split` with `--worktree new`, and exact error propagation.
@@ -798,16 +880,23 @@ layout.
   executable and traffic boundaries. Verify that a remote workspace rejects a
   local terminal registration and that terminal and Agent Thread creation
   never fall back to a local PTY.
+- Add a test that a seeded `thread create` on a project using the Tunneled
+  route reaches `launch_managed_thread_for_route`, not the configured-route
+  path, and returns the created terminal's metadata the same as the Direct
+  route does.
+- Add a test that a remote PTY created successfully, followed by a local
+  placement or registration failure, terminates that remote PTY and removes
+  its registration -- the failure direction opposite the existing
+  remote-creation-failure cleanup test.
 - Add remote bridge tests for connection-bound kind and session metadata,
   update after session discovery, same-kind disambiguation, stale-generation
   rejection, disconnect cleanup, and missing-session fail-closed behavior.
 - Add remote session-discovery tests for fresh Codex threads, reconnect,
   history lookup failure, already-bound IDs, and ambiguous concurrent
   sessions.
-- If the server reads the peer environment, verify on Linux, macOS, and
-  Windows that an environment-read failure counts as no match. A manual
-  platform check can supplement the automated tests but cannot replace the
-  detached-process regression test.
+- Verify on Linux, macOS, and Windows that an environment-read failure counts
+  as no match. A manual platform check can supplement the automated tests but
+  cannot replace the detached-process regression test.
 - Remove the production and test references to the exact variable
   `FLINT_AGENT_THREAD`, which appear only in `store.rs` and `SKILL.md`. Do
   not remove `FLINT_AGENT_THREAD_ID` in
@@ -840,9 +929,13 @@ layout.
    the control-server probe.
 8. Extend the terminal registry with exact pane and placement-surface state,
    and enforce that each terminal PTY host matches its owning workspace. Then
-   add the three parameters that "Reuse Flint's own terminal creation path"
-   lists: a conditional focus step in `TerminalPanel`'s `pane::Event::Split`
-   handler, an explicit-pane variant of `add_terminal_shell_internal`, and an
+   make the four changes "Reuse Flint's own terminal creation path" lists:
+   extract `TerminalPanel`'s split-creation body into an awaitable
+   `create_adjacent_terminal` method that both the UI event handler and
+   control code call; make its focus step conditional; replace
+   `add_terminal_shell_internal`'s use of `Pane::add_item` with
+   `Pane::add_item_inner` and an explicit `activate` argument distinct from
+   `focus_item`, plus an explicit-pane variant of that function; and an
    explicit source terminal or working directory for
    `new_pane_with_active_terminal`. Do not add a second creation path.
 9. Extend conservative session discovery to remote projects and synchronize
@@ -850,7 +943,10 @@ layout.
    registration.
 10. Add `terminal open` and `terminal split` to the protocol, CLI, local and
    remote dispatchers, capability result, and installed skills.
-11. Extend `thread create` with current-worktree split placement, focus
+11. Give `launch_seeded_thread` the same route dispatch `launch_new_thread`
+    already has, and make `launch_managed_thread_for_route` return the
+    created terminal result instead of remaining fire-and-forget. Then
+    extend `thread create` with current-worktree split placement, focus
     control, and the created terminal metadata result. Keep new-worktree
     creation non-activating by default.
 12. Add the `neighbors` and `placement` blocks to the `terminal list` result
