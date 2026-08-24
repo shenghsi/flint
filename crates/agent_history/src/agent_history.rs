@@ -965,6 +965,36 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn codex_title_ignores_injected_environment_context(cx: &mut TestAppContext) {
+        let source = Arc::new(InMemoryHistoryFs::new());
+        let messages = [
+            user_message(
+                "<environment_context>\n  <cwd>/work/project</cwd>\n  <shell>zsh</shell>\n</environment_context>",
+            ),
+            user_message("Fix the current thread titles"),
+        ]
+        .join("\n");
+        source.insert(
+            "/home/user/.codex/sessions/2026/07/24/rollout-2026-07-24T10-00-00-aaa.jsonl",
+            &rollout(
+                &session_meta("aaa", "/work/project", "2026-07-24T10:00:00.000Z"),
+                &messages,
+            ),
+            identity(1, 10),
+        );
+
+        let service = service(cx);
+        let host = host(source);
+        let snapshot = service
+            .refresh(HistoryKind::Codex, &host, &[PathBuf::from("/work/project")])
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].title, "Fix the current thread titles");
+    }
+
+    #[gpui::test]
     async fn codex_title_falls_back_to_earliest_history_jsonl_entry_not_latest(
         cx: &mut TestAppContext,
     ) {
