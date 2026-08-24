@@ -736,7 +736,7 @@ fn manage_agent_control_skill(
             let confirmation = cx.update(|window, cx| {
                 window.prompt(
                     PromptLevel::Info,
-                    "Flint control skills for all supported agents",
+                    &localization::text(cx, "agent-threads-control-skills-all-title"),
                     Some(&detail),
                     &buttons,
                     cx,

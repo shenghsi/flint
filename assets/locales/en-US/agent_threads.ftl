@@ -69,3 +69,4 @@ agent-threads-control-skill-reminder = Install the Flint control skill?
 agent-threads-control-skill-reminder-detail = The optional skill lets Codex and Claude Code control Flint Agent Threads and terminals. Review the skill before you install it. If you decline, you can install it later from Settings.
 agent-threads-control-skill-manage = Review and Install
 agent-threads-control-skill-not-now = Not Now
+agent-threads-control-skills-all-title = Flint control skills for all supported agents
