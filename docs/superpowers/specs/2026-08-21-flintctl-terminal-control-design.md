@@ -278,10 +278,14 @@ workspace terminal default when it is unavailable. `--cwd` and `--focus`
 follow `terminal open` semantics. The split is empty rather than cloned: it
 does not copy the selected shell state.
 
-The server uses the selected terminal's registered owning pane and placement
-surface. It must not dispatch an active-pane UI action. The same operation
-must work in the terminal panel and in the workspace center. Pane identity is
-internal and is not a public control ID.
+The server resolves the selected terminal's owning pane and placement surface
+through `Workspace::pane_for_item_id` and `Pane::in_center_group`, which are
+already the authority for item-to-pane ownership. It must not keep a second copy
+of that state in `TerminalControlRegistry`, and must not dispatch an active-pane
+UI action. The same operation must work in the terminal panel and in the
+workspace center. Pane identity is internal and is not a public control ID. See
+"Pane ownership" in
+`docs/superpowers/specs/2026-08-24-agent-initiated-terminal-creation-design.md`.
 
 Both creation commands return only after the PTY, terminal view, placement,
 and registry entry exist. A failed later step must clean up partial creation.
@@ -552,8 +556,10 @@ version's access boundary implicitly.
 4. Add validated text and key input plus `terminal run`.
 5. Add current-only length-prefixed framing and cancellable
    `terminal wait-output`.
-6. Retain exact internal pane and placement-surface state in the terminal
-   registry and add shared placement helpers that do not depend on UI focus.
+6. Add shared placement helpers that resolve an item to its exact pane,
+   placement surface, and owning `PaneGroup` through `Workspace::panes_by_item`,
+   without depending on UI focus. Do not duplicate pane state in the terminal
+   registry.
 7. Add `terminal open` and `terminal split`, their typed errors, capability
    reporting, returned identity, and local-only route checks.
 8. Extend `thread create` with current-worktree split placement, focus
