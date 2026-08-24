@@ -661,24 +661,122 @@ fn manage_agent_control_skill(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let agents = agent_control_skill::AgentKind::ALL;
+    let mut selection_buttons = agents
+        .iter()
+        .map(|agent| PromptButton::new(agent.label()))
+        .collect::<Vec<_>>();
+    selection_buttons.push(PromptButton::new("All Supported Agents"));
+    selection_buttons.push(PromptButton::cancel("Cancel"));
     let selection = window.prompt(
         PromptLevel::Info,
         &localization::text(cx, "agent-threads-manage-control-skill"),
-        Some("Select an agent. The next step shows the complete skill and its current state before any file changes."),
-        &[
-            PromptButton::new("Codex"),
-            PromptButton::new("Claude Code"),
-            PromptButton::cancel("Cancel"),
-        ],
+        Some("Select an agent or all supported agents. The next step shows every selected destination, the current states, and the complete skill before any file changes."),
+        &selection_buttons,
         cx,
     );
     cx.spawn_in(window, async move |workspace, cx| {
-        let agent = match selection.await.ok() {
-            Some(0) => agent_control_skill::AgentKind::Codex,
-            Some(1) => agent_control_skill::AgentKind::Claude,
+        let selected_agents = match selection.await.ok() {
+            Some(index) if index < agents.len() => {
+                let Some(&agent) = agents.get(index) else {
+                    return Ok(());
+                };
+                vec![agent]
+            }
+            Some(index) if index == agents.len() => agents.to_vec(),
             _ => return Ok(()),
         };
         let environment = agent_control_skill::SkillEnvironment::current();
+        if selected_agents.len() == agents.len() {
+            let states = selected_agents
+                .iter()
+                .copied()
+                .map(|agent| {
+                    agent_control_skill::status(agent, &environment)
+                        .map(|state| (agent, state))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let operation = bulk_control_skill_operation(&states);
+            let mut detail = states
+                .iter()
+                .map(|(agent, state)| {
+                    format!(
+                        "{}\nDestination: {}\nCurrent state: {state:?}",
+                        agent.label(),
+                        environment.skill_path(*agent).display()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if operation == BulkControlSkillOperation::Conflict {
+                detail.push_str(
+                    "\n\nOne or more selected skills are modified or owned by another source. Manage those agents separately.",
+                );
+            }
+            detail.push_str("\n\n");
+            detail.push_str(agent_control_skill::BUNDLED_SKILL);
+            let buttons = match operation {
+                BulkControlSkillOperation::InstallOrUpdate => {
+                    let label = if states.iter().any(|(_, state)| {
+                        *state == agent_control_skill::SkillState::NotInstalled
+                    }) {
+                        "Install All"
+                    } else {
+                        "Update All"
+                    };
+                    vec![PromptButton::new(label), PromptButton::cancel("Cancel")]
+                }
+                BulkControlSkillOperation::NoChange => {
+                    vec![PromptButton::cancel("All Skills Are Current")]
+                }
+                BulkControlSkillOperation::Conflict => {
+                    vec![PromptButton::cancel("Cancel")]
+                }
+            };
+            let confirmation = cx.update(|window, cx| {
+                window.prompt(
+                    PromptLevel::Info,
+                    "Flint control skills for all supported agents",
+                    Some(&detail),
+                    &buttons,
+                    cx,
+                )
+            })?;
+            if operation != BulkControlSkillOperation::InstallOrUpdate
+                || !matches!(confirmation.await.ok(), Some(0))
+            {
+                return Ok(());
+            }
+            for (agent, state) in states {
+                match state {
+                    agent_control_skill::SkillState::NotInstalled => {
+                        agent_control_skill::install(agent, &environment, false)?;
+                    }
+                    agent_control_skill::SkillState::Missing
+                    | agent_control_skill::SkillState::InstalledOutdated => {
+                        agent_control_skill::install(agent, &environment, true)?;
+                    }
+                    agent_control_skill::SkillState::InstalledCurrent => {}
+                    agent_control_skill::SkillState::Unowned
+                    | agent_control_skill::SkillState::Modified => return Ok(()),
+                }
+            }
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<ControlSkillChange>(),
+                        "Installed Flint control skills for all supported agents",
+                    )
+                    .autohide(),
+                    cx,
+                );
+            })?;
+            return Ok(());
+        }
+
+        let Some(&agent) = selected_agents.first() else {
+            return Ok(());
+        };
         let state = agent_control_skill::status(agent, &environment)?;
         let destination = environment.skill_path(agent);
         let detail = format!(
@@ -778,6 +876,36 @@ enum ControlSkillOperation {
 }
 
 enum ControlSkillChange {}
+
+fn bulk_control_skill_operation(
+    states: &[(
+        agent_control_skill::AgentKind,
+        agent_control_skill::SkillState,
+    )],
+) -> BulkControlSkillOperation {
+    if states.iter().any(|(_, state)| {
+        matches!(
+            state,
+            agent_control_skill::SkillState::Unowned | agent_control_skill::SkillState::Modified
+        )
+    }) {
+        BulkControlSkillOperation::Conflict
+    } else if states
+        .iter()
+        .all(|(_, state)| *state == agent_control_skill::SkillState::InstalledCurrent)
+    {
+        BulkControlSkillOperation::NoChange
+    } else {
+        BulkControlSkillOperation::InstallOrUpdate
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BulkControlSkillOperation {
+    NoChange,
+    InstallOrUpdate,
+    Conflict,
+}
 
 /// Returns the highest-priority live Terminal across `workspaces` using the
 /// Agent Threads rollup order: Blocked, Finished, Working, then Idle.
@@ -1074,6 +1202,34 @@ mod tests {
         assert_eq!(
             control_skill_operation(agent_control_skill::SkillState::Missing),
             ControlSkillOperation::Replace
+        );
+    }
+
+    #[test]
+    fn bulk_control_skill_operation_installs_missing_agents() {
+        assert_eq!(
+            bulk_control_skill_operation(&[
+                (
+                    agent_control_skill::AgentKind::Codex,
+                    agent_control_skill::SkillState::InstalledCurrent,
+                ),
+                (
+                    agent_control_skill::AgentKind::Claude,
+                    agent_control_skill::SkillState::NotInstalled,
+                ),
+            ]),
+            BulkControlSkillOperation::InstallOrUpdate
+        );
+    }
+
+    #[test]
+    fn bulk_control_skill_operation_preserves_conflicts() {
+        assert_eq!(
+            bulk_control_skill_operation(&[(
+                agent_control_skill::AgentKind::Codex,
+                agent_control_skill::SkillState::Modified,
+            )]),
+            BulkControlSkillOperation::Conflict
         );
     }
 
