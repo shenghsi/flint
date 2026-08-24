@@ -10487,6 +10487,32 @@ mod tests {
         assert_eq!(action.button_text.as_ref(), "Manage Skill");
     }
 
+    #[gpui::test]
+    fn agent_threads_control_skill_management_is_translated_to_chinese(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            localization::init(localization::UiLanguage::SimplifiedChinese, cx)
+                .expect("test localization must load");
+
+            assert_eq!(
+                crate::settings_source_text(cx, "Flint Control Skill"),
+                "Flint 控制技能"
+            );
+            assert_eq!(
+                crate::settings_source_text(cx, "Manage Skill"),
+                "管理技能"
+            );
+            assert_ne!(
+                crate::settings_source_text(
+                    cx,
+                    "Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files."
+                ),
+                "Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files."
+            );
+        });
+    }
+
     #[test]
     fn terminal_open_links_in_mouse_mode_uses_exact_json_path() {
         let page = terminal_page();

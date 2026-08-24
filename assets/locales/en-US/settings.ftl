@@ -1,4 +1,7 @@
 settings-language-title = Language
+settings-flint-control-skill = Flint Control Skill
+settings-manage-skill = Manage Skill
+settings-preview-install-update-or-uninstall-flint-control-skill = Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files.
 settings-language-description = Select the language that Flint uses for its interface.
 settings-edit-json = Edit in settings.json
 settings-reset-default = Reset to Default

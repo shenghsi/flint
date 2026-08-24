@@ -1625,6 +1625,7 @@ fn settings_item_message_id(source: &str) -> Option<&'static str> {
         "Hunk Style" => "settings-hunk-style",
         "Instructions" => "settings-instructions",
         "Max Diff Bytes" => "settings-max-diff-bytes",
+        "Manage Skill" => "settings-manage-skill",
         "Model" => "settings-model",
         "Path Style" => "settings-path-style",
         "Show Author Name" => "settings-show-author-name",
@@ -1663,6 +1664,9 @@ fn settings_item_message_id(source: &str) -> Option<&'static str> {
         }
         "Padding between the end of the source line and the start of the inline blame in columns." => {
             "settings-padding-between-the-end-of-the-source-line-and"
+        }
+        "Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files." => {
+            "settings-preview-install-update-or-uninstall-flint-control-skill"
         }
         "Should the name or path be displayed first in the git view." => {
             "settings-should-the-name-or-path-be-displayed-first-in"
@@ -1708,6 +1712,7 @@ fn settings_item_message_id(source: &str) -> Option<&'static str> {
         "Display Settings" => "settings-display-settings",
         "Environment" => "settings-environment",
         "Font" => "settings-font",
+        "Flint Control Skill" => "settings-flint-control-skill",
         "Layout Settings" => "settings-layout-settings",
         "Scrollbar" => "settings-scrollbar",
         "Toolbar" => "settings-toolbar",
