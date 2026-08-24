@@ -65,3 +65,7 @@ agent-threads-handoff-unsupported-history = The selected agent does not support 
 agent-threads-current-project = current
 agent-threads-manage-control-skill = Manage the Flint control skill
 agent-threads-control-skill-title = Flint control skill for { $agent }
+agent-threads-control-skill-reminder = Install the Flint control skill?
+agent-threads-control-skill-reminder-detail = The optional skill lets Codex and Claude Code control Flint Agent Threads and terminals. Review the skill before you install it. If you decline, you can install it later from Settings.
+agent-threads-control-skill-manage = Review and Install
+agent-threads-control-skill-not-now = Not Now

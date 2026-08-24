@@ -882,8 +882,11 @@ pub fn init_control_server(cx: &mut App) {
     #[cfg(any(unix, windows))]
     {
         let skill_sync_errors = Arc::new(control_skill::synchronize_control_skills());
-        cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
+        cx.observe_new(move |workspace: &mut Workspace, window, cx| {
             control_skill::show_sync_errors(&skill_sync_errors, workspace, cx);
+            if let Some(window) = window {
+                control_skill::show_install_reminder(workspace, window, cx);
+            }
         })
         .detach();
         cx.observe_new(|remote_client: &mut remote::RemoteClient, _window, cx| {
