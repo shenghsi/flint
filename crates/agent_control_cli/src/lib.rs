@@ -15,8 +15,9 @@ use std::path::PathBuf;
 use agent_control_protocol::{
     ControlCommand, ControlRequest, ControlResponse, ControlResult, ControlSuccess,
     CreateThreadRequest, CreateThreadWorktree, RetieThreadRequest, TerminalControlId,
-    TerminalListRequest, TerminalOutputMatcher, TerminalReadRequest, TerminalReadSource,
-    TerminalRunRequest, TerminalSendKeyRequest, TerminalSendTextRequest, TerminalWaitOutputRequest,
+    TerminalListRequest, TerminalOpenRequest, TerminalOutputMatcher, TerminalReadRequest,
+    TerminalReadSource, TerminalRunRequest, TerminalSendKeyRequest, TerminalSendTextRequest,
+    TerminalSplitRequest, TerminalWaitOutputRequest,
 };
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
@@ -99,6 +100,10 @@ enum ThreadCommand {
         agent: String,
         #[arg(long)]
         prompt: String,
+        #[arg(long, value_enum)]
+        split: Option<SplitDirectionArg>,
+        #[arg(long)]
+        focus: bool,
         #[arg(long)]
         json: bool,
     },
@@ -113,6 +118,34 @@ enum TerminalCommand {
     List {
         #[arg(long)]
         all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Open {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        focus: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(group(
+        ArgGroup::new("target")
+            .required(true)
+            .multiple(false)
+            .args(["current", "terminal_id"])
+    ))]
+    Split {
+        #[arg(long)]
+        current: bool,
+        #[arg(long = "terminal")]
+        terminal_id: Option<String>,
+        #[arg(long, value_enum)]
+        direction: SplitDirectionArg,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        focus: bool,
         #[arg(long)]
         json: bool,
     },
@@ -178,6 +211,25 @@ enum TerminalCommand {
 enum WorktreeArg {
     Current,
     New,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SplitDirectionArg {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+impl SplitDirectionArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Up => "up",
+            Self::Down => "down",
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -317,6 +369,8 @@ impl Cli {
                     name,
                     agent,
                     prompt,
+                    split,
+                    focus,
                     json,
                 } => (
                     ControlCommand::ThreadCreate(CreateThreadRequest {
@@ -324,6 +378,8 @@ impl Cli {
                         name,
                         agent,
                         prompt,
+                        split: split.map(|direction| direction.as_str().to_string()),
+                        focus,
                     }),
                     json,
                 ),
@@ -332,6 +388,27 @@ impl Cli {
                 TerminalCommand::Current { json } => (ControlCommand::TerminalCurrent, json),
                 TerminalCommand::List { all, json } => (
                     ControlCommand::TerminalList(TerminalListRequest { all }),
+                    json,
+                ),
+                TerminalCommand::Open { cwd, focus, json } => (
+                    ControlCommand::TerminalOpen(TerminalOpenRequest { cwd, focus }),
+                    json,
+                ),
+                TerminalCommand::Split {
+                    current,
+                    terminal_id,
+                    direction,
+                    cwd,
+                    focus,
+                    json,
+                } => (
+                    ControlCommand::TerminalSplit(TerminalSplitRequest {
+                        current,
+                        terminal_id: terminal_id.map(TerminalControlId),
+                        direction: direction.as_str().to_string(),
+                        cwd,
+                        focus,
+                    }),
                     json,
                 ),
                 TerminalCommand::Read {
@@ -790,8 +867,9 @@ fn print_response(response: &ControlResponse, wants_json: bool) -> i32 {
         ControlResult::Ok(ControlSuccess::Retied { worktree }) => {
             println!("Retied to {}", worktree.display());
         }
-        ControlResult::Ok(ControlSuccess::ThreadCreated { worktree }) => {
+        ControlResult::Ok(ControlSuccess::ThreadCreated { worktree, terminal }) => {
             println!("Created thread in {}", worktree.display());
+            print_terminal(terminal);
         }
         ControlResult::Ok(ControlSuccess::Status(status)) => {
             println!(
@@ -809,6 +887,9 @@ fn print_response(response: &ControlResponse, wants_json: bool) -> i32 {
             for terminal in terminals {
                 print_terminal(terminal);
             }
+        }
+        ControlResult::Ok(ControlSuccess::TerminalCreated(terminal)) => {
+            print_terminal(terminal);
         }
         ControlResult::Ok(ControlSuccess::TerminalRead(snapshot))
         | ControlResult::Ok(ControlSuccess::TerminalWaitOutput(snapshot)) => {
@@ -865,6 +946,13 @@ fn error_code_name(code: agent_control_protocol::ControlErrorCode) -> &'static s
         ControlErrorCode::InvalidKey => "invalid-key",
         ControlErrorCode::InvalidPattern => "invalid-pattern",
         ControlErrorCode::InvalidRequest => "invalid-request",
+        ControlErrorCode::InvalidWorkingDirectory => "invalid-working-directory",
+        ControlErrorCode::InvalidSplitDirection => "invalid-split-direction",
+        ControlErrorCode::InvalidPlacement => "invalid-placement",
+        ControlErrorCode::TerminalRouteMismatch => "terminal-route-mismatch",
+        ControlErrorCode::TerminalCreateFailed => "terminal-create-failed",
+        ControlErrorCode::TerminalPlacementFailed => "terminal-placement-failed",
+        ControlErrorCode::RemoteTerminalCreateFailed => "remote-terminal-create-failed",
         ControlErrorCode::CursorExpired => "cursor-expired",
         ControlErrorCode::Timeout => "timeout",
         ControlErrorCode::ResponseTooLarge => "response-too-large",
@@ -1032,6 +1120,74 @@ mod tests {
                 "ready",
                 "--regex",
                 "ready.*"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn terminal_open_and_split_build_creation_requests() {
+        let open = Cli::try_parse_from([
+            "flintctl", "terminal", "open", "--cwd", "/tmp", "--focus", "--json",
+        ])
+        .expect("parse terminal open");
+        let (request, wants_json) = open.into_request().expect("build terminal open request");
+        assert!(wants_json);
+        assert!(matches!(
+            request.command,
+            ControlCommand::TerminalOpen(TerminalOpenRequest { cwd: Some(cwd), focus: true })
+                if cwd.as_path() == std::path::Path::new("/tmp")
+        ));
+
+        let split = Cli::try_parse_from([
+            "flintctl",
+            "terminal",
+            "split",
+            "--terminal",
+            "t1",
+            "--direction",
+            "left",
+        ])
+        .expect("parse terminal split");
+        let (request, _) = split.into_request().expect("build terminal split request");
+        assert!(matches!(
+            request.command,
+            ControlCommand::TerminalSplit(TerminalSplitRequest {
+                current: false,
+                terminal_id: Some(TerminalControlId(ref id)),
+                ref direction,
+                focus: false,
+                ..
+            }) if id == "t1" && direction == "left"
+        ));
+    }
+
+    #[test]
+    fn terminal_split_requires_one_target_and_a_valid_direction() {
+        assert!(
+            Cli::try_parse_from(["flintctl", "terminal", "split", "--direction", "right"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "flintctl",
+                "terminal",
+                "split",
+                "--current",
+                "--terminal",
+                "t1",
+                "--direction",
+                "right"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "flintctl",
+                "terminal",
+                "split",
+                "--current",
+                "--direction",
+                "diagonal"
             ])
             .is_err()
         );

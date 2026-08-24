@@ -3,10 +3,12 @@ use std::path::PathBuf;
 
 use agent_control_protocol::{RemoteTerminalRegistrationId, TerminalControlId, TerminalMetadata};
 use anyhow::{Result, anyhow};
-use gpui::{App, AppContext as _, Entity, EntityId, Global, Subscription, WeakEntity, Window};
+use gpui::{
+    App, AppContext as _, Entity, EntityId, Global, Subscription, WeakEntity, Window, WindowHandle,
+};
 use terminal::Terminal;
 use terminal_view::TerminalView;
-use workspace::Workspace;
+use workspace::{MultiWorkspace, Workspace};
 
 #[derive(Clone)]
 pub(crate) struct TerminalControlRecord {
@@ -18,6 +20,7 @@ pub(crate) struct TerminalControlRecord {
     pub terminal: WeakEntity<Terminal>,
     pub view: WeakEntity<TerminalView>,
     pub workspace: WeakEntity<Workspace>,
+    pub window: Option<WindowHandle<MultiWorkspace>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -69,6 +72,7 @@ impl TerminalControlRegistry {
         terminal: WeakEntity<Terminal>,
         view: WeakEntity<TerminalView>,
         workspace: WeakEntity<Workspace>,
+        window: Option<WindowHandle<MultiWorkspace>>,
     ) -> TerminalControlId {
         self.register_with_caller(
             TerminalControlCaller::Local { root_process_id },
@@ -76,6 +80,7 @@ impl TerminalControlRegistry {
             terminal,
             view,
             workspace,
+            window,
         )
     }
 
@@ -87,12 +92,14 @@ impl TerminalControlRegistry {
         terminal: WeakEntity<Terminal>,
         view: WeakEntity<TerminalView>,
         workspace: WeakEntity<Workspace>,
+        window: Option<WindowHandle<MultiWorkspace>>,
     ) -> TerminalControlId {
         let caller = TerminalControlCaller::Remote {
             remote_connection_id,
             remote_terminal_registration_id: remote_terminal_registration_id.clone(),
         };
-        let id = self.register_with_caller(caller, working_directory, terminal, view, workspace);
+        let id =
+            self.register_with_caller(caller, working_directory, terminal, view, workspace, window);
         let generation = self.next_sequence;
         self.remote_mappings.insert(
             (remote_connection_id, remote_terminal_registration_id),
@@ -111,6 +118,7 @@ impl TerminalControlRegistry {
         terminal: WeakEntity<Terminal>,
         view: WeakEntity<TerminalView>,
         workspace: WeakEntity<Workspace>,
+        window: Option<WindowHandle<MultiWorkspace>>,
     ) -> TerminalControlId {
         let id = self.allocate_id();
         let sequence = self.next_sequence;
@@ -125,6 +133,7 @@ impl TerminalControlRegistry {
                 terminal,
                 view,
                 workspace,
+                window,
             },
         );
         id
@@ -188,7 +197,8 @@ pub(crate) fn init(cx: &mut App) {
     }
     let registry = cx.new(|_| TerminalControlRegistry::default());
     cx.set_global(GlobalTerminalControlRegistry(registry.clone()));
-    cx.observe_new(move |view: &mut TerminalView, _window, cx| {
+    cx.observe_new(move |view: &mut TerminalView, window, cx| {
+        let window = window.and_then(|window| window.window_handle().downcast::<MultiWorkspace>());
         let terminal = view.terminal().clone();
         let terminal_state = terminal.read(cx);
         if terminal_state.is_remote() {
@@ -210,6 +220,7 @@ pub(crate) fn init(cx: &mut App) {
                     terminal.clone(),
                     view,
                     workspace,
+                    window,
                 );
                 if let Some(terminal) = terminal.upgrade() {
                     let subscription = cx.subscribe(&terminal, |_registry, _, event, cx| {
@@ -242,6 +253,7 @@ pub(crate) fn init(cx: &mut App) {
                 terminal.clone(),
                 view,
                 workspace,
+                window,
             );
             if let Some(terminal) = terminal.upgrade() {
                 let subscription = cx.subscribe(&terminal, |_registry, _, event, cx| {
@@ -388,6 +400,7 @@ pub(crate) fn register_remote_terminal(
             terminal.downgrade(),
             view.downgrade(),
             workspace.downgrade(),
+            None,
         );
         let subscription = cx.subscribe(&terminal, |_registry, _, event, cx| {
             if matches!(
@@ -454,12 +467,15 @@ pub(crate) fn observe_output(
 pub(crate) fn metadata(record: &TerminalControlRecord, cx: &App) -> Option<TerminalMetadata> {
     let terminal = record.terminal.upgrade()?;
     let view = record.view.upgrade()?;
+    let terminal_state = terminal.read(cx);
     Some(TerminalMetadata {
         id: record.id.clone(),
-        title: terminal.read(cx).title(false),
-        working_directory: record.working_directory.clone(),
+        title: terminal_state.title(false),
+        working_directory: terminal_state
+            .working_directory()
+            .or_else(|| record.working_directory.clone()),
         is_agent_thread: view.read(cx).is_agent_thread(),
-        has_exited: terminal.read(cx).has_exited(),
+        has_exited: terminal_state.has_exited(),
     })
 }
 

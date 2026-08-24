@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 pub const BUNDLED_SKILL: &str = include_str!("../skills/flintctl/SKILL.md");
-pub const BUNDLED_SKILL_VERSION: u32 = 2;
+pub const BUNDLED_SKILL_VERSION: u32 = 3;
 
 static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
@@ -403,7 +403,7 @@ mod tests {
         install(AgentKind::Codex, &environment, false).expect("install skill");
         let installed_path = environment.codex_skill_path();
         let old_skill = fs::read_to_string(&installed_path).expect("read installed skill");
-        environment.replace_bundled_skill_for_test(old_skill.replace("version: 2", "version: 3"));
+        environment.replace_bundled_skill_for_test(old_skill.replace("version: 3", "version: 4"));
 
         assert_eq!(
             synchronize(&environment).expect("synchronize skills").len(),
@@ -412,7 +412,7 @@ mod tests {
         assert!(
             fs::read_to_string(installed_path)
                 .expect("read updated skill")
-                .contains("version: 3")
+                .contains("version: 4")
         );
         assert_eq!(
             status(AgentKind::Codex, &environment).expect("read status"),
@@ -480,7 +480,7 @@ mod tests {
         )
         .expect("parse ownership record");
 
-        assert_eq!(record["bundled_skill_version"], 2);
+        assert_eq!(record["bundled_skill_version"], 3);
         assert!(record["release_channel"].as_str().is_some());
     }
 

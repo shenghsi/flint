@@ -2341,23 +2341,24 @@ fn start_handoff(
                 doc_path.display(),
             );
 
-            window_handle.update(cx, |_, window, cx| {
+            let launch = window_handle.update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
-                    let seeded = store::launch_seeded_thread(
+                    store::launch_seeded_thread(
                         workspace,
                         &target_kind,
                         &bootstrap_prompt,
                         window,
                         cx,
-                    );
-                    if !seeded {
-                        log::warn!(
-                            "agent_threads: handoff to {} launched without seeding the handoff prompt (unsupported initial-prompt strategy)",
-                            target_kind.id
-                        );
-                    }
-                });
+                    )
+                })
             })?;
+            let launch = launch.await?;
+            if !launch.seeded {
+                log::warn!(
+                    "agent_threads: handoff to {} launched without seeding the handoff prompt (unsupported initial-prompt strategy)",
+                    target_kind.id
+                );
+            }
             Ok(())
         }
         .await;

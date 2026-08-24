@@ -20,7 +20,7 @@ use task::{RevealStrategy, RevealTarget, Shell, SpawnInTerminal};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use util::ResultExt as _;
 use workspace::notifications::NotificationId;
-use workspace::{MultiWorkspace, SaveIntent, Workspace, WorkspaceId};
+use workspace::{MultiWorkspace, Pane, SaveIntent, SplitDirection, Workspace, WorkspaceId};
 
 use crate::{
     AgentKindDefinition, AgentLaunchCommand, AgentThreadSettings, HistoricalThread,
@@ -1454,37 +1454,121 @@ pub fn launch_new_thread(
     }
 }
 
-/// Launches a fresh thread for `kind` seeded with `initial_prompt` as its first
-/// turn, for cross-agent handoff. Only used on the configured (non-managed)
-/// route -- handoff does not support the managed/tunneled route yet, so
-/// callers must not reach this for a project using it.
-///
-/// Returns whether the prompt was actually seeded, so a caller that promised
-/// a seeded launch (e.g. `create-thread`'s command handler) can report a
-/// structured failure instead of silently spawning an unseeded thread when
-/// `kind.initial_prompt_strategy` is `Unsupported` or the prompt is empty.
+pub(crate) struct SeededThreadLaunch {
+    pub terminal_view: Entity<TerminalView>,
+    pub seeded: bool,
+}
+
+#[derive(Clone)]
+pub(crate) enum SeededThreadPlacement {
+    Tab {
+        pane: Entity<Pane>,
+        focus: bool,
+    },
+    Split {
+        pane: Entity<Pane>,
+        direction: SplitDirection,
+        focus: bool,
+    },
+}
+
 pub(crate) fn launch_seeded_thread(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
     initial_prompt: &str,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> bool {
+) -> Task<Result<SeededThreadLaunch>> {
+    launch_seeded_thread_at(workspace, kind, initial_prompt, None, window, cx)
+}
+
+pub(crate) fn launch_seeded_thread_at(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    initial_prompt: &str,
+    placement: Option<SeededThreadPlacement>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<Result<SeededThreadLaunch>> {
     let extra_args = resolve_new_thread_launch_args(cx, kind);
-    let settings = AgentThreadSettings::get_global(cx);
-    let base = settings.command_for_kind(kind.id);
-    let mut launch = build_new_thread_launch(kind, base, &extra_args, None);
-    let seeded = crate::seed_launch_command_with_prompt(&mut launch.command, kind, initial_prompt);
-    spawn_thread(
-        workspace,
-        kind,
-        kind.label.clone(),
-        launch.command,
-        launch.session_id,
-        window,
-        cx,
-    );
-    seeded
+    let route = current_remote_agent_route(workspace, cx);
+    match new_thread_launch_route(route) {
+        NewThreadLaunchRoute::Configured => {
+            let settings = AgentThreadSettings::get_global(cx);
+            let base = settings.command_for_kind(kind.id);
+            let (launch, seeded) =
+                build_seeded_new_thread_launch(kind, base, &extra_args, None, initial_prompt);
+            let task = spawn_thread_view_task_for_route(
+                workspace,
+                kind,
+                kind.label.clone(),
+                launch.command,
+                launch.session_id,
+                route.map(RequiredAgentRoute),
+                None,
+                placement,
+                window,
+                cx,
+            );
+            cx.spawn(async move |_workspace, _cx| {
+                Ok(SeededThreadLaunch {
+                    terminal_view: task.await?,
+                    seeded,
+                })
+            })
+        }
+        NewThreadLaunchRoute::ManagedTunneled => {
+            let preparation = prepare_managed_agent(workspace, kind, window, cx);
+            let kind = kind.clone();
+            let initial_prompt = initial_prompt.to_string();
+            cx.spawn_in(window, async move |workspace, cx| {
+                let prepared = match preparation.await? {
+                    ManagedAgentPreparation::Ready(prepared) => prepared,
+                    ManagedAgentPreparation::Cancelled => {
+                        anyhow::bail!("managed agent preparation was cancelled")
+                    }
+                    ManagedAgentPreparation::AlreadyInProgress => {
+                        anyhow::bail!("managed agent preparation is already in progress")
+                    }
+                };
+                prepared.notification.update(cx, |notification, cx| {
+                    notification.set_state(ManagedAgentProgressState::Launching, cx);
+                });
+                let task = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.dismiss_notification(
+                        &managed_agent_notification_id(kind.id, &prepared.installation.version),
+                        cx,
+                    );
+                    let base = AgentThreadSettings::get_global(cx).command_for_kind(kind.id);
+                    let (launch, seeded) = build_seeded_new_thread_launch(
+                        &kind,
+                        base,
+                        &extra_args,
+                        Some(&prepared.installation.executable_path),
+                        &initial_prompt,
+                    );
+                    let task = spawn_thread_view_task_for_route(
+                        workspace,
+                        &kind,
+                        kind.label.clone(),
+                        launch.command,
+                        launch.session_id,
+                        Some(RequiredAgentRoute(settings::RemoteAgentRoute::Tunneled)),
+                        None,
+                        placement,
+                        window,
+                        cx,
+                    );
+                    (task, seeded)
+                })?;
+                let (task, seeded) = task;
+                Ok(SeededThreadLaunch {
+                    terminal_view: task.await?,
+                    seeded,
+                })
+            })
+        }
+    }
 }
 
 fn launch_configured_thread(
@@ -1842,6 +1926,18 @@ fn build_new_thread_launch(
         command,
         session_id,
     }
+}
+
+fn build_seeded_new_thread_launch(
+    kind: &AgentKindDefinition,
+    base: &AgentLaunchCommand,
+    extra_args: &[String],
+    managed_executable: Option<&std::path::Path>,
+    initial_prompt: &str,
+) -> (NewThreadLaunch, bool) {
+    let mut launch = build_new_thread_launch(kind, base, extra_args, managed_executable);
+    let seeded = crate::seed_launch_command_with_prompt(&mut launch.command, kind, initial_prompt);
+    (launch, seeded)
 }
 
 fn build_resume_command(
@@ -2297,13 +2393,40 @@ fn spawn_thread_task_for_route(
     workspace: &mut Workspace,
     kind: &AgentKindDefinition,
     summary: SharedString,
-    mut command: AgentLaunchCommand,
+    command: AgentLaunchCommand,
     resumed_session_id: Option<SharedString>,
     required_route: Option<RequiredAgentRoute>,
     tied_worktree: Option<TiedWorktree>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<Result<()>> {
+    let task = spawn_thread_view_task_for_route(
+        workspace,
+        kind,
+        summary,
+        command,
+        resumed_session_id,
+        required_route,
+        tied_worktree,
+        None,
+        window,
+        cx,
+    );
+    cx.spawn(async move |_workspace, _cx| task.await.map(drop))
+}
+
+fn spawn_thread_view_task_for_route(
+    workspace: &mut Workspace,
+    kind: &AgentKindDefinition,
+    summary: SharedString,
+    mut command: AgentLaunchCommand,
+    resumed_session_id: Option<SharedString>,
+    required_route: Option<RequiredAgentRoute>,
+    tied_worktree: Option<TiedWorktree>,
+    placement: Option<SeededThreadPlacement>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<Result<Entity<TerminalView>>> {
     let remote_client = workspace.project().read(cx).remote_client();
     let connection_options = remote_client
         .as_ref()
@@ -2336,6 +2459,7 @@ fn spawn_thread_task_for_route(
             remote_connection,
             None,
             tied_worktree,
+            placement,
             window,
             cx,
         );
@@ -2385,6 +2509,7 @@ fn spawn_thread_task_for_route(
                 Some(process_connection),
                 Some(egress),
                 tied_worktree,
+                placement,
                 window,
                 cx,
             ))
@@ -2775,9 +2900,10 @@ fn spawn_thread_task_inner(
     remote_connection: Option<Arc<dyn remote::RemoteConnection>>,
     egress: Option<AgentEgressLease>,
     tied_worktree: Option<TiedWorktree>,
+    placement: Option<SeededThreadPlacement>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> Task<Result<()>> {
+) -> Task<Result<Entity<TerminalView>>> {
     let Some(cwd) = command
         .cwd
         .clone()
@@ -2852,10 +2978,41 @@ fn spawn_thread_task_inner(
     let workspace_entity = cx.entity();
     let window_handle = window.window_handle().downcast::<MultiWorkspace>();
     let launched_at = SystemTime::now();
-    let terminal_view_task =
-        TerminalPanel::add_center_terminal_view(workspace, window, cx, |project, cx| {
+    let terminal_view_task = match placement {
+        None => TerminalPanel::add_center_terminal_view(workspace, window, cx, |project, cx| {
             project.create_terminal_task(task, cx)
-        });
+        }),
+        Some(SeededThreadPlacement::Tab { pane, focus }) => {
+            TerminalPanel::add_terminal_view_to_pane(
+                workspace,
+                pane,
+                focus,
+                focus,
+                window,
+                cx,
+                |project, cx| project.create_terminal_task(task, cx),
+            )
+        }
+        Some(SeededThreadPlacement::Split {
+            pane,
+            direction,
+            focus,
+        }) => {
+            let Some(panel) = workspace.panel::<TerminalPanel>(cx) else {
+                return Task::ready(Err(anyhow!("terminal panel is unavailable")));
+            };
+            panel.update(cx, |panel, cx| {
+                panel.create_adjacent_terminal_view(
+                    pane,
+                    direction,
+                    focus,
+                    window,
+                    cx,
+                    |project, cx| project.create_terminal_task(task, cx),
+                )
+            })
+        }
+    };
     cx.spawn_in(window, async move |_workspace, cx| {
         let (_, terminal_view) = terminal_view_task.await?;
         let terminal_view = terminal_view
@@ -2875,14 +3032,14 @@ fn spawn_thread_task_inner(
                 resumed_session_id,
                 launched_at,
                 workspace_entity,
-                terminal_view,
+                terminal_view.clone(),
                 window_handle,
                 remote_process,
                 egress,
                 cx,
             );
         });
-        anyhow::Ok(())
+        anyhow::Ok(terminal_view)
     })
 }
 
@@ -3572,6 +3729,38 @@ mod tests {
                 Some("source ~/.profile")
             );
         }
+    }
+
+    #[test]
+    fn managed_seeded_launch_uses_the_pinned_executable_and_keeps_the_prompt() {
+        let kind = agent_kind_registry()
+            .into_iter()
+            .find(|kind| kind.id == "codex")
+            .expect("Codex is registered");
+        let base = AgentLaunchCommand {
+            command: Some("ambient-codex".to_string()),
+            args: vec!["base".to_string()],
+            ..AgentLaunchCommand::default()
+        };
+        let managed_executable = PathBuf::from("/managed/codex");
+
+        let (launch, seeded) = build_seeded_new_thread_launch(
+            &kind,
+            &base,
+            &[],
+            Some(&managed_executable),
+            "implement the delegated task",
+        );
+
+        assert!(seeded);
+        assert_eq!(
+            launch.command.command.as_deref(),
+            managed_executable.to_str()
+        );
+        assert_eq!(
+            launch.command.args.last().map(String::as_str),
+            Some("implement the delegated task")
+        );
     }
 
     #[test]
