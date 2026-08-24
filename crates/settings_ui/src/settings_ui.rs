@@ -1665,7 +1665,7 @@ fn settings_item_message_id(source: &str) -> Option<&'static str> {
         "Padding between the end of the source line and the start of the inline blame in columns." => {
             "settings-padding-between-the-end-of-the-source-line-and"
         }
-        "Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files." => {
+        "Preview, install, update, or uninstall the optional Flint control skill for Codex, Pi, OpenCode, or Claude Code. Flint does not add this skill to global instruction files." => {
             "settings-preview-install-update-or-uninstall-flint-control-skill"
         }
         "Should the name or path be displayed first in the git view." => {

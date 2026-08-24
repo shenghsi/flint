@@ -1,12 +1,12 @@
 use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, PromptButton, PromptHandle, PromptLevel,
-    PromptResponse, RenderablePromptHandle, SharedString, TextStyleRefinement, Window, div,
-    prelude::*,
+    PromptResponse, RenderablePromptHandle, ScrollHandle, SharedString, TextStyleRefinement,
+    Window, div, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
 use theme_settings::ThemeSettings;
-use ui::{FluentBuilder, TintColor, prelude::*};
+use ui::{FluentBuilder, TintColor, WithScrollbar, prelude::*};
 use workspace::WorkspaceSettings;
 
 pub fn init(cx: &mut App) {
@@ -43,6 +43,7 @@ fn flint_prompt_renderer(
             actions: actions.to_vec(),
             focus: cx.focus_handle(),
             active_action_id: 0,
+            detail_scroll_handle: ScrollHandle::new(),
             detail: detail
                 .filter(|text| !text.is_empty())
                 .map(|text| cx.new(|cx| Markdown::new(SharedString::new(text), None, None, cx))),
@@ -59,6 +60,7 @@ pub struct FlintPromptRenderer {
     focus: FocusHandle,
     active_action_id: usize,
     detail: Option<Entity<Markdown>>,
+    detail_scroll_handle: ScrollHandle,
 }
 
 impl FlintPromptRenderer {
@@ -122,6 +124,7 @@ impl Render for FlintPromptRenderer {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .w_80()
+            .max_h(vh(0.8, window))
             .p_4()
             .gap_4()
             .elevation_3(cx)
@@ -132,10 +135,23 @@ impl Render for FlintPromptRenderer {
                 markdown_style(true, window, cx),
             )))
             .children(self.detail.clone().map(|detail| {
-                div().w_full().text_xs().child(MarkdownElement::new(
-                    detail,
-                    markdown_style(false, window, cx),
-                ))
+                div()
+                    .w_full()
+                    .flex_1()
+                    .overflow_hidden()
+                    .vertical_scrollbar_for(&self.detail_scroll_handle, window, cx)
+                    .child(
+                        div()
+                            .id("prompt-detail")
+                            .max_h(vh(0.55, window))
+                            .overflow_y_scroll()
+                            .track_scroll(&self.detail_scroll_handle)
+                            .text_xs()
+                            .child(MarkdownElement::new(
+                                detail,
+                                markdown_style(false, window, cx),
+                            )),
+                    )
             }))
             .child(
                 v_flex()

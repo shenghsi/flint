@@ -5184,7 +5184,7 @@ fn panels_page() -> SettingsPage {
             SettingsPageItem::ActionLink(ActionLink {
                 title: "Flint Control Skill".into(),
                 description: Some(
-                    "Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files."
+                    "Preview, install, update, or uninstall the optional Flint control skill for Codex, Pi, OpenCode, or Claude Code. Flint does not add this skill to global instruction files."
                         .into(),
                 ),
                 button_text: "Manage Skill".into(),
@@ -10506,9 +10506,9 @@ mod tests {
             assert_ne!(
                 crate::settings_source_text(
                     cx,
-                    "Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files."
+                    "Preview, install, update, or uninstall the optional Flint control skill for Codex, Pi, OpenCode, or Claude Code. Flint does not add this skill to global instruction files."
                 ),
-                "Preview, install, update, or uninstall the optional Flint control skill for Codex or Claude Code. Flint does not add this skill to global instruction files."
+                "Preview, install, update, or uninstall the optional Flint control skill for Codex, Pi, OpenCode, or Claude Code. Flint does not add this skill to global instruction files."
             );
         });
     }

@@ -184,13 +184,17 @@ enum WorktreeArg {
 enum SkillAgentArg {
     Codex,
     Claude,
+    Pi,
+    Opencode,
 }
 
 impl From<SkillAgentArg> for agent_control_skill::AgentKind {
     fn from(value: SkillAgentArg) -> Self {
         match value {
-            SkillAgentArg::Codex => Self::Codex,
-            SkillAgentArg::Claude => Self::Claude,
+            SkillAgentArg::Codex
+            | SkillAgentArg::Claude
+            | SkillAgentArg::Pi
+            | SkillAgentArg::Opencode => Self::Codex,
         }
     }
 }

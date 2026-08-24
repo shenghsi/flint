@@ -104,17 +104,14 @@ pub(crate) fn show_install_reminder(
 }
 
 fn should_offer_install_reminder(environment: &SkillEnvironment) -> bool {
-    [
-        agent_control_skill::AgentKind::Codex,
-        agent_control_skill::AgentKind::Claude,
-    ]
-    .into_iter()
-    .any(|agent| {
-        matches!(
-            agent_control_skill::status(agent, environment),
-            Ok(SkillState::NotInstalled)
-        )
-    })
+    agent_control_skill::AgentKind::ALL
+        .into_iter()
+        .any(|agent| {
+            matches!(
+                agent_control_skill::status(agent, environment),
+                Ok(SkillState::NotInstalled)
+            )
+        })
 }
 
 enum SkillSyncFailure {}
@@ -157,11 +154,7 @@ mod tests {
         assert!(should_offer_install_reminder(&environment));
 
         agent_control_skill::install(agent_control_skill::AgentKind::Codex, &environment, false)
-            .expect("install Codex skill");
-        assert!(should_offer_install_reminder(&environment));
-
-        agent_control_skill::install(agent_control_skill::AgentKind::Claude, &environment, false)
-            .expect("install Claude skill");
+            .expect("install shared skill");
         assert!(!should_offer_install_reminder(&environment));
     }
 }
