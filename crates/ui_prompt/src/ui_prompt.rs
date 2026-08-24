@@ -27,7 +27,7 @@ fn process_settings(cx: &mut App) {
 
 /// Use this function in conjunction with [App::set_prompt_builder] to force
 /// GPUI to use the internal prompt system.
-fn flint_prompt_renderer(
+pub fn flint_prompt_renderer(
     level: PromptLevel,
     message: &str,
     detail: Option<&str>,

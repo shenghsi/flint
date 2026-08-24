@@ -741,11 +741,12 @@ fn manage_agent_control_skill(
                 }
             };
             let confirmation = cx.update(|window, cx| {
-                window.prompt(
+                window.prompt_with_renderer(
                     PromptLevel::Info,
                     &localization::text(cx, "agent-threads-control-skills-all-title"),
                     Some(&detail),
                     &buttons,
+                    ui_prompt::flint_prompt_renderer,
                     cx,
                 )
             })?;
@@ -817,11 +818,12 @@ fn manage_agent_control_skill(
         let confirmation = cx.update(|window, cx| {
             let mut args = localization::FluentArgs::new();
             args.set("agent", agent.label());
-            window.prompt(
+            window.prompt_with_renderer(
                 PromptLevel::Info,
                 &localization::text_with_args(cx, "agent-threads-control-skill-title", &args),
                 Some(&detail),
                 &buttons,
+                ui_prompt::flint_prompt_renderer,
                 cx,
             )
         })?;
