@@ -54,15 +54,23 @@ On every application launch, Flint SHALL compare each recorded Flint-owned skill
 - **THEN** Flint makes no file change
 
 ### Requirement: The skill detects Flint Agent Threads without affecting other sessions
-Flint SHALL set `FLINT_AGENT_THREAD=1` in local Agent Threads. The skill metadata SHALL trigger for worktree, Agent Thread, and terminal-control tasks. Its body SHALL use the release-channel marker to find `flintctl` only when `FLINT_AGENT_THREAD=1`; outside a Flint Agent Thread it SHALL continue the task without Flint control commands.
+The skill metadata SHALL trigger for worktree, Agent Thread, and terminal-control tasks. Its body SHALL use the release-channel marker and matching control endpoint as a cheap availability check, then use `flintctl terminal current --json` as the authoritative caller probe. It SHALL NOT use a terminal environment variable as caller identity.
 
 #### Scenario: Agent creates a worktree in a Flint Agent Thread
-- **WHEN** an installed skill loads for a worktree task and `FLINT_AGENT_THREAD=1`
+- **WHEN** an installed skill loads for a worktree task and the caller probe reports `is_agent_thread: true`
 - **THEN** the agent follows the skill's marker discovery and `flintctl thread retie` instructions
 
-#### Scenario: Skill loads outside Flint
-- **WHEN** the skill loads and `FLINT_AGENT_THREAD` is not `1`
-- **THEN** it does not invoke `flintctl` and continues the user's task normally
+#### Scenario: Skill loads in an ordinary Flint terminal
+- **WHEN** the caller probe succeeds and reports `is_agent_thread: false`
+- **THEN** the skill permits terminal commands and does not permit Agent Thread commands
+
+#### Scenario: Control endpoint is absent
+- **WHEN** the release marker or matching control endpoint does not exist
+- **THEN** the skill does not invoke `flintctl` and continues the user's task normally
+
+#### Scenario: Caller probe fails
+- **WHEN** the connection fails, the protocol is incompatible, or Flint reports `caller-not-recognized`
+- **THEN** the skill continues the user's task without Flint control commands
 
 #### Scenario: Current marker refers to an older installation
 - **WHEN** Flint launches and the release-channel-scoped marker has an older executable path or content

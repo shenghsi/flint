@@ -2,7 +2,18 @@
 
 ## Status
 
-Design proposal. No implementation work has started.
+Change A is implemented. Change B did not pass its required step 0 platform
+check and is not implemented.
+
+On 2026-08-24, a live macOS test spawned a same-user child with a unique
+environment variable and refreshed it with the pinned `sysinfo` 0.37.2
+`ProcessRefreshKind::with_environ(UpdateKind::Always)`. `sysinfo` found the
+child and its executable name but returned no matching environment entry. The
+active Codex `CODEX_THREAD_ID` did match both `session_meta.payload.id` and
+`session_meta.payload.session_id` in its rollout file, so the identifier
+assumption passed and the macOS environment-access assumption failed. Per step
+0, do not implement Change B with peer-process environment reads. A future
+design needs another connection-bound session signal before Change B can resume.
 
 Two limits apply. Read them before the rest of this document:
 

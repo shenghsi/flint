@@ -173,7 +173,7 @@ Alternative: Require `flintctl` in `PATH`. Flint already has marker-based discov
 
 ### Install a dedicated control skill with consent
 
-Bundle one concise, release-matched `flintctl` skill. Its metadata triggers on worktree creation or switching, Agent Thread coordination, and Flint terminal control. Its body first checks `FLINT_AGENT_THREAD=1`. Outside a Flint Agent Thread it returns control to the normal task without invoking `flintctl`. Inside a local Agent Thread it reads the existing release-channel marker and uses its executable value.
+Bundle one concise, release-matched `flintctl` skill. Its metadata triggers on worktree creation or switching, Agent Thread coordination, and Flint terminal control. Its body first checks for the release-channel marker and matching control endpoint, then runs `terminal current --json` as the authoritative caller probe. A successful ordinary-terminal result permits terminal commands. Only an `is_agent_thread: true` result permits thread commands. A missing endpoint, connection failure, incompatible protocol, or unrecognized caller returns control to the normal task without Flint control.
 
 Expose the bundled text through `flintctl skill print` without connecting to Flint. Add install, status, update, and uninstall operations for agent kinds whose skill directory convention is verified. The Settings Editor and Agent Threads UI show the destination and full text before initial installation. Initial installation always requires a user action.
 
@@ -189,7 +189,7 @@ Alternative: Update every file at a known skill path. Rejected because Flint can
 
 ### Keep worktree retie explicit
 
-Set `FLINT_AGENT_THREAD=1` only for a local Agent Thread. Do not set it for Direct or Tunneled remote launches because their control executable and routing boundaries are different.
+Do not use a terminal environment variable as caller identity. The authoritative probe uses the operating-system peer identity and the control server's live terminal registrations. Direct and Tunneled remote launches keep their existing executable and routing boundaries.
 
 Do not automatically retie a thread whenever its terminal working directory changes. Agents and users can enter another worktree temporarily for inspection, and the terminal working directory does not prove a durable ownership decision. The skill tells the agent to run `flintctl thread retie` after it creates the worktree that the current thread will own. This preserves explicit intent while avoiding always-on global instructions.
 
