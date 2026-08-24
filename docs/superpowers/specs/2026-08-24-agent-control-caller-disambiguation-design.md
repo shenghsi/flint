@@ -223,14 +223,27 @@ remote `flintctl` bridge gets the peer PID, and `flint-remote-server` reads
 the remote process ancestry, cwd, process names, and -- per "Decided: the
 server reads the peer's environment" -- the remote peer process's own
 configured session environment variable. Local Flint must send the live
-Agent Thread kind and attached session ID as connection-bound metadata for
-the matching remote PTY registration. The remote server must not scan local
-paths or infer this state from a client claim.
+Agent Thread kind, the kind's `caller_session_env_var`, the attached session
+ID, and the tied worktree root as connection-bound metadata for the matching
+remote PTY registration. The remote server needs the environment-variable
+name because `AgentKindDefinition` is local application state, not remote
+server state. It needs the tied worktree root because the terminal working
+directory captured when the remote PTY registers does not follow a later
+retie and is not enough to match a caller working in another linked worktree
+of the same repository.
 
-When local Flint attaches or changes a session ID, it updates the live remote
-registration through the authenticated project connection. The remote server
-discards this metadata when the PTY, connection, or registration generation
-ends. Until the update arrives, ambiguous same-kind remote callers remain
+All paths in this metadata are remote-host paths. The remote server compares
+the peer cwd with the tied worktree roots and, when needed, computes git common
+directories from those remote paths. It must not scan local paths or infer
+identity metadata from a client claim.
+
+Local Flint sends the complete identity metadata when it binds the remote PTY
+registration. It sends an update when a retie changes the tied worktree root
+or when session discovery attaches or changes the session ID. Each update is
+bound to the authenticated project connection and the current registration
+generation. The remote server rejects a stale generation and discards the
+metadata when the PTY, connection, or registration generation ends. Until the
+required metadata arrives, ambiguous same-kind remote callers remain
 unresolved. Direct and Tunneled routes use the same identity exchange; the
 exchange does not change how either agent executable starts or reaches its
 provider.
@@ -381,18 +394,20 @@ The current `terminal` command group can inspect and operate only terminals
 that already exist. Add these commands:
 
 ```text
-flintctl terminal open [--cwd <path>] [--focus]
+flintctl terminal open [--cwd <path>] [--focus] [--json]
 flintctl terminal split (--current|--terminal <terminal-id>) \
-  --direction <left|right|up|down> [--cwd <path>] [--focus]
+  --direction <left|right|up|down> [--cwd <path>] [--focus] [--json]
 
-flintctl thread create --worktree <current|new> --agent <agent> \
-  --prompt <prompt> [--split <left|right|up|down>] [--focus]
+flintctl thread create --worktree <current|new> [--name <name>] \
+  --agent <agent> --prompt <prompt> \
+  [--split <left|right|up|down>] [--focus] [--json]
 ```
 
 `thread create` already exists. This change keeps it in the `thread` group,
-adds optional placement for a current-worktree thread, returns the created
-terminal identity, and teaches the installed skill when to use it. Do not add
-a second terminal command that starts an agent.
+preserves its existing `--name` and `--json` options, adds optional placement
+for a current-worktree thread, returns the created terminal identity, and
+teaches the installed skill when to use it. Do not add a second terminal
+command that starts an agent.
 
 ### Reuse Flint's own terminal creation path
 
@@ -510,10 +525,17 @@ through `Pane::split` on that pane, as "Reuse Flint's own terminal creation
 path" describes. It must work for a terminal in the terminal panel and for a
 terminal in the workspace center.
 
-The registry must therefore also retain the terminal's current owning `Pane`
-and placement surface. Update this information when the terminal moves. Pane
-identity remains an internal placement detail; it does not become a public
-control ID.
+Do not copy pane ownership into `TerminalControlRegistry`. `Workspace` already
+owns the current item-to-pane map: `ItemHandle::added_to_pane` updates
+`Workspace::panes_by_item` when an item is added or moved, including items in
+the terminal panel. At dispatch time, resolve the selected view through
+`Workspace::pane_for_item_id`. Read `Pane::in_center_group` to select the
+workspace-center or terminal-panel placement surface. Add a shared helper that
+returns the exact pane and its owning `PaneGroup` without reading active-pane
+or focus state. A missing pane or group is `invalid-placement`.
+
+Pane identity remains an internal placement detail; it does not become a
+public control ID.
 
 ### Spatial addressing
 
@@ -566,13 +588,15 @@ Four rules keep the answer honest:
 4. **Stay inside the caller's workspace.** Spatial data obeys the same
    workspace boundary as every other terminal command.
 
-This needs no new state. The registry already has to retain the owning pane and
-the placement surface for `terminal split`.
+This needs no new registry state. For each response, resolve the current pane
+from `Workspace::pane_for_item_id`, read `Pane::in_center_group`, and use the
+same exact-pane helper as `terminal split` to get the owning `PaneGroup`.
 
 The skill should prefer an explicit `--terminal <id>` from a previous
-`terminal list` over a direction word. It uses `neighbors` to resolve the
-user's phrase into an ID first, then addresses that ID. It must tell the user
-when position is unknown instead of choosing a terminal.
+`terminal list --all` over a direction word. It uses the caller entry's
+`neighbors` to resolve the user's phrase into an ID first, then addresses that
+ID. It must tell the user when position is unknown instead of choosing a
+terminal.
 
 ### `thread create`
 
@@ -657,6 +681,14 @@ terminal-create-failed
 terminal-placement-failed
 remote-terminal-create-failed
 ```
+
+Represent `direction` and the optional `thread create` split value as raw
+protocol strings. Parse them in the control handler after request decoding.
+Only `left`, `right`, `up`, and `down` are valid; any other decoded string
+returns `invalid-split-direction`. The `flintctl` CLI still uses a value enum
+and rejects an invalid command-line value before it sends a request. A raw or
+newer protocol client gets the typed server error. Malformed JSON remains
+`invalid-request` because the server cannot decode a command from it.
 
 `flintctl status --json` reports `terminal-open`, `terminal-split`,
 `terminal-placement`, and the current `thread-create` capability separately. A
@@ -760,12 +792,14 @@ new terminal. It must not create a worktree or Agent Thread only because a
 plain terminal is sufficient.
 
 When the user names a terminal by position, the skill resolves the phrase
-through `neighbors` in a `terminal list` result and then addresses the
-resulting `TerminalControlId`. It must not send a direction word as an
-address. If the blocks are absent, position is unknown: tell the user and ask
-which terminal, rather than choosing one. Use Flint's meaning of "pane" in
-anything the user reads, because a tmux or Herdr meaning describes a different
-layout.
+through `neighbors` in a `terminal list --all` result and then addresses the
+resulting `TerminalControlId`. `--all` is required because the default list
+excludes the caller, and the caller's own entry supplies the neighbor relation
+for phrases such as "the terminal on the right". It must not send a direction
+word as an address. If the blocks are absent, position is unknown: tell the
+user and ask which terminal, rather than choosing one. Use Flint's meaning of
+"pane" in anything the user reads, because a tmux or Herdr meaning describes a
+different layout.
 
 ## Non-goals
 
@@ -844,12 +878,15 @@ layout.
   neighbor returned across the panel and workspace-center surfaces; no
   neighbor returned outside the caller's workspace; a direction resolving to
   the neighboring pane's active tab while `placement` still lists that pane's
-  other tabs; and the `placement` grouping key staying stable within one
-  response and absent from every other result.
+  other tabs; the caller entry in `terminal list --all` resolving a position
+  while the default caller-excluding list cannot; and the `placement` grouping
+  key staying stable within one response and absent from every other result.
 - Add protocol and CLI tests for `terminal open`, `terminal split`, the four
   split directions, mutually exclusive targets, cwd validation, focus flags,
-  typed errors, capability reporting, and the expanded `thread create`
-  result.
+  preserved `--name` and `--json` options, typed errors, capability reporting,
+  and the expanded `thread create` result. Send an invalid direction through
+  a raw protocol request and verify `invalid-split-direction`; verify that the
+  CLI rejects the same value before transport.
 - Add GPUI tests that create and register a terminal in the caller's pane,
   split beside the exact selected terminal in both the terminal panel and
   workspace center, keep focus by default, focus only when requested, and
@@ -888,9 +925,11 @@ layout.
   placement or registration failure, terminates that remote PTY and removes
   its registration -- the failure direction opposite the existing
   remote-creation-failure cleanup test.
-- Add remote bridge tests for connection-bound kind and session metadata,
-  update after session discovery, same-kind disambiguation, stale-generation
-  rejection, disconnect cleanup, and missing-session fail-closed behavior.
+- Add remote bridge tests for connection-bound kind, session-environment
+  variable name, session ID, and tied-worktree metadata; update after session
+  discovery and retie; linked-worktree repository matching; same-kind
+  disambiguation; stale-generation rejection; disconnect cleanup; and
+  missing-metadata fail-closed behavior.
 - Add remote session-discovery tests for fresh Codex threads, reconnect,
   history lookup failure, already-bound IDs, and ambiguous concurrent
   sessions.
@@ -927,9 +966,11 @@ layout.
    `openspec/changes/add-flintctl-terminal-control/specs/terminal-agent-threads/spec.md`
    and its related tasks and design text to replace the environment gate with
    the control-server probe.
-8. Extend the terminal registry with exact pane and placement-surface state,
-   and enforce that each terminal PTY host matches its owning workspace. Then
-   make the four changes "Reuse Flint's own terminal creation path" lists:
+8. Keep `Workspace::panes_by_item` as the pane-ownership authority. Add a
+   shared helper that resolves an item to its current exact pane, placement
+   surface, and owning `PaneGroup`, and enforce that each terminal PTY host
+   matches its owning workspace. Then make the four changes "Reuse Flint's
+   own terminal creation path" lists:
    extract `TerminalPanel`'s split-creation body into an awaitable
    `create_adjacent_terminal` method that both the UI event handler and
    control code call; make its focus step conditional; replace
@@ -939,8 +980,9 @@ layout.
    explicit source terminal or working directory for
    `new_pane_with_active_terminal`. Do not add a second creation path.
 9. Extend conservative session discovery to remote projects and synchronize
-   attached kind and session metadata to the connection-bound remote PTY
-   registration.
+   the kind, `caller_session_env_var`, attached session ID, and tied worktree
+   root to the connection-bound remote PTY registration. Update the
+   registration after session discovery and retie, with generation checks.
 10. Add `terminal open` and `terminal split` to the protocol, CLI, local and
    remote dispatchers, capability result, and installed skills.
 11. Give `launch_seeded_thread` the same route dispatch `launch_new_thread`
@@ -951,8 +993,9 @@ layout.
     creation non-activating by default.
 12. Add the `neighbors` and `placement` blocks to the `terminal list` result
     through `PaneGroup::find_pane_in_direction`, report the
-    `terminal-placement` capability, and teach the installed skills to resolve
-    a position word into an ID before they address a terminal.
+    `terminal-placement` capability, and teach the installed skills to use
+    `terminal list --all` to resolve a position word into an ID before they
+    address a terminal.
 13. Reconcile
     `docs/superpowers/specs/2026-08-21-flintctl-terminal-control-design.md`,
     `docs/superpowers/specs/2026-08-22-flintctl-remote-dev-design.md`, and the
