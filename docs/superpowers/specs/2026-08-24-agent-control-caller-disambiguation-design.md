@@ -362,6 +362,7 @@ Add these typed errors:
 invalid-working-directory
 invalid-split-direction
 invalid-placement
+terminal-route-mismatch
 terminal-create-failed
 terminal-placement-failed
 remote-terminal-create-failed
@@ -373,30 +374,43 @@ from the protocol minor version alone.
 
 ### Access and remote boundaries
 
-Any caller that resolves to a live local controllable terminal can use
+Any caller that resolves to a live controllable terminal can use
 `terminal open` and `terminal split`. Only a caller that also resolves to a
 registered Agent Thread can use `thread create`. Every explicit target must
 belong to the caller's workspace.
 
 Local and remote callers get the same command forms, defaults, response
-shapes, focus behavior, and workspace checks. The new PTY follows the selected
-terminal's route:
+shapes, focus behavior, and workspace checks. The owning workspace controls
+the new PTY host:
 
-- `terminal open` follows the caller terminal's local or remote route.
-- `terminal split` follows the selected terminal's local or remote route.
+- A local workspace creates only local terminals.
+- A remote workspace creates only remote terminals through its authenticated
+  remote connection.
+- `terminal open` uses the caller terminal only to select the workspace and
+  exact pane.
+- `terminal split` uses the selected terminal only to select the workspace,
+  exact pane, and split position.
 - A remote `--cwd` is a path on the remote host and uses that host's path
   style and directory validation.
-- Local Flint owns pane placement and terminal metadata for both routes. The
-  remote server owns only the remote PTY process and its registration.
+- Local Flint owns pane placement and terminal metadata for both workspace
+  routes. The remote server owns only the remote PTY process and its
+  registration.
+
+There is no per-terminal local or remote route choice. A terminal registry
+entry must match its owning workspace route. Registration and creation return
+`terminal-route-mismatch` if the PTY host does not match the workspace. Flint
+does not keep a compatibility path for a local terminal in a remote workspace.
 
 The remote bridge forwards the same control request to local Flint. Local
 Flint creates the terminal through the existing project terminal route and
 waits for the new remote PTY registration before it returns success. A remote
 creation failure returns a typed error and cleans up local partial placement.
 
-`thread create` keeps its existing local, Direct, and Tunneled route behavior.
-Placement options must not change executable, credential, or traffic routing.
-Direct uses the configured ambient remote executable. Tunneled uses the pinned
+`thread create` uses the destination workspace route for its terminal PTY.
+For `--worktree current`, this is the caller's workspace. A worktree created
+from a remote workspace also gets a remote workspace and remote PTY. Placement
+options must not change executable, credential, or traffic routing. Direct
+uses the configured ambient remote executable. Tunneled uses the pinned
 Flint-managed remote executable and its existing local traffic tunnel.
 
 ### Skill behavior
@@ -485,7 +499,9 @@ plain terminal is sufficient.
 - Test local, Direct remote, and Tunneled remote boundaries for all three
   creation operations. For Direct and Tunneled, verify matching command forms,
   cwd behavior, placement, focus, returned identity, cleanup, and exact
-  executable and traffic boundaries.
+  executable and traffic boundaries. Verify that a remote workspace rejects a
+  local terminal registration and that terminal and Agent Thread creation
+  never fall back to a local PTY.
 - Add remote bridge tests for connection-bound kind and session metadata,
   update after session discovery, same-kind disambiguation, stale-generation
   rejection, disconnect cleanup, and missing-session fail-closed behavior.
@@ -517,7 +533,8 @@ plain terminal is sufficient.
    and its related tasks and design text to replace the environment gate with
    the control-server probe.
 8. Extend the terminal registry with exact pane and placement-surface state,
-   and add shared no-focus terminal placement helpers.
+   enforce that each terminal PTY host matches its owning workspace, and add
+   shared no-focus terminal placement helpers.
 9. Extend conservative session discovery to remote projects and synchronize
    attached kind and session metadata to the connection-bound remote PTY
    registration.

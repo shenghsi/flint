@@ -11,6 +11,8 @@ Let a process in a Flint remote-development terminal use the same `flintctl`
 commands as a process in a local terminal. Keep terminal state and control in
 the local Flint application. Use the existing authenticated connection to
 `flint-remote-server` as the bridge. Do not open a public network port.
+A remote workspace contains only remote terminals. Terminal and Agent Thread
+creation must not fall back to a local PTY.
 
 The remote command surface is the current local command surface:
 
@@ -313,17 +315,22 @@ Remote development uses the same creation rules as local development:
 - `terminal split` creates a new pane beside the exact selected terminal in
   the required direction.
 - Both commands keep focus on the caller unless `--focus` is present.
-- Both commands return the created local terminal metadata only after remote
+- Both commands return the created terminal metadata only after remote
   PTY registration completes.
 
-The created terminal follows the source terminal route. `terminal open`
-follows the caller. `terminal split` follows the selected terminal. This rule
-also handles a remote workspace that contains an explicit local terminal: a
-split beside that local terminal creates another local terminal, while a split
-beside a remote terminal creates another remote terminal.
+The owning workspace controls the PTY host. A remote workspace contains only
+remote terminals. `terminal open` uses the caller to select the workspace and
+exact pane. `terminal split` uses the selected terminal to select the
+workspace, exact pane, and split position. Neither command can select a local
+PTY in a remote workspace.
 
-For a remote route, local Flint performs pane placement and asks the existing
-project terminal service to create the PTY through `flint-remote-server`. The
+There is no per-terminal route choice and no compatibility path for a local
+terminal in a remote workspace. Terminal registration and creation return
+`terminal-route-mismatch` if the PTY host does not match the owning workspace.
+
+For a remote workspace, local Flint performs pane placement and asks the
+existing project terminal service to create the PTY through
+`flint-remote-server`. The
 server validates the remote working directory using the remote path style and
 filesystem. It creates the PTY, assigns a new remote registration ID, and
 returns it through the existing terminal creation flow. Local Flint waits for
@@ -335,9 +342,11 @@ message. Do not fall back to a local PTY because that changes the requested
 execution host.
 
 `thread create` keeps the same placement behavior on local, Direct, and
-Tunneled routes. For `--worktree current`, `--split` places the new Agent
-Thread beside the caller. For `--worktree new`, `--split` is invalid because
-the destination is another workspace. `--focus` is explicit in both cases.
+Tunneled routes. Its terminal PTY follows the destination workspace. For
+`--worktree current`, `--split` places the new Agent Thread beside the caller.
+For `--worktree new`, a remote caller creates another remote workspace and a
+remote Agent Thread terminal; `--split` is invalid because the destination is
+another workspace. `--focus` is explicit in both cases.
 
 Direct uses only the configured ambient remote agent executable. Tunneled uses
 only the pinned Flint-managed executable and its existing local traffic
@@ -349,11 +358,12 @@ Remote commands use local semantics:
 
 - `status --json` reports the local Flint version, protocol version, release
   channel, and supported capabilities.
-- `terminal current` returns the caller's local terminal metadata.
+- `terminal current` returns the caller's Flint terminal metadata.
 - `terminal list` excludes the caller by default and includes it with `--all`.
-- `terminal open` creates another terminal in the caller's pane and route.
+- `terminal open` creates another terminal in the caller's pane and workspace
+  route.
 - `terminal split` creates another terminal beside the selected terminal and
-  follows that terminal's route.
+  uses the selected terminal's workspace route.
 - `terminal read` reads the local screen and scrollback, returns an opaque
   cursor, and preserves `--since` and `cursor-expired` behavior.
 - `send-text`, `send-key`, and `run` use the current terminal input path.
@@ -380,7 +390,7 @@ not attach silently to a different Flint instance.
 After an upgrade, existing terminals continue with their current server and
 endpoint until they close, or control becomes explicitly unavailable. New
 terminals use the new server, marker, and instructions. An upgrade must not
-change a live terminal's route in place.
+change a live terminal's server connection or PTY host in place.
 
 ## Errors
 
@@ -389,8 +399,8 @@ Preserve current control errors, including `caller-not-recognized`,
 `terminal-outside-workspace`, `terminal-exited`, `invalid-key`,
 `invalid-pattern`, `invalid-request`, `cursor-expired`, `timeout`,
 `response-too-large`, `unsupported-protocol`, `invalid-working-directory`,
-`invalid-split-direction`, `invalid-placement`, `terminal-create-failed`, and
-`terminal-placement-failed`.
+`invalid-split-direction`, `invalid-placement`, `terminal-route-mismatch`,
+`terminal-create-failed`, and `terminal-placement-failed`.
 
 Add remote transport errors only where current errors are not sufficient:
 
@@ -422,7 +432,8 @@ Protocol and local control tests cover:
 - cursor reads and `cursor-expired` through the remote route;
 - disconnect cancellation for output waits;
 - remote terminal open and split forwarding, returned terminal identity,
-  focus behavior, route selection, and partial-failure cleanup;
+  focus behavior, workspace-route enforcement, terminal-route mismatch
+  rejection, and partial-failure cleanup;
 - unchanged local caller resolution.
 
 Remote server tests cover:
@@ -449,6 +460,11 @@ with tab and split placement. Verify human and JSON output. Verify the ambient
 Direct executable and pinned Tunneled executable boundaries and Tunneled
 traffic routing.
 
+Verify that every terminal in a remote workspace has a remote PTY. Reject a
+local terminal registration in a remote workspace. Verify that the terminal
+creation commands and both `thread create` worktree modes never fall back to a
+local PTY.
+
 Instruction and package tests verify the matching remote command mode,
 executable marker, and all supported managed remote agent instruction blocks.
 
@@ -463,6 +479,7 @@ This design does not:
 - use a terminal ID, environment variable, working directory, or client PID
   claim as a credential;
 - change Direct or Tunneled executable and credential rules;
+- support a local PTY in a remote workspace;
 - add general pane move, close, resize, or reorder commands;
 - keep terminals alive after local Flint exits.
 
@@ -482,9 +499,10 @@ This design does not:
 8. Extend session discovery to the remote history index and add
    connection-bound Agent Thread kind and session metadata updates for daemon
    caller disambiguation.
-9. Add remote terminal open and split through the existing project terminal
-   creation route, including remote cwd validation, exact pane placement,
-   registration wait, returned identity, and cleanup.
+9. Enforce the workspace PTY-host invariant during terminal registration and
+   creation. Add remote terminal open and split through the existing project
+   terminal creation route, including remote cwd validation, exact pane
+   placement, registration wait, returned identity, and cleanup.
 10. Add Agent Thread placement and focus options without changing Direct or
     Tunneled route selection.
 11. Add Direct, Tunneled, ordinary-terminal, cursor, reconnect, upgrade, Unix,
