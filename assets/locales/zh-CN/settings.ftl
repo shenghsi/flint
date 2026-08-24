@@ -1,4 +1,7 @@
 settings-language-title = 语言
+settings-flint-control-skill = Flint 控制技能
+settings-manage-skill = 管理技能
+settings-preview-install-update-or-uninstall-flint-control-skill = 预览、安装、更新或卸载 Codex 或 Claude Code 的可选 Flint 控制技能。Flint 不会将此技能添加到全局指令文件。
 settings-language-description = 选择 Flint 界面使用的语言。
 settings-edit-json = 在 settings.json 中编辑
 settings-reset-default = 恢复默认值
