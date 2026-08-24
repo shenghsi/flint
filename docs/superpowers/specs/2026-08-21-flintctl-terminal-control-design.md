@@ -9,7 +9,9 @@ This document is a design proposal. No implementation work has started.
 Replace the long `flint-agent-control` command name with `flintctl` and make
 the command a stable local control surface for Flint. Keep the existing Agent
 Thread operations and add a small set of commands that let a process in one
-Flint terminal inspect and operate another terminal in the same workspace.
+Flint terminal inspect, operate, and create another terminal in the same
+workspace. Let an Agent Thread create a sibling Agent Thread with explicit
+placement and without changing user focus by default.
 
 The first version has these user-visible command groups:
 
@@ -17,10 +19,12 @@ The first version has these user-visible command groups:
 flintctl status [--json]
 
 flintctl thread retie --worktree <path>
-flintctl thread create --worktree <current|new> --agent <agent> --prompt <prompt>
+flintctl thread create --worktree <current|new> --agent <agent> --prompt <prompt> [--split <left|right|up|down>] [--focus]
 
 flintctl terminal current
 flintctl terminal list
+flintctl terminal open [--cwd <path>] [--focus]
+flintctl terminal split (--current|--terminal <terminal-id>) --direction <left|right|up|down> [--cwd <path>] [--focus]
 flintctl terminal read <terminal-id> [--source visible|recent|recent-unwrapped] [--lines <count>]
 flintctl terminal send-text <terminal-id> <text>
 flintctl terminal send-key <terminal-id> <key>...
@@ -70,7 +74,8 @@ The adapted ideas are:
 - Make the CLI the normal automation surface. Keep the socket protocol as an
   implementation interface until Flint has a reason to support third-party
   protocol clients.
-- Keep terminal identity separate from visual pane and layout identity.
+- Keep public terminal identity separate from visual pane and layout identity.
+  Retain internal placement state for exact open and split operations.
 - Provide explicit `current`, `list`, `read`, validated-key input, command
   input, and output-wait operations.
 - Provide `visible`, `recent`, and `recent-unwrapped` read sources.
@@ -80,10 +85,10 @@ The adapted ideas are:
 - Return typed success results and machine-readable error codes.
 - Version the protocol and require clients to ignore unknown response fields.
 
-The first version does not copy Herdr's workspace, tab, and pane management,
-agent-state detection, event-subscription API, plugin API, or session restore.
-Those features depend on Herdr owning a persistent terminal server and need
-separate Flint designs.
+The first version does not copy Herdr's general workspace, tab, and pane
+management, agent-state detection, event-subscription API, plugin API, or
+session restore. It adds only terminal creation and one adjacent split
+operation through Flint's existing pane model.
 
 ## Command name and instruction upgrades
 
@@ -134,6 +139,8 @@ It records each controllable PTY terminal while that terminal is live:
 TerminalControlId
 Terminal entity
 TerminalView entity
+owning Pane entity
+placement surface (terminal panel or workspace center)
 Workspace entity
 root PTY process ID
 last known working directory
@@ -147,7 +154,8 @@ They do not survive an application restart.
 
 Register a terminal after its PTY and `TerminalView` exist. Remove it when the
 terminal entity or view is released. When a terminal moves to another pane or
-workspace, update its registry location without changing its ID.
+workspace, update its pane, placement surface, and workspace without changing
+its ID.
 
 Display-only terminals are not controllable and do not appear in `terminal
 list`.
@@ -179,20 +187,40 @@ terminal is a registered Agent Thread.
 
 The first version uses this access policy:
 
-- A terminal command is accepted only from a live local Flint PTY terminal.
+- A terminal command is accepted through a strong live local Flint PTY
+  ancestry match or through the constrained Agent Thread daemon fallback.
 - The target must belong to the same `Workspace` as the caller.
 - The caller can read and write itself, although commands default to excluding
   itself from `terminal list` unless `--all` is given.
-- A process outside a Flint terminal is rejected, even when it runs as the
-  same operating-system user.
+- An ordinary process outside a Flint terminal is rejected. The Agent Thread
+  daemon fallback uses cwd, kind, and session signals that a same-user process
+  can claim, so it is weaker than PTY ancestry and is not proof of descent
+  from a Flint terminal.
 - Thread commands keep their current Agent Thread-only restriction.
 
 The socket or named pipe remains local and user-scoped. Unix socket permissions
 remain `0600`. No token supplied by the client is treated as caller identity.
 
-This boundary prevents an Agent Thread in one project from operating terminals
-in another open project. Cross-workspace access and access from an external
-automation process are not part of the first version.
+This boundary prevents a resolved Agent Thread in one project from operating
+terminals in another open project. Cross-workspace access and general external
+automation are not part of the first version.
+
+## Agent Thread creation placement
+
+`thread create` remains available only to a resolved Agent Thread. For
+`--worktree current`, it creates the new Agent Thread as another item in the
+caller's exact terminal pane. `--split <direction>` instead creates it in a
+new pane adjacent to the caller. It does not move focus unless `--focus` is
+present.
+
+For `--worktree new`, Flint launches the Agent Thread in the destination
+worktree workspace. `--split` is invalid because the caller's pane belongs to
+another workspace. The new workspace remains in the background unless
+`--focus` is present.
+
+The success response returns the worktree and the created terminal metadata.
+This lets the caller read or wait for the new Agent Thread without listing
+terminals and guessing which result is new.
 
 ## Terminal commands
 
@@ -226,6 +254,37 @@ the same shape as `terminal current`.
 
 The first version does not expose pane positions. Pane layout can change when
 the user drags a terminal, and terminal control does not need layout identity.
+
+### `terminal open`
+
+Create a plain shell terminal as another item in the caller's exact terminal
+pane. Use the caller's last known working directory by default, then the
+workspace terminal default when it is unavailable. An explicit `--cwd` must
+be an absolute existing directory on the PTY host.
+
+The command creates a new PTY and shell. It does not copy running shell state
+and does not create an Agent Thread. It keeps focus on the caller unless
+`--focus` is present. The response returns the created terminal metadata.
+
+### `terminal split`
+
+Create a plain shell terminal in a new pane adjacent to the selected terminal.
+Exactly one of `--current` and `--terminal <terminal-id>` is required. The
+direction is also required. The selected terminal must belong to the caller's
+workspace.
+
+Use the selected terminal's last known working directory by default, then the
+workspace terminal default when it is unavailable. `--cwd` and `--focus`
+follow `terminal open` semantics. The split is empty rather than cloned: it
+does not copy the selected shell state.
+
+The server uses the selected terminal's registered owning pane and placement
+surface. It must not dispatch an active-pane UI action. The same operation
+must work in the terminal panel and in the workspace center. Pane identity is
+internal and is not a public control ID.
+
+Both creation commands return only after the PTY, terminal view, placement,
+and registry entry exist. A failed later step must clean up partial creation.
 
 ### `terminal read`
 
@@ -315,6 +374,8 @@ thread-retie
 thread-create
 terminal-current
 terminal-list
+terminal-open
+terminal-split
 terminal-read
 terminal-send-text
 terminal-send-key
@@ -329,6 +390,9 @@ are additive, and clients ignore fields they do not understand. A lightweight
 version, release channel, and supported command capabilities. This lets an
 agent check support before it depends on a new operation.
 
+Report `terminal-open`, `terminal-split`, and `thread-create` separately. A
+client must not infer operation support from the protocol minor version.
+
 Decode only the current noun-first thread request names. Responses use
 specific success types for thread and terminal operations. Expected failures return
 machine-readable error codes plus a message, for example:
@@ -339,6 +403,13 @@ caller-not-agent-thread
 terminal-not-found
 terminal-outside-workspace
 terminal-exited
+invalid-working-directory
+invalid-split-direction
+invalid-placement
+terminal-route-mismatch
+terminal-create-failed
+terminal-placement-failed
+remote-terminal-create-failed
 invalid-key
 invalid-pattern
 timeout
@@ -378,19 +449,29 @@ request cannot interleave bytes within that operation.
 
 ## Remote behavior
 
-The first version controls only terminals whose PTY process runs on the same
-machine as the Flint control server.
+Remote development provides the same terminal command forms, defaults,
+response shapes, focus behavior, and workspace checks through the authenticated
+`flint-remote-server` bridge described in
+`docs/superpowers/specs/2026-08-22-flintctl-remote-dev-design.md`.
 
-For a remote project:
+Creation follows the owning workspace route. A local workspace creates only
+local terminals. A remote workspace creates only remote terminals through its
+authenticated remote connection. `terminal open` uses the caller terminal to
+select the workspace and exact pane. `terminal split` uses the selected
+terminal to select the workspace, exact pane, and split position. Local Flint
+owns the new terminal view and pane placement. The remote server owns the
+remote PTY and its connection-bound registration. A remote `--cwd` is
+interpreted and validated on the remote host.
 
-- A local terminal created with Flint's local route can use local `flintctl`.
-- A terminal whose shell runs through the remote server is not exposed unless
-  the local server can verify its caller process identity and route input to
-  that exact terminal without weakening the workspace boundary.
+There is no per-terminal route choice. Terminal registration and creation
+return `terminal-route-mismatch` if the PTY host does not match the owning
+workspace. Flint does not support a local terminal in a remote workspace.
 
-No executable is copied to a remote host for this feature. Direct and tunneled
-Agent Thread routes keep their existing launch and credential boundaries.
-Remote terminal control needs a separate design and tests before it is enabled.
+Direct and Tunneled Agent Thread routes, including `thread create`, keep their
+existing launch and credential boundaries. The destination workspace selects
+the Agent Thread terminal PTY host. Direct uses only the configured ambient
+executable. Tunneled uses only the pinned Flint-managed executable and its
+existing local traffic tunnel.
 
 ## Packaging and discovery
 
@@ -416,6 +497,10 @@ Server tests cover:
 - caller resolution from ordinary terminals and Agent Thread terminals;
 - denial for an external process and for a target in another workspace;
 - registration, release, move, and non-reuse of terminal IDs;
+- terminal open in the caller's exact pane, default and explicit cwd, returned
+  identity, no-focus default, explicit focus, and partial-failure cleanup;
+- terminal split in all four directions beside an exact selected terminal in
+  both the terminal panel and workspace center;
 - visible, recent, and recent-unwrapped reads, line limits, UTF-8 truncation,
   and alternate-screen reporting;
 - `recent-unwrapped` reconstruction across soft-wrapped rows;
@@ -424,8 +509,14 @@ Server tests cover:
 - immediate and delayed output matches, invalid regular expressions, timeout,
   pinned-target replacement, target release, and client cancellation;
 - Unix socket permissions and Windows peer-process verification;
-- unchanged `thread retie` and `thread create` behavior;
-- local, Direct remote, and Tunneled remote route boundaries.
+- unchanged `thread retie` behavior and `thread create` tab, split, focus,
+  returned-identity, and new-worktree placement behavior;
+- denial of Agent Thread creation from an ordinary terminal;
+- local, Direct remote, and Tunneled remote command parity for terminal open,
+  terminal split, and Agent Thread creation, including cwd, placement, focus,
+  returned identity, cleanup, executable, credential, and traffic boundaries;
+- remote-workspace rejection of local terminal registration and no local PTY
+  fallback from terminal or Agent Thread creation.
 
 Package tests verify that `flintctl` is in the macOS application bundle and
 Linux and Windows packages and that `flint-agent-control` is absent.
@@ -438,7 +529,7 @@ The first version does not:
 
 - keep terminals alive after Flint exits;
 - provide a persistent terminal host or terminal multiplexer;
-- create, split, move, focus, close, or resize terminal panes;
+- move, close, resize, or reorder existing terminal panes;
 - expose raw PTY file descriptors or arbitrary byte input;
 - infer whether a terminal is idle, blocked, or at a shell prompt;
 - recognize or name the coding agent in an ordinary terminal;
@@ -446,9 +537,9 @@ The first version does not:
 - provide a public network API or accept client-provided authentication tokens;
 - guarantee terminal IDs across Flint restarts.
 
-Pane creation and Agent Thread state detection can be later additions. They
-must use explicit capabilities and must not expand the first version's access
-boundary implicitly.
+General pane management and Agent Thread state detection can be later
+additions. They must use explicit capabilities and must not expand the first
+version's access boundary implicitly.
 
 ## Implementation order
 
@@ -461,6 +552,12 @@ boundary implicitly.
 4. Add validated text and key input plus `terminal run`.
 5. Add current-only length-prefixed framing and cancellable
    `terminal wait-output`.
+6. Retain exact internal pane and placement-surface state in the terminal
+   registry and add shared placement helpers that do not depend on UI focus.
+7. Add `terminal open` and `terminal split`, their typed errors, capability
+   reporting, returned identity, and local-only route checks.
+8. Extend `thread create` with current-worktree split placement, focus
+   control, and the created terminal metadata result.
 
 Each stage keeps the current thread commands working and can be tested before
 the next stage changes the control surface.
