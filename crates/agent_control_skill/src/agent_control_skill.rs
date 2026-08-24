@@ -33,7 +33,7 @@ pub enum AgentKind {
 }
 
 impl AgentKind {
-    pub const ALL: [Self; 2] = [Self::Codex, Self::Claude];
+    pub const ALL: [Self; 1] = [Self::Codex];
 
     pub fn id(self) -> &'static str {
         match self {
@@ -44,16 +44,15 @@ impl AgentKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Codex => "Codex, Pi, and OpenCode",
-            Self::Claude => "Claude Code",
+            Self::Codex => "Codex, Pi, OpenCode, and Claude Code",
+            Self::Claude => "Claude Code (legacy installation)",
         }
     }
 
     pub fn parse(value: &str) -> Result<Self> {
         match value {
-            "codex" => Ok(Self::Codex),
-            "claude" => Ok(Self::Claude),
-            _ => bail!("unsupported agent {value:?}; expected codex or claude"),
+            "codex" | "claude" | "pi" | "opencode" => Ok(Self::Codex),
+            _ => bail!("unsupported agent {value:?}; expected codex, claude, pi, or opencode"),
         }
     }
 }
@@ -340,7 +339,21 @@ mod tests {
 
     #[test]
     fn shared_agent_skill_target_names_all_supported_agents() {
-        assert_eq!(AgentKind::Codex.label(), "Codex, Pi, and OpenCode");
+        assert_eq!(
+            AgentKind::Codex.label(),
+            "Codex, Pi, OpenCode, and Claude Code"
+        );
+    }
+
+    #[test]
+    fn all_agents_use_one_shared_installation_target() {
+        assert_eq!(AgentKind::ALL, [AgentKind::Codex]);
+        for agent_name in ["codex", "claude", "pi", "opencode"] {
+            assert_eq!(
+                AgentKind::parse(agent_name).expect("parse supported agent"),
+                AgentKind::Codex
+            );
+        }
     }
 
     #[test]
@@ -411,15 +424,15 @@ mod tests {
     fn synchronization_preserves_a_modified_owned_skill() {
         let temporary_directory = TempDir::new().expect("create temporary directory");
         let environment = environment(&temporary_directory);
-        install(AgentKind::Claude, &environment, false).expect("install skill");
-        let installed_path = environment.claude_skill_path();
+        install(AgentKind::Codex, &environment, false).expect("install skill");
+        let installed_path = environment.codex_skill_path();
         fs::write(&installed_path, "user changes\n").expect("modify skill");
 
         let outcomes = synchronize(&environment).expect("synchronize skills");
 
         assert_eq!(outcomes.len(), 1);
         assert_eq!(
-            status(AgentKind::Claude, &environment).expect("read status"),
+            status(AgentKind::Codex, &environment).expect("read status"),
             SkillState::Modified
         );
         assert_eq!(

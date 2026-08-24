@@ -662,21 +662,27 @@ fn manage_agent_control_skill(
     cx: &mut Context<Workspace>,
 ) {
     let agents = agent_control_skill::AgentKind::ALL;
-    let mut selection_buttons = agents
-        .iter()
-        .map(|agent| PromptButton::new(agent.label()))
-        .collect::<Vec<_>>();
-    selection_buttons.push(PromptButton::new("All Supported Agents"));
-    selection_buttons.push(PromptButton::cancel("Cancel"));
-    let selection = window.prompt(
-        PromptLevel::Info,
-        &localization::text(cx, "agent-threads-manage-control-skill"),
-        Some("Select an agent or all supported agents. The next step shows every selected destination, the current states, and the complete skill before any file changes."),
-        &selection_buttons,
-        cx,
-    );
+    let selection = if agents.len() > 1 {
+        let mut selection_buttons = agents
+            .iter()
+            .map(|agent| PromptButton::new(agent.label()))
+            .collect::<Vec<_>>();
+        selection_buttons.push(PromptButton::new("All Supported Agents"));
+        selection_buttons.push(PromptButton::cancel("Cancel"));
+        Some(window.prompt(
+            PromptLevel::Info,
+            &localization::text(cx, "agent-threads-manage-control-skill"),
+            Some("Select an agent or all supported agents. The next step shows every selected destination, the current states, and the complete skill before any file changes."),
+            &selection_buttons,
+            cx,
+        ))
+    } else {
+        None
+    };
     cx.spawn_in(window, async move |workspace, cx| {
-        let selected_agents = match selection.await.ok() {
+        let selected_agents = match selection {
+            None => agents.to_vec(),
+            Some(selection) => match selection.await.ok() {
             Some(index) if index < agents.len() => {
                 let Some(&agent) = agents.get(index) else {
                     return Ok(());
@@ -685,9 +691,10 @@ fn manage_agent_control_skill(
             }
             Some(index) if index == agents.len() => agents.to_vec(),
             _ => return Ok(()),
+            },
         };
         let environment = agent_control_skill::SkillEnvironment::current();
-        if selected_agents.len() == agents.len() {
+        if agents.len() > 1 && selected_agents.len() == agents.len() {
             let states = selected_agents
                 .iter()
                 .copied()
@@ -1214,8 +1221,8 @@ mod tests {
                     agent_control_skill::SkillState::InstalledCurrent,
                 ),
                 (
-                    agent_control_skill::AgentKind::Claude,
-                    agent_control_skill::SkillState::NotInstalled,
+                    agent_control_skill::AgentKind::Codex,
+                    agent_control_skill::SkillState::NotInstalled
                 ),
             ]),
             BulkControlSkillOperation::InstallOrUpdate
