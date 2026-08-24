@@ -245,6 +245,7 @@ dependencies = [
  "theme_settings",
  "toml 0.8.23",
  "ui",
+ "ui_prompt",
  "url",
  "util",
  "uuid",

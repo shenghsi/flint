@@ -5174,6 +5174,39 @@ impl Window {
         receiver
     }
 
+    /// Present a prompt with the given renderer instead of the configured platform or custom
+    /// prompt renderer.
+    pub fn prompt_with_renderer<T, R>(
+        &mut self,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        answers: &[T],
+        renderer: R,
+        cx: &mut App,
+    ) -> oneshot::Receiver<usize>
+    where
+        T: Clone + Into<PromptButton>,
+        R: Fn(
+            PromptLevel,
+            &str,
+            Option<&str>,
+            &[PromptButton],
+            PromptHandle,
+            &mut Window,
+            &mut App,
+        ) -> RenderablePromptHandle,
+    {
+        let answers = answers
+            .iter()
+            .map(|answer| answer.clone().into())
+            .collect::<Vec<_>>();
+        let (sender, receiver) = oneshot::channel();
+        let handle = PromptHandle::new(sender);
+        self.prompt = Some(renderer(level, message, detail, &answers, handle, self, cx));
+        receiver
+    }
+
     fn build_custom_prompt(
         &mut self,
         prompt_builder: &PromptBuilder,
@@ -6160,8 +6193,8 @@ mod tests {
     use std::{cell::Cell, rc::Rc};
 
     use crate::{
-        AppContext as _, Context, IntoElement, ParentElement, Render, Styled, TestAppContext,
-        Window, WindowOptions, canvas, div,
+        AppContext as _, Context, IntoElement, ParentElement, PromptButton, PromptLevel, Render,
+        Styled, TestAppContext, Window, WindowOptions, canvas, div, fallback_prompt_renderer,
     };
 
     struct EmptyView;
@@ -6207,6 +6240,35 @@ mod tests {
         assert_eq!(cx.windows().len(), 2);
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
             .expect("redraw outer window");
+    }
+
+    #[test]
+    fn prompt_with_renderer_uses_the_given_renderer() {
+        let mut cx = TestAppContext::single();
+        let window = cx.add_window(|_, _| EmptyView);
+        let renderer_was_used = Rc::new(Cell::new(false));
+
+        cx.update_window(window.into(), {
+            let renderer_was_used = renderer_was_used.clone();
+            move |_, window, cx| {
+                let _prompt_response = window.prompt_with_renderer(
+                    PromptLevel::Info,
+                    "Manage skill",
+                    Some("Long skill content"),
+                    &[PromptButton::cancel("Cancel")],
+                    move |level, message, detail, actions, handle, window, cx| {
+                        renderer_was_used.set(true);
+                        fallback_prompt_renderer(
+                            level, message, detail, actions, handle, window, cx,
+                        )
+                    },
+                    cx,
+                );
+            }
+        })
+        .expect("show prompt");
+
+        assert!(renderer_was_used.get());
     }
 }
 
