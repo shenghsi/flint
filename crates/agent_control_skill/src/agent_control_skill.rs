@@ -272,11 +272,20 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
             .open(&temporary)
         {
             Ok(mut file) => {
-                file.write_all(contents)
-                    .context("write temporary skill file")?;
-                file.sync_all().context("sync temporary skill file")?;
-                replace_file(path, &temporary).context("replace installed skill")?;
-                return Ok(());
+                let result = (|| {
+                    file.write_all(contents)
+                        .context("write temporary skill file")?;
+                    file.sync_all().context("sync temporary skill file")?;
+                    drop(file);
+                    replace_file(path, &temporary).context("replace installed skill")
+                })();
+                match result {
+                    Ok(()) => return Ok(()),
+                    Err(error) => {
+                        let _ = fs::remove_file(&temporary);
+                        return Err(error);
+                    }
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error).context("create temporary skill file"),
@@ -292,27 +301,55 @@ fn replace_file(destination: &Path, source: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn replace_file(destination: &Path, source: &Path) -> Result<()> {
-    use windows::Win32::Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW};
+    use std::time::Duration;
+
+    use windows::Win32::{
+        Foundation::ERROR_SHARING_VIOLATION,
+        Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW},
+    };
     use windows::core::HSTRING;
 
-    if !destination.exists() {
+    let created_destination = if !destination.exists() {
         match fs::File::create_new(destination) {
-            Ok(file) => drop(file),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Ok(file) => {
+                drop(file);
+                true
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
             Err(error) => return Err(error).context("create replacement destination"),
         }
+    } else {
+        false
+    };
+    for attempt in 0..10 {
+        let result = unsafe {
+            ReplaceFileW(
+                &HSTRING::from(destination.to_string_lossy().into_owned()),
+                &HSTRING::from(source.to_string_lossy().into_owned()),
+                None,
+                REPLACE_FILE_FLAGS::default(),
+                None,
+                None,
+            )
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if error.code().0
+                    == windows::core::HRESULT::from_win32(ERROR_SHARING_VIOLATION.0).0
+                    && attempt < 9 =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => {
+                if created_destination {
+                    let _ = fs::remove_file(destination);
+                }
+                return Err(error).context("replace destination file");
+            }
+        }
     }
-    unsafe {
-        ReplaceFileW(
-            &HSTRING::from(destination.to_string_lossy().into_owned()),
-            &HSTRING::from(source.to_string_lossy().into_owned()),
-            None,
-            REPLACE_FILE_FLAGS::default(),
-            None,
-            None,
-        )
-    }
-    .context("replace destination file")
+    unreachable!("the retry loop either returns or retries")
 }
 
 fn tempfile_path(parent: &Path, path: &Path) -> PathBuf {
