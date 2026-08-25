@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 pub const BUNDLED_SKILL: &str = include_str!("../skills/flintctl/SKILL.md");
-pub const BUNDLED_SKILL_VERSION: u32 = 3;
+pub const BUNDLED_SKILL_VERSION: u32 = 4;
 
 static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
@@ -447,7 +447,10 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{AgentKind, SkillEnvironment, SkillState, install, status, synchronize, uninstall};
+    use super::{
+        AgentKind, BUNDLED_SKILL_VERSION, SkillEnvironment, SkillState, install, status,
+        synchronize, uninstall,
+    };
 
     fn environment(temporary_directory: &TempDir) -> SkillEnvironment {
         SkillEnvironment::new(
@@ -522,7 +525,10 @@ mod tests {
         install(AgentKind::Codex, &environment, false).expect("install skill");
         let installed_path = environment.codex_skill_path();
         let old_skill = fs::read_to_string(&installed_path).expect("read installed skill");
-        environment.replace_bundled_skill_for_test(old_skill.replace("version: 3", "version: 4"));
+        let new_marker = format!("version: {}", BUNDLED_SKILL_VERSION + 1);
+        environment.replace_bundled_skill_for_test(
+            old_skill.replace(&format!("version: {BUNDLED_SKILL_VERSION}"), &new_marker),
+        );
 
         assert_eq!(
             synchronize(&environment).expect("synchronize skills").len(),
@@ -531,7 +537,7 @@ mod tests {
         assert!(
             fs::read_to_string(installed_path)
                 .expect("read updated skill")
-                .contains("version: 4")
+                .contains(&new_marker)
         );
         assert_eq!(
             status(AgentKind::Codex, &environment).expect("read status"),
@@ -599,7 +605,7 @@ mod tests {
         )
         .expect("parse ownership record");
 
-        assert_eq!(record["bundled_skill_version"], 3);
+        assert_eq!(record["bundled_skill_version"], 4);
         assert!(record["release_channel"].as_str().is_some());
     }
 
