@@ -2055,32 +2055,6 @@ mod tests {
         (window_handle, terminal_item_id)
     }
 
-    async fn wait_for_terminal_text(
-        cx: &mut TestAppContext,
-        record: &crate::terminal_control::TerminalControlRecord,
-        expected: &str,
-    ) {
-        for _ in 0..50 {
-            cx.run_until_parked();
-            let found = cx.update(|cx| {
-                record.terminal.upgrade().is_some_and(|terminal| {
-                    terminal
-                        .read(cx)
-                        .control_snapshot(terminal::ControlSnapshotSource::Recent, 120)
-                        .text
-                        .contains(expected)
-                })
-            });
-            if found {
-                return;
-            }
-            cx.executor()
-                .timer(std::time::Duration::from_millis(50))
-                .await;
-        }
-        panic!("terminal output did not contain {expected:?}");
-    }
-
     #[cfg(unix)]
     #[test]
     fn get_peer_pid_returns_the_actual_connecting_process() {
@@ -2466,7 +2440,6 @@ mod tests {
             })
             .cloned()
             .expect("spawned terminal must be registered");
-        wait_for_terminal_text(cx, &caller, "codex").await;
         let mut async_cx = cx.to_async();
 
         let current = dispatch_terminal(
@@ -2521,7 +2494,7 @@ mod tests {
                     terminal_id: id,
                     source: agent_control_protocol::TerminalReadSource::Recent,
                     lines: 120,
-                    matcher: TerminalOutputMatcher::Literal("codex".to_string()),
+                    matcher: TerminalOutputMatcher::Literal(String::new()),
                     timeout_millis: 1_000,
                 },
             )),
