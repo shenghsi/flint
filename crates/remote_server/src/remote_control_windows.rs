@@ -281,6 +281,14 @@ async fn dispatch_request(
 
 async fn wait_for_disconnect(pipe: HANDLE) {
     loop {
+        // The unix path awaits a socket read, which resolves on its own when the
+        // peer disconnects. A named pipe has no equivalent, so this polls. The
+        // worker thread driving it runs under `smol::block_on` with no GPUI
+        // executor in reach, and no test drives it.
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "no gpui executor on the named-pipe worker thread"
+        )]
         smol::Timer::after(Duration::from_millis(100)).await;
         // SAFETY: the worker owns this live handle for the duration of dispatch.
         let result = unsafe { PeekNamedPipe(pipe, None, 0, None, None, None) };
