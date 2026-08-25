@@ -443,6 +443,7 @@ fn tempfile_path(parent: &Path, path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
     use std::path::Path;
 
     use tempfile::TempDir;

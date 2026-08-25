@@ -1285,6 +1285,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_client_reads_a_response_larger_than_one_chunk() {
+        use agent_control_protocol::{ControlCommand, ControlErrorCode, RetieThreadRequest};
         use windows::Win32::Foundation::{
             CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WIN32_ERROR,
         };
@@ -1333,9 +1334,8 @@ mod tests {
             request.truncate(request_bytes as usize);
             serde_json::from_slice::<ControlRequest>(&request).expect("decode CLI request");
 
-            let response = ControlResponse::Error {
-                message: "x".repeat(32 * 1024),
-            };
+            let response =
+                ControlResponse::error(ControlErrorCode::Internal, "x".repeat(32 * 1024));
             let response = serde_json::to_vec(&response).expect("encode response");
             let mut response_bytes = 0;
             // SAFETY: response and count storage remain valid for the call.
@@ -1350,12 +1350,12 @@ mod tests {
             unsafe { CloseHandle(server) }.expect("close test pipe");
         });
 
-        let request = ControlRequest::RetieThread(RetieThreadRequest {
+        let request = ControlRequest::current(ControlCommand::ThreadRetie(RetieThreadRequest {
             worktree: PathBuf::from(r"C:\repo"),
-        });
+        }));
         let response = windows_client::send_once(&pipe_name, &request).expect("round trip request");
-        match response {
-            ControlResponse::Error { message } => assert_eq!(message.len(), 32 * 1024),
+        match response.result {
+            ControlResult::Error(error) => assert_eq!(error.message.len(), 32 * 1024),
             other => panic!("unexpected response: {other:?}"),
         }
         server_thread.join().expect("server thread panicked");

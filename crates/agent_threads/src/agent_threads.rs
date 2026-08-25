@@ -199,22 +199,6 @@ pub struct AgentKindDefinition {
     egress_hosts: &'static [&'static str],
     credential_policy: Option<AgentCredentialPolicy>,
     supports_plan_usage: bool,
-    #[cfg(windows)]
-    windows_agent_control: WindowsAgentControlCapability,
-}
-
-#[cfg(windows)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct WindowsAgentControlCapability {
-    pub(crate) instruction_shell: Option<WindowsInstructionShell>,
-    pub(crate) cwd_authorization_verified: bool,
-    pub(crate) unsupported_reason: Option<&'static str>,
-}
-
-#[cfg(windows)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WindowsInstructionShell {
-    PowerShell,
 }
 
 #[derive(Clone, Copy)]
@@ -249,18 +233,6 @@ impl AgentKindDefinition {
 
     pub fn supports_plan_usage(&self) -> bool {
         self.supports_plan_usage
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn supports_windows_agent_control(&self) -> bool {
-        self.windows_agent_control.instruction_shell.is_some()
-            && self.windows_agent_control.cwd_authorization_verified
-            && self.windows_agent_control.unsupported_reason.is_none()
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn windows_agent_control_unsupported_reason(&self) -> Option<&'static str> {
-        self.windows_agent_control.unsupported_reason
     }
 }
 
@@ -306,14 +278,6 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 provider_management_url: "https://platform.openai.com/api-keys",
             }),
             supports_plan_usage: true,
-            #[cfg(windows)]
-            windows_agent_control: WindowsAgentControlCapability {
-                // Official Codex docs confirm both native PowerShell execution
-                // and the global CODEX_HOME/AGENTS.md convention on Windows.
-                instruction_shell: Some(WindowsInstructionShell::PowerShell),
-                cwd_authorization_verified: true,
-                unsupported_reason: None,
-            },
         },
         AgentKindDefinition {
             id: "claude",
@@ -345,14 +309,6 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
                 provider_management_url: "https://claude.ai/settings/claude-code",
             }),
             supports_plan_usage: true,
-            #[cfg(windows)]
-            windows_agent_control: WindowsAgentControlCapability {
-                instruction_shell: None,
-                cwd_authorization_verified: false,
-                unsupported_reason: Some(
-                    "Claude Code uses Git Bash on native Windows; its cwd authorization path has not been verified",
-                ),
-            },
         },
         AgentKindDefinition {
             id: "pi",
@@ -426,14 +382,6 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             ],
             credential_policy: None,
             supports_plan_usage: false,
-            #[cfg(windows)]
-            windows_agent_control: WindowsAgentControlCapability {
-                instruction_shell: None,
-                cwd_authorization_verified: false,
-                unsupported_reason: Some(
-                    "Pi's Windows shell is configurable, so no single instruction block is safe to install",
-                ),
-            },
         },
         AgentKindDefinition {
             id: "opencode",
@@ -516,14 +464,6 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             // so there is no single non-interactive logout or provider page.
             credential_policy: None,
             supports_plan_usage: false,
-            #[cfg(windows)]
-            windows_agent_control: WindowsAgentControlCapability {
-                instruction_shell: None,
-                cwd_authorization_verified: false,
-                unsupported_reason: Some(
-                    "OpenCode recommends WSL on Windows; native cwd authorization has not been verified",
-                ),
-            },
         },
     ]
 }

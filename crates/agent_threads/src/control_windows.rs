@@ -6,8 +6,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use agent_control_protocol::{
-    ControlCommand, ControlRequest, ControlResponse, ControlResult, MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES, decode_frame, frame_payload,
+    ControlRequest, ControlResponse, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, decode_frame,
+    frame_payload,
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{App, Task};
@@ -120,7 +120,7 @@ fn start(
 ) -> Option<ControlServerHandle> {
     let pipe_name = scope.pipe_name().to_owned();
     let marker_path = scope.executable_location_path().to_path_buf();
-    match executable_override.clone() {
+    match executable_override {
         Some(executable) => control::write_executable_location_for(&marker_path, executable),
         None => control::write_executable_location(&marker_path),
     };
@@ -739,6 +739,7 @@ fn windows_error_code(error: &anyhow::Error) -> Option<windows::core::HRESULT> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_control_protocol::{ControlCommand, ControlResult};
     use gpui::TestAppContext;
     use settings::SettingsStore;
 
