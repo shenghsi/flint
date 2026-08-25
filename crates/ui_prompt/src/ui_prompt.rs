@@ -44,6 +44,7 @@ pub fn flint_prompt_renderer(
             focus: cx.focus_handle(),
             active_action_id: 0,
             detail_scroll_handle: ScrollHandle::new(),
+            has_long_detail: detail.is_some_and(|text| text.len() > 800),
             detail: detail
                 .filter(|text| !text.is_empty())
                 .map(|text| cx.new(|cx| Markdown::new(SharedString::new(text), None, None, cx))),
@@ -61,6 +62,7 @@ pub struct FlintPromptRenderer {
     active_action_id: usize,
     detail: Option<Entity<Markdown>>,
     detail_scroll_handle: ScrollHandle,
+    has_long_detail: bool,
 }
 
 impl FlintPromptRenderer {
@@ -125,6 +127,9 @@ impl Render for FlintPromptRenderer {
             .on_action(cx.listener(Self::select_last))
             .w_80()
             .max_h(vh(0.8, window))
+            .when(self.has_long_detail, |this| {
+                this.w(rems(48.)).max_w(vw(0.9, window)).h(vh(0.75, window))
+            })
             .p_4()
             .gap_4()
             .elevation_3(cx)
@@ -138,12 +143,13 @@ impl Render for FlintPromptRenderer {
                 div()
                     .w_full()
                     .flex_1()
+                    .min_h_0()
                     .overflow_hidden()
                     .vertical_scrollbar_for(&self.detail_scroll_handle, window, cx)
                     .child(
                         div()
                             .id("prompt-detail")
-                            .max_h(vh(0.55, window))
+                            .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&self.detail_scroll_handle)
                             .text_xs()
