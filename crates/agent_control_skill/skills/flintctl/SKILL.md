@@ -3,7 +3,7 @@ name: flintctl
 description: Use when creating or switching Git worktrees, creating or coordinating Flint Agent Threads, or reading, controlling, or waiting for Flint terminals. Outside a controllable Flint terminal, continue without Flint control commands.
 ---
 
-<!-- flintctl-skill-version: 3 -->
+<!-- flintctl-skill-version: 4 -->
 
 # Flint control
 
@@ -40,4 +40,12 @@ Use `terminal split` when the user names a direction, asks for a split or pane, 
 
 Use `terminal open` for a plain terminal request without a direction, and for an ambiguous request. It creates a new shell as a background tab in the caller's existing pane. It does not create a new visible region and has no tmux equivalent. Use `--focus` only when the user asks to switch to the new terminal. Never substitute `terminal open --focus` when the user asks to see both terminals at the same time.
 
-Use `thread create` only when the user asks for another coding agent or the work needs a delegated Agent Thread. Preserve the caller's working directory unless the user gives another directory. Do not use `--focus` unless the user asks for focus. Use `--split <direction>` only with `--worktree current`; it is invalid with `--worktree new`. Do not create a worktree or Agent Thread when a plain shell terminal is sufficient.
+Use `thread create` only when the user asks for another coding agent or the work needs a delegated Agent Thread. Preserve the caller's working directory unless the user gives another directory. Do not use `--focus` unless the user asks for focus. Use `--split <direction>` only with `--worktree current`; it is invalid with `--worktree new`. Do not create a worktree or Agent Thread when a plain shell terminal is sufficient. Give `--agent` one of the known agent ids: `codex`, `claude`, `pi`, or `opencode`.
+
+Use `terminal current --json` or `terminal list --json` to get a `<terminal-id>` before targeting a terminal with `read`, `send-text`, `send-key`, `run`, `wait-output`, or `split --terminal`. `terminal list` shows every other terminal in the caller's workspace; add `--all` to include the caller's own terminal too.
+
+Use `terminal read <terminal-id>` to see what a terminal has produced. The default `--source recent` returns the last physical lines of output, including scrollback. Use `--source visible` for only what the terminal renders right now -- prefer this over `recent` when a repainting program (a shell prompt, a progress bar, a TUI) would otherwise show stacked fragments instead of the real content. Use `--source detection` to judge whether an agent looks idle or busy; it always returns a snapshot sized to the terminal's current row count and ignores `--lines`. After a first read, pass `--since <cursor>` with the cursor from that read's `--json` output to fetch only the output appended since, instead of rereading the same tail.
+
+Use `terminal wait-output <terminal-id> --match "<text>"` or `--regex "<pattern>"` to block until matching output appears, instead of polling `terminal read` in a loop. The default timeout is 30 seconds; raise `--timeout` for a command expected to take longer.
+
+Use `terminal send-text <terminal-id> "<text>"` to type text without pressing a key, `terminal send-key <terminal-id> <key>...` to send named keys (`enter`, `escape`, `ctrl-c`, `alt-left`, arrow keys, `f1`-`f12`), and `terminal run <terminal-id> "<command>"` to type a full command and press enter in one call. None of these three wait for a response; follow up with `terminal read` or `terminal wait-output` to see the result.
