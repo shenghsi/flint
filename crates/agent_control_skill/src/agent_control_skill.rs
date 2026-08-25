@@ -29,7 +29,6 @@ static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
 #[serde(rename_all = "snake_case")]
 pub enum AgentKind {
     Codex,
-    Claude,
 }
 
 impl AgentKind {
@@ -38,14 +37,12 @@ impl AgentKind {
     pub fn id(self) -> &'static str {
         match self {
             Self::Codex => "codex",
-            Self::Claude => "claude",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Codex => "Codex, Pi, OpenCode, and Claude Code",
-            Self::Claude => "Claude Code (legacy installation)",
         }
     }
 
@@ -56,6 +53,24 @@ impl AgentKind {
         }
     }
 }
+
+/// An agent that does not read skills from `~/.agents/skills` on its own. Flint links its
+/// skills directory to the bundled skill's canonical location so the agent discovers it
+/// too, instead of installing a second copy that could drift from the canonical one.
+struct SkillLinkTarget {
+    /// Directory relative to home whose presence indicates the agent is installed.
+    installed_marker: &'static str,
+    /// Directory relative to home where the symlink is placed.
+    link_directory: &'static str,
+    /// Symlink target, relative to `link_directory`'s parent.
+    relative_target: &'static str,
+}
+
+const SKILL_LINK_TARGETS: &[SkillLinkTarget] = &[SkillLinkTarget {
+    installed_marker: ".claude",
+    link_directory: ".claude/skills/flintctl",
+    relative_target: "../../.agents/skills/flintctl",
+}];
 
 #[derive(Debug)]
 pub struct SkillEnvironment {
@@ -80,16 +95,11 @@ impl SkillEnvironment {
     pub fn skill_path(&self, agent: AgentKind) -> PathBuf {
         match agent {
             AgentKind::Codex => self.home_directory.join(".agents/skills/flintctl/SKILL.md"),
-            AgentKind::Claude => self.home_directory.join(".claude/skills/flintctl/SKILL.md"),
         }
     }
 
     pub fn codex_skill_path(&self) -> PathBuf {
         self.skill_path(AgentKind::Codex)
-    }
-
-    pub fn claude_skill_path(&self) -> PathBuf {
-        self.skill_path(AgentKind::Claude)
     }
 
     fn record_path(&self, agent: AgentKind) -> PathBuf {
@@ -166,7 +176,8 @@ pub fn install(agent: AgentKind, environment: &SkillEnvironment, replace: bool) 
         installed_digest: digest(&bundled_skill),
     };
     let record_json = serde_json::to_vec_pretty(&record).context("serialize skill ownership")?;
-    atomic_write(&record_path, &record_json)
+    atomic_write(&record_path, &record_json)?;
+    synchronize_skill_links(environment)
 }
 
 pub fn status(agent: AgentKind, environment: &SkillEnvironment) -> Result<SkillState> {
@@ -199,8 +210,11 @@ pub fn synchronize(environment: &SkillEnvironment) -> Result<Vec<SynchronizeOutc
     for agent in AgentKind::ALL {
         let state = status(agent, environment)?;
         match state {
-            SkillState::NotInstalled | SkillState::Unowned | SkillState::InstalledCurrent => {
+            SkillState::NotInstalled | SkillState::Unowned => {
                 continue;
+            }
+            SkillState::InstalledCurrent => {
+                synchronize_skill_links(environment)?;
             }
             SkillState::InstalledOutdated => {
                 install(agent, environment, true)?;
@@ -231,7 +245,74 @@ pub fn uninstall(agent: AgentKind, environment: &SkillEnvironment, force: bool) 
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error).context("remove installed Flint control skill"),
     }
-    fs::remove_file(environment.record_path(agent)).context("remove skill ownership record")
+    fs::remove_file(environment.record_path(agent)).context("remove skill ownership record")?;
+    remove_skill_links(environment)
+}
+
+/// Ensures a symlink exists at each [`SkillLinkTarget`] whose agent appears installed,
+/// pointing at the canonical bundled skill. Leaves alone any path that isn't already one
+/// of Flint's own symlinks, since that means it's owned by something else.
+fn synchronize_skill_links(environment: &SkillEnvironment) -> Result<()> {
+    for target in SKILL_LINK_TARGETS {
+        if !environment
+            .home_directory
+            .join(target.installed_marker)
+            .is_dir()
+        {
+            continue;
+        }
+        let link_path = environment.home_directory.join(target.link_directory);
+        match fs::read_link(&link_path) {
+            Ok(existing_target) if existing_target == Path::new(target.relative_target) => {
+                continue;
+            }
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => continue,
+        }
+        let parent = link_path
+            .parent()
+            .ok_or_else(|| anyhow!("skill link has no parent directory"))?;
+        fs::create_dir_all(parent).context("create skill link parent directory")?;
+        create_skill_link(Path::new(target.relative_target), &link_path)
+            .context("create skill link")?;
+    }
+    Ok(())
+}
+
+/// Removes each [`SkillLinkTarget`] symlink that still points at the canonical bundled
+/// skill. Leaves alone anything else found at those paths.
+fn remove_skill_links(environment: &SkillEnvironment) -> Result<()> {
+    for target in SKILL_LINK_TARGETS {
+        let link_path = environment.home_directory.join(target.link_directory);
+        match fs::read_link(&link_path) {
+            Ok(existing_target) if existing_target == Path::new(target.relative_target) => {
+                remove_skill_link(&link_path).context("remove skill link")?;
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn create_skill_link(target: &Path, link_path: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, link_path).context("create skill symlink")
+}
+
+#[cfg(windows)]
+fn create_skill_link(target: &Path, link_path: &Path) -> Result<()> {
+    std::os::windows::fs::symlink_dir(target, link_path).context("create skill symlink")
+}
+
+#[cfg(not(windows))]
+fn remove_skill_link(link_path: &Path) -> Result<()> {
+    fs::remove_file(link_path).context("remove skill symlink")
+}
+
+#[cfg(windows)]
+fn remove_skill_link(link_path: &Path) -> Result<()> {
+    fs::remove_dir(link_path).context("remove skill symlink")
 }
 
 fn read_record(
@@ -362,6 +443,7 @@ fn tempfile_path(parent: &Path, path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use tempfile::TempDir;
 
@@ -542,6 +624,94 @@ mod tests {
         assert!(unix_endpoint < probe);
         assert!(windows_endpoint < probe);
         assert!(!installed.contains("FLINT_AGENT_THREAD="));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn install_links_the_claude_code_skills_directory_when_claude_is_installed() {
+        let temporary_directory = TempDir::new().expect("create temporary directory");
+        let environment = environment(&temporary_directory);
+        let home_directory = temporary_directory.path().join("home");
+        fs::create_dir_all(home_directory.join(".claude")).expect("create Claude home directory");
+
+        install(AgentKind::Codex, &environment, false).expect("install skill");
+
+        let link_path = home_directory.join(".claude/skills/flintctl");
+        assert_eq!(
+            fs::read_link(&link_path).expect("read Claude skill link"),
+            Path::new("../../.agents/skills/flintctl")
+        );
+        assert_eq!(
+            fs::read_to_string(link_path.join("SKILL.md")).expect("read skill through link"),
+            fs::read_to_string(environment.codex_skill_path()).expect("read canonical skill")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn install_does_not_link_claude_code_when_claude_is_not_installed() {
+        let temporary_directory = TempDir::new().expect("create temporary directory");
+        let environment = environment(&temporary_directory);
+
+        install(AgentKind::Codex, &environment, false).expect("install skill");
+
+        assert!(
+            !temporary_directory
+                .path()
+                .join("home/.claude/skills/flintctl")
+                .exists()
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn synchronize_creates_the_claude_link_once_claude_is_installed() {
+        let temporary_directory = TempDir::new().expect("create temporary directory");
+        let environment = environment(&temporary_directory);
+        install(AgentKind::Codex, &environment, false).expect("install skill");
+        let home_directory = temporary_directory.path().join("home");
+        let link_path = home_directory.join(".claude/skills/flintctl");
+        assert!(!link_path.exists());
+
+        fs::create_dir_all(home_directory.join(".claude")).expect("create Claude home directory");
+        synchronize(&environment).expect("synchronize skills");
+
+        assert_eq!(
+            fs::read_link(&link_path).expect("read Claude skill link"),
+            Path::new("../../.agents/skills/flintctl")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn synchronize_skill_links_does_not_replace_an_unowned_path() {
+        let temporary_directory = TempDir::new().expect("create temporary directory");
+        let environment = environment(&temporary_directory);
+        let home_directory = temporary_directory.path().join("home");
+        let link_path = home_directory.join(".claude/skills/flintctl");
+        fs::create_dir_all(&link_path).expect("create unowned Claude skill directory");
+        fs::create_dir_all(home_directory.join(".claude")).expect("create Claude home directory");
+
+        install(AgentKind::Codex, &environment, false).expect("install skill");
+
+        assert!(link_path.is_dir());
+        assert!(fs::read_link(&link_path).is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn uninstall_removes_the_claude_link() {
+        let temporary_directory = TempDir::new().expect("create temporary directory");
+        let environment = environment(&temporary_directory);
+        let home_directory = temporary_directory.path().join("home");
+        fs::create_dir_all(home_directory.join(".claude")).expect("create Claude home directory");
+        install(AgentKind::Codex, &environment, false).expect("install skill");
+        let link_path = home_directory.join(".claude/skills/flintctl");
+        assert!(fs::read_link(&link_path).is_ok());
+
+        uninstall(AgentKind::Codex, &environment, false).expect("uninstall skill");
+
+        assert!(fs::symlink_metadata(&link_path).is_err());
     }
 
     #[test]
