@@ -637,7 +637,6 @@ mod tests {
         restrict_pipe_dacl(&pipe, &logon_sid).expect("restrict named pipe");
         let request = ControlRequest::current(ControlCommand::Status);
         let client = std::thread::spawn({
-            let name = name.clone();
             move || {
                 let pipe = loop {
                     if let Some(pipe) = open_pipe(&name).expect("open named pipe") {
