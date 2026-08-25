@@ -25,12 +25,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use agent_control_protocol::ControlResult;
 use agent_control_protocol::{
     ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, ControlSuccess,
-    CreateThreadRequest, CreateThreadWorktree, FRAME_LENGTH_BYTES, MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES, PROTOCOL_VERSION, RemoteControlEnvelope, RetieThreadRequest, StatusResult,
-    TerminalControlId, TerminalOpenRequest, TerminalOutputMatcher, TerminalReadRequest,
-    TerminalRunRequest, TerminalSendKeyRequest, TerminalSendTextRequest, TerminalSnapshot,
-    TerminalSplitRequest, TerminalWaitOutputRequest, frame_payload,
+    CreateThreadRequest, CreateThreadWorktree, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
+    RemoteControlEnvelope, RetieThreadRequest, StatusResult, TerminalControlId,
+    TerminalOpenRequest, TerminalOutputMatcher, TerminalReadRequest, TerminalRunRequest,
+    TerminalSendKeyRequest, TerminalSendTextRequest, TerminalSnapshot, TerminalSplitRequest,
+    TerminalWaitOutputRequest,
 };
+#[cfg(unix)]
+use agent_control_protocol::{FRAME_LENGTH_BYTES, MAX_REQUEST_BYTES, frame_payload};
 #[cfg(unix)]
 use anyhow::{Context as _, Result};
 use collections::HashMap;
