@@ -1285,7 +1285,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_client_reads_a_response_larger_than_one_chunk() {
-        use agent_control_protocol::{ControlCommand, ControlErrorCode, RetieThreadRequest};
+        use agent_control_protocol::{
+            ControlCommand, ControlErrorCode, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+            RetieThreadRequest,
+        };
         use windows::Win32::Foundation::{
             CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WIN32_ERROR,
         };
@@ -1332,11 +1335,15 @@ mod tests {
             unsafe { ReadFile(server, Some(&mut request), Some(&mut request_bytes), None) }
                 .expect("read CLI request");
             request.truncate(request_bytes as usize);
-            serde_json::from_slice::<ControlRequest>(&request).expect("decode CLI request");
+            let request = agent_control_protocol::decode_frame(&request, MAX_REQUEST_BYTES)
+                .expect("decode CLI request frame");
+            serde_json::from_slice::<ControlRequest>(request).expect("decode CLI request");
 
             let response =
                 ControlResponse::error(ControlErrorCode::Internal, "x".repeat(32 * 1024));
             let response = serde_json::to_vec(&response).expect("encode response");
+            let response = agent_control_protocol::frame_payload(&response, MAX_RESPONSE_BYTES)
+                .expect("frame response");
             let mut response_bytes = 0;
             // SAFETY: response and count storage remain valid for the call.
             unsafe { WriteFile(server, Some(&response), Some(&mut response_bytes), None) }
