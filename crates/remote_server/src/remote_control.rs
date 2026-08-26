@@ -134,7 +134,7 @@ struct ExecutableMarker {
 
 pub(crate) fn install_command() -> Result<()> {
     let server_executable = std::env::current_exe().context("failed to locate remote server")?;
-    install_command_at(&server_executable, &control_directory(), &paths::home_dir())
+    install_command_at(&server_executable, &command_directory(), &paths::home_dir())
 }
 
 fn install_command_at(
@@ -748,6 +748,12 @@ pub(crate) fn register_current_terminal(
 
 fn control_directory() -> PathBuf {
     paths::data_dir()
+        .join("ac")
+        .join(RELEASE_CHANNEL.dev_name())
+}
+
+fn command_directory() -> PathBuf {
+    paths::data_dir()
         .join("agent-control")
         .join(RELEASE_CHANNEL.dev_name())
         .join(crate::VERSION.as_str())
@@ -1141,6 +1147,20 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_endpoint_path_fits_platform_limit() {
+        const PORTABLE_UNIX_SOCKET_PATH_LIMIT: usize = 103;
+        let instance = "0".repeat(32);
+        let endpoint = control_directory().join(format!("{instance}.sock"));
+
+        assert!(
+            endpoint.as_os_str().as_encoded_bytes().len() <= PORTABLE_UNIX_SOCKET_PATH_LIMIT,
+            "remote control endpoint is too long: {}",
+            endpoint.display()
+        );
     }
 
     #[test]
