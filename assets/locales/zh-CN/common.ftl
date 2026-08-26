@@ -80,6 +80,7 @@ menu-toggle-gpui-inspector = 切换 GPUI 检查器
 menu-about-flint = 关于 Flint
 menu-check-for-updates = 检查更新
 menu-settings = 设置
+menu-open-settings = 打开设置
 menu-open-settings-file = 打开设置文件
 menu-open-project-settings-file = 打开项目设置文件
 menu-open-default-settings = 打开默认设置

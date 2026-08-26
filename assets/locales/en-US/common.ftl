@@ -84,6 +84,7 @@ menu-toggle-gpui-inspector = Toggle GPUI Inspector
 menu-about-flint = About Flint
 menu-check-for-updates = Check for Updates
 menu-settings = Settings
+menu-open-settings = Open Settings
 menu-open-settings-file = Open Settings File
 menu-open-project-settings-file = Open Project Settings File
 menu-open-default-settings = Open Default Settings
