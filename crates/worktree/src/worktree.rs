@@ -383,7 +383,7 @@ pub enum Event {
         old: Option<Arc<SanitizedPath>>,
     },
     DeletedEntry(ProjectEntryId),
-    /// The worktree root itself has been deleted (for single-file worktrees)
+    /// The worktree root itself has been deleted.
     Deleted,
 }
 
@@ -1221,7 +1221,6 @@ impl LocalWorktree {
                 };
                 let fs_case_sensitive = fs.is_case_sensitive().await;
 
-                let is_single_file = snapshot.snapshot.root_dir().is_none();
                 let mut scanner = BackgroundScanner {
                     fs,
                     fs_case_sensitive,
@@ -1247,7 +1246,6 @@ impl LocalWorktree {
                     settings,
                     watcher,
                     track_git_repositories,
-                    is_single_file,
                     defer_watch,
                 };
 
@@ -4049,9 +4047,6 @@ struct BackgroundScanner {
     settings: WorktreeSettings,
     share_private_files: bool,
     track_git_repositories: bool,
-    /// Whether this is a single-file worktree (root is a file, not a directory).
-    /// Used to determine if we should give up after repeated canonicalization failures.
-    is_single_file: bool,
     defer_watch: bool,
 }
 
@@ -4419,22 +4414,28 @@ impl BackgroundScanner {
         let root_canonical_path = match &root_canonical_path {
             Ok(path) => SanitizedPath::new(path),
             Err(err) => {
-                let new_path = self
-                    .state
-                    .lock()
-                    .await
-                    .snapshot
-                    .root_file_handle
-                    .clone()
-                    .and_then(|handle| match handle.current_path(&self.fs) {
+                let mut root_file_handle_failed = false;
+                let root_file_handle = self.state.lock().await.snapshot.root_file_handle.clone();
+                let new_path = match root_file_handle {
+                    Some(handle) => match handle.current_path(&self.fs) {
                         Ok(new_path) => Some(new_path),
                         Err(e) => {
+                            root_file_handle_failed = true;
                             log::error!("Failed to refresh worktree root path: {e:#}");
                             None
                         }
-                    })
-                    .map(|path| SanitizedPath::new_arc(&path))
-                    .filter(|new_path| *new_path != root_path);
+                    },
+                    // No handle means we could never confirm the root exists (e.g. the
+                    // initial `open_handle` failed), so we can't tell a rename from a
+                    // deletion. Treat it like a lookup failure rather than silently
+                    // keeping a worktree open whose root may be long gone.
+                    None => {
+                        root_file_handle_failed = true;
+                        None
+                    }
+                }
+                .map(|path| SanitizedPath::new_arc(&path))
+                .filter(|new_path| *new_path != root_path);
 
                 if let Some(new_path) = new_path {
                     log::info!(
@@ -4448,11 +4449,12 @@ impl BackgroundScanner {
                 } else {
                     log::error!("root path could not be canonicalized: {err:#}");
 
-                    // For single-file worktrees, if we can't canonicalize and the file handle
-                    // fallback also failed, the file is gone - close the worktree
-                    if self.is_single_file {
+                    // If the path cannot be canonicalized and the open file handle cannot find
+                    // the root, the root is gone. Close the worktree so it does not remain active
+                    // with a stale path. Keep it open after a transient canonicalization failure.
+                    if root_file_handle_failed {
                         log::info!(
-                            "single-file worktree root {:?} no longer exists, marking as deleted",
+                            "worktree root {:?} no longer exists, marking as deleted",
                             root_path.as_path()
                         );
                         self.status_updates_tx

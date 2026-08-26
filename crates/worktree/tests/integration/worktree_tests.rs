@@ -4872,6 +4872,74 @@ async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_directory_worktree_deleted(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    fs.insert_tree(
+        "/root/project",
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root/project"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(!tree.is_single_file(), "Should be a directory worktree");
+        assert_eq!(tree.abs_path().as_ref(), Path::new("/root/project"));
+    });
+
+    let deleted_event_received = Rc::new(Cell::new(false));
+    let _subscription = cx.update({
+        let deleted_event_received = deleted_event_received.clone();
+        |cx| {
+            cx.subscribe(&tree, move |_, event, _| {
+                if matches!(event, Event::Deleted) {
+                    deleted_event_received.set(true);
+                }
+            })
+        }
+    });
+
+    fs.remove_dir(
+        Path::new("/root/project"),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    cx.background_executor.run_until_parked();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.background_executor.run_until_parked();
+
+    assert!(
+        deleted_event_received.get(),
+        "Should receive Deleted event when directory worktree root is deleted"
+    );
+}
+
+#[gpui::test]
 async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_update(
     cx: &mut TestAppContext,
 ) {
