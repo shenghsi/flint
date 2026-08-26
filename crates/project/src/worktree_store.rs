@@ -914,7 +914,7 @@ impl WorktreeStore {
                     cx.emit(WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, *id))
                 }
                 worktree::Event::Deleted => {
-                    // The worktree root itself has been deleted (for single-file worktrees)
+                    // The worktree root itself has been deleted.
                     // The worktree will be removed via the observe_release callback
                 }
                 worktree::Event::UpdatedRootRepoCommonDir { .. } => {
