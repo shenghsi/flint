@@ -28,6 +28,7 @@ Flint is for developers who want the project awareness and visual review tools o
 - **Codex, Claude Code, Pi, and OpenCode threads:** Launch any supported CLI directly in a terminal-backed thread using its existing authentication and configuration.
 - **Agent Threads panel:** Organize sessions, discover recent threads on the local machine or connected remote host, and resume work using titles from each agent's history.
 - **Agent status and continuity:** See Codex and Claude Code plan usage and reset countdowns, receive desktop notifications when a thread needs attention, and optionally reopen resumable sessions after restarting Flint.
+- **Agent-controlled terminals:** Install Flint's optional `flintctl` control skill so agents can inspect terminal state, send input, wait for output, and create terminals or sibling Agent Threads from local and supported remote sessions.
 - **Cross-agent handoff:** Preview a bounded handoff document from a live local thread, then continue the work in a fresh thread with another supported agent.
 - **Remote agent threads:** Run supported agents on SSH remotes using either the remote's configured CLI (`Direct`) or pinned Flint-managed binaries whose traffic is routed through local Flint (`Tunneled`).
 - **Configurable agent workflows:** Set commands, arguments, environment variables, working directories, visibility, panel location, and default resume options.
