@@ -9,7 +9,6 @@ use std::{
 };
 
 use anyhow::{Result, anyhow, bail};
-use gpui::AppContext as _;
 use windows::{
     Win32::{
         Foundation::{
@@ -89,11 +88,6 @@ pub(super) fn start(session: AnyProtoClient, cx: &mut gpui::App) -> Result<()> {
         shutdown.store(true, Ordering::Release);
         std::fs::remove_file(&record_path).ok();
         async {}
-    })
-    .detach();
-    cx.spawn(async move |_cx| {
-        let _state = state;
-        futures::future::pending::<()>().await;
     })
     .detach();
     Ok(())

@@ -17,7 +17,6 @@ use anyhow::{Context as _, Result};
 #[cfg(unix)]
 use futures::AsyncWriteExt as _;
 use futures::{FutureExt as _, select};
-#[cfg(unix)]
 use gpui::AppContext as _;
 use parking_lot::Mutex;
 use release_channel::RELEASE_CHANNEL;
