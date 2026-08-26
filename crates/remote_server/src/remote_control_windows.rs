@@ -56,39 +56,13 @@ const RETRY_BACKOFFS: &[Duration] = &[
 ];
 
 pub(super) fn start(session: AnyProtoClient, cx: &mut gpui::App) -> Result<()> {
+    let registrations = register_terminal_allocation_handler(&session, cx);
     let directory = control_directory();
     std::fs::create_dir_all(&directory)?;
     let instance = uuid::Uuid::new_v4().simple().to_string();
     let pipe_name = format!(r"\\.\pipe\flint-remote-control-{instance}");
     let record_path = directory.join(format!("{instance}.json"));
     let logon_sid = current_logon_sid_string()?;
-    let registrations = Arc::new(Mutex::new(HashMap::new()));
-    let state = cx.new(|_| RemoteControlState {
-        registrations: registrations.clone(),
-    });
-    session.add_request_handler(
-        state.downgrade(),
-        |_state,
-         _envelope: rpc::TypedEnvelope<proto::AllocateRemoteTerminalRegistration>,
-         mut cx| async move {
-            let registration_id = RemoteTerminalRegistrationId(uuid::Uuid::new_v4().to_string());
-            _state.update(&mut cx, |state, _cx| {
-                let mut registrations = state.registrations.lock();
-                prune_registrations(&mut registrations);
-                registrations.insert(
-                    registration_id.clone(),
-                    RemoteTerminalRegistration {
-                        allocated_at: Instant::now(),
-                        terminal: None,
-                    },
-                );
-            });
-            Ok(proto::AllocateRemoteTerminalRegistrationResponse {
-                registration_id: registration_id.0,
-            })
-        },
-    );
-
     let first_pipe = create_pipe(&pipe_name, &logon_sid, true)?;
     let shutdown = Arc::new(AtomicBool::new(false));
     let mut pipes = vec![first_pipe];
