@@ -739,7 +739,7 @@ fn windows_error_code(error: &anyhow::Error) -> Option<windows::core::HRESULT> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_control_protocol::{ControlCommand, ControlResult};
+    use agent_control_protocol::{ControlCommand, ControlResult, FRAME_LENGTH_BYTES};
     use gpui::TestAppContext;
     use settings::SettingsStore;
 
@@ -863,16 +863,19 @@ mod tests {
         Ok(client)
     }
 
-    fn transact_raw(name: &str, request: &[u8]) -> Result<ControlResponse> {
+    /// Writes `frame` to the endpoint verbatim. Callers that want a
+    /// well-formed request should use `transact_raw`; this exists so tests can
+    /// send deliberately malformed frames the protocol helpers would reject.
+    fn transact_frame(name: &str, frame: &[u8]) -> Result<ControlResponse> {
         let client = open_test_client(name, Duration::from_secs(2))?;
         let mut written = 0;
         // SAFETY: client is synchronous and all input/output storage lives through the call.
-        unsafe { WriteFile(client.0, Some(request), Some(&mut written), None) }
+        unsafe { WriteFile(client.0, Some(frame), Some(&mut written), None) }
             .context("write test request")?;
-        if written as usize != request.len() {
+        if written as usize != frame.len() {
             bail!(
                 "test request write completed after {written} of {} bytes",
-                request.len()
+                frame.len()
             );
         }
 
@@ -898,7 +901,14 @@ mod tests {
             }
         }
         drop(client);
-        serde_json::from_slice(&response).context("decode test response")
+        let response =
+            decode_frame(&response, MAX_RESPONSE_BYTES).context("decode test response frame")?;
+        serde_json::from_slice(response).context("decode test response")
+    }
+
+    fn transact_raw(name: &str, payload: &[u8]) -> Result<ControlResponse> {
+        let frame = frame_payload(payload, MAX_REQUEST_BYTES).context("frame test request")?;
+        transact_frame(name, &frame)
     }
 
     fn transact_request(name: &str, request: &ControlRequest) -> Result<ControlResponse> {
@@ -1042,8 +1052,8 @@ mod tests {
             format!("accepted prompt with {} bytes", large_prompt.len())
         );
 
-        let oversized = vec![b'x'; MAX_REQUEST_BYTES + 1];
-        let oversized = transact_raw(&server.name, &oversized).expect("oversized round trip");
+        let oversized = vec![b'x'; MAX_REQUEST_BYTES + FRAME_LENGTH_BYTES + 1];
+        let oversized = transact_frame(&server.name, &oversized).expect("oversized round trip");
         assert!(error_message(oversized).contains("protocol limit"));
 
         let recovered = transact_request(&server.name, &prompt_request("after-error"))
