@@ -118,6 +118,7 @@ pub struct WaylandWindowState {
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
+    close_pending: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -349,6 +350,11 @@ impl WaylandWindowState {
                 transparent: true,
                 // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
+                defer_surface_configuration: true,
+                surface_configuration_notifier: {
+                    let ping = globals.surface_configuration_ping.clone();
+                    Some(Arc::new(move || ping.ping()))
+                },
             };
             WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
@@ -396,6 +402,7 @@ impl WaylandWindowState {
             hovered: false,
             force_render_after_recovery: false,
             renderer_presented: false,
+            close_pending: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -453,50 +460,15 @@ pub enum ImeInput {
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
-        let mut state = self.0.state.borrow_mut();
-        let surface_id = state.surface.id();
-        if let Some(parent) = state.parent.as_ref() {
-            parent.state.borrow_mut().children.remove(&surface_id);
+        let should_defer = {
+            let mut state = self.0.state.borrow_mut();
+            state.close_pending = true;
+            state.renderer.surface_configuration_in_progress()
+        };
+
+        if !should_defer {
+            self.0.finish_close();
         }
-
-        let client = state.client.clone();
-
-        state.renderer.destroy();
-
-        // Destroy blur first, this has no dependencies.
-        if let Some(blur) = &state.blur {
-            blur.release();
-        }
-
-        // Decorations must be destroyed before the xdg state.
-        // See https://wayland.app/protocols/xdg-decoration-unstable-v1#zxdg_toplevel_decoration_v1
-        if let Some(decoration) = &state.surface_state.decoration() {
-            decoration.destroy();
-        }
-
-        // Surface state might contain xdg_toplevel/xdg_surface which can be destroyed now that
-        // decorations are gone. layer_surface has no dependencies.
-        state.surface_state.destroy();
-
-        // Viewport must be destroyed before the wl_surface.
-        // See https://wayland.app/protocols/viewporter#wp_viewport
-        if let Some(viewport) = &state.viewport {
-            viewport.destroy();
-        }
-
-        // The wl_surface itself should always be destroyed last.
-        state.surface.destroy();
-
-        let state_ptr = self.0.clone();
-        state
-            .globals
-            .executor
-            .spawn(async move {
-                state_ptr.close();
-                client.drop_window(&surface_id)
-            })
-            .detach();
-        drop(state);
     }
 }
 
@@ -586,6 +558,9 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
+        if state.close_pending {
+            return;
+        }
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
         let force_render = state.force_render_after_recovery;
@@ -600,6 +575,68 @@ impl WaylandWindowStatePtr {
             });
             self.update_ime_enabled();
         }
+    }
+
+    /// Services worker completion from the calloop ping source. A pending
+    /// close keeps native Wayland objects alive until the worker releases the
+    /// Vulkan surface operation that can still reference them.
+    pub fn service_surface_configuration(&self) {
+        let should_close = {
+            let mut state = self.state.borrow_mut();
+            state.renderer.service_surface_configuration();
+            state.close_pending && !state.renderer.surface_configuration_in_progress()
+        };
+
+        if should_close {
+            self.finish_close();
+        } else {
+            self.frame();
+        }
+    }
+
+    fn finish_close(&self) {
+        let (surface_id, parent, client, executor) = {
+            let mut state = self.state.borrow_mut();
+            if !state.close_pending || state.renderer.surface_configuration_in_progress() {
+                return;
+            }
+            state.close_pending = false;
+
+            let surface_id = state.surface.id();
+            let parent = state.parent.clone();
+            let client = state.client.clone();
+            let executor = state.globals.executor.clone();
+
+            state.renderer.destroy();
+
+            // Destroy blur first, then role and decoration objects, then the
+            // viewport and wl_surface.
+            if let Some(blur) = &state.blur {
+                blur.release();
+            }
+            if let Some(decoration) = &state.surface_state.decoration() {
+                decoration.destroy();
+            }
+            state.surface_state.destroy();
+            if let Some(viewport) = &state.viewport {
+                viewport.destroy();
+            }
+            state.surface.destroy();
+
+            (surface_id, parent, client, executor)
+        };
+
+        if let Some(parent) = parent {
+            parent.state.borrow_mut().children.remove(&surface_id);
+        }
+
+        let state_ptr = self.clone();
+        executor
+            .spawn(async move {
+                state_ptr.close();
+                client.drop_window(&surface_id)
+            })
+            .detach();
     }
 
     fn update_ime_enabled(&self) {
@@ -1426,6 +1463,22 @@ impl PlatformWindow for WaylandWindow {
         }
 
         state.renderer_presented = state.renderer.draw(scene);
+
+        if state.renderer.take_surface_lost() {
+            let raw_window = RawWindow {
+                window: state.surface.id().as_ptr().cast::<std::ffi::c_void>(),
+                display: state
+                    .surface
+                    .backend()
+                    .upgrade()
+                    .unwrap()
+                    .display_ptr()
+                    .cast::<std::ffi::c_void>(),
+            };
+            if let Err(error) = state.renderer.recreate_lost_surface(&raw_window) {
+                log::warn!("failed to recreate lost Wayland surface: {error}");
+            }
+        }
 
         if state.renderer.needs_redraw() {
             state.force_render_after_recovery = true;

@@ -723,6 +723,8 @@ impl X11WindowState {
                     // too
                     transparent: false,
                     preferred_present_mode: None,
+                    defer_surface_configuration: false,
+                    surface_configuration_notifier: None,
                 };
                 WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };

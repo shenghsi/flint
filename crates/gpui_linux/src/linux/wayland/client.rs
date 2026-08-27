@@ -131,6 +131,7 @@ pub struct Globals {
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
     pub system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
+    pub surface_configuration_ping: calloop::ping::Ping,
     pub executor: ForegroundExecutor,
 }
 
@@ -140,6 +141,7 @@ impl Globals {
         executor: ForegroundExecutor,
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
+        surface_configuration_ping: calloop::ping::Ping,
     ) -> Self {
         let dialog_v = XdgWmDialogV1::interface().version;
         Globals {
@@ -173,6 +175,7 @@ impl Globals {
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
             system_bell: globals.bind(&qh, 1..=1, ()).ok(),
+            surface_configuration_ping,
             executor,
             qh,
         }
@@ -578,6 +581,24 @@ impl WaylandClient {
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
+        let (surface_configuration_ping, surface_configuration_ping_source) =
+            calloop::ping::make_ping().expect("Failed to create a surface configuration ping.");
+        handle
+            .insert_source(surface_configuration_ping_source, |_, _, client| {
+                let Some(client) = client.0.upgrade() else {
+                    return;
+                };
+                let windows = client
+                    .borrow()
+                    .windows
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for window in windows {
+                    window.service_surface_configuration();
+                }
+            })
+            .unwrap();
         handle
             .insert_source(main_receiver, {
                 let handle = handle.clone();
@@ -604,6 +625,7 @@ impl WaylandClient {
             common.foreground_executor.clone(),
             qh.clone(),
             seat.clone(),
+            surface_configuration_ping,
         );
 
         let data_device = globals
