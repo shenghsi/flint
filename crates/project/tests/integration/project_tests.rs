@@ -893,6 +893,66 @@ async fn test_removing_worktree_cleans_up_external_editorconfig(cx: &mut gpui::T
 }
 
 #[gpui::test]
+async fn test_worktree_removed_from_project_when_root_deleted(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project": {
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    cx.executor().run_until_parked();
+    assert!(
+        project.read_with(cx, |project, cx| project
+            .worktree_for_id(worktree_id, cx)
+            .is_some()),
+        "worktree should be present before deletion"
+    );
+
+    fs.remove_dir(
+        path!("/root/project").as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    cx.executor().run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.executor().run_until_parked();
+
+    // A deleted worktree root must not just emit Event::Deleted: the project needs to
+    // actually drop it. Visible worktrees hold a Strong handle in WorktreeStore, so
+    // relying on observe_release (which only fires once every strong reference is
+    // gone) left the scanner running forever, re-detecting the same deletion on every
+    // watch cycle instead of the worktree ever going away.
+    project.read_with(cx, |project, cx| {
+        assert!(
+            project.worktree_for_id(worktree_id, cx).is_none(),
+            "worktree should be removed from the project after its root is deleted"
+        );
+        assert_eq!(project.worktrees(cx).count(), 0);
+    });
+}
+
+#[gpui::test]
 async fn test_shared_external_editorconfig_cleanup_with_multiple_worktrees(
     cx: &mut gpui::TestAppContext,
 ) {
