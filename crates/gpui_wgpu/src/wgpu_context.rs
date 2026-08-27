@@ -2,8 +2,13 @@
 use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
 use gpui_util::ResultExt;
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_family = "wasm"))]
+use std::sync::mpsc::{self, Sender};
+#[cfg(all(not(target_family = "wasm"), debug_assertions))]
+use std::time::Duration;
 use wgpu::TextureFormat;
 
 pub struct WgpuContext {
@@ -14,6 +19,67 @@ pub struct WgpuContext {
     dual_source_blending: bool,
     color_texture_format: wgpu::TextureFormat,
     device_lost: Arc<AtomicBool>,
+    /// Serializes surface configuration with rendering on this shared device.
+    /// A surface configuration can wait in the Vulkan WSI driver, so renderers
+    /// must use a non-blocking read lock before they submit GPU work.
+    pub surface_configuration_lock: Arc<RwLock<()>>,
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) surface_configuration_sender: Sender<SurfaceConfigurationRequest>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub(crate) struct SurfaceConfigurationRequest {
+    pub surface: Arc<wgpu::Surface<'static>>,
+    pub device: Arc<wgpu::Device>,
+    pub config: wgpu::SurfaceConfiguration,
+    pub complete: Sender<()>,
+    pub wake: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn start_surface_configuration_worker(
+    lock: Arc<RwLock<()>>,
+) -> Sender<SurfaceConfigurationRequest> {
+    let (sender, receiver) = mpsc::channel::<SurfaceConfigurationRequest>();
+    std::thread::Builder::new()
+        .name("SurfaceConfigure".to_owned())
+        .spawn(move || {
+            for request in receiver {
+                // A Vulkan WSI call can block while the compositor is slow.
+                // Keep it off the event thread and prevent concurrent GPU
+                // submissions on this shared device.
+                let _permit = lock.write();
+                #[cfg(debug_assertions)]
+                if let Some(delay) = test_surface_configuration_delay() {
+                    log::debug!("delaying surface configuration by {delay:?} for test");
+                    std::thread::sleep(delay);
+                }
+                request.surface.configure(&request.device, &request.config);
+                drop(_permit);
+                // The receiver is dropped when a newer generation has already
+                // superseded this request, or the window closed. Either way
+                // there is nothing left to notify; just make the drop visible.
+                request.complete.send(()).log_err();
+                if let Some(wake) = request.wake {
+                    wake();
+                }
+            }
+        })
+        .expect("failed to start surface configuration worker");
+    sender
+}
+
+/// Returns an opt-in delay for exercising the nonblocking configuration path
+/// in a local debug build. This is deliberately unavailable from release
+/// builds. The delay holds the same device permit as a real WSI stall.
+#[cfg(all(not(target_family = "wasm"), debug_assertions))]
+fn test_surface_configuration_delay() -> Option<Duration> {
+    const ENV: &str = "FLINT_TEST_SURFACE_CONFIGURE_DELAY_MS";
+    std::env::var(ENV)
+        .ok()?
+        .parse::<u64>()
+        .ok()
+        .map(|milliseconds| Duration::from_millis(milliseconds.min(60_000)))
 }
 
 #[derive(Clone, Copy)]
@@ -88,6 +154,10 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
+        let surface_configuration_lock = Arc::new(RwLock::new(()));
+        let surface_configuration_sender =
+            start_surface_configuration_worker(Arc::clone(&surface_configuration_lock));
+
         Ok(Self {
             instance,
             adapter,
@@ -96,6 +166,8 @@ impl WgpuContext {
             dual_source_blending,
             color_texture_format,
             device_lost,
+            surface_configuration_lock,
+            surface_configuration_sender,
         })
     }
 
@@ -136,6 +208,7 @@ impl WgpuContext {
             dual_source_blending,
             color_texture_format,
             device_lost,
+            surface_configuration_lock: Arc::new(RwLock::new(())),
         })
     }
 

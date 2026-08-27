@@ -141,6 +141,8 @@ impl WebWindow {
             size: device_size,
             transparent: false,
             preferred_present_mode: None,
+            defer_surface_configuration: false,
+            surface_configuration_notifier: None,
         };
 
         let renderer = WgpuRenderer::new_from_canvas(context, &canvas, renderer_config)?;

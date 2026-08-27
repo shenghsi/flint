@@ -199,6 +199,7 @@
   - [Windows](./development/windows.md)
   - [FreeBSD](./development/freebsd.md)
   - [Using Debuggers](./development/debuggers.md)
+  - [Wayland Surface Reconfiguration Design](./development/wayland-surface-reconfiguration-design.md)
   - [Performance](./performance.md)
   - [Glossary](./development/glossary.md)
 - [Release Notes](./development/release-notes.md)
