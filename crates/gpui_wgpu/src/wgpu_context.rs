@@ -56,7 +56,10 @@ fn start_surface_configuration_worker(
                 }
                 request.surface.configure(&request.device, &request.config);
                 drop(_permit);
-                let _ = request.complete.send(());
+                // The receiver is dropped when a newer generation has already
+                // superseded this request, or the window closed. Either way
+                // there is nothing left to notify; just make the drop visible.
+                request.complete.send(()).log_err();
                 if let Some(wake) = request.wake {
                     wake();
                 }

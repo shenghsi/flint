@@ -119,6 +119,12 @@ pub struct WaylandWindowState {
     pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
     close_pending: bool,
+    /// Set once native Wayland objects are destroyed in `finish_close`, and
+    /// never cleared afterward. Unlike `close_pending` (which is reset before
+    /// the deferred `client.drop_window` runs), this must keep guarding
+    /// `frame`/`service_surface_configuration` for as long as this window
+    /// stays reachable through the client's window list.
+    closed: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -403,6 +409,7 @@ impl WaylandWindowState {
             force_render_after_recovery: false,
             renderer_presented: false,
             close_pending: false,
+            closed: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -558,7 +565,7 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
-        if state.close_pending {
+        if state.closed || state.close_pending {
             return;
         }
         state.surface.frame(&state.globals.qh, state.surface.id());
@@ -583,6 +590,9 @@ impl WaylandWindowStatePtr {
     pub fn service_surface_configuration(&self) {
         let should_close = {
             let mut state = self.state.borrow_mut();
+            if state.closed {
+                return;
+            }
             state.renderer.service_surface_configuration();
             state.close_pending && !state.renderer.surface_configuration_in_progress()
         };
@@ -601,6 +611,7 @@ impl WaylandWindowStatePtr {
                 return;
             }
             state.close_pending = false;
+            state.closed = true;
 
             let surface_id = state.surface.id();
             let parent = state.parent.clone();

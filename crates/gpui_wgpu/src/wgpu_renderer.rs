@@ -327,7 +327,8 @@ impl WgpuRenderer {
         let surface = Arc::clone(&resources.surface);
         let device = Arc::clone(&resources.device);
         let (sender, receiver) = mpsc::channel();
-        self.surface_configuration_sender
+        if let Err(error) = self
+            .surface_configuration_sender
             .send(SurfaceConfigurationRequest {
                 surface,
                 device,
@@ -335,7 +336,17 @@ impl WgpuRenderer {
                 complete: sender,
                 wake: self.surface_configuration_notifier.clone(),
             })
-            .expect("surface configuration worker stopped");
+        {
+            // The worker thread died (e.g. it panicked configuring a lost
+            // device). Treat this like the worker disconnecting mid-request
+            // in `poll_surface_configuration`: log and leave the surface
+            // unconfigured rather than taking down the whole process over a
+            // single window's GPU failure.
+            log::error!(
+                "surface configuration worker stopped, generation {generation} not sent: {error}"
+            );
+            return;
+        }
 
         self.surface_configuration_task = Some(SurfaceConfigurationTask {
             generation,
@@ -1302,6 +1313,19 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
+    /// Reconfigures the surface synchronously on the calling thread. Only
+    /// used on platforms/targets that don't route configuration through the
+    /// deferred surface worker (wasm, or non-Wayland when the worker is
+    /// disabled); Wayland's own recovery paths go through
+    /// `request_surface_configuration` instead.
+    fn configure_surface_synchronously(&mut self) {
+        let surface_config = self.surface_config.clone();
+        let resources = self.resources_mut();
+        resources
+            .surface
+            .configure(&resources.device, &surface_config);
+    }
+
     pub fn draw(&mut self, scene: &Scene) -> bool {
         #[cfg(not(target_family = "wasm"))]
         {
@@ -1368,11 +1392,7 @@ impl WgpuRenderer {
                 } else {
                     // Textures must be destroyed before the surface can be reconfigured.
                     drop(frame);
-                    let surface_config = self.surface_config.clone();
-                    let resources = self.resources_mut();
-                    resources
-                        .surface
-                        .configure(&resources.device, &surface_config);
+                    self.configure_surface_synchronously();
                     return false;
                 }
             }
@@ -1384,11 +1404,7 @@ impl WgpuRenderer {
                     return false;
                 }
 
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
+                self.configure_surface_synchronously();
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
@@ -1398,11 +1414,7 @@ impl WgpuRenderer {
                     return false;
                 }
 
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
+                self.configure_surface_synchronously();
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
