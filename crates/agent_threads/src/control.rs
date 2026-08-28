@@ -1892,7 +1892,7 @@ fn seeded_launch_response(
 mod tests {
     use super::*;
     use fs::Fs;
-    use gpui::{AppContext as _, EntityId, Focusable as _, TestAppContext, WindowHandle};
+    use gpui::{EntityId, Focusable as _, TestAppContext, WindowHandle};
     use project::{FakeFs, Project};
     use settings::{AgentThreadCommandContent, AgentThreadSettingsContent, SettingsStore};
     use std::path::PathBuf;
