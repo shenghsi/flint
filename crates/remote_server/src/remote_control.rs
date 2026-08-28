@@ -32,7 +32,7 @@ const MAX_ANCESTRY_DEPTH: usize = 32;
 const PENDING_REGISTRATION_LIFETIME: Duration = Duration::from_secs(10 * 60);
 const MANAGED_BLOCK_BEGIN_PREFIX: &str = "<!-- Flint managed agent-thread instructions: begin v";
 const MANAGED_BLOCK_END: &str = "<!-- Flint managed agent-thread instructions: end -->";
-const REMOTE_MANAGED_BLOCK_VERSION: u32 = 3;
+const REMOTE_MANAGED_BLOCK_VERSION: u32 = 4;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct DiscoveryRecord {
@@ -239,9 +239,10 @@ fn remote_unix_instruction_block(marker_path: &Path) -> String {
          ## Worktree creation\n\n\
          After you create a git worktree, read this executable marker:\n\n\
              {marker_path}\n\n\
-         Run its exact `executable` value with the new worktree's full path:\n\n\
-             \"<executable>\" thread retie --worktree <path>\n\n\
-         If the marker is absent or the command reports that the caller is not recognized, continue without retieing the thread.\n\
+         If the marker is absent, continue without retieing the thread. Otherwise use its `executable` value as `<executable>` and check whether this is a controllable Agent Thread:\n\n\
+             \"<executable>\" terminal current --json\n\n\
+         If the connection fails or the result reports that the caller is not recognized, continue without retieing the thread. If the result has `is_agent_thread: true`, run:\n\n\
+             \"<executable>\" thread retie --worktree <path>\n\
          {MANAGED_BLOCK_END}\n"
     )
 }
@@ -260,9 +261,10 @@ fn remote_windows_instruction_block(marker_path: &Path) -> String {
          ## Worktree creation\n\n\
          After you create a git worktree, read this executable marker in PowerShell:\n\n\
              $control = (Get-Content -Raw '{marker_path}' | ConvertFrom-Json).executable\n\n\
-         If `$control` contains an executable path, run it with the new worktree's full path:\n\n\
-             & $control thread retie --worktree \"<path>\"\n\n\
-         If the marker is absent or the command reports that the caller is not recognized, continue without retieing the thread.\n\
+         If `$control` does not contain an executable path, continue without retieing the thread. Otherwise check whether this is a controllable Agent Thread:\n\n\
+             & $control terminal current --json\n\n\
+         If the connection fails or the result reports that the caller is not recognized, continue without retieing the thread. If the result has `is_agent_thread: true`, run:\n\n\
+             & $control thread retie --worktree \"<path>\"\n\
          {MANAGED_BLOCK_END}\n"
     )
 }
@@ -1347,7 +1349,7 @@ mod tests {
 
         assert!(content.contains("before"));
         assert!(content.contains("after"));
-        assert!(content.contains("begin v3"));
+        assert!(content.contains("begin v4"));
         assert!(content.contains("thread retie --worktree"));
         assert!(!content.contains("\nold\n"));
     }
@@ -1378,8 +1380,10 @@ mod tests {
         let windows = remote_windows_instruction_block(marker);
 
         assert!(unix.contains(&marker.to_string_lossy().to_string()));
+        assert!(unix.contains("\"<executable>\" terminal current --json"));
         assert!(unix.contains("\"<executable>\" thread retie --worktree <path>"));
         assert!(windows.contains("Get-Content -Raw"));
+        assert!(windows.contains("& $control terminal current --json"));
         assert!(windows.contains("& $control thread retie --worktree \"<path>\""));
     }
 
