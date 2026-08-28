@@ -1,6 +1,7 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Cell, RefCell, RefMut},
     hash::Hash,
+    io,
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
     rc::{Rc, Weak},
@@ -9,7 +10,8 @@ use std::{
 
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle,
+    EventLoop, Interest, LoopHandle, Mode, PostAction, RegistrationToken,
+    generic::Generic,
     timer::{TimeoutAction, Timer},
 };
 use calloop_wayland_source::WaylandSource;
@@ -18,7 +20,7 @@ use filedescriptor::Pipe;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt as _;
-use wayland_backend::client::ObjectId;
+use wayland_backend::client::{ObjectId, WaylandError};
 use wayland_backend::protocol::WEnum;
 use wayland_client::event_created_child;
 use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
@@ -69,6 +71,7 @@ use wayland_protocols::{
 };
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+use wayland_sys::{client::wayland_client_handle, ffi_dispatch};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
@@ -103,6 +106,48 @@ use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1,
 };
+
+enum WaylandFlushStatus {
+    Flushed,
+    Backpressured,
+    Fatal(WaylandError),
+}
+
+fn flush_wayland_connection(connection: &Connection) -> WaylandFlushStatus {
+    match connection.flush() {
+        Ok(()) => WaylandFlushStatus::Flushed,
+        Err(error) => {
+            if let Some(error) = connection.backend().last_error() {
+                return WaylandFlushStatus::Fatal(error);
+            }
+
+            // SAFETY: client_system makes display_ptr a genuine wl_display
+            // pointer. wayland-sys binds this function from the same loaded
+            // libwayland-client instance that owns the display.
+            let display_error = unsafe {
+                ffi_dispatch!(
+                    wayland_client_handle(),
+                    wl_display_get_error,
+                    connection.backend().display_ptr().cast()
+                )
+            };
+            if display_error != 0 {
+                return WaylandFlushStatus::Fatal(WaylandError::Io(io::Error::from_raw_os_error(
+                    display_error,
+                )));
+            }
+
+            if matches!(
+                &error,
+                WaylandError::Io(error) if error.kind() == io::ErrorKind::WouldBlock
+            ) {
+                WaylandFlushStatus::Backpressured
+            } else {
+                WaylandFlushStatus::Fatal(error)
+            }
+        }
+    }
+}
 
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
@@ -266,6 +311,10 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
+    wayland_connection: Connection,
+    writable_registration: RegistrationToken,
+    writable_enabled: Rc<Cell<bool>>,
+    writable_usable: Rc<Cell<bool>>,
     pub common: LinuxCommon,
     ime_enabled: Option<bool>,
 }
@@ -581,6 +630,34 @@ impl WaylandClient {
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
+        let writable_enabled = Rc::new(Cell::new(false));
+        let writable_usable = Rc::new(Cell::new(true));
+        let writable_connection = conn.clone();
+        let writable_enabled_for_callback = Rc::clone(&writable_enabled);
+        let writable_fd = conn
+            .backend()
+            .poll_fd()
+            .try_clone_to_owned()
+            .expect("failed to duplicate the Wayland socket for writable polling");
+        let writable_registration = handle
+            .insert_source(
+                Generic::new(writable_fd, Interest::WRITE, Mode::Level),
+                move |_, _, _| match flush_wayland_connection(&writable_connection) {
+                    WaylandFlushStatus::Flushed => {
+                        writable_enabled_for_callback.set(false);
+                        Ok(PostAction::Disable)
+                    }
+                    WaylandFlushStatus::Backpressured => Ok(PostAction::Continue),
+                    WaylandFlushStatus::Fatal(error) => Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        format!("fatal Wayland error while flushing output: {error}"),
+                    )),
+                },
+            )
+            .expect("failed to register Wayland writable polling");
+        handle
+            .disable(&writable_registration)
+            .expect("failed to disable initial Wayland writable polling");
         let (surface_configuration_ping, surface_configuration_ping_source) =
             calloop::ping::make_ping().expect("Failed to create a surface configuration ping.");
         handle
@@ -753,6 +830,10 @@ impl WaylandClient {
             cursor,
             pending_activation: None,
             event_loop: Some(event_loop),
+            wayland_connection: conn.clone(),
+            writable_registration,
+            writable_enabled,
+            writable_usable,
             ime_enabled: None,
         }));
 
@@ -947,18 +1028,71 @@ impl LinuxClient for WaylandClient {
     }
 
     fn run(&self) {
-        let mut event_loop = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .expect("App is already running");
+        let (
+            mut event_loop,
+            connection,
+            loop_handle,
+            loop_signal,
+            writable_registration,
+            writable_enabled,
+            writable_usable,
+        ) = {
+            let mut state = self.0.borrow_mut();
+            (
+                state.event_loop.take().expect("App is already running"),
+                state.wayland_connection.clone(),
+                state.loop_handle.clone(),
+                state.common.signal.clone(),
+                state.writable_registration,
+                Rc::clone(&state.writable_enabled),
+                Rc::clone(&state.writable_usable),
+            )
+        };
+
+        // Flush once before the first event-loop wait. WaylandSource ignores
+        // a transient EAGAIN and only watches for readable events. Without
+        // this check, initial output backpressure could make the first wait
+        // sleep without a writable watch.
+        match flush_wayland_connection(&connection) {
+            WaylandFlushStatus::Flushed => {}
+            WaylandFlushStatus::Backpressured => {
+                if let Err(error) = loop_handle.enable(&writable_registration) {
+                    log::error!("failed to enable initial Wayland writable polling: {error}");
+                    writable_usable.set(false);
+                } else {
+                    writable_enabled.set(true);
+                }
+            }
+            WaylandFlushStatus::Fatal(error) => {
+                log::error!("fatal Wayland connection error before event loop start: {error}");
+                return;
+            }
+        }
 
         event_loop
             .run(
                 None,
                 &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
-                |_| {},
+                move |_| match flush_wayland_connection(&connection) {
+                    WaylandFlushStatus::Flushed => {}
+                    WaylandFlushStatus::Backpressured => {
+                        if writable_usable.get() && !writable_enabled.get() {
+                            match loop_handle.enable(&writable_registration) {
+                                Ok(()) => writable_enabled.set(true),
+                                Err(error) => {
+                                    log::error!(
+                                        "failed to enable Wayland writable polling: {error}"
+                                    );
+                                    writable_usable.set(false);
+                                }
+                            }
+                        }
+                    }
+                    WaylandFlushStatus::Fatal(error) => {
+                        log::error!("fatal Wayland connection error: {error}");
+                        loop_signal.stop();
+                    }
+                },
             )
             .log_err();
     }
