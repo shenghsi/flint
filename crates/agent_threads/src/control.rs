@@ -38,7 +38,7 @@ use anyhow::{Context as _, Result};
 use collections::HashMap;
 #[cfg(unix)]
 use gpui::Task;
-use gpui::{App, AsyncApp, Entity, EntityId, Keystroke, WindowHandle};
+use gpui::{App, AppContext as _, AsyncApp, Entity, EntityId, Keystroke, WindowHandle};
 #[cfg(unix)]
 use net::async_net::{UnixListener, UnixStream};
 use settings::Settings as _;
@@ -650,15 +650,37 @@ pub(crate) async fn dispatch(
         )
     });
     let records = cx.update(crate::terminal_control::records);
-    let caller_record = resolve_terminal_caller(peer_pid, &records).or_else(|| {
-        let terminal_item_id = resolve_caller_thread(peer_pid, &tracked_pids, &tracked_worktrees)?;
-        records.iter().find(|record| {
-            record
-                .view
-                .upgrade()
-                .is_some_and(|view| view.entity_id() == terminal_item_id)
-        })
-    });
+    let caller_record = match resolve_terminal_caller(peer_pid, &records) {
+        Some(record) => Some(record),
+        None => {
+            // `resolve_caller_thread` refreshes every process on the host,
+            // reading `/proc/<pid>/{cmdline,exe,cwd}` for each one -- on a
+            // busy machine that is hundreds of processes, to use the few on
+            // the caller's ancestry chain. This task runs on the foreground
+            // executor, so doing that inline stalls the main thread for as
+            // long as those reads take; under storage pressure that has been
+            // measured at over 100ms per control request.
+            //
+            // Narrowing the refresh to just the ancestry chain would be the
+            // real win, but the resolver's tests race with their own spawned
+            // child's `execve` and currently depend on this scan being slow.
+            // Left as follow-up work; moving it off the main thread is what
+            // stops it from being visible to the user.
+            let terminal_item_id = cx
+                .background_spawn(async move {
+                    resolve_caller_thread(peer_pid, &tracked_pids, &tracked_worktrees)
+                })
+                .await;
+            terminal_item_id.and_then(|terminal_item_id| {
+                records.iter().find(|record| {
+                    record
+                        .view
+                        .upgrade()
+                        .is_some_and(|view| view.entity_id() == terminal_item_id)
+                })
+            })
+        }
+    };
 
     if matches!(
         request.command,

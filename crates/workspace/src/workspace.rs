@@ -54,12 +54,12 @@ use futures::{
     future::Shared,
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis, Bounds,
-    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptButton, PromptLevel, Render, ResizeEdge, Size, Stateful,
-    Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds,
-    WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
+    Action, AnyEntity, AnyView, AnyWeakView, App, AppContext as _, AsyncApp, AsyncWindowContext,
+    Axis, Bounds, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView,
+    MouseButton, PathPromptOptions, Point, PromptButton, PromptLevel, Render, ResizeEdge, Size,
+    Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
+    WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
     transparent_black,
 };
 pub use history_manager::*;
@@ -1701,6 +1701,9 @@ impl Workspace {
         );
 
         let db = WorkspaceDb::global(cx);
+        // A second handle, so the blocking lookup below can be moved onto the
+        // background executor while `db` stays available to this task.
+        let serialized_workspace_db = WorkspaceDb::global(cx);
         let kvp = db::kvp::KeyValueStore::global(cx);
         cx.spawn(async move |cx| {
             let mut paths_to_open = Vec::with_capacity(abs_paths.len());
@@ -1712,7 +1715,17 @@ impl Workspace {
                 }
             }
 
-            let serialized_workspace = db.workspace_for_roots(paths_to_open.as_slice());
+            // `workspace_for_roots` is a synchronous SQLite query. This task
+            // runs on the foreground executor, so running it inline blocks the
+            // main thread for however long the query takes -- which under
+            // storage pressure is long enough to drop frames.
+            let (serialized_workspace, mut paths_to_open) = cx
+                .background_spawn(async move {
+                    let serialized_workspace =
+                        serialized_workspace_db.workspace_for_roots(paths_to_open.as_slice());
+                    (serialized_workspace, paths_to_open)
+                })
+                .await;
 
             if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
                 paths_to_open = paths.ordered_paths().cloned().collect();
