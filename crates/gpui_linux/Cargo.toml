@@ -26,6 +26,7 @@ wayland = [
     "wayland-protocols",
     "wayland-protocols-plasma",
     "wayland-protocols-wlr",
+    "wayland-sys",
     "filedescriptor",
     "xkbcommon",
     "open",
@@ -102,6 +103,7 @@ wayland-backend = { version = "0.3.3", features = [
 ], optional = true }
 wayland-client = { version = "0.31.11", optional = true }
 wayland-cursor = { version = "0.31.11", optional = true }
+wayland-sys = { version = "0.31.7", features = ["client", "dlopen"], optional = true }
 wayland-protocols = { version = "0.32.9", features = [
     "client",
     "staging",

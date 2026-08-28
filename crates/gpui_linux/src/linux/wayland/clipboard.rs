@@ -7,7 +7,7 @@ use std::{
 use calloop::{LoopHandle, PostAction};
 use filedescriptor::Pipe;
 use strum::IntoEnumIterator;
-use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
+use wayland_client::{Connection, backend::WaylandError, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
 use crate::linux::{WaylandClientStatePtr, platform::read_fd};
@@ -84,7 +84,14 @@ impl<T: ReceiveData> DataOffer<T> {
         let fd = pipe.read;
         drop(pipe.write);
 
-        connection.flush().unwrap();
+        if let Err(error) = connection.flush() {
+            if matches!(&error, WaylandError::Io(error) if error.kind() == ErrorKind::WouldBlock) {
+                log::warn!("Wayland output is backpressured; skipping clipboard read");
+            } else {
+                log::error!("failed to flush Wayland clipboard request: {error}");
+            }
+            return None;
+        }
 
         match unsafe { read_fd(fd) } {
             Ok(bytes) => Some(bytes),
