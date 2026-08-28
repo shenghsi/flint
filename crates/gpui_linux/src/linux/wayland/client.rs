@@ -1,6 +1,7 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Cell, RefCell, RefMut},
     hash::Hash,
+    io,
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
     rc::{Rc, Weak},
@@ -9,7 +10,8 @@ use std::{
 
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle,
+    EventLoop, Interest, LoopHandle, Mode, PostAction, RegistrationToken,
+    generic::Generic,
     timer::{TimeoutAction, Timer},
 };
 use calloop_wayland_source::WaylandSource;
@@ -18,7 +20,7 @@ use filedescriptor::Pipe;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt as _;
-use wayland_backend::client::ObjectId;
+use wayland_backend::client::{ObjectId, WaylandError};
 use wayland_backend::protocol::WEnum;
 use wayland_client::event_created_child;
 use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
@@ -63,6 +65,104 @@ use wayland_protocols::{
     wp::cursor_shape::v1::client::{wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1},
     xdg::dialog::v1::client::xdg_wm_dialog_v1::{self, XdgWmDialogV1},
 };
+
+enum WaylandFlushStatus {
+    Flushed,
+    Backpressured,
+    Fatal(WaylandError),
+}
+
+fn flush_wayland_connection(connection: &Connection) -> WaylandFlushStatus {
+    match connection.flush() {
+        Ok(()) => WaylandFlushStatus::Flushed,
+        Err(error) => {
+            if let Some(error) = connection.backend().last_error() {
+                WaylandFlushStatus::Fatal(error)
+            } else if libwayland_display_error(connection).is_some_and(|error| error != 0) {
+                // wayland-backend intentionally does not save EAGAIN because
+                // it is normally transient. libwayland can also use EAGAIN as
+                // a fatal display error when its fixed output buffer is full.
+                WaylandFlushStatus::Fatal(error)
+            } else if matches!(
+                &error,
+                WaylandError::Io(error) if error.kind() == io::ErrorKind::WouldBlock
+            ) {
+                WaylandFlushStatus::Backpressured
+            } else {
+                WaylandFlushStatus::Fatal(error)
+            }
+        }
+    }
+}
+
+/// Return libwayland's display error, if the runtime library provides the
+/// required function. This check is necessary because wayland-backend does
+/// not save a `WouldBlock` error in its own error state.
+fn libwayland_display_error(connection: &Connection) -> Option<libc::c_int> {
+    type GetDisplayError = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
+
+    // SAFETY: Opening this SONAME returns another handle to the library that
+    // backs `connection`. A non-null symbol has the function signature from
+    // libwayland-client. The display pointer is valid while `connection`
+    // exists. The function pointer is not used after the handle is closed.
+    unsafe {
+        let library = libc::dlopen(
+            c"libwayland-client.so.0".as_ptr(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        if library.is_null() {
+            return None;
+        }
+
+        let symbol = libc::dlsym(library, c"wl_display_get_error".as_ptr());
+        if symbol.is_null() {
+            libc::dlclose(library);
+            return None;
+        }
+
+        let get_display_error: GetDisplayError = std::mem::transmute(symbol);
+        let error = get_display_error(connection.backend().display_ptr().cast());
+        libc::dlclose(library);
+        Some(error)
+    }
+}
+
+/// Enable dynamically growing libwayland connection buffers when the loaded
+/// library provides the API added in libwayland 1.23. Older libraries keep
+/// their fixed buffers and rely on writable readiness plus fatal-error
+/// detection below.
+fn enable_dynamic_wayland_buffers(connection: &Connection) {
+    type SetMaxBufferSize = unsafe extern "C" fn(*mut libc::c_void, usize);
+
+    // SAFETY: Opening this SONAME returns another handle to the same library
+    // that backs `connection`. A non-null symbol has the function signature
+    // from libwayland-client. The display pointer remains valid for the
+    // lifetime of `connection`.
+    unsafe {
+        let library = libc::dlopen(
+            c"libwayland-client.so.0".as_ptr(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        if library.is_null() {
+            log::warn!("could not open libwayland-client to configure connection buffers");
+            return;
+        }
+
+        let symbol = libc::dlsym(library, c"wl_display_set_max_buffer_size".as_ptr());
+        if symbol.is_null() {
+            libc::dlclose(library);
+            log::debug!(
+                "libwayland does not support dynamic connection buffers; using writable backpressure handling"
+            );
+            return;
+        }
+
+        let set_max_buffer_size: SetMaxBufferSize = std::mem::transmute(symbol);
+        set_max_buffer_size(connection.backend().display_ptr().cast(), 0);
+        libc::dlclose(library);
+        log::debug!("enabled dynamically growing libwayland connection buffers");
+    }
+}
 use wayland_protocols::{
     wp::fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
@@ -266,6 +366,9 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
+    wayland_connection: Connection,
+    writable_registration: RegistrationToken,
+    writable_enabled: Rc<Cell<bool>>,
     pub common: LinuxCommon,
     ime_enabled: Option<bool>,
 }
@@ -541,6 +644,7 @@ fn wl_output_version(version: u32) -> u32 {
 impl WaylandClient {
     pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
+        enable_dynamic_wayland_buffers(&conn);
 
         let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
@@ -581,6 +685,33 @@ impl WaylandClient {
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
+        let writable_enabled = Rc::new(Cell::new(false));
+        let writable_connection = conn.clone();
+        let writable_enabled_for_callback = Rc::clone(&writable_enabled);
+        let writable_fd = conn
+            .backend()
+            .poll_fd()
+            .try_clone_to_owned()
+            .expect("failed to duplicate the Wayland socket for writable polling");
+        let writable_registration = handle
+            .insert_source(
+                Generic::new(writable_fd, Interest::WRITE, Mode::Level),
+                move |_, _, _| match flush_wayland_connection(&writable_connection) {
+                    WaylandFlushStatus::Flushed => {
+                        writable_enabled_for_callback.set(false);
+                        Ok(PostAction::Disable)
+                    }
+                    WaylandFlushStatus::Backpressured => Ok(PostAction::Continue),
+                    WaylandFlushStatus::Fatal(error) => Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        format!("fatal Wayland error while flushing output: {error}"),
+                    )),
+                },
+            )
+            .expect("failed to register Wayland writable polling");
+        handle
+            .disable(&writable_registration)
+            .expect("failed to disable initial Wayland writable polling");
         let (surface_configuration_ping, surface_configuration_ping_source) =
             calloop::ping::make_ping().expect("Failed to create a surface configuration ping.");
         handle
@@ -753,6 +884,9 @@ impl WaylandClient {
             cursor,
             pending_activation: None,
             event_loop: Some(event_loop),
+            wayland_connection: conn.clone(),
+            writable_registration,
+            writable_enabled,
             ime_enabled: None,
         }));
 
@@ -947,18 +1081,68 @@ impl LinuxClient for WaylandClient {
     }
 
     fn run(&self) {
-        let mut event_loop = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .expect("App is already running");
+        let (
+            mut event_loop,
+            connection,
+            loop_handle,
+            loop_signal,
+            writable_registration,
+            writable_enabled,
+        ) = {
+            let mut state = self.0.borrow_mut();
+            (
+                state.event_loop.take().expect("App is already running"),
+                state.wayland_connection.clone(),
+                state.loop_handle.clone(),
+                state.common.signal.clone(),
+                state.writable_registration,
+                Rc::clone(&state.writable_enabled),
+            )
+        };
+
+        // Flush once before the first event-loop wait. WaylandSource ignores
+        // a transient EAGAIN and only watches for readable events. Without
+        // this check, initial output backpressure could make the first wait
+        // sleep without a writable watch.
+        match flush_wayland_connection(&connection) {
+            WaylandFlushStatus::Flushed => {}
+            WaylandFlushStatus::Backpressured => {
+                if let Err(error) = loop_handle.enable(&writable_registration) {
+                    log::error!("failed to enable initial Wayland writable polling: {error}");
+                    return;
+                }
+                writable_enabled.set(true);
+            }
+            WaylandFlushStatus::Fatal(error) => {
+                log::error!("fatal Wayland connection error before event loop start: {error}");
+                return;
+            }
+        }
 
         event_loop
             .run(
                 None,
                 &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
-                |_| {},
+                move |_| match flush_wayland_connection(&connection) {
+                    WaylandFlushStatus::Flushed => {}
+                    WaylandFlushStatus::Backpressured => {
+                        if !writable_enabled.get() {
+                            match loop_handle.enable(&writable_registration) {
+                                Ok(()) => writable_enabled.set(true),
+                                Err(error) => {
+                                    log::error!(
+                                        "failed to enable Wayland writable polling: {error}"
+                                    );
+                                    loop_signal.stop();
+                                }
+                            }
+                        }
+                    }
+                    WaylandFlushStatus::Fatal(error) => {
+                        log::error!("fatal Wayland connection error: {error}");
+                        loop_signal.stop();
+                    }
+                },
             )
             .log_err();
     }
