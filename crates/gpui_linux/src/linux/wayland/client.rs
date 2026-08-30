@@ -113,6 +113,74 @@ enum WaylandFlushStatus {
     Fatal(WaylandError),
 }
 
+/// Stops frame-producing requests while the compositor socket cannot accept output.
+///
+/// libwayland 1.22 and older use a fixed 4096-byte client output buffer. If a
+/// caller marshals another request while that buffer cannot flush, libwayland
+/// can latch EAGAIN as a fatal display error. The writable watch drains the
+/// buffer, and this shared state prevents frame traffic from filling it first.
+#[derive(Default)]
+pub(crate) struct WaylandWriteState {
+    backpressured: Cell<bool>,
+    writable_enabled: Cell<bool>,
+    writable_usable: Cell<bool>,
+    backpressure_started_at: Cell<Option<Instant>>,
+    backpressure_episodes: Cell<u64>,
+    deferred_frames: Cell<u64>,
+}
+
+impl WaylandWriteState {
+    fn new() -> Self {
+        Self {
+            writable_usable: Cell::new(true),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn is_backpressured(&self) -> bool {
+        self.backpressured.get()
+    }
+
+    fn begin_backpressure(&self) {
+        if !self.backpressured.replace(true) {
+            self.backpressure_started_at.set(Some(Instant::now()));
+            self.backpressure_episodes
+                .set(self.backpressure_episodes.get() + 1);
+            self.deferred_frames.set(0);
+        }
+    }
+
+    pub(crate) fn note_deferred_frame(&self) {
+        self.deferred_frames.set(self.deferred_frames.get() + 1);
+    }
+
+    fn finish_backpressure(&self) -> Option<(Duration, u64)> {
+        if !self.backpressured.replace(false) {
+            return None;
+        }
+
+        let elapsed = self
+            .backpressure_started_at
+            .take()
+            .map(|started_at| started_at.elapsed())
+            .unwrap_or_default();
+        Some((elapsed, self.deferred_frames.replace(0)))
+    }
+
+    fn log_fatal_error(&self, error: &WaylandError, operation: &str) {
+        let elapsed = self
+            .backpressure_started_at
+            .get()
+            .map(|started_at| started_at.elapsed());
+        log::error!(
+            "fatal Wayland connection error {operation}: {error}; backpressured={}, backpressure_duration={elapsed:?}, deferred_frames={}, backpressure_episodes={}. The Wayland connection cannot recover; stopping the event loop",
+            self.backpressured.get(),
+            self.deferred_frames.get(),
+            self.backpressure_episodes.get(),
+        );
+    }
+}
+
 fn flush_wayland_connection(connection: &Connection) -> WaylandFlushStatus {
     match connection.flush() {
         Ok(()) => WaylandFlushStatus::Flushed,
@@ -178,6 +246,7 @@ pub struct Globals {
     pub system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
     pub surface_configuration_ping: calloop::ping::Ping,
     pub executor: ForegroundExecutor,
+    pub(crate) write_state: Rc<WaylandWriteState>,
 }
 
 impl Globals {
@@ -187,6 +256,7 @@ impl Globals {
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
         surface_configuration_ping: calloop::ping::Ping,
+        write_state: Rc<WaylandWriteState>,
     ) -> Self {
         let dialog_v = XdgWmDialogV1::interface().version;
         Globals {
@@ -223,6 +293,7 @@ impl Globals {
             surface_configuration_ping,
             executor,
             qh,
+            write_state,
         }
     }
 }
@@ -313,8 +384,6 @@ pub(crate) struct WaylandClientState {
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     wayland_connection: Connection,
     writable_registration: RegistrationToken,
-    writable_enabled: Rc<Cell<bool>>,
-    writable_usable: Rc<Cell<bool>>,
     pub common: LinuxCommon,
     ime_enabled: Option<bool>,
 }
@@ -367,6 +436,60 @@ impl WaylandClientStatePtr {
     pub fn set_pending_activation(&self, window: ObjectId) {
         self.0.upgrade().unwrap().borrow_mut().pending_activation =
             Some(PendingActivation::Window(window));
+    }
+
+    pub(crate) fn flush_before_wayland_frame(&self) -> bool {
+        self.flush_wayland_output("before starting a frame")
+    }
+
+    pub(crate) fn flush_after_wayland_frame(&self) {
+        self.flush_wayland_output("after completing a frame");
+    }
+
+    fn flush_wayland_output(&self, operation: &'static str) -> bool {
+        let Some(client) = self.0.upgrade() else {
+            return false;
+        };
+        let (connection, write_state, loop_signal) = {
+            let state = client.borrow();
+            (
+                state.wayland_connection.clone(),
+                Rc::clone(&state.globals.write_state),
+                state.common.signal.clone(),
+            )
+        };
+
+        if write_state.is_backpressured() {
+            return false;
+        }
+
+        match flush_wayland_connection(&connection) {
+            WaylandFlushStatus::Flushed => true,
+            WaylandFlushStatus::Backpressured => {
+                write_state.begin_backpressure();
+                false
+            }
+            WaylandFlushStatus::Fatal(error) => {
+                write_state.log_fatal_error(&error, operation);
+                loop_signal.stop();
+                false
+            }
+        }
+    }
+
+    fn resume_deferred_wayland_frames(&self) {
+        let Some(client) = self.0.upgrade() else {
+            return;
+        };
+        let windows = client
+            .borrow()
+            .windows
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for window in windows {
+            window.resume_after_wayland_backpressure();
+        }
     }
 
     pub fn enable_ime(&self) {
@@ -630,10 +753,9 @@ impl WaylandClient {
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
-        let writable_enabled = Rc::new(Cell::new(false));
-        let writable_usable = Rc::new(Cell::new(true));
+        let write_state = Rc::new(WaylandWriteState::new());
         let writable_connection = conn.clone();
-        let writable_enabled_for_callback = Rc::clone(&writable_enabled);
+        let write_state_for_callback = Rc::clone(&write_state);
         let writable_fd = conn
             .backend()
             .poll_fd()
@@ -642,16 +764,38 @@ impl WaylandClient {
         let writable_registration = handle
             .insert_source(
                 Generic::new(writable_fd, Interest::WRITE, Mode::Level),
-                move |_, _, _| match flush_wayland_connection(&writable_connection) {
+                move |_, _, client| match flush_wayland_connection(&writable_connection) {
                     WaylandFlushStatus::Flushed => {
-                        writable_enabled_for_callback.set(false);
-                        Ok(PostAction::Disable)
+                        if let Some((elapsed, deferred_frames)) =
+                            write_state_for_callback.finish_backpressure()
+                        {
+                            log::debug!(
+                                "Wayland output recovered after {elapsed:?}; resuming {deferred_frames} deferred frame(s)"
+                            );
+                            client.resume_deferred_wayland_frames();
+                        }
+
+                        if write_state_for_callback.is_backpressured() {
+                            Ok(PostAction::Continue)
+                        } else {
+                            write_state_for_callback.writable_enabled.set(false);
+                            Ok(PostAction::Disable)
+                        }
                     }
-                    WaylandFlushStatus::Backpressured => Ok(PostAction::Continue),
-                    WaylandFlushStatus::Fatal(error) => Err(io::Error::new(
-                        io::ErrorKind::ConnectionAborted,
-                        format!("fatal Wayland error while flushing output: {error}"),
-                    )),
+                    WaylandFlushStatus::Backpressured => {
+                        write_state_for_callback.begin_backpressure();
+                        Ok(PostAction::Continue)
+                    }
+                    WaylandFlushStatus::Fatal(error) => {
+                        write_state_for_callback.log_fatal_error(
+                            &error,
+                            "while flushing output after a writable event",
+                        );
+                        Err(io::Error::new(
+                            io::ErrorKind::ConnectionAborted,
+                            format!("fatal Wayland error while flushing output: {error}"),
+                        ))
+                    }
                 },
             )
             .expect("failed to register Wayland writable polling");
@@ -703,6 +847,7 @@ impl WaylandClient {
             qh.clone(),
             seat.clone(),
             surface_configuration_ping,
+            Rc::clone(&write_state),
         );
 
         let data_device = globals
@@ -832,8 +977,6 @@ impl WaylandClient {
             event_loop: Some(event_loop),
             wayland_connection: conn.clone(),
             writable_registration,
-            writable_enabled,
-            writable_usable,
             ime_enabled: None,
         }));
 
@@ -1034,8 +1177,7 @@ impl LinuxClient for WaylandClient {
             loop_handle,
             loop_signal,
             writable_registration,
-            writable_enabled,
-            writable_usable,
+            write_state,
         ) = {
             let mut state = self.0.borrow_mut();
             (
@@ -1044,8 +1186,7 @@ impl LinuxClient for WaylandClient {
                 state.loop_handle.clone(),
                 state.common.signal.clone(),
                 state.writable_registration,
-                Rc::clone(&state.writable_enabled),
-                Rc::clone(&state.writable_usable),
+                Rc::clone(&state.globals.write_state),
             )
         };
 
@@ -1056,15 +1197,16 @@ impl LinuxClient for WaylandClient {
         match flush_wayland_connection(&connection) {
             WaylandFlushStatus::Flushed => {}
             WaylandFlushStatus::Backpressured => {
+                write_state.begin_backpressure();
                 if let Err(error) = loop_handle.enable(&writable_registration) {
                     log::error!("failed to enable initial Wayland writable polling: {error}");
-                    writable_usable.set(false);
+                    write_state.writable_usable.set(false);
                 } else {
-                    writable_enabled.set(true);
+                    write_state.writable_enabled.set(true);
                 }
             }
             WaylandFlushStatus::Fatal(error) => {
-                log::error!("fatal Wayland connection error before event loop start: {error}");
+                write_state.log_fatal_error(&error, "before the event loop started");
                 return;
             }
         }
@@ -1073,23 +1215,61 @@ impl LinuxClient for WaylandClient {
             .run(
                 None,
                 &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
-                move |_| match flush_wayland_connection(&connection) {
-                    WaylandFlushStatus::Flushed => {}
-                    WaylandFlushStatus::Backpressured => {
-                        if writable_usable.get() && !writable_enabled.get() {
+                move |client| match flush_wayland_connection(&connection) {
+                    WaylandFlushStatus::Flushed => {
+                        if let Some((elapsed, deferred_frames)) =
+                            write_state.finish_backpressure()
+                        {
+                            if write_state.writable_enabled.get() {
+                                match loop_handle.disable(&writable_registration) {
+                                    Ok(()) => write_state.writable_enabled.set(false),
+                                    Err(error) => {
+                                        log::error!(
+                                            "failed to disable Wayland writable polling after recovery: {error}"
+                                        );
+                                        write_state.writable_usable.set(false);
+                                    }
+                                }
+                            }
+                            log::debug!(
+                                "Wayland output recovered after {elapsed:?}; resuming {deferred_frames} deferred frame(s)"
+                            );
+                            client.resume_deferred_wayland_frames();
+                        }
+
+                        if write_state.is_backpressured()
+                            && write_state.writable_usable.get()
+                            && !write_state.writable_enabled.get()
+                        {
                             match loop_handle.enable(&writable_registration) {
-                                Ok(()) => writable_enabled.set(true),
+                                Ok(()) => write_state.writable_enabled.set(true),
+                                Err(error) => {
+                                    log::error!(
+                                        "failed to enable Wayland writable polling after frame recovery: {error}"
+                                    );
+                                    write_state.writable_usable.set(false);
+                                }
+                            }
+                        }
+                    }
+                    WaylandFlushStatus::Backpressured => {
+                        write_state.begin_backpressure();
+                        if write_state.writable_usable.get()
+                            && !write_state.writable_enabled.get()
+                        {
+                            match loop_handle.enable(&writable_registration) {
+                                Ok(()) => write_state.writable_enabled.set(true),
                                 Err(error) => {
                                     log::error!(
                                         "failed to enable Wayland writable polling: {error}"
                                     );
-                                    writable_usable.set(false);
+                                    write_state.writable_usable.set(false);
                                 }
                             }
                         }
                     }
                     WaylandFlushStatus::Fatal(error) => {
-                        log::error!("fatal Wayland connection error: {error}");
+                        write_state.log_fatal_error(&error, "at the end of an event-loop cycle");
                         loop_signal.stop();
                     }
                 },
@@ -2710,5 +2890,31 @@ impl Dispatch<XdgDialogV1, ()> for WaylandClientStatePtr {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WaylandWriteState;
+
+    #[test]
+    fn wayland_write_state_tracks_one_backpressure_episode() {
+        let state = WaylandWriteState::new();
+
+        assert!(!state.is_backpressured());
+        assert_eq!(state.finish_backpressure(), None);
+
+        state.begin_backpressure();
+        state.note_deferred_frame();
+        state.note_deferred_frame();
+        state.begin_backpressure();
+
+        assert!(state.is_backpressured());
+        assert_eq!(state.backpressure_episodes.get(), 1);
+
+        let (_, deferred_frames) = state.finish_backpressure().unwrap();
+        assert_eq!(deferred_frames, 2);
+        assert!(!state.is_backpressured());
+        assert_eq!(state.finish_backpressure(), None);
     }
 }

@@ -118,6 +118,8 @@ pub struct WaylandWindowState {
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
+    frame_callback_pending_commit: bool,
+    frame_deferred_for_backpressure: bool,
     close_pending: bool,
     /// Set once native Wayland objects are destroyed in `finish_close`, and
     /// never cleared afterward. Unlike `close_pending` (which is reset before
@@ -408,6 +410,8 @@ impl WaylandWindowState {
             hovered: false,
             force_render_after_recovery: false,
             renderer_presented: false,
+            frame_callback_pending_commit: false,
+            frame_deferred_for_backpressure: false,
             close_pending: false,
             closed: false,
             in_progress_window_controls: None,
@@ -564,11 +568,41 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn frame(&self) {
+        let client = {
+            let state = self.state.borrow();
+            if state.closed || state.close_pending {
+                return;
+            }
+            if state.globals.write_state.is_backpressured() {
+                drop(state);
+                self.defer_frame_for_wayland_backpressure();
+                return;
+            }
+            state.client.clone()
+        };
+
+        if !client.flush_before_wayland_frame() {
+            self.defer_frame_for_wayland_backpressure();
+            return;
+        }
+
+        self.request_gpui_frame();
+    }
+
+    fn request_gpui_frame(&self) {
         let mut state = self.state.borrow_mut();
         if state.closed || state.close_pending {
             return;
         }
-        state.surface.frame(&state.globals.qh, state.surface.id());
+        if state.globals.write_state.is_backpressured() {
+            drop(state);
+            self.defer_frame_for_wayland_backpressure();
+            return;
+        }
+        if !state.frame_callback_pending_commit {
+            state.surface.frame(&state.globals.qh, state.surface.id());
+            state.frame_callback_pending_commit = true;
+        }
         state.resize_throttle = false;
         let force_render = state.force_render_after_recovery;
         state.force_render_after_recovery = false;
@@ -581,6 +615,37 @@ impl WaylandWindowStatePtr {
                 ..Default::default()
             });
             self.update_ime_enabled();
+        }
+    }
+
+    fn defer_frame_for_wayland_backpressure(&self) {
+        let write_state = {
+            let mut state = self.state.borrow_mut();
+            if state.closed || state.close_pending {
+                return;
+            }
+            state.force_render_after_recovery = true;
+            if state.frame_deferred_for_backpressure {
+                return;
+            }
+            state.frame_deferred_for_backpressure = true;
+            Rc::clone(&state.globals.write_state)
+        };
+        write_state.note_deferred_frame();
+    }
+
+    pub(crate) fn resume_after_wayland_backpressure(&self) {
+        let should_resume = {
+            let mut state = self.state.borrow_mut();
+            if state.closed || state.close_pending || !state.frame_deferred_for_backpressure {
+                return;
+            }
+            state.frame_deferred_for_backpressure = false;
+            true
+        };
+
+        if should_resume {
+            self.frame();
         }
     }
 
@@ -1449,8 +1514,21 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        let mut state = self.borrow_mut();
+        let client = {
+            let state = self.borrow();
+            if state.globals.write_state.is_backpressured() {
+                drop(state);
+                self.0.defer_frame_for_wayland_backpressure();
+                return;
+            }
+            state.client.clone()
+        };
+        if !client.flush_before_wayland_frame() {
+            self.0.defer_frame_for_wayland_backpressure();
+            return;
+        }
 
+        let mut state = self.borrow_mut();
         if state.renderer.device_lost() {
             let raw_window = RawWindow {
                 window: state.surface.id().as_ptr().cast::<std::ffi::c_void>(),
@@ -1499,6 +1577,18 @@ impl PlatformWindow for WaylandWindow {
     fn completed_frame(&self) {
         let mut state = self.borrow_mut();
 
+        if state.globals.write_state.is_backpressured() {
+            let frame_was_presented = state.renderer_presented;
+            state.renderer_presented = false;
+            if frame_was_presented {
+                state.frame_callback_pending_commit = false;
+            } else {
+                drop(state);
+                self.0.defer_frame_for_wayland_backpressure();
+            }
+            return;
+        }
+
         // Work around a bug in old versions of wlroots where committing without a buffer attached
         // can cause invalid synchronization that leads to graphical corruption.
         if !state.renderer_presented {
@@ -1506,6 +1596,10 @@ impl PlatformWindow for WaylandWindow {
         }
 
         state.renderer_presented = false;
+        state.frame_callback_pending_commit = false;
+        let client = state.client.clone();
+        drop(state);
+        client.flush_after_wayland_frame();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
