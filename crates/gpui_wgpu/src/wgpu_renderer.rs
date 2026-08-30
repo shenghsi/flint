@@ -253,6 +253,28 @@ impl WgpuRenderer {
                     );
                     task.stalled_warning_logged = true;
                 }
+                // The Vulkan WSI call backing this (e.g.
+                // vkGetPhysicalDeviceSurfaceCapabilitiesKHR) has no timeout or
+                // cancellation in the spec, and the worker thread holds the
+                // shared `surface_configuration_lock` for as long as it runs.
+                // A wedge there blocks every window sharing this GPU context,
+                // forever, with no recovery. Past this point give up on the
+                // worker instead: treat it like a lost device so `recover()`
+                // (already wired into the per-frame device_lost() check)
+                // rebuilds the whole context, including a fresh lock and a
+                // fresh worker thread. The old worker thread is abandoned
+                // still holding the old lock, which is the same leak profile
+                // as a genuine driver-reported device loss.
+                if elapsed >= Duration::from_secs(5) {
+                    log::error!(
+                        "surface configuration generation {} did not complete after {:?}; treating GPU device as lost",
+                        task.generation,
+                        elapsed
+                    );
+                    self.device_lost
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    self.surface_configuration_task = None;
+                }
             }
             Err(TryRecvError::Disconnected) => {
                 let task = self.surface_configuration_task.take().unwrap();
