@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use std::{
@@ -166,6 +167,41 @@ impl LinuxCommon {
     }
 }
 
+/// Bounds how often a fatal display disconnect can trigger an auto-relaunch,
+/// so a deterministic failure (e.g. a broken compositor session) can't spin
+/// Flint in a restart loop. Uses a marker file rather than an inherited
+/// environment variable so it works across the exec boundary without
+/// mutating process environment during shutdown, when other threads may
+/// still be running.
+///
+/// Returns the age in seconds of the previous marker if it is within the
+/// cooldown window (meaning the caller should NOT relaunch again yet).
+/// Otherwise refreshes the marker to now and returns `None`.
+fn seconds_since_last_fatal_relaunch_marker() -> Option<u64> {
+    let marker = env::temp_dir().join("flint-wayland-fatal-relaunch-marker");
+    check_and_refresh_relaunch_marker(&marker, FATAL_RELAUNCH_COOLDOWN_SECS)
+}
+
+const FATAL_RELAUNCH_COOLDOWN_SECS: u64 = 60;
+
+fn check_and_refresh_relaunch_marker(marker: &Path, cooldown_secs: u64) -> Option<u64> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+
+    let previous = std::fs::read_to_string(marker)
+        .ok()
+        .and_then(|contents| contents.trim().parse::<u64>().ok());
+
+    std::fs::write(marker, now.to_string()).log_err();
+
+    previous.and_then(|previous| {
+        let elapsed = now.saturating_sub(previous);
+        (elapsed < cooldown_secs).then_some(elapsed)
+    })
+}
+
 pub(crate) struct LinuxPlatform<P> {
     pub(crate) inner: P,
 }
@@ -210,11 +246,17 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         LinuxClient::run(&self.inner);
 
         if self.inner.fatal_display_disconnect() {
-            log::warn!(
-                "display connection ended with an unrecoverable error; relaunching instead of exiting silently"
-            );
-            self.restart(None);
-            return;
+            if let Some(elapsed) = seconds_since_last_fatal_relaunch_marker() {
+                log::error!(
+                    "display connection failed fatally again only {elapsed}s after the last \
+                     auto-relaunch; not relaunching again to avoid a restart loop"
+                );
+            } else {
+                log::warn!(
+                    "display connection ended with an unrecoverable error; relaunching instead of exiting silently"
+                );
+                self.restart(None);
+            }
         }
 
         let quit = self
@@ -1173,5 +1215,27 @@ mod tests {
             zero,
             Point::new(px(5.0), px(5.1))
         ),);
+    }
+
+    #[test]
+    fn relaunch_marker_blocks_within_cooldown_and_allows_after() {
+        let marker = env::temp_dir().join(format!(
+            "flint-test-relaunch-marker-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+
+        // No prior marker: allowed, and it writes one for next time.
+        assert_eq!(check_and_refresh_relaunch_marker(&marker, 60), None);
+
+        // Immediately again, well within the cooldown: blocked.
+        assert!(check_and_refresh_relaunch_marker(&marker, 60).is_some());
+
+        // A marker older than the cooldown: allowed again.
+        std::fs::write(&marker, "0").unwrap();
+        assert_eq!(check_and_refresh_relaunch_marker(&marker, 60), None);
+
+        let _ = std::fs::remove_file(&marker);
     }
 }
