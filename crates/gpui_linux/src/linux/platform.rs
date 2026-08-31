@@ -94,6 +94,16 @@ pub(crate) trait LinuxClient {
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
 
+    /// Whether `run` returned because the display connection died with an
+    /// unrecoverable error, rather than through a normal quit. Per the
+    /// Wayland protocol, the only valid recovery from a fatal display error
+    /// is a fresh connection from scratch -- there is no in-process way to
+    /// reconnect an existing client's surfaces, windows, and GPU context.
+    /// Backends that cannot hit this condition (X11) keep the default.
+    fn fatal_display_disconnect(&self) -> bool {
+        false
+    }
+
     #[cfg(any(feature = "wayland", feature = "x11"))]
     fn window_identifier(
         &self,
@@ -198,6 +208,14 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         on_finish_launching();
 
         LinuxClient::run(&self.inner);
+
+        if self.inner.fatal_display_disconnect() {
+            log::warn!(
+                "display connection ended with an unrecoverable error; relaunching instead of exiting silently"
+            );
+            self.restart(None);
+            return;
+        }
 
         let quit = self
             .inner
