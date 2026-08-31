@@ -127,6 +127,7 @@ pub(crate) struct WaylandWriteState {
     backpressure_started_at: Cell<Option<Instant>>,
     backpressure_episodes: Cell<u64>,
     deferred_frames: Cell<u64>,
+    fatal_disconnect: Cell<bool>,
 }
 
 impl WaylandWriteState {
@@ -168,16 +169,24 @@ impl WaylandWriteState {
     }
 
     fn log_fatal_error(&self, error: &WaylandError, operation: &str) {
+        self.fatal_disconnect.set(true);
         let elapsed = self
             .backpressure_started_at
             .get()
             .map(|started_at| started_at.elapsed());
         log::error!(
-            "fatal Wayland connection error {operation}: {error}; backpressured={}, backpressure_duration={elapsed:?}, deferred_frames={}, backpressure_episodes={}. The Wayland connection cannot recover; stopping the event loop",
+            "fatal Wayland connection error {operation}: {error}; backpressured={}, backpressure_duration={elapsed:?}, deferred_frames={}, backpressure_episodes={}. The Wayland connection cannot recover; relaunching instead of stopping",
             self.backpressured.get(),
             self.deferred_frames.get(),
             self.backpressure_episodes.get(),
         );
+    }
+
+    /// Whether a fatal, unrecoverable display error was ever seen on this
+    /// connection. Per the Wayland protocol, the only valid recovery is a
+    /// fresh connection -- callers should relaunch rather than retry.
+    pub(crate) fn fatal_disconnect(&self) -> bool {
+        self.fatal_disconnect.get()
     }
 }
 
@@ -1275,6 +1284,10 @@ impl LinuxClient for WaylandClient {
                 },
             )
             .log_err();
+    }
+
+    fn fatal_display_disconnect(&self) -> bool {
+        self.0.borrow().globals.write_state.fatal_disconnect()
     }
 
     fn write_to_primary(&self, item: gpui::ClipboardItem) {
@@ -2895,7 +2908,19 @@ impl Dispatch<XdgDialogV1, ()> for WaylandClientStatePtr {
 
 #[cfg(test)]
 mod tests {
-    use super::WaylandWriteState;
+    use super::{WaylandError, WaylandWriteState};
+
+    #[test]
+    fn wayland_write_state_marks_fatal_disconnect() {
+        let state = WaylandWriteState::new();
+
+        assert!(!state.fatal_disconnect());
+
+        let error = WaylandError::Io(std::io::Error::from_raw_os_error(11));
+        state.log_fatal_error(&error, "in a test");
+
+        assert!(state.fatal_disconnect());
+    }
 
     #[test]
     fn wayland_write_state_tracks_one_backpressure_episode() {
