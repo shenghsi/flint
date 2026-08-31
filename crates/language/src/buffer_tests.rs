@@ -971,7 +971,7 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_outline_annotations(cx: &mut App) {
+async fn test_outline_annotations(cx: &mut TestAppContext) {
     // Add this new test case
     let text = r#"
         /// This is a doc comment
@@ -991,8 +991,15 @@ fn test_outline_annotations(cx: &mut App) {
     "#
     .unindent();
 
-    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
-    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_sync_parse_timeout(None);
+        buffer.set_language(Some(rust_lang()), cx);
+        buffer
+    });
+    cx.executor().run_until_parked();
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let outline = snapshot.outline(None);
 
     assert_eq!(
         outline
@@ -1002,7 +1009,7 @@ fn test_outline_annotations(cx: &mut App) {
                 item.text,
                 item.depth,
                 item.annotation_range
-                    .map(|range| { buffer.read(cx).text_for_range(range).collect::<String>() })
+                    .map(|range| snapshot.text_for_range(range).collect::<String>())
             ))
             .collect::<Vec<_>>(),
         &[
