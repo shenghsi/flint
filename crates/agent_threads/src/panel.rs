@@ -394,13 +394,17 @@ fn historical_thread_belongs_to_panel(
     thread: &HistoricalThread,
     own_project_roots: &[PathBuf],
     path_style: PathStyle,
+    remote_project: bool,
 ) -> bool {
     // A tie override whose target directory has since been deleted (e.g. a
     // linked worktree that was later removed) must not permanently orphan
     // the session from every panel -- fall back to its natural root instead.
+    // `Path::exists` only ever inspects this process's own filesystem, so for
+    // a remote project (whose tied root lives on the remote host) it must be
+    // skipped rather than misreported as "gone".
     let effective_root = store::read_tie_override(cx, kind_id, &thread.session_id)
         .map(|tie| tie.root)
-        .filter(|root| root.exists())
+        .filter(|root| remote_project || root.exists())
         .unwrap_or_else(|| thread.project_root.clone());
     // Matches the normalization the scan-time filter
     // (`agent_history::filter_snapshot`) already uses, so a row that matched
@@ -878,6 +882,7 @@ impl AgentThreadsPanel {
                                             thread,
                                             &own_project_roots,
                                             path_style,
+                                            remote_project,
                                         )
                                     })
                                     .collect();
@@ -3436,6 +3441,7 @@ mod tests {
                     &thread,
                     &[PathBuf::from(root_a)],
                     PathStyle::Posix,
+                    false,
                 ),
                 "the retied session should no longer belong to its original root"
             );
@@ -3450,6 +3456,7 @@ mod tests {
                     &thread_at_b,
                     std::slice::from_ref(&root_b),
                     PathStyle::Posix,
+                    false,
                 ),
                 "the retied session should belong to its new root"
             );
@@ -3505,9 +3512,66 @@ mod tests {
                     &thread,
                     &[PathBuf::from(root_a)],
                     PathStyle::Posix,
+                    false,
                 ),
                 "a session tied to a now-deleted worktree must fall back to its natural \
                  project root, not disappear from every panel"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn historical_thread_belongs_to_panel_trusts_a_remote_tie_it_cannot_locally_stat(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+
+        let thread = HistoricalThread {
+            session_id: SharedString::from("session-remote-tie"),
+            title: SharedString::from("Fix the bug"),
+            project_root: PathBuf::from(root_a),
+            last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                });
+            })
+            .expect("failed to resume thread");
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+        let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
+
+        // A path that cannot exist on this (the client) machine, standing in
+        // for a tied root that lives only on a remote host `Path::exists`
+        // can't see.
+        let remote_only_root = PathBuf::from("/nonexistent/remote/only/worktree/root");
+        let async_cx = cx.to_async();
+        store::retie_thread(
+            terminal_item_id,
+            remote_only_root.clone(),
+            window_handle,
+            &mut async_cx.clone(),
+        )
+        .await
+        .expect("retie should succeed");
+
+        cx.update(|cx| {
+            assert!(
+                historical_thread_belongs_to_panel(
+                    cx,
+                    "codex",
+                    &thread,
+                    std::slice::from_ref(&remote_only_root),
+                    PathStyle::Posix,
+                    true,
+                ),
+                "a remote project's tie override must be trusted without a local \
+                 filesystem check, since Path::exists can only see this machine"
             );
         });
     }
@@ -3532,6 +3596,7 @@ mod tests {
                     &thread,
                     &[PathBuf::from("/work/project")],
                     PathStyle::Posix,
+                    false,
                 ),
                 "a trailing separator alone must not stop a row that the scan-time filter \
                  already matched from belonging to the panel"
