@@ -276,7 +276,7 @@ fn path_for_style(path: &Path, path_style: PathStyle) -> Result<String> {
     Ok(normalize_path_for_style(path, path_style))
 }
 
-fn normalize_path_for_style(path: &str, path_style: PathStyle) -> String {
+pub(crate) fn normalize_path_for_style(path: &str, path_style: PathStyle) -> String {
     let path = match path_style {
         PathStyle::Posix => path.replace('\\', "/"),
         PathStyle::Windows => path.replace('/', "\\"),

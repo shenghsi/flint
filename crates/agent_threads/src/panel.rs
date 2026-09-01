@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,6 +17,7 @@ use ui::{
     LabelSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
+use util::paths::PathStyle;
 use workspace::{
     MultiWorkspace, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -392,11 +393,30 @@ fn historical_thread_belongs_to_panel(
     kind_id: &str,
     thread: &HistoricalThread,
     own_project_roots: &[PathBuf],
+    path_style: PathStyle,
 ) -> bool {
+    // A tie override whose target directory has since been deleted (e.g. a
+    // linked worktree that was later removed) must not permanently orphan
+    // the session from every panel -- fall back to its natural root instead.
     let effective_root = store::read_tie_override(cx, kind_id, &thread.session_id)
         .map(|tie| tie.root)
+        .filter(|root| root.exists())
         .unwrap_or_else(|| thread.project_root.clone());
-    own_project_roots.contains(&effective_root)
+    // Matches the normalization the scan-time filter
+    // (`agent_history::filter_snapshot`) already uses, so a row that matched
+    // during scanning can't then fail this narrower per-panel check purely
+    // over formatting (trailing separators, `.`/`..` components, and so on).
+    own_project_roots
+        .iter()
+        .any(|root| paths_equal_for_style(&effective_root, root, path_style))
+}
+
+fn paths_equal_for_style(left: &Path, right: &Path, path_style: PathStyle) -> bool {
+    let (Some(left), Some(right)) = (left.to_str(), right.to_str()) else {
+        return left == right;
+    };
+    history::normalize_path_for_style(left, path_style)
+        == history::normalize_path_for_style(right, path_style)
 }
 
 fn format_reset_countdown(reset_at: i64) -> Option<String> {
@@ -857,6 +877,7 @@ impl AgentThreadsPanel {
                                             kind_id,
                                             thread,
                                             &own_project_roots,
+                                            path_style,
                                         )
                                     })
                                     .collect();
@@ -2543,7 +2564,6 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
     use settings::{AgentThreadCommandContent, AgentThreadSettingsContent, SettingsStore};
-    use std::path::Path;
     use std::sync::LazyLock;
     use terminal_view::TerminalView;
     use workspace::MultiWorkspace;
@@ -3410,7 +3430,13 @@ mod tests {
         // this session to B, not A.
         cx.update(|cx| {
             assert!(
-                !historical_thread_belongs_to_panel(cx, "codex", &thread, &[PathBuf::from(root_a)]),
+                !historical_thread_belongs_to_panel(
+                    cx,
+                    "codex",
+                    &thread,
+                    &[PathBuf::from(root_a)],
+                    PathStyle::Posix,
+                ),
                 "the retied session should no longer belong to its original root"
             );
             let thread_at_b = HistoricalThread {
@@ -3422,9 +3448,93 @@ mod tests {
                     cx,
                     "codex",
                     &thread_at_b,
-                    std::slice::from_ref(&root_b)
+                    std::slice::from_ref(&root_b),
+                    PathStyle::Posix,
                 ),
                 "the retied session should belong to its new root"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn historical_thread_belongs_to_panel_falls_back_when_the_tied_root_is_gone(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+
+        let thread = HistoricalThread {
+            session_id: SharedString::from("session-vanished-tie"),
+            title: SharedString::from("Fix the bug"),
+            project_root: PathBuf::from(root_a),
+            last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                });
+            })
+            .expect("failed to resume thread");
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+        let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
+
+        let vanished_root = std::env::temp_dir().join("agent_threads_vanished_tie_root_test");
+        std::fs::create_dir_all(&vanished_root)
+            .expect("failed to create the retie target directory");
+        let async_cx = cx.to_async();
+        store::retie_thread(
+            terminal_item_id,
+            vanished_root.clone(),
+            window_handle,
+            &mut async_cx.clone(),
+        )
+        .await
+        .expect("retie should succeed");
+        std::fs::remove_dir_all(&vanished_root)
+            .expect("failed to remove the retie target directory");
+
+        cx.update(|cx| {
+            assert!(
+                historical_thread_belongs_to_panel(
+                    cx,
+                    "codex",
+                    &thread,
+                    &[PathBuf::from(root_a)],
+                    PathStyle::Posix,
+                ),
+                "a session tied to a now-deleted worktree must fall back to its natural \
+                 project root, not disappear from every panel"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn historical_thread_belongs_to_panel_ignores_path_formatting(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let thread = HistoricalThread {
+            session_id: SharedString::from("session-formatting"),
+            title: SharedString::from("Fix the bug"),
+            project_root: PathBuf::from("/work/project/"),
+            last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+
+        cx.update(|cx| {
+            assert!(
+                historical_thread_belongs_to_panel(
+                    cx,
+                    "codex",
+                    &thread,
+                    &[PathBuf::from("/work/project")],
+                    PathStyle::Posix,
+                ),
+                "a trailing separator alone must not stop a row that the scan-time filter \
+                 already matched from belonging to the panel"
             );
         });
     }
