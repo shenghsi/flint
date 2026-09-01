@@ -393,8 +393,12 @@ fn historical_thread_belongs_to_panel(
     thread: &HistoricalThread,
     own_project_roots: &[PathBuf],
 ) -> bool {
+    // A tie override whose target directory has since been deleted (e.g. a
+    // linked worktree that was later removed) must not permanently orphan
+    // the session from every panel -- fall back to its natural root instead.
     let effective_root = store::read_tie_override(cx, kind_id, &thread.session_id)
         .map(|tie| tie.root)
+        .filter(|root| root.exists())
         .unwrap_or_else(|| thread.project_root.clone());
     own_project_roots.contains(&effective_root)
 }
@@ -3425,6 +3429,56 @@ mod tests {
                     std::slice::from_ref(&root_b)
                 ),
                 "the retied session should belong to its new root"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn historical_thread_belongs_to_panel_falls_back_when_the_tied_root_is_gone(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let root_a = SPAWNING_TEST_ROOT.as_str();
+        configure_echo_threads(cx, root_a, 5);
+        let window_handle = init_workspace(cx, root_a).await;
+
+        let thread = HistoricalThread {
+            session_id: SharedString::from("session-vanished-tie"),
+            title: SharedString::from("Fix the bug"),
+            project_root: PathBuf::from(root_a),
+            last_activity_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                });
+            })
+            .expect("failed to resume thread");
+        wait_for_terminal_view_count(&window_handle, cx, 1).await;
+        let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
+
+        let vanished_root = std::env::temp_dir().join("agent_threads_vanished_tie_root_test");
+        std::fs::create_dir_all(&vanished_root)
+            .expect("failed to create the retie target directory");
+        let async_cx = cx.to_async();
+        store::retie_thread(
+            terminal_item_id,
+            vanished_root.clone(),
+            window_handle,
+            &mut async_cx.clone(),
+        )
+        .await
+        .expect("retie should succeed");
+        std::fs::remove_dir_all(&vanished_root)
+            .expect("failed to remove the retie target directory");
+
+        cx.update(|cx| {
+            assert!(
+                historical_thread_belongs_to_panel(cx, "codex", &thread, &[PathBuf::from(root_a)]),
+                "a session tied to a now-deleted worktree must fall back to its natural \
+                 project root, not disappear from every panel"
             );
         });
     }
